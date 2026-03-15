@@ -1,0 +1,23 @@
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct ConfigurationDto {
+    github_data_url: String,
+}
+
+pub struct ConfigurationTomlAdapter {
+    file_path: String,
+}
+
+impl ConfigurationRepository for ConfigurationTomlAdapter {
+    fn read_configuration(&self) -> Result<Configuration, DomainError> {
+        let content = std::fs::read_to_string(&self.file_path)
+            .map_err(|_| DomainError::ConfigNotFound)?;
+
+        let dto: ConfigurationDto = toml::from_str(&content)
+            .map_err(|_| DomainError::InvalidConfigFormat)?;
+
+        let url = RawGithubDataUrl::new(dto.github_data_url);
+        Ok(Configuration::new(url))
+    }
+}
