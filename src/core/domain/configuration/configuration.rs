@@ -1,5 +1,8 @@
+use crate::core::domain::configuration::configuration::value_objects::RawGithubDataUrl;
+
+#[derive(Debug)]
 pub struct Configuration {
-    github_data_url: value_objects::raw_github_data_url,
+    github_data_url: value_objects::RawGithubDataUrl,
 }
 
 impl Configuration {
@@ -13,5 +16,12 @@ impl Configuration {
 }
 
 pub mod value_objects {
-    pub struct raw_github_data_url(String);
+    #[derive(Debug, Clone)]
+    pub struct RawGithubDataUrl(String);
+
+    impl RawGithubDataUrl {
+        pub fn new(url: String) -> Self {
+            Self(url)
+        }
+    }
 }

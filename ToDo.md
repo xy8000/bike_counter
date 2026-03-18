@@ -2,7 +2,7 @@ Initial Setup of MuensterGithubAdapter
 
 - [x] Setup initial domain
 - [x] Setup TOML-Configuration-Adapter
-- [] Start TOML-Configuration-Adapter using real file
+- [x] Start TOML-Configuration-Adapter using real file
 - [] Write first TOML-Configuration-Adapter-Test
 - [] Setup Postgrest-DB-Adapter
 - [] Include Postgres-Testcontainer-Support using Docker-Compose
