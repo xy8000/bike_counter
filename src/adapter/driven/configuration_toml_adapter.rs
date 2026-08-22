@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
-use crate::core::domain::configuration::configuration::Configuration;
 use crate::core::domain::configuration::configuration::value_objects::{
     DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+};
+use crate::core::domain::configuration::configuration::{
+    Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
 };
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::configuration::repository::ConfigurationRepository;
@@ -12,10 +14,17 @@ use serde::Deserialize;
 struct ConfigurationDto {
     #[serde(default)]
     data_sources: Vec<DataSourceDto>,
+    #[serde(default = "default_data_source_update_cron")]
+    data_source_update_cron: String,
+    data_source_update_max_lifetime_seconds: i64,
     database_url: String,
     database_user: String,
     database_password: String,
     database_name: String,
+}
+
+fn default_data_source_update_cron() -> String {
+    DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string()
 }
 
 #[derive(Deserialize)]
@@ -66,7 +75,12 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             data_sources.push(data_source);
         }
 
-        Configuration::new(database, data_sources)
+        Configuration::new(
+            database,
+            data_sources,
+            dto.data_source_update_cron,
+            dto.data_source_update_max_lifetime_seconds,
+        )
     }
 }
 
@@ -102,6 +116,8 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
+            data_source_update_cron = \"0 15 * * * *\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
             \n\
             [[data_sources]]\n\
             name = \"Münster\"\n\
@@ -126,6 +142,11 @@ mod tests {
         assert_eq!(configuration.database().user(), "user");
         assert_eq!(configuration.database().password(), "password");
         assert_eq!(configuration.database().database_name(), "database");
+        assert_eq!(configuration.data_source_update_cron(), "0 15 * * * *");
+        assert_eq!(
+            configuration.data_source_update_max_lifetime_seconds(),
+            3600
+        );
 
         let data_sources = configuration.data_sources();
         assert_eq!(data_sources.len(), 1);
@@ -150,13 +171,95 @@ mod tests {
             "database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert!(configuration.data_sources().is_empty());
+        assert_eq!(
+            configuration.data_source_update_cron(),
+            DEFAULT_DATA_SOURCE_UPDATE_CRON
+        );
+        assert_eq!(
+            configuration.data_source_update_max_lifetime_seconds(),
+            3600
+        );
+    }
+
+    #[test]
+    fn defaults_data_source_update_cron_when_not_configured() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 1800\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(
+            configuration.data_source_update_cron(),
+            DEFAULT_DATA_SOURCE_UPDATE_CRON
+        );
+        assert_eq!(
+            configuration.data_source_update_max_lifetime_seconds(),
+            1800
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_data_source_update_cron() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_cron = \"not a cron\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn rejects_non_positive_data_source_update_max_lifetime() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 0\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn rejects_missing_data_source_update_max_lifetime() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
             database_name = \"database\"\n",
         );
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
 
         std::fs::remove_file(path).unwrap();
-        assert!(result.unwrap().data_sources().is_empty());
+        assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
     }
 
     #[test]

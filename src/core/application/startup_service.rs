@@ -120,11 +120,15 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
+    use chrono::{DateTime, Utc};
+
     use super::*;
     use crate::core::domain::channels::channel::Channel;
-    use crate::core::domain::configuration::configuration::Configuration;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+    };
+    use crate::core::domain::configuration::configuration::{
+        Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::provider::{
@@ -157,6 +161,8 @@ mod tests {
                 .iter()
                 .map(|name| data_source_config(name, "münster_opendata_github_provider"))
                 .collect(),
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
         )
         .unwrap()
     }
@@ -226,6 +232,23 @@ mod tests {
 
         fn delete(&self, id: DataSourceId) -> Result<(), DomainError> {
             self.data_sources.lock().unwrap().retain(|ds| ds.id != id);
+            Ok(())
+        }
+
+        fn update_last_updated_at(
+            &self,
+            id: DataSourceId,
+            timestamp: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            if let Some(data_source) = self
+                .data_sources
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|ds| ds.id == id)
+            {
+                data_source.last_updated_at = Some(timestamp);
+            }
             Ok(())
         }
     }

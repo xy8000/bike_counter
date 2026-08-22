@@ -3,6 +3,11 @@ database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
 
+# CRON expression for the data-source update job (default: every hour).
+data_source_update_cron="0 0 * * * *"
+# REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
+data_source_update_max_lifetime_seconds=3600
+
 [[data_sources]]
 name = "Münster"
 

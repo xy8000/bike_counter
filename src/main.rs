@@ -9,8 +9,12 @@ use crate::adapter::driven::postgres_channel_repository::PostgresChannelReposito
 use crate::adapter::driven::postgres_counting_station_repository::PostgresCountingStationRepository;
 use crate::adapter::driven::postgres_data_source_repository::PostgresDataSourceRepository;
 use crate::adapter::driven::postgres_health_check::PostgresHealthCheck;
+use crate::adapter::driven::postgres_job_repository::PostgresJobRepository;
 use crate::adapter::driven::postgres_measurement_repository::PostgresMeasurementRepository;
+use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
+use crate::core::application::data_import_service::DataImportService;
+use crate::core::application::data_source_update_service::DataSourceUpdateService;
 use crate::core::application::startup_service::{StartupError, StartupService};
 use crate::core::domain::configuration::repository::ConfigurationRepository;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
@@ -24,11 +28,11 @@ fn main() {
     let configuration_repository =
         Arc::new(ConfigurationTomlAdapter::new("config.toml".to_string()));
 
-    let database_configuration = configuration_repository
-        .read_configuration()
-        .expect("Failed to read configuration from file. Please check the file path and format.")
-        .database()
-        .clone();
+    let configuration =
+        Arc::new(configuration_repository.read_configuration().expect(
+            "Failed to read configuration from file. Please check the file path and format.",
+        ));
+    let database_configuration = configuration.database().clone();
 
     // Log a redacted summary. NEVER print the full `DatabaseConfiguration` via
     // Debug, as it contains the plaintext password.
@@ -63,6 +67,10 @@ fn main() {
             panic!("Failed to initialize PostgresDataSourceRepository: {err:?}")
         }),
     );
+    let job_repo = Arc::new(
+        PostgresJobRepository::new(&database_configuration)
+            .unwrap_or_else(|err| panic!("Failed to initialize PostgresJobRepository: {err:?}")),
+    );
 
     // The domain decides what happens at startup: read the configuration, build
     // a provider per data source, sync the persisted data sources and prepare
@@ -95,12 +103,28 @@ fn main() {
     indicators.extend(provider_health_indicators);
     let health_service = Arc::new(HealthService::new(indicators));
 
+    // Data import + scheduled data-source update service (share the runtimes).
+    let data_import_service = Arc::new(DataImportService::new(
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
+        startup.data_source_runtimes.clone(),
+    ));
+    let data_source_update_service = Arc::new(DataSourceUpdateService::new(
+        job_repo.clone(),
+        data_source_repo.clone(),
+        data_import_service,
+        configuration.clone(),
+        startup.data_source_runtimes,
+    ));
+
     // Initialize driving REST API adapter
     let rest_adapter = RestApiAdapter::new(
         counting_station_repo,
         channel_repo,
         measurement_repo,
         data_source_repo,
+        job_repo,
         health_service,
     );
 
@@ -109,7 +133,15 @@ fn main() {
     println!("Swagger UI available at http://localhost:8080/swagger-ui/");
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    if let Err(err) = runtime.block_on(rest_adapter.run(addr)) {
+    if let Err(err) = runtime.block_on(async {
+        // Background scheduler: runs the data-source update job at startup (if
+        // it never succeeded) and then on the configured CRON schedule.
+        tokio::spawn(job_scheduler::run_scheduler(
+            data_source_update_service,
+            configuration,
+        ));
+        rest_adapter.run(addr).await
+    }) {
         eprintln!("REST API server error: {:?}", err);
     }
 }

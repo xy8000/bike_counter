@@ -1,5 +1,6 @@
 //! The persisted representation of an external data source.
 
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Namespace used to derive a deterministic data source id from its name.
@@ -10,6 +11,9 @@ pub struct DataSource {
     pub id: value_objects::Id,
     pub name: value_objects::Name,
     pub provider_type: value_objects::ProviderType,
+    /// Database-only indicator of the last processed measurement timestamp.
+    /// Not exposed through the REST API.
+    pub last_updated_at: Option<DateTime<Utc>>,
 }
 
 impl DataSource {
@@ -18,6 +22,7 @@ impl DataSource {
             id: value_objects::Id(Self::id_from_name(&name)),
             name: value_objects::Name(name),
             provider_type: value_objects::ProviderType(provider_type),
+            last_updated_at: None,
         }
     }
 

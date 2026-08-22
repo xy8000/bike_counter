@@ -34,9 +34,10 @@ use uuid::Uuid;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::{
-    sample_channel_repository, sample_counting_station_repository, sample_measurement_repository,
+    sample_channel_repository, sample_counting_station_repository, sample_job_repository,
+    sample_measurement_repository,
 };
-use mocks::{MockDataSourceRepository, mock_health_service};
+use mocks::{MockDataSourceRepository, MockJobRepository, mock_health_service};
 
 /// Wraps the router under test and provides request helpers.
 pub struct TestApp {
@@ -62,11 +63,35 @@ impl TestApp {
         data_source_repository: MockDataSourceRepository,
         health_service: Arc<HealthService>,
     ) -> Self {
+        Self::with_all(
+            sample_job_repository(),
+            data_source_repository,
+            health_service,
+        )
+    }
+
+    /// Builds a router with a custom job repository (default data-source repo
+    /// and a healthy mock PostgreSQL indicator).
+    pub fn with_jobs(job_repository: MockJobRepository) -> Self {
+        Self::with_all(
+            job_repository,
+            MockDataSourceRepository::default(),
+            mock_health_service(HealthStatus::Up),
+        )
+    }
+
+    /// Builds a router backed by the given in-memory repositories.
+    fn with_all(
+        job_repository: MockJobRepository,
+        data_source_repository: MockDataSourceRepository,
+        health_service: Arc<HealthService>,
+    ) -> Self {
         let router = RestApiAdapter::new(
             Arc::new(sample_counting_station_repository()),
             Arc::new(sample_channel_repository()),
             Arc::new(sample_measurement_repository()),
             Arc::new(data_source_repository),
+            Arc::new(job_repository),
             health_service,
         )
         .router();

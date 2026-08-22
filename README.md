@@ -25,6 +25,11 @@ database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
 
+# CRON expression for the data-source update job (default: every hour).
+data_source_update_cron="0 0 * * * *"
+# REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
+data_source_update_max_lifetime_seconds=3600
+
 [[data_sources]]
 name = "Münster"
 
@@ -58,6 +63,35 @@ On startup the application syncs the configured data sources into the
 removed. The `data_sources` list may be empty (no import happens, but the API
 and health checks still work).
 
+### Background data-source updates
+
+A cron-driven scheduler keeps the configured data sources up to date. Every run
+is recorded as a generic ShedLock-style **job** in the `jobs` table and goes
+through a lifecycle: `PENDING -> RUNNING -> FINISHED` (or `FAILED`).
+
+- `data_source_update_cron` – CRON expression that re-triggers the update job.
+  Defaults to `"0 0 * * * *"` (every hour) and is validated at startup.
+- `data_source_update_max_lifetime_seconds` – **required** (no default): the max
+  lifetime of an update job. Each job gets an absolute `lifetime_until` deadline
+  (`insert time + max lifetime`) stored as `TIMESTAMPTZ`. A `RUNNING` job blocks
+  other runs of the same type **only until** that deadline; a stale `RUNNING` job
+  past its deadline is expired to `FAILED` with `max_lifetime_exceeded = true`,
+  so the next run can proceed even after a crash.
+
+Scheduling semantics:
+
+- The update job runs immediately at startup if it has never succeeded.
+- Afterwards it runs on the CRON schedule.
+- While a job of the same type is `RUNNING` and within its `lifetime_until`, new
+  runs are skipped (a warning is printed).
+- Updates are **incremental**: each data source's `last_updated_at` advances to
+  the last processed measurement timestamp, so consecutive runs do not reprocess
+  data. Per data source the order is strict: counting stations, then channels,
+  then measurements (paged in batches; the running `processed_measurements`
+  count is persisted to the job metadata after each batch).
+
+Every job is exposed through the read-only jobs API (see below).
+
 ## Start the database
 
 If you do not have a PostgreSQL instance yet, start one matching the defaults:
@@ -71,13 +105,26 @@ docker run --name bike_counter_db \
   -d postgres
 ```
 
-## Build and run
+## Run
+
+The easiest way to run the whole stack (PostgreSQL + application) is through the
+[`Makefile`](Makefile):
 
 ```bash
-# Build the project
-cargo build
+make run    # docker compose up --build (foreground, follows logs; Ctrl-C to stop)
+make down   # stop and remove the stack (keeps the database volume)
+make logs   # follow the application logs
+```
 
-# Start the application (reads config.toml, runs migrations, serves the API)
+This requires a [`config.toml`](config.toml) with `database_url` set to the
+compose service name `db` (see [Run with Docker Compose](#run-with-docker-compose)).
+
+Alternatively, run the binary locally (reads `config.toml`, applies migrations,
+serves the API) — this needs a reachable PostgreSQL, so set
+`database_url="postgres://localhost:5432"`:
+
+```bash
+cargo build
 cargo run
 ```
 
@@ -99,7 +146,10 @@ that ramp up both the PostgreSQL database and the application:
 ```bash
 # Copy the template, adjust database_url to "postgres://db:5432", then start
 cp config.toml.example config.toml
-docker compose up --build
+# Either directly, or via the Makefile:
+docker compose up --build        # make run
+docker compose down              # make down
+docker compose logs -f app       # make logs
 ```
 
 - The `db` service runs PostgreSQL with the development defaults
@@ -119,6 +169,9 @@ docker compose up --build
   database_user="postgres"
   database_password="postgres"
   database_name="bike_counter"
+
+  data_source_update_cron="0 0 * * * *"
+  data_source_update_max_lifetime_seconds=3600
 
   [[data_sources]]
   name = "Münster"
@@ -148,6 +201,7 @@ All endpoints are **read-only (GET)** and use a flat URL hierarchy under `/api/v
 
 - `GET /api/v1` – root discovery with HATEOAS links
 - `GET /api/v1/data-sources` / `GET /api/v1/data-sources/{id}` – list / fetch the configured (persisted) data sources
+- `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
 - `GET /api/v1/counting-stations` / `GET /api/v1/counting-stations/{id}`
 - `GET /api/v1/channels` (optional `?counting_station_id=` filter) / `GET /api/v1/channels/{id}`
 - `GET /api/v1/measurements` (optional `?channel_id=` filter) / `GET /api/v1/measurements/{id}`
@@ -181,10 +235,26 @@ reachable.
 
 ## Running tests
 
-```bash
-# REST endpoint tests (in-memory mocks, no database required)
-cargo test adapter::driving::rest::tests
+A [`Makefile`](Makefile) wraps the common commands. Run `make help` for the full
+list:
 
-# All tests (repository tests spin up a Postgres test container via Docker)
-cargo test
+```bash
+make check      # CI gate: cargo fmt --check + cargo clippy --all-targets -- -D warnings
+make test       # all tests (repository tests spin up a Postgres test container via Docker)
+make test-rest  # only the REST endpoint tests (in-memory mocks, no database required)
+make test-e2e   # end-to-end smoke test against the real docker-compose stack (requires Docker)
+make test-all   # make check + make test
 ```
+
+Under the hood the scripts are:
+
+- [`scripts/fmt-test.sh`](scripts/fmt-test.sh) – CI-style gate: `cargo fmt --check`
+  and `cargo clippy --all-targets -- -D warnings`, failing non-zero on any drift.
+- [`scripts/docker-compose-test.sh`](scripts/docker-compose-test.sh) – boots the
+  real docker-compose stack (PostgreSQL + app), waits for readiness, asserts the
+  jobs + data-sources APIs return `200`, verifies a `data_source_update` job with
+  `lifetime_until` was recorded, and checks `jobs.lifetime_until TIMESTAMPTZ NOT
+  NULL` and `data_sources.last_updated_at` via `psql`, then tears everything down.
+
+`fmt-test.sh` is intended to be wired into CI; `docker-compose-test.sh` requires
+Docker and `docker compose` v2.

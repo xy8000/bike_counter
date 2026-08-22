@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use super::data_source::DataSource;
 use super::data_source::value_objects::Id;
 use crate::core::domain::error::DomainError;
@@ -13,4 +15,7 @@ pub trait DataSourceRepository {
     fn find_all(&self) -> Result<Vec<DataSource>, DomainError>;
 
     fn delete(&self, id: Id) -> Result<(), DomainError>;
+
+    /// Advances the incremental update marker to the given timestamp.
+    fn update_last_updated_at(&self, id: Id, timestamp: DateTime<Utc>) -> Result<(), DomainError>;
 }

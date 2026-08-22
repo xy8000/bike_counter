@@ -16,14 +16,15 @@ use utoipa_swagger_ui::SwaggerUi;
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
     get_api_root, get_channel_by_id, get_counting_station_by_id, get_data_source_by_id,
-    get_health_live, get_health_ready, get_measurement_by_id, list_channels,
-    list_counting_stations, list_data_sources, list_measurements,
+    get_health_live, get_health_ready, get_job_by_id, get_measurement_by_id, list_channels,
+    list_counting_stations, list_data_sources, list_jobs, list_measurements,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
 use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::health::HealthService;
+use crate::core::domain::jobs::repository::JobRepository;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
 pub struct RestApiAdapter {
@@ -36,6 +37,7 @@ impl RestApiAdapter {
         channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
         measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
         data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
+        job_repository: Arc<dyn JobRepository + Send + Sync>,
         health_service: Arc<HealthService>,
     ) -> Self {
         Self {
@@ -44,6 +46,7 @@ impl RestApiAdapter {
                 channel_repository,
                 measurement_repository,
                 data_source_repository,
+                job_repository,
                 health_service,
             },
         }
@@ -68,6 +71,8 @@ impl RestApiAdapter {
             .route("/api/v1/measurements/:id", get(get_measurement_by_id))
             .route("/api/v1/data-sources", get(list_data_sources))
             .route("/api/v1/data-sources/:id", get(get_data_source_by_id))
+            .route("/api/v1/jobs", get(list_jobs))
+            .route("/api/v1/jobs/:id", get(get_job_by_id))
             .route("/health/live", get(get_health_live))
             .route("/health/ready", get(get_health_ready))
             .with_state(app_state)

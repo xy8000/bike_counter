@@ -1,21 +1,42 @@
 use std::collections::HashSet;
+use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
     DataSourceConfiguration, DatabaseConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
 
+/// Default data-source update frequency: once per hour (CRON syntax).
+pub const DEFAULT_DATA_SOURCE_UPDATE_CRON: &str = "0 0 * * * *";
+
 #[derive(Debug, Clone)]
 pub struct Configuration {
     database: DatabaseConfiguration,
     data_sources: Vec<DataSourceConfiguration>,
+    /// CRON expression defining when the data-source update job re-triggers.
+    data_source_update_cron: String,
+    /// Required ShedLock-style max lifetime for the update job (no default).
+    data_source_update_max_lifetime_seconds: i64,
 }
 
 impl Configuration {
     pub fn new(
         database: DatabaseConfiguration,
         data_sources: Vec<DataSourceConfiguration>,
+        data_source_update_cron: String,
+        data_source_update_max_lifetime_seconds: i64,
     ) -> Result<Self, ConfigError> {
+        cron::Schedule::from_str(&data_source_update_cron).map_err(|error| {
+            ConfigError::InvalidFormat(format!(
+                "invalid data_source_update_cron '{data_source_update_cron}': {error}"
+            ))
+        })?;
+        if data_source_update_max_lifetime_seconds <= 0 {
+            return Err(ConfigError::InvalidFormat(
+                "data_source_update_max_lifetime_seconds must be a positive integer".to_string(),
+            ));
+        }
+
         let mut seen = HashSet::new();
         for data_source in &data_sources {
             if !seen.insert(data_source.name()) {
@@ -29,6 +50,8 @@ impl Configuration {
         Ok(Self {
             database,
             data_sources,
+            data_source_update_cron,
+            data_source_update_max_lifetime_seconds,
         })
     }
 
@@ -38,6 +61,21 @@ impl Configuration {
 
     pub fn data_sources(&self) -> &[DataSourceConfiguration] {
         &self.data_sources
+    }
+
+    /// CRON expression defining when the data-source update job is re-triggered.
+    pub fn data_source_update_cron(&self) -> &str {
+        &self.data_source_update_cron
+    }
+
+    /// Required ShedLock-style max lifetime for the update job (no default).
+    pub fn data_source_update_max_lifetime_seconds(&self) -> i64 {
+        self.data_source_update_max_lifetime_seconds
+    }
+
+    /// The configured max lifetime as a `chrono::Duration` for the domain.
+    pub fn data_source_update_max_lifetime(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.data_source_update_max_lifetime_seconds)
     }
 }
 
@@ -170,6 +208,7 @@ pub mod value_objects {
 mod tests {
     use std::collections::HashMap;
 
+    use super::DEFAULT_DATA_SOURCE_UPDATE_CRON;
     use super::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
     };
@@ -243,8 +282,59 @@ mod tests {
             DataSourceConfiguration::new("Münster".to_string(), provider_config("type")).unwrap(),
         ];
         assert!(matches!(
-            super::Configuration::new(database_config(), data_sources),
+            super::Configuration::new(
+                database_config(),
+                data_sources,
+                DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                3600,
+            ),
             Err(ConfigError::InvalidFormat(_))
         ));
+    }
+
+    #[test]
+    fn accepts_valid_cron_and_positive_lifetime() {
+        let configuration = super::Configuration::new(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        assert_eq!(
+            configuration.data_source_update_cron(),
+            DEFAULT_DATA_SOURCE_UPDATE_CRON
+        );
+        assert_eq!(
+            configuration.data_source_update_max_lifetime_seconds(),
+            3600
+        );
+        assert_eq!(
+            configuration.data_source_update_max_lifetime(),
+            chrono::Duration::seconds(3600)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_cron() {
+        assert!(matches!(
+            super::Configuration::new(database_config(), vec![], "not a cron".to_string(), 3600,),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_non_positive_lifetime() {
+        for lifetime in [0, -1] {
+            assert!(matches!(
+                super::Configuration::new(
+                    database_config(),
+                    vec![],
+                    DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                    lifetime,
+                ),
+                Err(ConfigError::InvalidFormat(_))
+            ));
+        }
     }
 }

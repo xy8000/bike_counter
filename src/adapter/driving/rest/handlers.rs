@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
@@ -7,8 +8,8 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, ChannelQueryParams, CountingStationDto,
-    CountingStationListDto, DataSourceDto, DataSourceListDto, ErrorResponseDto, HealthDto,
-    MeasurementDto, MeasurementListDto, MeasurementQueryParams,
+    CountingStationListDto, DataSourceDto, DataSourceListDto, ErrorResponseDto, HealthDto, JobDto,
+    JobListDto, JobQueryParams, MeasurementDto, MeasurementListDto, MeasurementQueryParams,
 };
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
@@ -18,6 +19,8 @@ use crate::core::domain::data_source::data_source::value_objects as data_source_
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthComponent, HealthService, HealthStatus};
+use crate::core::domain::jobs::job::JobStatus;
+use crate::core::domain::jobs::repository::JobRepository;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
@@ -27,6 +30,7 @@ pub struct AppState {
     pub channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
     pub measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
     pub data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
+    pub job_repository: Arc<dyn JobRepository + Send + Sync>,
     pub health_service: Arc<HealthService>,
 }
 
@@ -48,6 +52,12 @@ fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) 
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponseDto {
                 error: format!("Provider error: {}", err),
+            }),
+        ),
+        DomainError::InvalidQuery(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponseDto {
+                error: format!("Invalid request: {}", message),
             }),
         ),
     }
@@ -280,6 +290,59 @@ pub async fn get_data_source_by_id(
         .ok_or(DomainError::NotFound(id))
         .map_err(map_domain_error)?;
     Ok(Json(DataSourceDto::from(data_source)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/jobs",
+    tag = "Jobs",
+    params(JobQueryParams),
+    responses(
+        (status = 200, description = "List jobs, optionally filtered by job_type and status", body = JobListDto),
+        (status = 400, description = "Invalid query parameters", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn list_jobs(
+    State(state): State<AppState>,
+    Query(params): Query<JobQueryParams>,
+) -> Result<Json<JobListDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let status = match &params.status {
+        Some(raw) => Some(JobStatus::from_str(raw).map_err(map_domain_error)?),
+        None => None,
+    };
+    let repository = state.job_repository.clone();
+    let job_type = params.job_type.as_deref().map(str::to_string);
+    let jobs = blocking(move || repository.find_all(job_type.as_deref(), status))
+        .await
+        .map_err(map_domain_error)?;
+    Ok(Json(JobListDto::new(jobs)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/jobs/{id}",
+    tag = "Jobs",
+    params(
+        ("id" = Uuid, Path, description = "Job UUID")
+    ),
+    responses(
+        (status = 200, description = "Job found", body = JobDto),
+        (status = 404, description = "Job not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_job_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JobDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let repository = state.job_repository.clone();
+    let job = blocking(move || repository.find_by_id(id))
+        .await
+        .map_err(map_domain_error)?
+        .ok_or(DomainError::NotFound(id))
+        .map_err(map_domain_error)?;
+    Ok(Json(JobDto::from(job)))
 }
 
 #[utoipa::path(

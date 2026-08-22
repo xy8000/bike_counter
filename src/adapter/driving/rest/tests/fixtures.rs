@@ -4,12 +4,14 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::tests::mocks::{
-    MockChannelRepository, MockCountingStationRepository, MockMeasurementRepository,
+    MockChannelRepository, MockCountingStationRepository, MockJobRepository,
+    MockMeasurementRepository,
 };
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
+use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 
@@ -19,6 +21,8 @@ pub const CHANNEL_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0
 pub const CHANNEL_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0012);
 pub const MEASUREMENT_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0021);
 pub const MEASUREMENT_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0022);
+pub const JOB_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0031);
+pub const JOB_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0032);
 pub const UNKNOWN_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF);
 
 pub fn timestamp() -> DateTime<Utc> {
@@ -104,4 +108,34 @@ pub fn sample_measurement_repository() -> MockMeasurementRepository {
     MockMeasurementRepository {
         measurements: vec![measurement_a(), measurement_b()],
     }
+}
+
+pub fn job_a() -> Job {
+    let mut job = Job::new(
+        JOB_ID_A,
+        "Data source update".to_string(),
+        "data_source_update".to_string(),
+        timestamp() + chrono::Duration::hours(1),
+    );
+    job.status = JobStatus::Finished;
+    job.started_at = Some(timestamp() - chrono::Duration::minutes(10));
+    job.finished_at = Some(timestamp());
+    job
+}
+
+pub fn job_b() -> Job {
+    let mut job = Job::new(
+        JOB_ID_B,
+        "Data source update".to_string(),
+        "data_source_update".to_string(),
+        timestamp() + chrono::Duration::hours(1),
+    );
+    job.status = JobStatus::Running;
+    job.started_at = Some(timestamp() - chrono::Duration::minutes(5));
+    job
+}
+
+/// Repository fixture holding the two sample jobs.
+pub fn sample_job_repository() -> MockJobRepository {
+    MockJobRepository::new(vec![job_a(), job_b()])
 }

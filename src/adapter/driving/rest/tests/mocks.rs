@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
@@ -13,6 +16,8 @@ use crate::core::domain::data_source::data_source::value_objects as data_source_
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthService, HealthStatus, ServiceHealthIndicator};
+use crate::core::domain::jobs::job::{Job, JobStatus};
+use crate::core::domain::jobs::repository::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository::MeasurementRepository;
@@ -178,6 +183,14 @@ impl DataSourceRepository for MockDataSourceRepository {
     fn delete(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
         Ok(())
     }
+
+    fn update_last_updated_at(
+        &self,
+        _id: data_source_vo::Id,
+        _timestamp: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 /// A configurable health indicator standing in for a real downstream service.
@@ -205,4 +218,82 @@ pub fn mock_health_service(status: HealthStatus) -> Arc<HealthService> {
             status,
         },
     )]))
+}
+
+/// In-memory job repository standing in for the real database.
+pub struct MockJobRepository {
+    pub jobs: Vec<Job>,
+}
+
+impl MockJobRepository {
+    pub fn new(jobs: Vec<Job>) -> Self {
+        Self { jobs }
+    }
+}
+
+impl JobRepository for MockJobRepository {
+    fn insert(&self, _job: Job) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    fn set_running(&self, _id: Uuid, _started_at: DateTime<Utc>) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    fn set_finished(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    fn set_failed(
+        &self,
+        _id: Uuid,
+        _finished_at: DateTime<Utc>,
+        _message: &str,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    fn update_metadata(
+        &self,
+        _id: Uuid,
+        _key: &str,
+        _value: serde_json::Value,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    fn find_by_id(&self, id: Uuid) -> Result<Option<Job>, DomainError> {
+        Ok(self.jobs.iter().find(|job| job.id == id).cloned())
+    }
+
+    fn find_all(
+        &self,
+        job_type: Option<&str>,
+        status: Option<JobStatus>,
+    ) -> Result<Vec<Job>, DomainError> {
+        let mut jobs = self.jobs.clone();
+        if let Some(job_type) = job_type {
+            jobs.retain(|job| job.job_type == job_type);
+        }
+        if let Some(status) = status {
+            jobs.retain(|job| job.status == status);
+        }
+        Ok(jobs)
+    }
+
+    fn find_running_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
+        Ok(None)
+    }
+
+    fn find_last_finished_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
+        Ok(None)
+    }
+
+    fn expire_running_jobs(
+        &self,
+        _job_type: &str,
+        _now: DateTime<Utc>,
+    ) -> Result<u64, DomainError> {
+        Ok(0)
+    }
 }

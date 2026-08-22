@@ -18,6 +18,7 @@ use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
 /// A configured data source together with its built provider.
+#[derive(Clone)]
 pub struct DataSourceRuntime {
     pub configuration: DataSourceConfiguration,
     /// Deterministic id derived from the data source name.
@@ -32,6 +33,15 @@ pub struct ImportSummary {
     pub counting_stations: usize,
     pub channels: usize,
     pub measurements: usize,
+}
+
+/// Result of incrementally updating a single data source.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DataSourceUpdate {
+    pub processed_measurements: usize,
+    /// Timestamp of the last processed measurement (the cursor to advance
+    /// `data_sources.last_updated_at` to).
+    pub last_measurement_timestamp: Option<DateTime<Utc>>,
 }
 
 pub struct DataImportService {
@@ -183,6 +193,67 @@ impl DataImportService {
         }
 
         Ok(())
+    }
+
+    /// Incrementally updates a single data source in **strict order**:
+    /// counting stations first, then channels, then measurements (paged from
+    /// `from`, the data source's `last_updated_at`). `on_batch` is invoked with
+    /// the running processed-measurement count after each persisted batch, so
+    /// the caller can record progress (e.g. `processed_measurements` metadata).
+    ///
+    /// Returns how many measurements were processed and the timestamp of the
+    /// last processed measurement (the cursor for the next run).
+    pub fn update_data_source(
+        &self,
+        runtime: &DataSourceRuntime,
+        from: Option<DateTime<Utc>>,
+        on_batch: impl Fn(usize) -> Result<(), DomainError>,
+    ) -> Result<DataSourceUpdate, DomainError> {
+        self.sync_counting_stations(runtime, &mut ImportSummary::default())?;
+        let channels = self.sync_channels(runtime, &mut ImportSummary::default())?;
+
+        let mut processed = 0usize;
+        let mut last_measurement_timestamp: Option<DateTime<Utc>> = None;
+
+        for channel in &channels {
+            let max_batch_size = runtime.provider.max_measurement_batch_size();
+            let mut current_from = from;
+
+            loop {
+                let mut query = MeasurementQuery::for_channel(channel.clone(), max_batch_size);
+                if let Some(from) = current_from {
+                    query = query.with_start(from);
+                }
+                let batch = runtime
+                    .provider
+                    .get_measurements(query)
+                    .map_err(DomainError::from)?;
+
+                processed += batch.measurements.len();
+                self.measurement_repository.save_batch(batch.measurements)?;
+                on_batch(processed)?;
+
+                match (
+                    batch.last_measurement_datetime,
+                    batch.batch_size_limit_reached,
+                ) {
+                    (Some(last), true) => {
+                        current_from = Some(last);
+                        last_measurement_timestamp = Some(last);
+                    }
+                    (Some(last), false) => {
+                        last_measurement_timestamp = Some(last);
+                        break;
+                    }
+                    (None, _) => break,
+                }
+            }
+        }
+
+        Ok(DataSourceUpdate {
+            processed_measurements: processed,
+            last_measurement_timestamp,
+        })
     }
 }
 
@@ -581,5 +652,257 @@ mod tests {
         assert_eq!(summary.measurements, 0);
         assert_eq!(station_repo.stations.lock().unwrap().len(), 1);
         assert_eq!(channel_repo.channels.lock().unwrap().len(), 1);
+    }
+
+    /// Records every repository save into a shared log so tests can assert the
+    /// strict stations -> channels -> measurements ordering.
+    struct LoggingRepositories {
+        log: Arc<Mutex<Vec<String>>>,
+        stations: Mutex<Vec<CountingStation>>,
+        channels: Mutex<Vec<Channel>>,
+        measurements: Mutex<Vec<Measurement>>,
+    }
+
+    impl CountingStationRepository for LoggingRepositories {
+        fn save(&self, station: CountingStation) -> Result<(), DomainError> {
+            self.log.lock().unwrap().push("station".to_string());
+            self.stations.lock().unwrap().push(station);
+            Ok(())
+        }
+
+        fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {
+            self.stations
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id == id)
+                .cloned()
+                .ok_or(DomainError::NotFound(id.0))
+        }
+
+        fn find_all(&self) -> Result<Vec<CountingStation>, DomainError> {
+            Ok(self.stations.lock().unwrap().clone())
+        }
+
+        fn find_by_external_datasource_id(
+            &self,
+            external_id: station_vo::ExternalDatasourceId,
+        ) -> Result<Option<CountingStation>, DomainError> {
+            Ok(self
+                .stations
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| {
+                    s.external_datasource_id.as_ref().map(|e| e.0.as_str())
+                        == Some(external_id.0.as_str())
+                })
+                .cloned())
+        }
+    }
+
+    impl ChannelRepository for LoggingRepositories {
+        fn save(&self, channel: Channel) -> Result<(), DomainError> {
+            self.log.lock().unwrap().push("channel".to_string());
+            self.channels.lock().unwrap().push(channel);
+            Ok(())
+        }
+
+        fn find_by_id(&self, id: channel_vo::Id) -> Result<Channel, DomainError> {
+            self.channels
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .ok_or(DomainError::NotFound(id.0))
+        }
+
+        fn find_all(&self) -> Result<Vec<Channel>, DomainError> {
+            Ok(self.channels.lock().unwrap().clone())
+        }
+
+        fn find_by_counting_station_id(
+            &self,
+            station_id: channel_vo::CountingStationId,
+        ) -> Result<Vec<Channel>, DomainError> {
+            Ok(self
+                .channels
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c.counting_station_id == station_id)
+                .cloned()
+                .collect())
+        }
+
+        fn find_by_external_datasource_id(
+            &self,
+            external_id: channel_vo::ExternalDatasourceId,
+        ) -> Result<Option<Channel>, DomainError> {
+            Ok(self
+                .channels
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|c| {
+                    c.external_datasource_id.as_ref().map(|e| e.0.as_str())
+                        == Some(external_id.0.as_str())
+                })
+                .cloned())
+        }
+    }
+
+    impl MeasurementRepository for LoggingRepositories {
+        fn save(&self, measurement: Measurement) -> Result<(), DomainError> {
+            self.log.lock().unwrap().push("measurements".to_string());
+            self.measurements.lock().unwrap().push(measurement);
+            Ok(())
+        }
+
+        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError> {
+            self.log.lock().unwrap().push("measurements".to_string());
+            self.measurements.lock().unwrap().extend(measurements);
+            Ok(())
+        }
+
+        fn find_by_id(&self, id: measurement_vo::Id) -> Result<Measurement, DomainError> {
+            self.measurements
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|m| m.id.0 == id.0)
+                .cloned()
+                .ok_or(DomainError::NotFound(id.0))
+        }
+
+        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
+            Ok(self.measurements.lock().unwrap().clone())
+        }
+
+        fn find_by_channel_id(
+            &self,
+            channel_id: measurement_vo::ChannelId,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            Ok(self
+                .measurements
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| m.channel_id.0 == channel_id.0)
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[test]
+    fn update_data_source_updates_stations_then_channels_then_measurements() {
+        let station = station("station-1");
+        let channel = channel("channel-1");
+        let t0 = timestamp("2024-01-01T00:00:00Z");
+        let provider = Arc::new(MockProvider {
+            stations: vec![station.clone()],
+            channels: vec![channel.clone()],
+            measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
+                measurements: vec![
+                    measurement(0x100, channel.id.0, t0),
+                    measurement(0x101, channel.id.0, t0),
+                ],
+                last_measurement_datetime: Some(t0),
+                batch_size_limit_reached: false,
+            }])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let repos = Arc::new(LoggingRepositories {
+            log: log.clone(),
+            stations: Mutex::new(Vec::new()),
+            channels: Mutex::new(Vec::new()),
+            measurements: Mutex::new(Vec::new()),
+        });
+        let station_repo: Arc<dyn CountingStationRepository + Send + Sync> = repos.clone();
+        let channel_repo: Arc<dyn ChannelRepository + Send + Sync> = repos.clone();
+        let measurement_repo: Arc<dyn MeasurementRepository + Send + Sync> = repos.clone();
+
+        let service =
+            DataImportService::new(station_repo, channel_repo, measurement_repo, Vec::new());
+
+        let update = service
+            .update_data_source(&runtime(provider.clone()), None, |_| Ok(()))
+            .expect("update should succeed");
+
+        assert_eq!(update.processed_measurements, 2);
+        assert_eq!(update.last_measurement_timestamp, Some(t0));
+
+        // Strict order per data source: stations first, then channels, then measurements.
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec!["station", "channel", "measurements"]
+        );
+    }
+
+    #[test]
+    fn update_data_source_reports_progress_and_resumes_from_last_updated() {
+        let channel = channel("channel-1");
+        let t1 = timestamp("2024-01-01T10:00:00Z");
+        let last_updated = timestamp("2024-01-01T09:00:00Z");
+        let page_one = MeasurementBatch {
+            measurements: vec![
+                measurement(0x1000, channel.id.0, t1),
+                measurement(0x1001, channel.id.0, t1),
+            ],
+            last_measurement_datetime: Some(t1),
+            batch_size_limit_reached: true,
+        };
+        let page_two = MeasurementBatch {
+            measurements: vec![measurement(0x2000, channel.id.0, t1)],
+            last_measurement_datetime: Some(t1),
+            batch_size_limit_reached: false,
+        };
+        let provider = Arc::new(MockProvider {
+            stations: Vec::new(),
+            channels: vec![channel.clone()],
+            measurement_pages: Mutex::new(VecDeque::from([page_one, page_two])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let update = service
+            .update_data_source(&runtime(provider.clone()), Some(last_updated), |count| {
+                progress.lock().unwrap().push(count);
+                Ok(())
+            })
+            .expect("update should succeed");
+
+        assert_eq!(update.processed_measurements, 3);
+        assert_eq!(update.last_measurement_timestamp, Some(t1));
+        assert_eq!(*progress.lock().unwrap(), vec![2, 3]);
+
+        let queries = provider.recorded_queries.lock().unwrap();
+        assert_eq!(queries.len(), 2, "expected exactly two pages");
+        assert_eq!(
+            queries[0].from,
+            Some(last_updated),
+            "resumes from the data source's last_updated_at"
+        );
+        assert_eq!(
+            queries[1].from,
+            Some(t1),
+            "second page resumes from the last batch datetime"
+        );
     }
 }
