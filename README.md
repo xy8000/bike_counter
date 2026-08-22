@@ -100,7 +100,8 @@ All endpoints are **read-only (GET)** and use a flat URL hierarchy under `/api/v
 
 Every resource includes a `_links` object (HAL-style) pointing to related
 resources, e.g. a station links to its own `self`, its `channels`, and its
-`collection`.
+`collection`. The root discovery endpoint (`/api/v1`) additionally links to the
+operational health endpoints via `health-live` and `health-ready`.
 
 ## Health checks
 

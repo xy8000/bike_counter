@@ -42,6 +42,8 @@ impl ApiRootDto {
             "measurements".to_string(),
             LinkDto::new("/api/v1/measurements"),
         );
+        links.insert("health-live".to_string(), LinkDto::new("/health/live"));
+        links.insert("health-ready".to_string(), LinkDto::new("/health/ready"));
         links.insert("swagger-ui".to_string(), LinkDto::new("/swagger-ui/"));
 
         Self {
