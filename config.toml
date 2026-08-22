@@ -1,1 +1,5 @@
 github_data_url="https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
+database_url="postgres://localhost:5432"
+database_user="postgres"
+database_password="postgres"
+database_name="bike_counter"

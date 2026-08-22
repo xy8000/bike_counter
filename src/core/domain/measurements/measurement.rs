@@ -1,13 +1,20 @@
 pub struct Measurement {
-    pub id: value_objects::id,
-    pub value: value_objects::value,
-    pub channel_id: value_objects::channel_id,
-    pub timestamp: value_objects::timestamp,
+    pub id: value_objects::Id,
+    pub value: value_objects::Value,
+    pub channel_id: value_objects::ChannelId,
+    pub timestamp: value_objects::Timestamp,
 }
 
 pub mod value_objects {
-    pub struct id(UUID);
-    pub struct value(i64);
-    pub struct channel_id(UUID);
-    pub struct timestamp(DateTime<Utc>);
+    use chrono::{DateTime, Utc};
+    use uuid::Uuid;
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct Id(pub Uuid);
+    #[derive(Debug, Clone, Copy)]
+    pub struct Value(pub i64);
+    #[derive(Debug, Clone, Copy)]
+    pub struct ChannelId(pub Uuid);
+    #[derive(Debug, Clone, Copy)]
+    pub struct Timestamp(pub DateTime<Utc>);
 }
