@@ -19,7 +19,7 @@ impl HealthService {
         self.indicators
             .iter()
             .map(|indicator| HealthComponent {
-                name: indicator.name().to_string(),
+                name: indicator.name(),
                 status: indicator.check(),
             })
             .collect()
@@ -34,13 +34,13 @@ mod tests {
     use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
     struct MockIndicator {
-        name: &'static str,
+        name: String,
         status: HealthStatus,
     }
 
     impl ServiceHealthIndicator for MockIndicator {
-        fn name(&self) -> &'static str {
-            self.name
+        fn name(&self) -> String {
+            self.name.clone()
         }
 
         fn check(&self) -> HealthStatus {
@@ -52,11 +52,11 @@ mod tests {
     fn reports_every_component_in_order() {
         let service = HealthService::new(vec![
             Arc::new(MockIndicator {
-                name: "postgres",
+                name: "postgres".to_string(),
                 status: HealthStatus::Up,
             }),
             Arc::new(MockIndicator {
-                name: "redis",
+                name: "redis".to_string(),
                 status: HealthStatus::Down("no route to host".to_string()),
             }),
         ]);

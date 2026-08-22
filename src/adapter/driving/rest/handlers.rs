@@ -7,13 +7,15 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, ChannelQueryParams, CountingStationDto,
-    CountingStationListDto, ErrorResponseDto, HealthDto, MeasurementDto, MeasurementListDto,
-    MeasurementQueryParams,
+    CountingStationListDto, DataSourceDto, DataSourceListDto, ErrorResponseDto, HealthDto,
+    MeasurementDto, MeasurementListDto, MeasurementQueryParams,
 };
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthComponent, HealthService, HealthStatus};
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
@@ -24,6 +26,7 @@ pub struct AppState {
     pub counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
     pub channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
     pub measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
+    pub data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
     pub health_service: Arc<HealthService>,
 }
 
@@ -39,6 +42,12 @@ fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) 
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponseDto {
                 error: format!("Internal database error: {}", err),
+            }),
+        ),
+        DomainError::Provider(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponseDto {
+                error: format!("Provider error: {}", err),
             }),
         ),
     }
@@ -225,6 +234,52 @@ pub async fn get_measurement_by_id(
         .await
         .map_err(map_domain_error)?;
     Ok(Json(MeasurementDto::from(measurement)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/data-sources",
+    tag = "Data Sources",
+    responses(
+        (status = 200, description = "List all configured data sources with HATEOAS links", body = DataSourceListDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn list_data_sources(
+    State(state): State<AppState>,
+) -> Result<Json<DataSourceListDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let repository = state.data_source_repository.clone();
+    let data_sources = blocking(move || repository.find_all())
+        .await
+        .map_err(map_domain_error)?;
+    Ok(Json(DataSourceListDto::new(data_sources)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/data-sources/{id}",
+    tag = "Data Sources",
+    params(
+        ("id" = Uuid, Path, description = "Data source UUID")
+    ),
+    responses(
+        (status = 200, description = "Data source found", body = DataSourceDto),
+        (status = 404, description = "Data source not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_data_source_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<DataSourceDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let repository = state.data_source_repository.clone();
+    let data_source_id = data_source_vo::Id(id);
+    let data_source = blocking(move || repository.find_by_id(data_source_id))
+        .await
+        .map_err(map_domain_error)?
+        .ok_or(DomainError::NotFound(id))
+        .map_err(map_domain_error)?;
+    Ok(Json(DataSourceDto::from(data_source)))
 }
 
 #[utoipa::path(

@@ -32,6 +32,8 @@ pub fn station_a() -> CountingStation {
         id: station_vo::Id(STATION_ID_A),
         name: station_vo::Name("Station A".to_string()),
         description: station_vo::Description("First station".to_string()),
+        external_datasource_id: None,
+        data_source_id: None,
     }
 }
 
@@ -40,6 +42,8 @@ pub fn station_b() -> CountingStation {
         id: station_vo::Id(STATION_ID_B),
         name: station_vo::Name("Station B".to_string()),
         description: station_vo::Description("Second station".to_string()),
+        external_datasource_id: None,
+        data_source_id: None,
     }
 }
 
@@ -49,6 +53,7 @@ pub fn channel_a() -> Channel {
         counting_station_id: channel_vo::CountingStationId(STATION_ID_A),
         name: channel_vo::Name("Channel A1".to_string()),
         description: channel_vo::Description("Northbound lane".to_string()),
+        external_datasource_id: None,
     }
 }
 
@@ -58,6 +63,7 @@ pub fn channel_b() -> Channel {
         counting_station_id: channel_vo::CountingStationId(STATION_ID_A),
         name: channel_vo::Name("Channel A2".to_string()),
         description: channel_vo::Description("Southbound lane".to_string()),
+        external_datasource_id: None,
     }
 }
 

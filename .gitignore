@@ -51,8 +51,9 @@ Cargo.lock
 .history
 .ionide
 
-### Docker ###
-# Local environment secrets (override the defaults from .env.example)
-.env
+### Configuration ###
+config.toml
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,visualstudiocode,git
+
+plans

@@ -28,7 +28,7 @@ pub struct HealthComponent {
 /// `tokio::task::spawn_blocking` (the `postgres` crate must not run on a
 /// tokio worker thread).
 pub trait ServiceHealthIndicator: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> String;
 
     fn check(&self) -> HealthStatus;
 }

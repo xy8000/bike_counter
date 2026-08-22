@@ -32,6 +32,18 @@ impl PostgresChannelRepository {
             client: Mutex::new(client),
         })
     }
+
+    fn map_row(row: &postgres::Row) -> Channel {
+        Channel {
+            id: value_objects::Id(row.get(0)),
+            counting_station_id: value_objects::CountingStationId(row.get(1)),
+            name: value_objects::Name(row.get(2)),
+            description: value_objects::Description(row.get(3)),
+            external_datasource_id: row
+                .get::<_, Option<String>>(4)
+                .map(value_objects::ExternalDatasourceId),
+        }
+    }
 }
 
 impl ChannelRepository for PostgresChannelRepository {
@@ -42,8 +54,15 @@ impl ChannelRepository for PostgresChannelRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
-                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
-                &[&channel.id.0, &channel.counting_station_id.0, &channel.name.0, &channel.description.0],
+                "INSERT INTO channels (id, counting_station_id, name, description, external_datasource_id)
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[
+                    &channel.id.0,
+                    &channel.counting_station_id.0,
+                    &channel.name.0,
+                    &channel.description.0,
+                    &channel.external_datasource_id.as_ref().map(|id| id.0.as_str()),
+                ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(())
@@ -56,17 +75,13 @@ impl ChannelRepository for PostgresChannelRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, counting_station_id, name, description FROM channels WHERE id = $1",
+                "SELECT id, counting_station_id, name, description, external_datasource_id
+                 FROM channels WHERE id = $1",
                 &[&id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?
             .ok_or(DomainError::NotFound(id.0))?;
-        Ok(Channel {
-            id: value_objects::Id(row.get(0)),
-            counting_station_id: value_objects::CountingStationId(row.get(1)),
-            name: value_objects::Name(row.get(2)),
-            description: value_objects::Description(row.get(3)),
-        })
+        Ok(Self::map_row(&row))
     }
 
     fn find_all(&self) -> Result<Vec<Channel>, DomainError> {
@@ -76,20 +91,12 @@ impl ChannelRepository for PostgresChannelRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, counting_station_id, name, description FROM channels ORDER BY name ASC",
+                "SELECT id, counting_station_id, name, description, external_datasource_id
+                 FROM channels ORDER BY name ASC",
                 &[],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let mut channels = Vec::with_capacity(rows.len());
-        for row in rows {
-            channels.push(Channel {
-                id: value_objects::Id(row.get(0)),
-                counting_station_id: value_objects::CountingStationId(row.get(1)),
-                name: value_objects::Name(row.get(2)),
-                description: value_objects::Description(row.get(3)),
-            });
-        }
-        Ok(channels)
+        Ok(rows.iter().map(Self::map_row).collect())
     }
 
     fn find_by_counting_station_id(
@@ -102,19 +109,29 @@ impl ChannelRepository for PostgresChannelRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, counting_station_id, name, description FROM channels WHERE counting_station_id = $1 ORDER BY name ASC",
+                "SELECT id, counting_station_id, name, description, external_datasource_id
+                 FROM channels WHERE counting_station_id = $1 ORDER BY name ASC",
                 &[&station_id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let mut channels = Vec::with_capacity(rows.len());
-        for row in rows {
-            channels.push(Channel {
-                id: value_objects::Id(row.get(0)),
-                counting_station_id: value_objects::CountingStationId(row.get(1)),
-                name: value_objects::Name(row.get(2)),
-                description: value_objects::Description(row.get(3)),
-            });
-        }
-        Ok(channels)
+        Ok(rows.iter().map(Self::map_row).collect())
+    }
+
+    fn find_by_external_datasource_id(
+        &self,
+        external_id: value_objects::ExternalDatasourceId,
+    ) -> Result<Option<Channel>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, counting_station_id, name, description, external_datasource_id
+                 FROM channels WHERE external_datasource_id = $1",
+                &[&external_id.0],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.as_ref().map(Self::map_row))
     }
 }

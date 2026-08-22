@@ -1,0 +1,14 @@
+database_url="postgres://localhost:5432"
+database_user="postgres"
+database_password="postgres"
+database_name="bike_counter"
+
+[[data_sources]]
+name = "Münster"
+
+[data_sources.provider]
+type = "münster_opendata_github_provider"
+
+[data_sources.provider.vars]
+url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
+max_measurement_batch_size = "500"

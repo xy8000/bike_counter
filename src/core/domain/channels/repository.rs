@@ -9,4 +9,8 @@ pub trait ChannelRepository {
         &self,
         station_id: value_objects::CountingStationId,
     ) -> Result<Vec<Channel>, DomainError>;
+    fn find_by_external_datasource_id(
+        &self,
+        external_id: value_objects::ExternalDatasourceId,
+    ) -> Result<Option<Channel>, DomainError>;
 }

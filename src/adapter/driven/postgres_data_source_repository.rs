@@ -5,17 +5,17 @@ use postgres::{Client, Config as PostgresConfig, NoTls};
 use refinery::embed_migrations;
 
 use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
-use crate::core::domain::counting_stations::counting_station::{CountingStation, value_objects};
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::data_source::data_source::{DataSource, value_objects};
+use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 
 embed_migrations!("migrations");
 
-pub struct PostgresCountingStationRepository {
+pub struct PostgresDataSourceRepository {
     client: Mutex<Client>,
 }
 
-impl PostgresCountingStationRepository {
+impl PostgresDataSourceRepository {
     pub fn new(configuration: &DatabaseConfiguration) -> Result<Self, DomainError> {
         let mut config = PostgresConfig::from_str(configuration.database_url())
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -33,89 +33,85 @@ impl PostgresCountingStationRepository {
         })
     }
 
-    fn map_row(row: &postgres::Row) -> CountingStation {
-        CountingStation {
+    fn map_row(row: &postgres::Row) -> DataSource {
+        DataSource {
             id: value_objects::Id(row.get(0)),
             name: value_objects::Name(row.get(1)),
-            description: value_objects::Description(row.get(2)),
-            external_datasource_id: row
-                .get::<_, Option<String>>(3)
-                .map(value_objects::ExternalDatasourceId),
-            data_source_id: row
-                .get::<_, Option<uuid::Uuid>>(4)
-                .map(value_objects::DataSourceId),
+            provider_type: value_objects::ProviderType(row.get(2)),
         }
     }
 }
 
-impl CountingStationRepository for PostgresCountingStationRepository {
-    fn save(&self, station: CountingStation) -> Result<(), DomainError> {
+impl DataSourceRepository for PostgresDataSourceRepository {
+    fn upsert(&self, data_source: DataSource) -> Result<(), DomainError> {
         let mut client = self
             .client
             .lock()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
-                "INSERT INTO counting_stations (id, name, description, external_datasource_id, data_source_id)
-                 VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)
+                 ON CONFLICT (id) DO UPDATE SET name = $2, provider_type = $3",
                 &[
-                    &station.id.0,
-                    &station.name.0,
-                    &station.description.0,
-                    &station.external_datasource_id.as_ref().map(|id| id.0.as_str()),
-                    &station.data_source_id.map(|id| id.0),
+                    &data_source.id.0,
+                    &data_source.name.0,
+                    &data_source.provider_type.0,
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(())
     }
 
-    fn find_by_id(&self, id: value_objects::Id) -> Result<CountingStation, DomainError> {
+    fn find_by_id(&self, id: value_objects::Id) -> Result<Option<DataSource>, DomainError> {
         let mut client = self
             .client
             .lock()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, name, description, external_datasource_id, data_source_id
-                 FROM counting_stations WHERE id = $1",
+                "SELECT id, name, provider_type FROM data_sources WHERE id = $1",
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?
-            .ok_or(DomainError::NotFound(id.0))?;
-        Ok(Self::map_row(&row))
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.as_ref().map(Self::map_row))
     }
 
-    fn find_all(&self) -> Result<Vec<CountingStation>, DomainError> {
+    fn find_by_name(&self, name: &str) -> Result<Option<DataSource>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, name, provider_type FROM data_sources WHERE name = $1",
+                &[&name],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.as_ref().map(Self::map_row))
+    }
+
+    fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
         let mut client = self
             .client
             .lock()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, name, description, external_datasource_id, data_source_id
-                 FROM counting_stations ORDER BY name ASC",
+                "SELECT id, name, provider_type FROM data_sources ORDER BY name ASC",
                 &[],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(rows.iter().map(Self::map_row).collect())
     }
 
-    fn find_by_external_datasource_id(
-        &self,
-        external_id: value_objects::ExternalDatasourceId,
-    ) -> Result<Option<CountingStation>, DomainError> {
+    fn delete(&self, id: value_objects::Id) -> Result<(), DomainError> {
         let mut client = self
             .client
             .lock()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let row = client
-            .query_opt(
-                "SELECT id, name, description, external_datasource_id, data_source_id
-                 FROM counting_stations WHERE external_datasource_id = $1",
-                &[&external_id.0],
-            )
+        client
+            .execute("DELETE FROM data_sources WHERE id = $1", &[&id.0])
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        Ok(row.as_ref().map(Self::map_row))
+        Ok(())
     }
 }

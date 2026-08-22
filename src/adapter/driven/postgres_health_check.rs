@@ -24,8 +24,8 @@ impl PostgresHealthCheck {
 }
 
 impl ServiceHealthIndicator for PostgresHealthCheck {
-    fn name(&self) -> &'static str {
-        "postgres"
+    fn name(&self) -> String {
+        "postgres".to_string()
     }
 
     fn check(&self) -> HealthStatus {

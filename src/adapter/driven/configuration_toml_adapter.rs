@@ -1,17 +1,35 @@
+use std::collections::HashMap;
+
 use crate::core::domain::configuration::configuration::Configuration;
-use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
-use crate::core::domain::configuration::configuration::value_objects::RawGithubDataUrl;
+use crate::core::domain::configuration::configuration::value_objects::{
+    DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+};
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::configuration::repository::ConfigurationRepository;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct ConfigurationDto {
-    github_data_url: String,
+    #[serde(default)]
+    data_sources: Vec<DataSourceDto>,
     database_url: String,
     database_user: String,
     database_password: String,
     database_name: String,
+}
+
+#[derive(Deserialize)]
+struct DataSourceDto {
+    name: String,
+    provider: DataProviderDto,
+}
+
+#[derive(Deserialize)]
+struct DataProviderDto {
+    #[serde(rename = "type")]
+    provider_type: String,
+    #[serde(default)]
+    vars: HashMap<String, String>,
 }
 
 pub struct ConfigurationTomlAdapter {
@@ -26,72 +44,153 @@ impl ConfigurationTomlAdapter {
 
 impl ConfigurationRepository for ConfigurationTomlAdapter {
     fn read_configuration(&self) -> Result<Configuration, ConfigError> {
-        let content =
-            std::fs::read_to_string(&self.file_path).map_err(|e| ConfigError::IoError(e))?;
+        let content = std::fs::read_to_string(&self.file_path).map_err(ConfigError::IoError)?;
 
         let dto: ConfigurationDto = toml::from_str(&content)
             .map_err(|_| ConfigError::InvalidFormat(self.file_path.clone()))?;
 
-        let url = RawGithubDataUrl::new(dto.github_data_url)?;
         let database = DatabaseConfiguration::new(
             dto.database_url,
             dto.database_user,
             dto.database_password,
             dto.database_name,
         )?;
-        Ok(Configuration::new(url, database))
+
+        let mut data_sources = Vec::with_capacity(dto.data_sources.len());
+        for data_source in dto.data_sources {
+            let provider = DataProviderConfiguration::new(
+                data_source.provider.provider_type,
+                data_source.provider.vars,
+            )?;
+            let data_source = DataSourceConfiguration::new(data_source.name, provider)?;
+            data_sources.push(data_source);
+        }
+
+        Configuration::new(database, data_sources)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
+    // Tests run in parallel; each invocation must get its own temp file so tests
+    // never delete or overwrite each other's config.
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
     fn test_file_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("bike_counter_{name}_{}", std::process::id()))
+        let unique = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "bike_counter_{name}_{}_{}",
+            std::process::id(),
+            unique
+        ))
+    }
+
+    fn write_config(content: &str) -> std::path::PathBuf {
+        let path = test_file_path("config");
+        std::fs::write(&path, content).unwrap();
+        path
     }
 
     #[test]
-    fn reads_github_data_url_from_toml() {
-        let path = test_file_path("valid.toml");
-        let expected_url = "https://example.com/data.zip";
-        let expected_database_url = "postgres://localhost";
-        let expected_user = "user";
-        let expected_password = "password";
-        let expected_database_name = "database";
-        std::fs::write(
-            &path,
-            format!(
-                "github_data_url = \"{expected_url}\"\n\
-                database_url = \"{expected_database_url}\"\n\
-                database_user = \"{expected_user}\"\n\
-                database_password = \"{expected_password}\"\n\
-                database_name = \"{expected_database_name}\"\n"
-            ),
-        )
-        .unwrap();
+    fn reads_database_and_data_sources_from_toml() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            \n\
+            [[data_sources]]\n\
+            name = \"Münster\"\n\
+            \n\
+            [data_sources.provider]\n\
+            type = \"münster_opendata_github_provider\"\n\
+            \n\
+            [data_sources.provider.vars]\n\
+            url = \"https://example.com/data.zip\"\n\
+            max_measurement_batch_size = \"500\"\n",
+        );
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
 
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
-        assert_eq!(configuration.github_data_url().as_str(), expected_url);
+
         assert_eq!(
             configuration.database().database_url(),
-            expected_database_url
+            "postgres://localhost"
         );
-        assert_eq!(configuration.database().user(), expected_user);
-        assert_eq!(configuration.database().password(), expected_password);
+        assert_eq!(configuration.database().user(), "user");
+        assert_eq!(configuration.database().password(), "password");
+        assert_eq!(configuration.database().database_name(), "database");
+
+        let data_sources = configuration.data_sources();
+        assert_eq!(data_sources.len(), 1);
+        assert_eq!(data_sources[0].name(), "Münster");
         assert_eq!(
-            configuration.database().database_name(),
-            expected_database_name
+            data_sources[0].provider().provider_type(),
+            "münster_opendata_github_provider"
+        );
+        assert_eq!(
+            data_sources[0].provider().var("url"),
+            Some("https://example.com/data.zip")
+        );
+        assert_eq!(
+            data_sources[0].provider().var("max_measurement_batch_size"),
+            Some("500")
         );
     }
 
     #[test]
+    fn accepts_configuration_without_data_sources() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(result.unwrap().data_sources().is_empty());
+    }
+
+    #[test]
     fn rejects_invalid_toml() {
-        let path = test_file_path("invalid.toml");
-        std::fs::write(&path, "github_data_url = \n").unwrap();
+        let path = write_config("database_url = \n");
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn rejects_duplicate_data_source_names() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            \n\
+            [[data_sources]]\n\
+            name = \"Münster\"\n\
+            [data_sources.provider]\n\
+            type = \"münster_opendata_github_provider\"\n\
+            [data_sources.provider.vars]\n\
+            url = \"https://example.com/1.zip\"\n\
+            \n\
+            [[data_sources]]\n\
+            name = \"Münster\"\n\
+            [data_sources.provider]\n\
+            type = \"another_provider\"\n\
+            [data_sources.provider.vars]\n\
+            url = \"https://example.com/2.zip\"\n",
+        );
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
 

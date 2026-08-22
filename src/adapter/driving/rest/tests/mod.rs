@@ -5,7 +5,7 @@
 //! - [`mocks`]: in-memory repositories standing in for the real database
 //! - [`fixtures`]: deterministic sample data (IDs and domain entities)
 //! - [`root`]: root discovery, Swagger UI, OpenAPI and router behaviour
-//! - [`counting_stations`], [`channels`], [`measurements`]: per-resource endpoint tests
+//! - [`counting_stations`], [`channels`], [`measurements`], [`data_sources`]: per-resource endpoint tests
 //! - [`dto`]: structural unit checks for the HATEOAS DTOs
 //!
 //! [`TestApp`] wraps the full Axum router and exposes small request helpers so
@@ -13,6 +13,7 @@
 
 pub mod channels;
 pub mod counting_stations;
+pub mod data_sources;
 pub mod dto;
 pub mod fixtures;
 pub mod health;
@@ -35,7 +36,7 @@ use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::{
     sample_channel_repository, sample_counting_station_repository, sample_measurement_repository,
 };
-use mocks::mock_health_service;
+use mocks::{MockDataSourceRepository, mock_health_service};
 
 /// Wraps the router under test and provides request helpers.
 pub struct TestApp {
@@ -52,10 +53,20 @@ impl TestApp {
     /// Builds a router backed by the in-memory mock repositories with a custom
     /// health service (used to exercise the readiness 503 path).
     pub fn with_health(health_service: Arc<HealthService>) -> Self {
+        Self::with_repositories(MockDataSourceRepository::default(), health_service)
+    }
+
+    /// Builds a router backed by the in-memory mock repositories with a custom
+    /// data-source repository and health service.
+    pub fn with_repositories(
+        data_source_repository: MockDataSourceRepository,
+        health_service: Arc<HealthService>,
+    ) -> Self {
         let router = RestApiAdapter::new(
             Arc::new(sample_counting_station_repository()),
             Arc::new(sample_channel_repository()),
             Arc::new(sample_measurement_repository()),
+            Arc::new(data_source_repository),
             health_service,
         )
         .router();
