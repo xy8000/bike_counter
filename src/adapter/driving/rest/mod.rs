@@ -8,19 +8,20 @@ mod tests;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
-    get_api_root, get_channel_by_id, get_counting_station_by_id, get_measurement_by_id,
-    list_channels, list_counting_stations, list_measurements,
+    get_api_root, get_channel_by_id, get_counting_station_by_id, get_health_live, get_health_ready,
+    get_measurement_by_id, list_channels, list_counting_stations, list_measurements,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
 use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::health::HealthService;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
 pub struct RestApiAdapter {
@@ -32,12 +33,14 @@ impl RestApiAdapter {
         counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
         channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
         measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
+        health_service: Arc<HealthService>,
     ) -> Self {
         Self {
             app_state: AppState {
                 counting_station_repository,
                 channel_repository,
                 measurement_repository,
+                health_service,
             },
         }
     }
@@ -59,6 +62,8 @@ impl RestApiAdapter {
             .route("/api/v1/channels/:id", get(get_channel_by_id))
             .route("/api/v1/measurements", get(list_measurements))
             .route("/api/v1/measurements/:id", get(get_measurement_by_id))
+            .route("/health/live", get(get_health_live))
+            .route("/health/ready", get(get_health_ready))
             .with_state(app_state)
     }
 

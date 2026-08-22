@@ -1,14 +1,17 @@
 //! In-memory repositories that back the router in tests (no database required).
 
-use crate::core::domain::channels::channel::value_objects as channel_vo;
+use std::sync::Arc;
+
 use crate::core::domain::channels::channel::Channel;
+use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
-use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
+use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
+use crate::core::domain::health::{HealthService, HealthStatus, ServiceHealthIndicator};
 use crate::core::domain::measurements::measurement::Measurement;
+use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
 pub struct MockCountingStationRepository {
@@ -103,4 +106,31 @@ impl MeasurementRepository for MockMeasurementRepository {
             .cloned()
             .collect())
     }
+}
+
+/// A configurable health indicator standing in for a real downstream service.
+pub struct MockServiceHealthIndicator {
+    pub name: &'static str,
+    pub status: HealthStatus,
+}
+
+impl ServiceHealthIndicator for MockServiceHealthIndicator {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn check(&self) -> HealthStatus {
+        self.status.clone()
+    }
+}
+
+/// A [`HealthService`] backed by a single mock PostgreSQL indicator, used by
+/// the REST tests to exercise the readiness endpoint without a database.
+pub fn mock_health_service(status: HealthStatus) -> Arc<HealthService> {
+    Arc::new(HealthService::new(vec![Arc::new(
+        MockServiceHealthIndicator {
+            name: "postgres",
+            status,
+        },
+    )]))
 }

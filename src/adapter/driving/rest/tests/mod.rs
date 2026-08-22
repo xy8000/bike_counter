@@ -15,24 +15,27 @@ pub mod channels;
 pub mod counting_stations;
 pub mod dto;
 pub mod fixtures;
+pub mod health;
 pub mod measurements;
 pub mod mocks;
 pub mod root;
 
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::RestApiAdapter;
+use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::{
     sample_channel_repository, sample_counting_station_repository, sample_measurement_repository,
 };
+use mocks::mock_health_service;
 
 /// Wraps the router under test and provides request helpers.
 pub struct TestApp {
@@ -40,12 +43,20 @@ pub struct TestApp {
 }
 
 impl TestApp {
-    /// Builds a router backed by the in-memory mock repositories.
+    /// Builds a router backed by the in-memory mock repositories and a healthy
+    /// mock PostgreSQL indicator.
     pub fn new() -> Self {
+        Self::with_health(mock_health_service(HealthStatus::Up))
+    }
+
+    /// Builds a router backed by the in-memory mock repositories with a custom
+    /// health service (used to exercise the readiness 503 path).
+    pub fn with_health(health_service: Arc<HealthService>) -> Self {
         let router = RestApiAdapter::new(
             Arc::new(sample_counting_station_repository()),
             Arc::new(sample_channel_repository()),
             Arc::new(sample_measurement_repository()),
+            health_service,
         )
         .router();
         Self { router }
@@ -87,7 +98,10 @@ pub async fn assert_not_found(app: &TestApp, path: &str, id: Uuid) {
     let (status, body) = app.get_json(&uri).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(
-        body["error"].as_str().unwrap_or_default().contains(&id.to_string()),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&id.to_string()),
         "expected error message to mention {id}, got: {}",
         body["error"]
     );

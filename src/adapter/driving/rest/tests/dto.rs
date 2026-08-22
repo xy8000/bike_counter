@@ -5,7 +5,7 @@ use crate::adapter::driving::rest::dto::{
     MeasurementDto, MeasurementListDto,
 };
 use crate::adapter::driving::rest::tests::fixtures::{
-    channel_a, measurement_a, station_a, CHANNEL_ID_A, MEASUREMENT_ID_A, STATION_ID_A,
+    CHANNEL_ID_A, MEASUREMENT_ID_A, STATION_ID_A, channel_a, measurement_a, station_a,
 };
 
 #[test]
@@ -27,7 +27,10 @@ fn counting_station_dto_contains_expected_links() {
 fn channel_dto_contains_expected_links() {
     let dto = ChannelDto::from(channel_a());
 
-    assert_eq!(dto.links["self"].href, format!("/api/v1/channels/{CHANNEL_ID_A}"));
+    assert_eq!(
+        dto.links["self"].href,
+        format!("/api/v1/channels/{CHANNEL_ID_A}")
+    );
     assert_eq!(
         dto.links["counting_station"].href,
         format!("/api/v1/counting-stations/{STATION_ID_A}")

@@ -119,7 +119,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(measurements)
     }
 
-    fn find_by_channel_id(&self, channel_id: value_objects::ChannelId) -> Result<Vec<Measurement>, DomainError> {
+    fn find_by_channel_id(
+        &self,
+        channel_id: value_objects::ChannelId,
+    ) -> Result<Vec<Measurement>, DomainError> {
         let mut client = self
             .client
             .lock()

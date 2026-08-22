@@ -6,12 +6,12 @@ use uuid::Uuid;
 use crate::adapter::driving::rest::tests::mocks::{
     MockChannelRepository, MockCountingStationRepository, MockMeasurementRepository,
 };
-use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::channel::Channel;
-use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
+use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
-use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
+use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::measurements::measurement::Measurement;
+use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 
 pub const STATION_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0001);
 pub const STATION_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0002);

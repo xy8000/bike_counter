@@ -1,13 +1,13 @@
 use utoipa::OpenApi;
 
 use crate::adapter::driving::rest::dto::{
-    ApiRootDto, ChannelDto, ChannelListDto, CountingStationDto,
-    CountingStationListDto, ErrorResponseDto, LinkDto, MeasurementDto, MeasurementListDto,
+    ApiRootDto, ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto,
+    ErrorResponseDto, HealthComponentDto, HealthDto, LinkDto, MeasurementDto, MeasurementListDto,
 };
 use crate::adapter::driving::rest::handlers::{
     __path_get_api_root, __path_get_channel_by_id, __path_get_counting_station_by_id,
-    __path_get_measurement_by_id, __path_list_channels, __path_list_counting_stations,
-    __path_list_measurements,
+    __path_get_health_live, __path_get_health_ready, __path_get_measurement_by_id,
+    __path_list_channels, __path_list_counting_stations, __path_list_measurements,
 };
 
 #[derive(OpenApi)]
@@ -20,6 +20,8 @@ use crate::adapter::driving::rest::handlers::{
         get_channel_by_id,
         list_measurements,
         get_measurement_by_id,
+        get_health_live,
+        get_health_ready,
     ),
     components(
         schemas(
@@ -32,6 +34,8 @@ use crate::adapter::driving::rest::handlers::{
             MeasurementListDto,
             LinkDto,
             ErrorResponseDto,
+            HealthComponentDto,
+            HealthDto,
         )
     ),
     tags(
@@ -39,6 +43,7 @@ use crate::adapter::driving::rest::handlers::{
         (name = "Counting Stations", description = "Operations on bike counting stations"),
         (name = "Channels", description = "Operations on counting station channels"),
         (name = "Measurements", description = "Operations on channel measurements"),
+        (name = "Health", description = "Operational health checks (liveness/readiness)"),
     ),
     info(
         title = "Bike Counter REST API",

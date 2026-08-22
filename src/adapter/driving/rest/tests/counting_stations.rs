@@ -3,7 +3,7 @@
 use axum::http::StatusCode;
 
 use crate::adapter::driving::rest::tests::fixtures::{STATION_ID_A, UNKNOWN_ID};
-use crate::adapter::driving::rest::tests::{assert_not_found, TestApp};
+use crate::adapter::driving::rest::tests::{TestApp, assert_not_found};
 
 #[tokio::test]
 async fn list_returns_all_stations_with_links() {
@@ -25,7 +25,10 @@ async fn list_returns_all_stations_with_links() {
         first["_links"]["channels"]["href"],
         format!("/api/v1/channels?counting_station_id={STATION_ID_A}")
     );
-    assert_eq!(first["_links"]["collection"]["href"], "/api/v1/counting-stations");
+    assert_eq!(
+        first["_links"]["collection"]["href"],
+        "/api/v1/counting-stations"
+    );
 
     assert_eq!(body["_links"]["self"]["href"], "/api/v1/counting-stations");
     assert_eq!(body["_links"]["root"]["href"], "/api/v1");
@@ -34,9 +37,9 @@ async fn list_returns_all_stations_with_links() {
 #[tokio::test]
 async fn get_by_id_returns_single_station() {
     let app = TestApp::new();
-    let (status, body) =
-        app.get_json(&format!("/api/v1/counting-stations/{STATION_ID_A}"))
-            .await;
+    let (status, body) = app
+        .get_json(&format!("/api/v1/counting-stations/{STATION_ID_A}"))
+        .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], STATION_ID_A.to_string());

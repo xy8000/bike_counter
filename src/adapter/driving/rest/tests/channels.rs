@@ -3,7 +3,7 @@
 use axum::http::StatusCode;
 
 use crate::adapter::driving::rest::tests::fixtures::{CHANNEL_ID_A, STATION_ID_A, UNKNOWN_ID};
-use crate::adapter::driving::rest::tests::{assert_not_found, TestApp};
+use crate::adapter::driving::rest::tests::{TestApp, assert_not_found};
 
 #[tokio::test]
 async fn list_returns_all_channels_with_links() {
@@ -50,7 +50,9 @@ async fn list_filters_by_counting_station_id() {
 #[tokio::test]
 async fn get_by_id_returns_single_channel() {
     let app = TestApp::new();
-    let (status, body) = app.get_json(&format!("/api/v1/channels/{CHANNEL_ID_A}")).await;
+    let (status, body) = app
+        .get_json(&format!("/api/v1/channels/{CHANNEL_ID_A}"))
+        .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], CHANNEL_ID_A.to_string());

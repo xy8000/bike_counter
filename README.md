@@ -56,6 +56,8 @@ The application prints the loaded configuration and then serves:
 | REST API base          | <http://localhost:8080/api/v1>             |
 | Swagger-UI             | <http://localhost:8080/swagger-ui/>        |
 | OpenAPI JSON document  | <http://localhost:8080/api-docs/openapi.json> |
+| Liveness               | <http://localhost:8080/health/live>        |
+| Readiness              | <http://localhost:8080/health/ready>       |
 
 ## Run with Docker Compose
 
@@ -99,6 +101,21 @@ All endpoints are **read-only (GET)** and use a flat URL hierarchy under `/api/v
 Every resource includes a `_links` object (HAL-style) pointing to related
 resources, e.g. a station links to its own `self`, its `channels`, and its
 `collection`.
+
+## Health checks
+
+The application exposes two unversioned operational endpoints:
+
+- `GET /health/live` – liveness probe. Answers `200 {"status":"up"}` while the
+  backend process is running (it requires no database access).
+- `GET /health/ready` – readiness probe. Opens a fresh PostgreSQL connection and
+  runs `SELECT 1`. It answers `200 {"status":"ready", ...}` only when every
+  downstream service is available, otherwise `503 {"status":"not_ready", ...}`
+  with a per-component breakdown (including the failure reason).
+
+Both the `Dockerfile` `HEALTHCHECK` and the docker-compose `app` service use
+`/health/ready`, so a container is only marked *healthy* while PostgreSQL is
+reachable.
 
 ## Running tests
 

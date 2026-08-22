@@ -2,8 +2,8 @@
 
 use axum::http::{Method, StatusCode};
 
-use crate::adapter::driving::rest::tests::fixtures::STATION_ID_A;
 use crate::adapter::driving::rest::tests::TestApp;
+use crate::adapter::driving::rest::tests::fixtures::STATION_ID_A;
 
 #[tokio::test]
 async fn root_returns_hateoas_links() {
@@ -14,9 +14,14 @@ async fn root_returns_hateoas_links() {
     assert_eq!(body["title"], "Bike Counter API");
     assert_eq!(body["version"], "v1");
 
-    let links = body["_links"].as_object().expect("_links should be an object");
+    let links = body["_links"]
+        .as_object()
+        .expect("_links should be an object");
     assert_eq!(links["self"]["href"], "/api/v1");
-    assert_eq!(links["counting-stations"]["href"], "/api/v1/counting-stations");
+    assert_eq!(
+        links["counting-stations"]["href"],
+        "/api/v1/counting-stations"
+    );
     assert_eq!(links["channels"]["href"], "/api/v1/channels");
     assert_eq!(links["measurements"]["href"], "/api/v1/measurements");
     assert_eq!(links["swagger-ui"]["href"], "/swagger-ui/");
@@ -35,7 +40,9 @@ async fn openapi_document_is_served() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["openapi"], "3.0.3");
-    let paths = body["paths"].as_object().expect("paths should be an object");
+    let paths = body["paths"]
+        .as_object()
+        .expect("paths should be an object");
     for path in [
         "/api/v1",
         "/api/v1/counting-stations",
@@ -43,7 +50,10 @@ async fn openapi_document_is_served() {
         "/api/v1/channels",
         "/api/v1/measurements",
     ] {
-        assert!(paths.contains_key(path), "OpenAPI document should contain {path}");
+        assert!(
+            paths.contains_key(path),
+            "OpenAPI document should contain {path}"
+        );
     }
 }
 
@@ -61,7 +71,10 @@ async fn write_methods_are_not_supported() {
     for (method, uri) in [
         (Method::POST, "/api/v1/counting-stations".to_string()),
         (Method::PUT, "/api/v1/counting-stations".to_string()),
-        (Method::DELETE, format!("/api/v1/counting-stations/{STATION_ID_A}")),
+        (
+            Method::DELETE,
+            format!("/api/v1/counting-stations/{STATION_ID_A}"),
+        ),
     ] {
         let method_label = method.to_string();
         let response = app.send(method, &uri).await;

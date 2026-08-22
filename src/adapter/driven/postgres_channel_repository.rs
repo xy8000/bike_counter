@@ -92,7 +92,10 @@ impl ChannelRepository for PostgresChannelRepository {
         Ok(channels)
     }
 
-    fn find_by_counting_station_id(&self, station_id: value_objects::CountingStationId) -> Result<Vec<Channel>, DomainError> {
+    fn find_by_counting_station_id(
+        &self,
+        station_id: value_objects::CountingStationId,
+    ) -> Result<Vec<Channel>, DomainError> {
         let mut client = self
             .client
             .lock()

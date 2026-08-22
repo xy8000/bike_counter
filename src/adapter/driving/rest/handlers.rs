@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, ChannelQueryParams, CountingStationDto,
-    CountingStationListDto, ErrorResponseDto, MeasurementDto, MeasurementListDto,
+    CountingStationListDto, ErrorResponseDto, HealthDto, MeasurementDto, MeasurementListDto,
     MeasurementQueryParams,
 };
 use crate::core::domain::channels::channel::value_objects as channel_vo;
@@ -15,6 +15,7 @@ use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::error::DomainError;
+use crate::core::domain::health::{HealthComponent, HealthService, HealthStatus};
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
@@ -23,6 +24,7 @@ pub struct AppState {
     pub counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
     pub channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
     pub measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
+    pub health_service: Arc<HealthService>,
 }
 
 fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) {
@@ -53,9 +55,9 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, DomainError> + Send + 'static,
 {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|join_error| DomainError::Database(format!("Blocking task failed: {}", join_error)))?
+    tokio::task::spawn_blocking(f).await.map_err(|join_error| {
+        DomainError::Database(format!("Blocking task failed: {}", join_error))
+    })?
 }
 
 #[utoipa::path(
@@ -223,4 +225,55 @@ pub async fn get_measurement_by_id(
         .await
         .map_err(map_domain_error)?;
     Ok(Json(MeasurementDto::from(measurement)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/health/live",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Backend process is running", body = HealthDto)
+    )
+)]
+pub async fn get_health_live() -> Json<HealthDto> {
+    Json(HealthDto::simple("up"))
+}
+
+#[utoipa::path(
+    get,
+    path = "/health/ready",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Application is ready: all downstream services are available", body = HealthDto),
+        (status = 503, description = "Application is not ready: at least one downstream service is unavailable", body = HealthDto)
+    )
+)]
+pub async fn get_health_ready(
+    State(state): State<AppState>,
+) -> Result<Json<HealthDto>, (StatusCode, Json<HealthDto>)> {
+    // The synchronous `postgres` crate used by the indicators must not run on a
+    // tokio worker thread, so the whole check runs on the blocking pool.
+    let health_service = state.health_service.clone();
+    let components = tokio::task::spawn_blocking(move || health_service.check())
+        .await
+        .map_err(|join_error| {
+            let component = HealthComponent {
+                name: "backend".to_string(),
+                status: HealthStatus::Down(format!("Health check task failed: {join_error}")),
+            };
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(HealthDto::with_components("not_ready", vec![component])),
+            )
+        })?;
+
+    let ready = components.iter().all(|component| component.status.is_up());
+    if ready {
+        Ok(Json(HealthDto::with_components("ready", components)))
+    } else {
+        Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthDto::with_components("not_ready", components)),
+        ))
+    }
 }

@@ -28,8 +28,9 @@ RUN find src migrations -type f -exec touch {} + \
 
 # ---------- Runtime stage ----------
 FROM debian:bookworm-slim
+# `curl` is required by the HEALTHCHECK below.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -39,3 +40,8 @@ RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
+
+# The container is healthy only while the application reports itself ready,
+# i.e. while PostgreSQL answers the readiness probe.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl --fail --silent http://localhost:8080/health/ready || exit 1
