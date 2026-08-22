@@ -1,36 +1,16 @@
-use std::str::FromStr;
-use std::sync::Mutex;
-
-use postgres::{Client, Config as PostgresConfig, NoTls};
-use refinery::embed_migrations;
-
 use crate::core::domain::channels::channel::{Channel, value_objects};
 use crate::core::domain::channels::repository::ChannelRepository;
-use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
 use crate::core::domain::error::DomainError;
 
-embed_migrations!("migrations");
+use super::postgres_pool::PgPool;
 
 pub struct PostgresChannelRepository {
-    client: Mutex<Client>,
+    pool: PgPool,
 }
 
 impl PostgresChannelRepository {
-    pub fn new(configuration: &DatabaseConfiguration) -> Result<Self, DomainError> {
-        let mut config = PostgresConfig::from_str(configuration.database_url())
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        config.user(configuration.user());
-        config.password(configuration.password());
-        config.dbname(configuration.database_name());
-        let mut client = config
-            .connect(NoTls)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        migrations::runner()
-            .run(&mut client)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        Ok(Self {
-            client: Mutex::new(client),
-        })
+    pub fn new(pool: &PgPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     fn map_row(row: &postgres::Row) -> Channel {
@@ -49,8 +29,8 @@ impl PostgresChannelRepository {
 impl ChannelRepository for PostgresChannelRepository {
     fn save(&self, channel: Channel) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
@@ -70,8 +50,8 @@ impl ChannelRepository for PostgresChannelRepository {
 
     fn find_by_id(&self, id: value_objects::Id) -> Result<Channel, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
@@ -86,8 +66,8 @@ impl ChannelRepository for PostgresChannelRepository {
 
     fn find_all(&self) -> Result<Vec<Channel>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
@@ -104,8 +84,8 @@ impl ChannelRepository for PostgresChannelRepository {
         station_id: value_objects::CountingStationId,
     ) -> Result<Vec<Channel>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
@@ -122,8 +102,8 @@ impl ChannelRepository for PostgresChannelRepository {
         external_id: value_objects::ExternalDatasourceId,
     ) -> Result<Option<Channel>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(

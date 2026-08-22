@@ -7,3 +7,4 @@ pub mod postgres_data_source_repository;
 pub mod postgres_health_check;
 pub mod postgres_job_repository;
 pub mod postgres_measurement_repository;
+pub mod postgres_pool;

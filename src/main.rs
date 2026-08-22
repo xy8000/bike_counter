@@ -11,6 +11,7 @@ use crate::adapter::driven::postgres_data_source_repository::PostgresDataSourceR
 use crate::adapter::driven::postgres_health_check::PostgresHealthCheck;
 use crate::adapter::driven::postgres_job_repository::PostgresJobRepository;
 use crate::adapter::driven::postgres_measurement_repository::PostgresMeasurementRepository;
+use crate::adapter::driven::postgres_pool::create_pool;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::data_import_service::DataImportService;
@@ -47,30 +48,16 @@ fn main() {
     // spins up its own internal runtime via `block_on` and must NOT be used from
     // within a tokio runtime ("Cannot start a runtime from within a runtime").
     // Construction therefore happens here, before the async server runtime starts.
-    let counting_station_repo = Arc::new(
-        PostgresCountingStationRepository::new(&database_configuration).unwrap_or_else(|err| {
-            panic!("Failed to initialize PostgresCountingStationRepository: {err:?}")
-        }),
-    );
-    let channel_repo = Arc::new(
-        PostgresChannelRepository::new(&database_configuration).unwrap_or_else(|err| {
-            panic!("Failed to initialize PostgresChannelRepository: {err:?}")
-        }),
-    );
-    let measurement_repo = Arc::new(
-        PostgresMeasurementRepository::new(&database_configuration).unwrap_or_else(|err| {
-            panic!("Failed to initialize PostgresMeasurementRepository: {err:?}")
-        }),
-    );
-    let data_source_repo = Arc::new(
-        PostgresDataSourceRepository::new(&database_configuration).unwrap_or_else(|err| {
-            panic!("Failed to initialize PostgresDataSourceRepository: {err:?}")
-        }),
-    );
-    let job_repo = Arc::new(
-        PostgresJobRepository::new(&database_configuration)
-            .unwrap_or_else(|err| panic!("Failed to initialize PostgresJobRepository: {err:?}")),
-    );
+    // A single shared connection pool is created once; migrations run exactly
+    // once inside `create_pool`, and every repository clones the pool.
+    let pool = create_pool(&database_configuration)
+        .unwrap_or_else(|err| panic!("Failed to initialize Postgres connection pool: {err:?}"));
+
+    let counting_station_repo = Arc::new(PostgresCountingStationRepository::new(&pool));
+    let channel_repo = Arc::new(PostgresChannelRepository::new(&pool));
+    let measurement_repo = Arc::new(PostgresMeasurementRepository::new(&pool));
+    let data_source_repo = Arc::new(PostgresDataSourceRepository::new(&pool));
+    let job_repo = Arc::new(PostgresJobRepository::new(&pool));
 
     // The domain decides what happens at startup: read the configuration, build
     // a provider per data source, sync the persisted data sources and prepare
@@ -99,7 +86,7 @@ fn main() {
     // Build the health service used by the readiness endpoint. It combines the
     // PostgreSQL probe with one indicator per configured data source.
     let mut indicators: Vec<Arc<dyn ServiceHealthIndicator>> =
-        vec![Arc::new(PostgresHealthCheck::new(database_configuration))];
+        vec![Arc::new(PostgresHealthCheck::new(pool.clone()))];
     indicators.extend(provider_health_indicators);
     let health_service = Arc::new(HealthService::new(indicators));
 

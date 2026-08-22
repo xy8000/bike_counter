@@ -7,46 +7,27 @@
 //! driven repositories.
 
 use std::str::FromStr;
-use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
-use postgres::{Client, Config as PostgresConfig, NoTls};
-use refinery::embed_migrations;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::jobs::repository::JobRepository;
 
-embed_migrations!("migrations");
+use super::postgres_pool::PgPool;
 
 const SELECT_COLUMNS: &str = "id, name, job_type, status, started_at, finished_at, \
                               failure_message, metadata, lifetime_until, max_lifetime_exceeded";
 
 pub struct PostgresJobRepository {
-    client: Mutex<Client>,
+    pool: PgPool,
 }
 
 impl PostgresJobRepository {
-    pub fn new(configuration: &DatabaseConfiguration) -> Result<Self, DomainError> {
-        let mut postgres_config = PostgresConfig::from_str(configuration.database_url())
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        postgres_config.user(configuration.user());
-        postgres_config.password(configuration.password());
-        postgres_config.dbname(configuration.database_name());
-
-        let mut client = postgres_config
-            .connect(NoTls)
-            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
-        migrations::runner()
-            .run(&mut client)
-            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
-
-        Ok(Self {
-            client: Mutex::new(client),
-        })
+    pub fn new(pool: &PgPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     fn map_row(row: &postgres::Row) -> Result<Job, DomainError> {
@@ -76,8 +57,8 @@ impl JobRepository for PostgresJobRepository {
         }
 
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let metadata = Value::Object(job.metadata);
         client
@@ -100,8 +81,8 @@ impl JobRepository for PostgresJobRepository {
 
     fn set_running(&self, id: Uuid, started_at: DateTime<Utc>) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let updated = client
             .execute(
@@ -120,8 +101,8 @@ impl JobRepository for PostgresJobRepository {
 
     fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let updated = client
             .execute(
@@ -145,8 +126,8 @@ impl JobRepository for PostgresJobRepository {
         message: &str,
     ) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let updated = client
             .execute(
@@ -165,8 +146,8 @@ impl JobRepository for PostgresJobRepository {
 
     fn update_metadata(&self, id: Uuid, key: &str, value: Value) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
@@ -179,8 +160,8 @@ impl JobRepository for PostgresJobRepository {
 
     fn find_by_id(&self, id: Uuid) -> Result<Option<Job>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
@@ -197,32 +178,29 @@ impl JobRepository for PostgresJobRepository {
         status: Option<JobStatus>,
     ) -> Result<Vec<Job>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
+        // Filters are pushed down to SQL so the existing idx_jobs_type_status
+        // index can be used instead of loading all rows and filtering in Rust.
+        // `Option` params bind to NULL when absent, keeping the WHERE clause
+        // null-safe without building dynamic SQL.
+        let query = format!(
+            "SELECT {SELECT_COLUMNS} FROM jobs \
+             WHERE ($1::text IS NULL OR job_type = $1) \
+               AND ($2::text IS NULL OR status = $2) \
+             ORDER BY created_at DESC"
+        );
         let rows = client
-            .query(
-                &format!("SELECT {SELECT_COLUMNS} FROM jobs ORDER BY created_at DESC"),
-                &[],
-            )
+            .query(&query, &[&job_type, &status.map(|status| status.as_str())])
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let mut jobs = rows
-            .iter()
-            .map(Self::map_row)
-            .collect::<Result<Vec<_>, _>>()?;
-        if let Some(job_type) = job_type {
-            jobs.retain(|job| job.job_type == job_type);
-        }
-        if let Some(status) = status {
-            jobs.retain(|job| job.status == status);
-        }
-        Ok(jobs)
+        rows.iter().map(Self::map_row).collect()
     }
 
     fn find_running_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
@@ -238,8 +216,8 @@ impl JobRepository for PostgresJobRepository {
 
     fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
@@ -255,8 +233,8 @@ impl JobRepository for PostgresJobRepository {
 
     fn expire_running_jobs(&self, job_type: &str, now: DateTime<Utc>) -> Result<u64, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let updated = client
             .execute(
@@ -282,6 +260,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::PostgresJobRepository;
+    use crate::adapter::driven::postgres_pool::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::jobs::job::{Job, JobStatus};
     use crate::core::domain::jobs::repository::JobRepository;
@@ -322,7 +301,8 @@ mod tests {
                 database_name.to_string(),
             )
             .unwrap();
-            let repository = PostgresJobRepository::new(&configuration).unwrap();
+            let pool = create_pool(&configuration).unwrap();
+            let repository = PostgresJobRepository::new(&pool);
             Self {
                 repository,
                 _container: container,

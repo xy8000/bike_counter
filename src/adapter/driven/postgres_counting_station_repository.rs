@@ -1,36 +1,16 @@
-use std::str::FromStr;
-use std::sync::Mutex;
-
-use postgres::{Client, Config as PostgresConfig, NoTls};
-use refinery::embed_migrations;
-
-use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
 use crate::core::domain::counting_stations::counting_station::{CountingStation, value_objects};
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::error::DomainError;
 
-embed_migrations!("migrations");
+use super::postgres_pool::PgPool;
 
 pub struct PostgresCountingStationRepository {
-    client: Mutex<Client>,
+    pool: PgPool,
 }
 
 impl PostgresCountingStationRepository {
-    pub fn new(configuration: &DatabaseConfiguration) -> Result<Self, DomainError> {
-        let mut config = PostgresConfig::from_str(configuration.database_url())
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        config.user(configuration.user());
-        config.password(configuration.password());
-        config.dbname(configuration.database_name());
-        let mut client = config
-            .connect(NoTls)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        migrations::runner()
-            .run(&mut client)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        Ok(Self {
-            client: Mutex::new(client),
-        })
+    pub fn new(pool: &PgPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     fn map_row(row: &postgres::Row) -> CountingStation {
@@ -51,8 +31,8 @@ impl PostgresCountingStationRepository {
 impl CountingStationRepository for PostgresCountingStationRepository {
     fn save(&self, station: CountingStation) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
@@ -72,8 +52,8 @@ impl CountingStationRepository for PostgresCountingStationRepository {
 
     fn find_by_id(&self, id: value_objects::Id) -> Result<CountingStation, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
@@ -88,8 +68,8 @@ impl CountingStationRepository for PostgresCountingStationRepository {
 
     fn find_all(&self) -> Result<Vec<CountingStation>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
@@ -106,8 +86,8 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         external_id: value_objects::ExternalDatasourceId,
     ) -> Result<Option<CountingStation>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(

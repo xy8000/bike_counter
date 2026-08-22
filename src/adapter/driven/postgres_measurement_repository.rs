@@ -1,46 +1,26 @@
-use std::str::FromStr;
-use std::sync::Mutex;
+use postgres::types::ToSql;
 
-use postgres::{Client, Config as PostgresConfig, NoTls};
-use refinery::embed_migrations;
-
-use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
-embed_migrations!("migrations");
+use super::postgres_pool::PgPool;
 
 pub struct PostgresMeasurementRepository {
-    client: Mutex<Client>,
+    pool: PgPool,
 }
 
 impl PostgresMeasurementRepository {
-    pub fn new(configuration: &DatabaseConfiguration) -> Result<Self, DomainError> {
-        let mut postgres_config = PostgresConfig::from_str(configuration.database_url())
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        postgres_config.user(configuration.user());
-        postgres_config.password(configuration.password());
-        postgres_config.dbname(configuration.database_name());
-
-        let mut client = postgres_config
-            .connect(NoTls)
-            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
-        migrations::runner()
-            .run(&mut client)
-            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
-
-        Ok(Self {
-            client: Mutex::new(client),
-        })
+    pub fn new(pool: &PgPool) -> Self {
+        Self { pool: pool.clone() }
     }
 }
 
 impl MeasurementRepository for PostgresMeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
@@ -52,22 +32,50 @@ impl MeasurementRepository for PostgresMeasurementRepository {
     }
 
     fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError> {
+        if measurements.is_empty() {
+            return Ok(());
+        }
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut transaction = client
             .transaction()
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
-        for measurement in measurements {
-            transaction
-                .execute(
-                    "INSERT INTO measurements (id, value, channel_id, timestamp) VALUES ($1, $2, $3, $4)",
-                    &[&measurement.id.0, &measurement.value.0, &measurement.channel_id.0, &measurement.timestamp.0],
+        // A single multi-row INSERT instead of one round trip per measurement.
+        // The 65 535 parameter cap allows ~16 383 rows per statement; provider
+        // batch sizes are far below this.
+        let placeholders: Vec<String> = measurements
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let base = index * 4;
+                format!(
+                    "(${}, ${}, ${}, ${})",
+                    base + 1,
+                    base + 2,
+                    base + 3,
+                    base + 4
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?;
+            })
+            .collect();
+        let query = format!(
+            "INSERT INTO measurements (id, value, channel_id, timestamp) VALUES {}",
+            placeholders.join(", ")
+        );
+
+        let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(measurements.len() * 4);
+        for measurement in &measurements {
+            params.push(&measurement.id.0);
+            params.push(&measurement.value.0);
+            params.push(&measurement.channel_id.0);
+            params.push(&measurement.timestamp.0);
         }
+
+        transaction
+            .execute(&query, &params)
+            .map_err(|error| DomainError::Database(error.to_string()))?;
 
         transaction
             .commit()
@@ -77,8 +85,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
 
     fn find_by_id(&self, id: value_objects::Id) -> Result<Measurement, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
@@ -98,8 +106,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
 
     fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
@@ -124,8 +132,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         channel_id: value_objects::ChannelId,
     ) -> Result<Vec<Measurement>, DomainError> {
         let mut client = self
-            .client
-            .lock()
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
@@ -157,6 +165,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::PostgresMeasurementRepository;
+    use crate::adapter::driven::postgres_pool::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::measurements::measurement::{Measurement, value_objects};
     use crate::core::domain::measurements::repository::MeasurementRepository;
@@ -184,7 +193,8 @@ mod tests {
             database_name.to_string(),
         )
         .unwrap();
-        let repository = PostgresMeasurementRepository::new(&configuration).unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
 
         let station_id = Uuid::from_u128(200);
         let setup_channel_id = channel_id().0;
@@ -223,6 +233,71 @@ mod tests {
         assert_eq!(stored.value.0, 42);
         assert_eq!(stored.channel_id.0, channel_id().0);
         assert_eq!(stored.timestamp.0, timestamp(1));
+    }
+
+    #[test]
+    fn save_batch_persists_all_rows_in_a_single_statement() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let postgres = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .start()
+            .unwrap();
+        let database_url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            postgres.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            database_url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
+
+        let station_id = Uuid::from_u128(300);
+        let setup_channel_id = channel_id().0;
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description) VALUES ($1, $2, $3)",
+                &[&station_id, &"Test station", &"Test station description"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
+                &[
+                    &setup_channel_id,
+                    &station_id,
+                    &"Test channel",
+                    &"Test channel description",
+                ],
+            )
+            .unwrap();
+
+        let batch = (10..30).map(|i| measurement(i, i as i64)).collect();
+        repository.save_batch(batch).unwrap();
+
+        let stored = repository.find_by_channel_id(channel_id()).unwrap();
+        assert_eq!(stored.len(), 20);
+        // An empty batch is a no-op, not an error.
+        repository.save_batch(Vec::new()).unwrap();
+        assert_eq!(
+            repository.find_by_channel_id(channel_id()).unwrap().len(),
+            20
+        );
     }
 
     fn measurement(id: u128, value: i64) -> Measurement {

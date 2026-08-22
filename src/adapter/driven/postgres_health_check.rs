@@ -1,25 +1,19 @@
 //! PostgreSQL health indicator used by the readiness endpoint.
 
-use std::str::FromStr;
-
-use postgres::{Config as PostgresConfig, NoTls};
-
-use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
 use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
-/// Checks PostgreSQL availability by opening a fresh connection and running
-/// `SELECT 1`.
-///
-/// A new connection per probe keeps the check stateless and independent of the
-/// shared `Mutex<Client>` repository clients, so a readiness probe never
-/// contends with in-flight queries.
+use super::postgres_pool::PgPool;
+
+/// Checks PostgreSQL availability by running `SELECT 1` on a pooled
+/// connection. The pool's connection timeout bounds the probe, so a readiness
+/// check never hangs when the pool is exhausted.
 pub struct PostgresHealthCheck {
-    configuration: DatabaseConfiguration,
+    pool: PgPool,
 }
 
 impl PostgresHealthCheck {
-    pub fn new(configuration: DatabaseConfiguration) -> Self {
-        Self { configuration }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -29,18 +23,9 @@ impl ServiceHealthIndicator for PostgresHealthCheck {
     }
 
     fn check(&self) -> HealthStatus {
-        let mut postgres_config = match PostgresConfig::from_str(self.configuration.database_url())
-        {
-            Ok(config) => config,
-            Err(error) => return HealthStatus::Down(error.to_string()),
-        };
-        postgres_config.user(self.configuration.user());
-        postgres_config.password(self.configuration.password());
-        postgres_config.dbname(self.configuration.database_name());
-
-        let mut client = match postgres_config.connect(NoTls) {
+        let mut client = match self.pool.get() {
             Ok(client) => client,
-            Err(error) => return HealthStatus::Down(format!("{error:?}")),
+            Err(error) => return HealthStatus::Down(error.to_string()),
         };
 
         match client.simple_query("SELECT 1") {
@@ -52,11 +37,17 @@ impl ServiceHealthIndicator for PostgresHealthCheck {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use postgres::{Config as PostgresConfig, NoTls};
+    use r2d2::Pool;
+    use r2d2_postgres::PostgresConnectionManager;
     use testcontainers::Container;
     use testcontainers::runners::SyncRunner;
     use testcontainers_modules::postgres::Postgres;
 
     use super::PostgresHealthCheck;
+    use crate::adapter::driven::postgres_pool::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
@@ -93,23 +84,28 @@ mod tests {
             .unwrap();
         let configuration =
             test_database_configuration(&postgres, database_user, database_password, database_name);
+        let pool = create_pool(&configuration).unwrap();
 
-        let check = PostgresHealthCheck::new(configuration);
+        let check = PostgresHealthCheck::new(pool);
         assert!(matches!(check.check(), HealthStatus::Up));
     }
 
     #[test]
     fn reports_down_when_postgres_is_unreachable() {
         // A closed port with no listener refuses the connection immediately.
-        let configuration = DatabaseConfiguration::new(
-            "postgres://127.0.0.1:1".to_string(),
-            "user".to_string(),
-            "password".to_string(),
-            "database".to_string(),
-        )
-        .unwrap();
+        // min_idle(0) skips r2d2's eager initial connections, so the pool
+        // itself constructs fine; the first `get()` (and thus the probe) fails
+        // fast with the connection error.
+        let mut config = PostgresConfig::from_str("postgres://127.0.0.1:1").unwrap();
+        config.user("user").password("password").dbname("database");
+        let manager = PostgresConnectionManager::new(config, NoTls);
+        let pool = Pool::builder()
+            .max_size(1)
+            .min_idle(Some(0))
+            .build(manager)
+            .unwrap();
 
-        let check = PostgresHealthCheck::new(configuration);
+        let check = PostgresHealthCheck::new(pool);
         assert!(matches!(check.check(), HealthStatus::Down(_)));
     }
 }
