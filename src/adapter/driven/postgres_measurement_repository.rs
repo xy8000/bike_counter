@@ -95,6 +95,52 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             timestamp: value_objects::Timestamp(row.get(3)),
         })
     }
+
+    fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, value, channel_id, timestamp FROM measurements ORDER BY timestamp DESC",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut measurements = Vec::with_capacity(rows.len());
+        for row in rows {
+            measurements.push(Measurement {
+                id: value_objects::Id(row.get(0)),
+                value: value_objects::Value(row.get(1)),
+                channel_id: value_objects::ChannelId(row.get(2)),
+                timestamp: value_objects::Timestamp(row.get(3)),
+            });
+        }
+        Ok(measurements)
+    }
+
+    fn find_by_channel_id(&self, channel_id: value_objects::ChannelId) -> Result<Vec<Measurement>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, value, channel_id, timestamp FROM measurements WHERE channel_id = $1 ORDER BY timestamp DESC",
+                &[&channel_id.0],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut measurements = Vec::with_capacity(rows.len());
+        for row in rows {
+            measurements.push(Measurement {
+                id: value_objects::Id(row.get(0)),
+                value: value_objects::Value(row.get(1)),
+                channel_id: value_objects::ChannelId(row.get(2)),
+                timestamp: value_objects::Timestamp(row.get(3)),
+            });
+        }
+        Ok(measurements)
+    }
 }
 
 #[cfg(test)]

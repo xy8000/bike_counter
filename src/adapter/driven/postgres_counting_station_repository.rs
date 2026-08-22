@@ -67,4 +67,26 @@ impl CountingStationRepository for PostgresCountingStationRepository {
             description: value_objects::Description(row.get(2)),
         })
     }
+
+    fn find_all(&self) -> Result<Vec<CountingStation>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, name, description FROM counting_stations ORDER BY name ASC",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut stations = Vec::with_capacity(rows.len());
+        for row in rows {
+            stations.push(CountingStation {
+                id: value_objects::Id(row.get(0)),
+                name: value_objects::Name(row.get(1)),
+                description: value_objects::Description(row.get(2)),
+            });
+        }
+        Ok(stations)
+    }
 }

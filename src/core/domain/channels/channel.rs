@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub struct Channel {
     pub id: value_objects::Id,
     pub counting_station_id: value_objects::CountingStationId,
@@ -8,8 +9,12 @@ pub struct Channel {
 pub mod value_objects {
     use uuid::Uuid;
 
+    #[derive(Debug, Clone)]
     pub struct Id(pub Uuid);
+    #[derive(Debug, Clone)]
     pub struct CountingStationId(pub Uuid);
+    #[derive(Debug, Clone)]
     pub struct Name(pub String);
+    #[derive(Debug, Clone)]
     pub struct Description(pub String);
 }

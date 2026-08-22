@@ -68,4 +68,50 @@ impl ChannelRepository for PostgresChannelRepository {
             description: value_objects::Description(row.get(3)),
         })
     }
+
+    fn find_all(&self) -> Result<Vec<Channel>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, counting_station_id, name, description FROM channels ORDER BY name ASC",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut channels = Vec::with_capacity(rows.len());
+        for row in rows {
+            channels.push(Channel {
+                id: value_objects::Id(row.get(0)),
+                counting_station_id: value_objects::CountingStationId(row.get(1)),
+                name: value_objects::Name(row.get(2)),
+                description: value_objects::Description(row.get(3)),
+            });
+        }
+        Ok(channels)
+    }
+
+    fn find_by_counting_station_id(&self, station_id: value_objects::CountingStationId) -> Result<Vec<Channel>, DomainError> {
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, counting_station_id, name, description FROM channels WHERE counting_station_id = $1 ORDER BY name ASC",
+                &[&station_id.0],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut channels = Vec::with_capacity(rows.len());
+        for row in rows {
+            channels.push(Channel {
+                id: value_objects::Id(row.get(0)),
+                counting_station_id: value_objects::CountingStationId(row.get(1)),
+                name: value_objects::Name(row.get(2)),
+                description: value_objects::Description(row.get(3)),
+            });
+        }
+        Ok(channels)
+    }
 }

@@ -1,0 +1,17 @@
+# Rust build artifacts
+target/
+debug/
+
+# Version control
+.git/
+.gitignore
+
+# Local configuration / secrets
+.env
+
+# Compose / docs (not needed for the image build)
+docker-compose.yml
+Dockerfile
+README.md
+ToDo.md
+plans/

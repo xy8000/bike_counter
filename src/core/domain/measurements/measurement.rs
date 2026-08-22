@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub struct Measurement {
     pub id: value_objects::Id,
     pub value: value_objects::Value,
