@@ -1,10 +1,5 @@
 use super::measurement::{Measurement, value_objects};
-
-#[derive(Debug)]
-pub enum DomainError {
-    Database(String),
-    NotFound(value_objects::Id),
-}
+use crate::core::domain::error::DomainError;
 
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;

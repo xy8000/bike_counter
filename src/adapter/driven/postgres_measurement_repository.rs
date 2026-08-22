@@ -5,8 +5,9 @@ use postgres::{Client, Config as PostgresConfig, NoTls};
 use refinery::embed_migrations;
 
 use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
+use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
-use crate::core::domain::measurements::repository::{DomainError, MeasurementRepository};
+use crate::core::domain::measurements::repository::MeasurementRepository;
 
 embed_migrations!("migrations");
 
@@ -24,10 +25,10 @@ impl PostgresMeasurementRepository {
 
         let mut client = postgres_config
             .connect(NoTls)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
         migrations::runner()
             .run(&mut client)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
 
         Ok(Self {
             client: Mutex::new(client),
@@ -85,7 +86,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 &[&id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?
-            .ok_or(DomainError::NotFound(id))?;
+            .ok_or(DomainError::NotFound(id.0))?;
 
         Ok(Measurement {
             id: value_objects::Id(row.get(0)),
@@ -98,7 +99,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use chrono::{TimeZone, Utc};
+    use postgres::{Config as PostgresConfig, NoTls};
     use testcontainers::runners::SyncRunner;
     use testcontainers_modules::postgres::Postgres;
     use uuid::Uuid;
@@ -132,6 +136,32 @@ mod tests {
         )
         .unwrap();
         let repository = PostgresMeasurementRepository::new(&configuration).unwrap();
+
+        let station_id = Uuid::from_u128(200);
+        let setup_channel_id = channel_id().0;
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description) VALUES ($1, $2, $3)",
+                &[&station_id, &"Test station", &"Test station description"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
+                &[
+                    &setup_channel_id,
+                    &station_id,
+                    &"Test channel",
+                    &"Test channel description",
+                ],
+            )
+            .unwrap();
 
         let first_measurement = measurement(1, 42);
         let measurement_id = first_measurement.id;
