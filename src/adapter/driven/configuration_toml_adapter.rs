@@ -31,3 +31,38 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
         Ok(Configuration::new(url))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_file_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("bike_counter_{name}_{}", std::process::id()))
+    }
+
+    #[test]
+    fn reads_github_data_url_from_toml() {
+        let path = test_file_path("valid.toml");
+        let expected_url = "https://example.com/data.zip";
+        std::fs::write(&path, format!("github_data_url = \"{expected_url}\"\n")).unwrap();
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string())
+            .read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(configuration.github_data_url().as_str(), expected_url);
+    }
+
+    #[test]
+    fn rejects_invalid_toml() {
+        let path = test_file_path("invalid.toml");
+        std::fs::write(&path, "github_data_url = ").unwrap();
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string())
+            .read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
+    }
+}

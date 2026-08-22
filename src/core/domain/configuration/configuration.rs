@@ -23,5 +23,9 @@ pub mod value_objects {
         pub fn new(url: String) -> Self {
             Self(url)
         }
+
+        pub fn as_str(&self) -> &str {
+            &self.0
+        }
     }
 }
