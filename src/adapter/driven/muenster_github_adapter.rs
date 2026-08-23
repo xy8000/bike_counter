@@ -5,6 +5,7 @@
 //! measurements is a follow-up task; the data-serving methods return empty data.
 
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 
@@ -13,17 +14,23 @@ use crate::core::domain::configuration::configuration::value_objects::DataSource
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::data_source::provider::{
-    DataProvider, MeasurementBatch, MeasurementQuery, ProviderError,
+    DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
 };
 use crate::core::domain::health::HealthStatus;
 
 const PROVIDER_TYPE: &str = "münster_opendata_github_provider";
 const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 500;
+const DEFAULT_CACHE_DURATION_SECS: u64 = 300;
 
 // The batch-size getter is only consumed by the deferred import feature.
 pub struct MuensterGithubAdapter {
     url: String,
     max_measurement_batch_size: usize,
+    /// Cache window in seconds for the (follow-up) archive cache; default 300.
+    cache_duration: u64,
+    /// Scoped persistent-state handle, attached by `StartupService` after the
+    /// data source is persisted (two-phase handover). `None` until attached.
+    state: Mutex<Option<Arc<dyn PersistentStateAccess + Send + Sync>>>,
 }
 
 impl MuensterGithubAdapter {
@@ -33,8 +40,13 @@ impl MuensterGithubAdapter {
 
     /// Builds the adapter from the data source's provider vars.
     ///
-    /// Required var: `url`. Optional var: `max_measurement_batch_size`.
-    /// A missing/invalid value is a configuration error (blocks startup).
+    /// Phase 1 of the two-phase handover: parses only static config and stores
+    /// **no** state handle, so construction is DB-free. The handle is attached
+    /// later via [`DataProvider::attach_persistent_state`].
+    ///
+    /// Required var: `url`. Optional vars: `max_measurement_batch_size`,
+    /// `cache_duration` (seconds, default `300`). A missing/invalid value is a
+    /// configuration error (blocks startup).
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
         let url = config
             .provider()
@@ -53,9 +65,20 @@ impl MuensterGithubAdapter {
             None => DEFAULT_MAX_MEASUREMENT_BATCH_SIZE,
         };
 
+        let cache_duration = match config.provider().var("cache_duration") {
+            Some(raw) => raw.parse::<u64>().map_err(|_| {
+                ConfigError::InvalidFormat(format!(
+                    "{PROVIDER_TYPE}: var 'cache_duration' is not a valid number"
+                ))
+            })?,
+            None => DEFAULT_CACHE_DURATION_SECS,
+        };
+
         Ok(Self {
             url,
             max_measurement_batch_size,
+            cache_duration,
+            state: Mutex::new(None),
         })
     }
 }
@@ -100,6 +123,24 @@ impl DataProvider for MuensterGithubAdapter {
     fn max_measurement_batch_size(&self) -> usize {
         self.max_measurement_batch_size
     }
+
+    fn attach_persistent_state(&self, state: Arc<dyn PersistentStateAccess + Send + Sync>) {
+        *self.state.lock().unwrap() = Some(state);
+    }
+}
+
+impl MuensterGithubAdapter {
+    /// The configured cache window in seconds (used by the follow-up archive
+    /// cache plan).
+    pub fn cache_duration(&self) -> u64 {
+        self.cache_duration
+    }
+
+    /// The attached persistent-state handle, if any (test-only accessor).
+    #[cfg(test)]
+    fn attached_state(&self) -> Option<Arc<dyn PersistentStateAccess + Send + Sync>> {
+        self.state.lock().unwrap().clone()
+    }
 }
 
 /// Naive host/port extraction for health checks (no extra dependency).
@@ -116,13 +157,16 @@ fn parse_host_and_port(url: &str) -> Option<(String, u16)> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     use super::{MuensterGithubAdapter, parse_host_and_port};
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration,
     };
     use crate::core::domain::configuration::error::ConfigError;
-    use crate::core::domain::data_source::provider::DataProvider;
+    use crate::core::domain::data_source::provider::{
+        DataProvider, PersistentStateAccess, ProviderError,
+    };
     use crate::core::domain::health::HealthStatus;
 
     fn data_source(vars: HashMap<String, String>) -> DataSourceConfiguration {
@@ -192,5 +236,78 @@ mod tests {
         let config = data_source(vars);
         let adapter = MuensterGithubAdapter::new(&config).unwrap();
         assert!(matches!(adapter.check_health(), HealthStatus::Down(_)));
+    }
+
+    #[test]
+    fn defaults_cache_duration_when_unset() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        let config = data_source(vars);
+        let adapter = MuensterGithubAdapter::new(&config).unwrap();
+        assert_eq!(adapter.cache_duration(), 300);
+    }
+
+    #[test]
+    fn reads_cache_duration_var() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        vars.insert("cache_duration".to_string(), "120".to_string());
+        let config = data_source(vars);
+        let adapter = MuensterGithubAdapter::new(&config).unwrap();
+        assert_eq!(adapter.cache_duration(), 120);
+    }
+
+    #[test]
+    fn rejects_invalid_cache_duration_var() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        vars.insert("cache_duration".to_string(), "not-a-number".to_string());
+        let config = data_source(vars);
+        assert!(matches!(
+            MuensterGithubAdapter::new(&config),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+    }
+
+    /// In-memory persistent-state access used to exercise the attach hook.
+    #[derive(Default)]
+    struct InMemoryAccess {
+        map: Mutex<HashMap<String, String>>,
+    }
+
+    impl PersistentStateAccess for InMemoryAccess {
+        fn load(&self) -> Result<HashMap<String, String>, ProviderError> {
+            Ok(self.map.lock().unwrap().clone())
+        }
+
+        fn store(&self, key: &str, value: &str) -> Result<(), ProviderError> {
+            self.map
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, key: &str) -> Result<(), ProviderError> {
+            self.map.lock().unwrap().remove(key);
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<(), ProviderError> {
+            self.map.lock().unwrap().clear();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn attach_persistent_state_stores_the_handle() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        let config = data_source(vars);
+        let adapter = MuensterGithubAdapter::new(&config).unwrap();
+
+        assert!(adapter.attached_state().is_none());
+        adapter.attach_persistent_state(Arc::new(InMemoryAccess::default()));
+        assert!(adapter.attached_state().is_some());
     }
 }

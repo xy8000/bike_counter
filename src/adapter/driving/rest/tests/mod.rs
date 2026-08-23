@@ -19,6 +19,7 @@ pub mod fixtures;
 pub mod health;
 pub mod measurements;
 pub mod mocks;
+pub mod persistent_state;
 pub mod root;
 
 use std::sync::Arc;
@@ -32,12 +33,16 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::RestApiAdapter;
+use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::{
     sample_channel_repository, sample_counting_station_repository, sample_job_repository,
     sample_measurement_repository,
 };
-use mocks::{MockDataSourceRepository, MockJobRepository, mock_health_service};
+use mocks::{
+    MockDataSourceRepository, MockJobRepository, mock_health_service,
+    sample_persistent_state_service,
+};
 
 /// Wraps the router under test and provides request helpers.
 pub struct TestApp {
@@ -80,6 +85,24 @@ impl TestApp {
         )
     }
 
+    /// Builds a router with a custom persistent-state service (used by the
+    /// persistent_state endpoint tests).
+    pub fn with_persistent_state_service(
+        persistent_state_service: Arc<PersistentStateService>,
+    ) -> Self {
+        let router = RestApiAdapter::new(
+            Arc::new(sample_counting_station_repository()),
+            Arc::new(sample_channel_repository()),
+            Arc::new(sample_measurement_repository()),
+            Arc::new(MockDataSourceRepository::default()),
+            Arc::new(sample_job_repository()),
+            mock_health_service(HealthStatus::Up),
+            persistent_state_service,
+        )
+        .router();
+        Self { router }
+    }
+
     /// Builds a router backed by the given in-memory repositories.
     fn with_all(
         job_repository: MockJobRepository,
@@ -93,6 +116,7 @@ impl TestApp {
             Arc::new(data_source_repository),
             Arc::new(job_repository),
             health_service,
+            sample_persistent_state_service(),
         )
         .router();
         Self { router }
@@ -125,6 +149,47 @@ impl TestApp {
             )
             .await
             .expect("router should respond")
+    }
+
+    /// Sends a request with an optional JSON body and returns the raw response.
+    pub async fn send_json(
+        &self,
+        method: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> axum::response::Response {
+        let body = body.map(|value| value.to_string()).unwrap_or_default();
+        self.router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .expect("valid request body"),
+            )
+            .await
+            .expect("router should respond")
+    }
+
+    /// Sends a request with an optional JSON body and returns `(status, JSON body)`.
+    pub async fn request_json(
+        &self,
+        method: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let response = self.send_json(method, uri, body).await;
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body should be collectable")
+            .to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, json)
     }
 }
 

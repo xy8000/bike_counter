@@ -77,4 +77,19 @@ fn list_dtos_build_consistent_self_links() {
 fn link_dto_serializes_as_object_with_href() {
     let json = serde_json::to_value(LinkDto::new("/api/v1")).expect("link should serialize");
     assert_eq!(json["href"], "/api/v1");
+    // A concrete link must not carry the HAL `templated` flag.
+    assert!(json.get("templated").is_none());
+}
+
+#[test]
+fn templated_link_serializes_with_templated_flag() {
+    let json = serde_json::to_value(LinkDto::templated(
+        "/api/v1/data-sources/{id}/persistent_state/{key}",
+    ))
+    .expect("link should serialize");
+    assert_eq!(
+        json["href"],
+        "/api/v1/data-sources/{id}/persistent_state/{key}"
+    );
+    assert_eq!(json["templated"], true);
 }

@@ -1,10 +1,13 @@
 //! In-memory repositories that back the router in tests (no database required).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::adapter::driving::rest::tests::fixtures::data_source_a;
+use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
@@ -13,6 +16,7 @@ use crate::core::domain::counting_stations::counting_station::value_objects as s
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+use crate::core::domain::data_source::persistent_state::PersistentStateStore;
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthService, HealthStatus, ServiceHealthIndicator};
@@ -296,4 +300,64 @@ impl JobRepository for MockJobRepository {
     ) -> Result<u64, DomainError> {
         Ok(0)
     }
+}
+
+/// In-memory persistent state store standing in for the database.
+#[derive(Default)]
+pub struct MockPersistentStateStore {
+    rows: Mutex<HashMap<data_source_vo::Id, HashMap<String, String>>>,
+}
+
+impl PersistentStateStore for MockPersistentStateStore {
+    fn get(
+        &self,
+        data_source_id: data_source_vo::Id,
+    ) -> Result<HashMap<String, String>, DomainError> {
+        Ok(self
+            .rows
+            .lock()
+            .unwrap()
+            .get(&data_source_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    fn set(
+        &self,
+        data_source_id: data_source_vo::Id,
+        key: &str,
+        value: &str,
+    ) -> Result<(), DomainError> {
+        self.rows
+            .lock()
+            .unwrap()
+            .entry(data_source_id)
+            .or_default()
+            .insert(key.to_string(), value.to_string());
+        Ok(())
+    }
+
+    fn delete(&self, data_source_id: data_source_vo::Id, key: &str) -> Result<(), DomainError> {
+        self.rows
+            .lock()
+            .unwrap()
+            .get_mut(&data_source_id)
+            .and_then(|rows| rows.remove(key));
+        Ok(())
+    }
+
+    fn clear(&self, data_source_id: data_source_vo::Id) -> Result<(), DomainError> {
+        self.rows.lock().unwrap().remove(&data_source_id);
+        Ok(())
+    }
+}
+
+/// A real [`PersistentStateService`] backed by an in-memory store and a data
+/// source repository containing the sample data source.
+pub fn sample_persistent_state_service() -> Arc<PersistentStateService> {
+    let store = Arc::new(MockPersistentStateStore::default());
+    let data_source_repository = Arc::new(MockDataSourceRepository {
+        data_sources: vec![data_source_a()],
+    });
+    Arc::new(PersistentStateService::new(store, data_source_repository))
 }

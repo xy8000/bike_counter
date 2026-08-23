@@ -13,6 +13,8 @@ use crate::core::domain::configuration::repository::ConfigurationRepository;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
 use crate::core::domain::data_source::health_indicator::ProviderHealthIndicator;
+use crate::core::domain::data_source::persistent_state::PersistentStateStore;
+use crate::core::domain::data_source::provider::{PersistentStateAccess, ScopedPersistentState};
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::ServiceHealthIndicator;
@@ -50,6 +52,7 @@ pub struct StartupService {
     configuration_repository: Arc<dyn ConfigurationRepository + Send + Sync>,
     data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
     data_provider_factory: Arc<dyn DataProviderFactory>,
+    persistent_state_store: Arc<dyn PersistentStateStore + Send + Sync>,
 }
 
 impl StartupService {
@@ -57,11 +60,13 @@ impl StartupService {
         configuration_repository: Arc<dyn ConfigurationRepository + Send + Sync>,
         data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
         data_provider_factory: Arc<dyn DataProviderFactory>,
+        persistent_state_store: Arc<dyn PersistentStateStore + Send + Sync>,
     ) -> Self {
         Self {
             configuration_repository,
             data_source_repository,
             data_provider_factory,
+            persistent_state_store,
         }
     }
 
@@ -73,15 +78,26 @@ impl StartupService {
         let mut configured_ids = HashSet::new();
 
         for data_source in configuration.data_sources() {
+            // Phase 1: build the provider with NO state handle, so construction
+            // is DB-free and the provider cannot touch persistent state early.
             let provider = self.data_provider_factory.build(data_source)?;
             let data_source_id = DataSourceId(DataSource::id_from_name(data_source.name()));
             configured_ids.insert(data_source_id);
 
-            // Persist the configured data source (id is deterministic from name).
+            // Persist the configured data source (id is deterministic from
+            // name) BEFORE attaching the state handle, so the persistent-state
+            // FK always resolves when the provider writes.
             self.data_source_repository.upsert(DataSource::new(
                 data_source.name().to_string(),
                 data_source.provider().provider_type().to_string(),
             ))?;
+
+            // Phase 2: attach the scoped persistent-state handle (row now exists).
+            let state = Arc::new(ScopedPersistentState::new(
+                self.persistent_state_store.clone(),
+                data_source_id,
+            )) as Arc<dyn PersistentStateAccess + Send + Sync>;
+            provider.attach_persistent_state(state);
 
             let name = format!(
                 "{}/{}",
@@ -118,6 +134,7 @@ impl StartupService {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     use chrono::{DateTime, Utc};
@@ -131,8 +148,10 @@ mod tests {
         Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
     use crate::core::domain::counting_stations::counting_station::CountingStation;
+    use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
+    use crate::core::domain::data_source::persistent_state::PersistentStateStore;
     use crate::core::domain::data_source::provider::{
-        DataProvider, MeasurementBatch, MeasurementQuery, ProviderError,
+        DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
     };
     use crate::core::domain::health::HealthStatus;
 
@@ -253,8 +272,22 @@ mod tests {
         }
     }
 
-    /// A minimal provider; the data-serving methods are never reached in these tests.
-    struct MockProvider;
+    /// A minimal provider; the data-serving methods are never reached in these
+    /// tests. It records whether/with what `attach_persistent_state` was called
+    /// so tests can verify the two-phase handover.
+    struct MockProvider {
+        attach_called: AtomicBool,
+        attached_state: Mutex<Option<Arc<dyn PersistentStateAccess + Send + Sync>>>,
+    }
+
+    impl MockProvider {
+        fn new() -> Self {
+            Self {
+                attach_called: AtomicBool::new(false),
+                attached_state: Mutex::new(None),
+            }
+        }
+    }
 
     impl DataProvider for MockProvider {
         fn check_health(&self) -> HealthStatus {
@@ -283,34 +316,115 @@ mod tests {
         fn max_measurement_batch_size(&self) -> usize {
             500
         }
+
+        fn attach_persistent_state(&self, state: Arc<dyn PersistentStateAccess + Send + Sync>) {
+            self.attach_called.store(true, Ordering::SeqCst);
+            *self.attached_state.lock().unwrap() = Some(state);
+        }
     }
 
-    struct MockDataProviderFactory;
+    struct MockDataProviderFactory {
+        last_built: Mutex<Option<Arc<MockProvider>>>,
+    }
+
+    impl MockDataProviderFactory {
+        fn new() -> Self {
+            Self {
+                last_built: Mutex::new(None),
+            }
+        }
+    }
 
     impl DataProviderFactory for MockDataProviderFactory {
         fn build(
             &self,
             _config: &DataSourceConfiguration,
         ) -> Result<Arc<dyn DataProvider>, ConfigError> {
-            Ok(Arc::new(MockProvider))
+            let provider = Arc::new(MockProvider::new());
+            *self.last_built.lock().unwrap() = Some(provider.clone());
+            Ok(provider)
+        }
+    }
+
+    /// In-memory persistent state store.
+    #[derive(Default)]
+    struct MockPersistentStateStore {
+        rows: Mutex<HashMap<DataSourceId, HashMap<String, String>>>,
+    }
+
+    impl MockPersistentStateStore {
+        fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl PersistentStateStore for MockPersistentStateStore {
+        fn get(
+            &self,
+            data_source_id: DataSourceId,
+        ) -> Result<HashMap<String, String>, DomainError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .get(&data_source_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        fn set(
+            &self,
+            data_source_id: DataSourceId,
+            key: &str,
+            value: &str,
+        ) -> Result<(), DomainError> {
+            self.rows
+                .lock()
+                .unwrap()
+                .entry(data_source_id)
+                .or_default()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, data_source_id: DataSourceId, key: &str) -> Result<(), DomainError> {
+            self.rows
+                .lock()
+                .unwrap()
+                .get_mut(&data_source_id)
+                .and_then(|rows| rows.remove(key));
+            Ok(())
+        }
+
+        fn clear(&self, data_source_id: DataSourceId) -> Result<(), DomainError> {
+            self.rows.lock().unwrap().remove(&data_source_id);
+            Ok(())
         }
     }
 
     fn service(
         config_repo: MockConfigurationRepository,
         data_source_repo: Arc<MockDataSourceRepository>,
-    ) -> StartupService {
-        StartupService::new(
+    ) -> (
+        StartupService,
+        Arc<MockDataProviderFactory>,
+        Arc<MockPersistentStateStore>,
+    ) {
+        let factory = Arc::new(MockDataProviderFactory::new());
+        let store = Arc::new(MockPersistentStateStore::new());
+        let startup_service = StartupService::new(
             Arc::new(config_repo),
             data_source_repo,
-            Arc::new(MockDataProviderFactory),
-        )
+            factory.clone(),
+            store.clone(),
+        );
+        (startup_service, factory, store)
     }
 
     #[test]
     fn upserts_configured_data_sources_and_builds_indicators() {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
-        let startup_service = service(
+        let (startup_service, _factory, _store) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -339,7 +453,7 @@ mod tests {
     fn removes_data_sources_that_are_no_longer_configured() {
         let stale = DataSource::new("Old".to_string(), "old_provider".to_string());
         let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![stale]));
-        let startup_service = service(
+        let (startup_service, _factory, _store) = service(
             MockConfigurationRepository {
                 configuration: configuration(&[]),
             },
@@ -361,7 +475,7 @@ mod tests {
         let configured = DataSource::new("Münster".to_string(), "p".to_string());
         let stale = DataSource::new("Old".to_string(), "p".to_string());
         let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![configured, stale]));
-        let startup_service = service(
+        let (startup_service, _factory, _store) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -381,7 +495,7 @@ mod tests {
             data_sources: Mutex::new(Vec::new()),
             fail_upsert: true,
         });
-        let startup_service = service(
+        let (startup_service, _factory, _store) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -392,5 +506,45 @@ mod tests {
             startup_service.run(),
             Err(StartupError::Database(DomainError::Database(_)))
         ));
+    }
+
+    #[test]
+    fn attaches_scoped_state_after_the_data_source_is_upserted() {
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let (startup_service, factory, store) = service(
+            MockConfigurationRepository {
+                configuration: configuration(&["Münster"]),
+            },
+            data_source_repo.clone(),
+        );
+
+        startup_service.run().expect("startup should succeed");
+
+        let provider = factory
+            .last_built
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("provider built");
+        assert!(
+            provider.attach_called.load(Ordering::SeqCst),
+            "phase 2 attach must be called"
+        );
+        let attached = provider
+            .attached_state
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("state handle attached");
+
+        // The data source must have been persisted before the handle was
+        // attached, and the handle must be a working ScopedPersistentState
+        // bound to that data source's id.
+        let source_id = data_source_repo.data_sources.lock().unwrap()[0].id;
+        attached.store("k", "v").unwrap();
+        assert_eq!(
+            store.rows.lock().unwrap()[&source_id].get("k").unwrap(),
+            "v"
+        );
     }
 }

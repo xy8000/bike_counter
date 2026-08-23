@@ -50,6 +50,24 @@ async fn lists_persisted_data_sources() {
         "/api/v1/data-sources"
     );
     assert_eq!(munster["_links"]["root"]["href"], "/api/v1");
+    assert_eq!(
+        munster["_links"]["persistent_state"]["href"],
+        format!(
+            "/api/v1/data-sources/{}/persistent_state",
+            DataSource::id_from_name("Münster")
+        )
+    );
+    assert_eq!(
+        munster["_links"]["persistent_state_entry"]["href"],
+        format!(
+            "/api/v1/data-sources/{}/persistent_state/{{key}}",
+            DataSource::id_from_name("Münster")
+        )
+    );
+    assert_eq!(
+        munster["_links"]["persistent_state_entry"]["templated"],
+        true
+    );
 
     let list_links = body["_links"]
         .as_object()
@@ -98,6 +116,15 @@ async fn gets_data_source_by_id() {
     );
     assert_eq!(body["_links"]["collection"]["href"], "/api/v1/data-sources");
     assert_eq!(body["_links"]["root"]["href"], "/api/v1");
+    assert_eq!(
+        body["_links"]["persistent_state"]["href"],
+        format!("/api/v1/data-sources/{id}/persistent_state")
+    );
+    assert_eq!(
+        body["_links"]["persistent_state_entry"]["href"],
+        format!("/api/v1/data-sources/{id}/persistent_state/{{key}}")
+    );
+    assert_eq!(body["_links"]["persistent_state_entry"]["templated"], true);
 }
 
 #[tokio::test]

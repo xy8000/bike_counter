@@ -2,8 +2,8 @@
 
 This Repository can be used to analyse the Bike-Counter-Stations of Münster.
 
-It exposes a read-only REST API (with HATEOAS links) backed by a PostgreSQL
-database, documented via auto-generated OpenAPI and browsable through Swagger-UI.
+It exposes a REST API (with HATEOAS links) backed by a PostgreSQL database,
+documented via auto-generated OpenAPI and browsable through Swagger-UI.
 
 ## Prerequisites
 
@@ -55,8 +55,9 @@ an array entry under `[[data_sources]]`:
 - `provider.type` – the provider implementation to build (e.g.
   `münster_opendata_github_provider`).
 - `provider.vars` – provider-specific key/value settings. The supported keys
-  depend on the provider only; the Münster provider understands `url` (required)
-  and `max_measurement_batch_size` (optional, defaults to `500`).
+  depend on the provider only; the Münster provider understands `url` (required),
+  `max_measurement_batch_size` (optional, defaults to `500`) and `cache_duration`
+  (optional seconds, defaults to `300` — used by the deferred archive cache).
 
 On startup the application syncs the configured data sources into the
 `data_sources` table: new ones are added, ones that are no longer configured are
@@ -91,6 +92,35 @@ Scheduling semantics:
   count is persisted to the job metadata after each batch).
 
 Every job is exposed through the read-only jobs API (see below).
+
+### Persistent provider state
+
+Each configured data source can remember opaque **runtime state** that survives
+restarts (for example archive-cache metadata). The state lives in the
+`data_source_persistent_state` table, scoped per data source:
+
+- `data_source_id` – foreign key to `data_sources` (`ON DELETE CASCADE`); a data
+  source has exactly one provider, so the id fully scopes the state.
+- `key` / `value` – arbitrary opaque strings (`UNIQUE (data_source_id, key)`).
+- `id` – surrogate UUID (application-generated) used purely for identification.
+
+At startup every provider receives a scoped state handle **after** its data source
+is persisted (two-phase handover): the provider is constructed first without the
+handle, then `StartupService` calls `attach_persistent_state` to hand it the
+handle. Neither the core nor REST interprets keys or values — only the provider
+adapter does.
+
+When a data source's `provider_type` changes, a database trigger
+(`AFTER UPDATE OF provider_type`) deletes its state rows, so a different provider
+never inherits the previous provider's memory; deleting a data source cascades to
+its state.
+
+The state is exposed through the core as
+`GET/PUT/DELETE /api/v1/data-sources/{id}/persistent_state` (see
+[API overview](#api-overview)): the driving adapter calls a core application
+service (`PersistentStateService`), never a repository port directly. The
+pre-existing read endpoints still call their repositories directly; migrating them
+to core services is a separate follow-up.
 
 ## Start the database
 
@@ -197,10 +227,16 @@ docker compose down -v       # stop containers and delete the database volume
 
 ## API overview
 
-All endpoints are **read-only (GET)** and use a flat URL hierarchy under `/api/v1`:
+The API uses a flat URL hierarchy under `/api/v1`. The resource endpoints are
+**read-only (GET)**; the `persistent_state` endpoints additionally support `PUT`
+and `DELETE` to manage the opaque per-data-source provider state:
 
 - `GET /api/v1` – root discovery with HATEOAS links
 - `GET /api/v1/data-sources` / `GET /api/v1/data-sources/{id}` – list / fetch the configured (persisted) data sources
+- `GET /api/v1/data-sources/{id}/persistent_state` – full opaque persistent-state map for a data source
+- `PUT /api/v1/data-sources/{id}/persistent_state/{key}` with body `{"value": "..."}` – upsert one entry (`200`; `404` unknown data source; `400` blank key)
+- `DELETE /api/v1/data-sources/{id}/persistent_state/{key}` – delete one entry (`204`; `404` unknown data source)
+- `DELETE /api/v1/data-sources/{id}/persistent_state` – clear the whole store (`204`; `404` unknown data source)
 - `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
 - `GET /api/v1/counting-stations` / `GET /api/v1/counting-stations/{id}`
 - `GET /api/v1/channels` (optional `?counting_station_id=` filter) / `GET /api/v1/channels/{id}`
@@ -208,8 +244,11 @@ All endpoints are **read-only (GET)** and use a flat URL hierarchy under `/api/v
 
 Every resource includes a `_links` object (HAL-style) pointing to related
 resources, e.g. a station links to its own `self`, its `channels`, and its
-`collection`. The root discovery endpoint (`/api/v1`) additionally links to the
-operational health endpoints via `health-live` and `health-ready`.
+`collection`; a data source links to its `self`, `collection`, and
+`persistent_state`, plus an RFC 6570 templated `persistent_state_entry` for a
+single key (marked `"templated": true`). The root discovery endpoint
+(`/api/v1`) additionally links to the operational health endpoints via
+`health-live` and `health-ready`.
 
 ## Health checks
 

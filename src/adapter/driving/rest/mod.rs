@@ -9,17 +9,20 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, put};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
-    get_api_root, get_channel_by_id, get_counting_station_by_id, get_data_source_by_id,
-    get_health_live, get_health_ready, get_job_by_id, get_measurement_by_id, list_channels,
+    clear_persistent_state, delete_persistent_state_entry, get_api_root, get_channel_by_id,
+    get_counting_station_by_id, get_data_source_by_id, get_health_live, get_health_ready,
+    get_job_by_id, get_measurement_by_id, get_persistent_state, list_channels,
     list_counting_stations, list_data_sources, list_jobs, list_measurements,
+    put_persistent_state_entry,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
+use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::data_source::repository::DataSourceRepository;
@@ -39,6 +42,7 @@ impl RestApiAdapter {
         data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
         job_repository: Arc<dyn JobRepository + Send + Sync>,
         health_service: Arc<HealthService>,
+        persistent_state_service: Arc<PersistentStateService>,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -48,6 +52,7 @@ impl RestApiAdapter {
                 data_source_repository,
                 job_repository,
                 health_service,
+                persistent_state_service,
             },
         }
     }
@@ -71,6 +76,14 @@ impl RestApiAdapter {
             .route("/api/v1/measurements/:id", get(get_measurement_by_id))
             .route("/api/v1/data-sources", get(list_data_sources))
             .route("/api/v1/data-sources/:id", get(get_data_source_by_id))
+            .route(
+                "/api/v1/data-sources/:id/persistent_state",
+                get(get_persistent_state).delete(clear_persistent_state),
+            )
+            .route(
+                "/api/v1/data-sources/:id/persistent_state/:key",
+                put(put_persistent_state_entry).delete(delete_persistent_state_entry),
+            )
             .route("/api/v1/jobs", get(list_jobs))
             .route("/api/v1/jobs/:id", get(get_job_by_id))
             .route("/health/live", get(get_health_live))

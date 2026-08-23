@@ -11,11 +11,13 @@ use crate::adapter::driven::postgres_data_source_repository::PostgresDataSourceR
 use crate::adapter::driven::postgres_health_check::PostgresHealthCheck;
 use crate::adapter::driven::postgres_job_repository::PostgresJobRepository;
 use crate::adapter::driven::postgres_measurement_repository::PostgresMeasurementRepository;
+use crate::adapter::driven::postgres_persistent_state_repository::PostgresPersistentStateRepository;
 use crate::adapter::driven::postgres_pool::create_pool;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::data_import_service::DataImportService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
+use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::startup_service::{StartupError, StartupService};
 use crate::core::domain::configuration::repository::ConfigurationRepository;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
@@ -58,14 +60,23 @@ fn main() {
     let measurement_repo = Arc::new(PostgresMeasurementRepository::new(&pool));
     let data_source_repo = Arc::new(PostgresDataSourceRepository::new(&pool));
     let job_repo = Arc::new(PostgresJobRepository::new(&pool));
+    let persistent_state_repo = Arc::new(PostgresPersistentStateRepository::new(&pool));
+
+    // Opaque per-data-source persistent state, exposed through the core and
+    // handed (scoped) to each provider at startup.
+    let persistent_state_service = Arc::new(PersistentStateService::new(
+        persistent_state_repo.clone(),
+        data_source_repo.clone(),
+    ));
 
     // The domain decides what happens at startup: read the configuration, build
-    // a provider per data source, sync the persisted data sources and prepare
-    // their health indicators.
+    // a provider per data source, sync the persisted data sources, attach a
+    // scoped persistent-state handle per provider and prepare health indicators.
     let startup_service = StartupService::new(
         configuration_repository,
         data_source_repo.clone(),
         Arc::new(DataProviderFactoryImpl),
+        persistent_state_repo.clone(),
     );
     let startup = match startup_service.run() {
         Ok(startup) => startup,
@@ -113,6 +124,7 @@ fn main() {
         data_source_repo,
         job_repo,
         health_service,
+        persistent_state_service,
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));

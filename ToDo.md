@@ -65,4 +65,15 @@ Generic Job Tracking, Cron Scheduler & Data Source Updater
 - [x] scripts/fmt-test.sh (cargo fmt --check + clippy -D warnings gate)
 - [x] Docs (README, ToDo, plans/job_scheduler_plan.md)
 
-I now have driven controllers for accessing the database. Now i would like to create a driving adapter that is exposing a REST-Ful (including HATEOAS-Links) API. The API should be READ ONLY (GET). Start with /api/v1 and then have a flat hierarchy (do not chain IDs in the URL). Also should be exposed by Swagger-UI. Write an adapter (driven) that handles REST-Calls. Is there a way to automatically generate a swagger? if yes, do so. Otherwise please create another adapter for swagger (you can use an openSource alternative instead swagger as well)
+Data Source Persistent State (plans/provider_state_storage_plan.md)
+
+- [x] Migration V4: data_source_persistent_state table + index + provider-change revoke trigger
+- [x] Core port PersistentStateStore (opaque KV, scoped per data source)
+- [x] PersistentStateAccess handle + ScopedPersistentState (maps DomainError -> ProviderError::Storage)
+- [x] DataProvider::attach_persistent_state (default no-op) — two-phase handover
+- [x] PostgresPersistentStateRepository (get/set/delete/clear, upsert on the unique key)
+- [x] PersistentStateService (resolves the data source, 404 unknown, delegates to the store)
+- [x] StartupService: build provider -> upsert data source -> attach scoped handle
+- [x] REST persistent_state endpoints (GET / PUT entry / DELETE entry / DELETE collection) through core
+- [x] Münster adapter: holds the handle + cache_duration var (default 300)
+- [x] Tests: repository + trigger + service + startup + adapter + REST persistent_state

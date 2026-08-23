@@ -11,6 +11,8 @@ use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
+use crate::core::domain::data_source::data_source::DataSource;
+use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
 use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
@@ -23,6 +25,8 @@ pub const MEASUREMENT_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_00
 pub const MEASUREMENT_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0022);
 pub const JOB_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0031);
 pub const JOB_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0032);
+pub const DATA_SOURCE_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0041);
+pub const DATA_SOURCE_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 pub const UNKNOWN_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF);
 
 pub fn timestamp() -> DateTime<Utc> {
@@ -86,6 +90,15 @@ pub fn measurement_b() -> Measurement {
         channel_id: measurement_vo::ChannelId(CHANNEL_ID_B),
         value: measurement_vo::Value(1337),
         timestamp: measurement_vo::Timestamp(timestamp()),
+    }
+}
+
+pub fn data_source_a() -> DataSource {
+    DataSource {
+        id: data_source_vo::Id(DATA_SOURCE_ID_A),
+        name: data_source_vo::Name("Münster".to_string()),
+        provider_type: data_source_vo::ProviderType("münster_opendata_github_provider".to_string()),
+        last_updated_at: None,
     }
 }
 
