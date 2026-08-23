@@ -77,3 +77,16 @@ Data Source Persistent State (plans/provider_state_storage_plan.md)
 - [x] REST persistent_state endpoints (GET / PUT entry / DELETE entry / DELETE collection) through core
 - [x] Münster adapter: holds the handle + cache_duration var (default 300)
 - [x] Tests: repository + trigger + service + startup + adapter + REST persistent_state
+
+REST through the core (plans/rest_through_core_plan.md)
+
+- [x] CountingStationService (list / find_by_id) + register in src/core/application/mod.rs
+- [x] ChannelService (list with station filter / find_by_id) + register
+- [x] MeasurementService (list with channel filter / find_by_id) + register
+- [x] DataSourceService (list / find_by_id with Option -> NotFound mapping) + register
+- [x] JobService (list with job_type + status filters / find_by_id with Option -> NotFound mapping) + register
+- [x] Rewire AppState to hold the five services; update handlers to call services via blocking + map_domain_error
+- [x] Update RestApiAdapter::new signature and main.rs wiring
+- [x] Update REST tests / fixtures / mocks to the service-based AppState (sample service constructors)
+- [x] Add service unit tests (local in-memory repos; NotFound mapping + filter branching)
+- [x] make check + make test + make test-rest green

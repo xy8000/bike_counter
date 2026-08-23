@@ -22,13 +22,13 @@ use crate::adapter::driving::rest::handlers::{
     put_persistent_state_entry,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
+use crate::core::application::channel_service::ChannelService;
+use crate::core::application::counting_station_service::CountingStationService;
+use crate::core::application::data_source_service::DataSourceService;
+use crate::core::application::job_service::JobService;
+use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
-use crate::core::domain::channels::repository::ChannelRepository;
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
-use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::health::HealthService;
-use crate::core::domain::jobs::repository::JobRepository;
-use crate::core::domain::measurements::repository::MeasurementRepository;
 
 pub struct RestApiAdapter {
     app_state: AppState,
@@ -36,21 +36,21 @@ pub struct RestApiAdapter {
 
 impl RestApiAdapter {
     pub fn new(
-        counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
-        channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
-        measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
-        data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
-        job_repository: Arc<dyn JobRepository + Send + Sync>,
+        counting_station_service: Arc<CountingStationService>,
+        channel_service: Arc<ChannelService>,
+        measurement_service: Arc<MeasurementService>,
+        data_source_service: Arc<DataSourceService>,
+        job_service: Arc<JobService>,
         health_service: Arc<HealthService>,
         persistent_state_service: Arc<PersistentStateService>,
     ) -> Self {
         Self {
             app_state: AppState {
-                counting_station_repository,
-                channel_repository,
-                measurement_repository,
-                data_source_repository,
-                job_repository,
+                counting_station_service,
+                channel_service,
+                measurement_service,
+                data_source_service,
+                job_service,
                 health_service,
                 persistent_state_service,
             },

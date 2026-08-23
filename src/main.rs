@@ -15,8 +15,13 @@ use crate::adapter::driven::postgres_persistent_state_repository::PostgresPersis
 use crate::adapter::driven::postgres_pool::create_pool;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
+use crate::core::application::channel_service::ChannelService;
+use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_import_service::DataImportService;
+use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
+use crate::core::application::job_service::JobService;
+use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::startup_service::{StartupError, StartupService};
 use crate::core::domain::configuration::repository::ConfigurationRepository;
@@ -116,13 +121,21 @@ fn main() {
         startup.data_source_runtimes,
     ));
 
+    // Thin core application services backing the REST read endpoints. The
+    // scheduler/import services keep using the repositories directly.
+    let counting_station_service = Arc::new(CountingStationService::new(counting_station_repo));
+    let channel_service = Arc::new(ChannelService::new(channel_repo));
+    let measurement_service = Arc::new(MeasurementService::new(measurement_repo));
+    let data_source_service = Arc::new(DataSourceService::new(data_source_repo));
+    let job_service = Arc::new(JobService::new(job_repo));
+
     // Initialize driving REST API adapter
     let rest_adapter = RestApiAdapter::new(
-        counting_station_repo,
-        channel_repo,
-        measurement_repo,
-        data_source_repo,
-        job_repo,
+        counting_station_service,
+        channel_service,
+        measurement_service,
+        data_source_service,
+        job_service,
         health_service,
         persistent_state_service,
     );

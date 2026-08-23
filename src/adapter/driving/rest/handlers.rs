@@ -12,27 +12,27 @@ use crate::adapter::driving::rest::dto::{
     JobListDto, JobQueryParams, MeasurementDto, MeasurementListDto, MeasurementQueryParams,
     PersistentStateDto, PersistentStateEntryDto, PersistentStateValueDto,
 };
+use crate::core::application::channel_service::ChannelService;
+use crate::core::application::counting_station_service::CountingStationService;
+use crate::core::application::data_source_service::DataSourceService;
+use crate::core::application::job_service::JobService;
+use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
-use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthComponent, HealthService, HealthStatus};
 use crate::core::domain::jobs::job::JobStatus;
-use crate::core::domain::jobs::repository::JobRepository;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
-use crate::core::domain::measurements::repository::MeasurementRepository;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
-    pub channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
-    pub measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
-    pub data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
-    pub job_repository: Arc<dyn JobRepository + Send + Sync>,
+    pub counting_station_service: Arc<CountingStationService>,
+    pub channel_service: Arc<ChannelService>,
+    pub measurement_service: Arc<MeasurementService>,
+    pub data_source_service: Arc<DataSourceService>,
+    pub job_service: Arc<JobService>,
     pub health_service: Arc<HealthService>,
     pub persistent_state_service: Arc<PersistentStateService>,
 }
@@ -66,11 +66,11 @@ fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) 
     }
 }
 
-/// Runs a blocking repository call on the tokio blocking thread pool.
+/// Runs a blocking service call on the tokio blocking thread pool.
 ///
 /// The synchronous `postgres` crate spins up its own internal runtime via
 /// `block_on`, which panics ("Cannot start a runtime from within a runtime")
-/// when invoked on a tokio worker thread. All blocking repository calls must
+/// when invoked on a tokio worker thread. All blocking service calls must
 /// therefore go through `tokio::task::spawn_blocking`.
 async fn blocking<T, F>(f: F) -> Result<T, DomainError>
 where
@@ -106,8 +106,8 @@ pub async fn get_api_root() -> impl IntoResponse {
 pub async fn list_counting_stations(
     State(state): State<AppState>,
 ) -> Result<Json<CountingStationListDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.counting_station_repository.clone();
-    let stations = blocking(move || repository.find_all())
+    let service = state.counting_station_service.clone();
+    let stations = blocking(move || service.list())
         .await
         .map_err(map_domain_error)?;
     Ok(Json(CountingStationListDto::new(stations)))
@@ -130,9 +130,9 @@ pub async fn get_counting_station_by_id(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<CountingStationDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.counting_station_repository.clone();
+    let service = state.counting_station_service.clone();
     let station_id = station_vo::Id(id);
-    let station = blocking(move || repository.find_by_id(station_id))
+    let station = blocking(move || service.find_by_id(station_id))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(CountingStationDto::from(station)))
@@ -154,15 +154,12 @@ pub async fn list_channels(
     State(state): State<AppState>,
     Query(params): Query<ChannelQueryParams>,
 ) -> Result<Json<ChannelListDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.channel_repository.clone();
+    let service = state.channel_service.clone();
     let station_id_filter = params.counting_station_id;
     let station_id = station_id_filter.map(channel_vo::CountingStationId);
-    let channels = blocking(move || match station_id {
-        Some(station_id) => repository.find_by_counting_station_id(station_id),
-        None => repository.find_all(),
-    })
-    .await
-    .map_err(map_domain_error)?;
+    let channels = blocking(move || service.list(station_id))
+        .await
+        .map_err(map_domain_error)?;
 
     Ok(Json(ChannelListDto::new(channels, station_id_filter)))
 }
@@ -184,9 +181,9 @@ pub async fn get_channel_by_id(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ChannelDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.channel_repository.clone();
+    let service = state.channel_service.clone();
     let channel_id = channel_vo::Id(id);
-    let channel = blocking(move || repository.find_by_id(channel_id))
+    let channel = blocking(move || service.find_by_id(channel_id))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(ChannelDto::from(channel)))
@@ -208,15 +205,12 @@ pub async fn list_measurements(
     State(state): State<AppState>,
     Query(params): Query<MeasurementQueryParams>,
 ) -> Result<Json<MeasurementListDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.measurement_repository.clone();
+    let service = state.measurement_service.clone();
     let channel_id_filter = params.channel_id;
     let channel_id = channel_id_filter.map(measurement_vo::ChannelId);
-    let measurements = blocking(move || match channel_id {
-        Some(channel_id) => repository.find_by_channel_id(channel_id),
-        None => repository.find_all(),
-    })
-    .await
-    .map_err(map_domain_error)?;
+    let measurements = blocking(move || service.list(channel_id))
+        .await
+        .map_err(map_domain_error)?;
 
     Ok(Json(MeasurementListDto::new(
         measurements,
@@ -241,9 +235,9 @@ pub async fn get_measurement_by_id(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<MeasurementDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.measurement_repository.clone();
+    let service = state.measurement_service.clone();
     let measurement_id = measurement_vo::Id(id);
-    let measurement = blocking(move || repository.find_by_id(measurement_id))
+    let measurement = blocking(move || service.find_by_id(measurement_id))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(MeasurementDto::from(measurement)))
@@ -261,8 +255,8 @@ pub async fn get_measurement_by_id(
 pub async fn list_data_sources(
     State(state): State<AppState>,
 ) -> Result<Json<DataSourceListDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.data_source_repository.clone();
-    let data_sources = blocking(move || repository.find_all())
+    let service = state.data_source_service.clone();
+    let data_sources = blocking(move || service.list())
         .await
         .map_err(map_domain_error)?;
     Ok(Json(DataSourceListDto::new(data_sources)))
@@ -285,12 +279,10 @@ pub async fn get_data_source_by_id(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DataSourceDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.data_source_repository.clone();
+    let service = state.data_source_service.clone();
     let data_source_id = data_source_vo::Id(id);
-    let data_source = blocking(move || repository.find_by_id(data_source_id))
+    let data_source = blocking(move || service.find_by_id(data_source_id))
         .await
-        .map_err(map_domain_error)?
-        .ok_or(DomainError::NotFound(id))
         .map_err(map_domain_error)?;
     Ok(Json(DataSourceDto::from(data_source)))
 }
@@ -426,9 +418,9 @@ pub async fn list_jobs(
         Some(raw) => Some(JobStatus::from_str(raw).map_err(map_domain_error)?),
         None => None,
     };
-    let repository = state.job_repository.clone();
+    let service = state.job_service.clone();
     let job_type = params.job_type.as_deref().map(str::to_string);
-    let jobs = blocking(move || repository.find_all(job_type.as_deref(), status))
+    let jobs = blocking(move || service.list(job_type, status))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(JobListDto::new(jobs)))
@@ -451,11 +443,9 @@ pub async fn get_job_by_id(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<JobDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let repository = state.job_repository.clone();
-    let job = blocking(move || repository.find_by_id(id))
+    let service = state.job_service.clone();
+    let job = blocking(move || service.find_by_id(id))
         .await
-        .map_err(map_domain_error)?
-        .ok_or(DomainError::NotFound(id))
         .map_err(map_domain_error)?;
     Ok(Json(JobDto::from(job)))
 }

@@ -35,13 +35,11 @@ use uuid::Uuid;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::domain::health::{HealthService, HealthStatus};
-use fixtures::{
-    sample_channel_repository, sample_counting_station_repository, sample_job_repository,
-    sample_measurement_repository,
-};
+use fixtures::sample_job_repository;
 use mocks::{
-    MockDataSourceRepository, MockJobRepository, mock_health_service,
-    sample_persistent_state_service,
+    MockDataSourceRepository, MockJobRepository, mock_health_service, sample_channel_service,
+    sample_counting_station_service, sample_data_source_service, sample_job_service,
+    sample_measurement_service, sample_persistent_state_service,
 };
 
 /// Wraps the router under test and provides request helpers.
@@ -91,11 +89,11 @@ impl TestApp {
         persistent_state_service: Arc<PersistentStateService>,
     ) -> Self {
         let router = RestApiAdapter::new(
-            Arc::new(sample_counting_station_repository()),
-            Arc::new(sample_channel_repository()),
-            Arc::new(sample_measurement_repository()),
-            Arc::new(MockDataSourceRepository::default()),
-            Arc::new(sample_job_repository()),
+            sample_counting_station_service(),
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(MockDataSourceRepository::default()),
+            sample_job_service(sample_job_repository()),
             mock_health_service(HealthStatus::Up),
             persistent_state_service,
         )
@@ -110,11 +108,11 @@ impl TestApp {
         health_service: Arc<HealthService>,
     ) -> Self {
         let router = RestApiAdapter::new(
-            Arc::new(sample_counting_station_repository()),
-            Arc::new(sample_channel_repository()),
-            Arc::new(sample_measurement_repository()),
-            Arc::new(data_source_repository),
-            Arc::new(job_repository),
+            sample_counting_station_service(),
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(data_source_repository),
+            sample_job_service(job_repository),
             health_service,
             sample_persistent_state_service(),
         )

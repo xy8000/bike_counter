@@ -6,7 +6,15 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::adapter::driving::rest::tests::fixtures::data_source_a;
+use crate::adapter::driving::rest::tests::fixtures::{
+    data_source_a, sample_channel_repository, sample_counting_station_repository,
+    sample_measurement_repository,
+};
+use crate::core::application::channel_service::ChannelService;
+use crate::core::application::counting_station_service::CountingStationService;
+use crate::core::application::data_source_service::DataSourceService;
+use crate::core::application::job_service::JobService;
+use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
@@ -360,4 +368,35 @@ pub fn sample_persistent_state_service() -> Arc<PersistentStateService> {
         data_sources: vec![data_source_a()],
     });
     Arc::new(PersistentStateService::new(store, data_source_repository))
+}
+
+/// A [`CountingStationService`] backed by the sample counting-station repository.
+pub fn sample_counting_station_service() -> Arc<CountingStationService> {
+    Arc::new(CountingStationService::new(Arc::new(
+        sample_counting_station_repository(),
+    )))
+}
+
+/// A [`ChannelService`] backed by the sample channel repository.
+pub fn sample_channel_service() -> Arc<ChannelService> {
+    Arc::new(ChannelService::new(Arc::new(sample_channel_repository())))
+}
+
+/// A [`MeasurementService`] backed by the sample measurement repository.
+pub fn sample_measurement_service() -> Arc<MeasurementService> {
+    Arc::new(MeasurementService::new(Arc::new(
+        sample_measurement_repository(),
+    )))
+}
+
+/// A [`DataSourceService`] backed by the given data-source repository.
+pub fn sample_data_source_service(
+    data_source_repository: MockDataSourceRepository,
+) -> Arc<DataSourceService> {
+    Arc::new(DataSourceService::new(Arc::new(data_source_repository)))
+}
+
+/// A [`JobService`] backed by the given job repository.
+pub fn sample_job_service(job_repository: MockJobRepository) -> Arc<JobService> {
+    Arc::new(JobService::new(Arc::new(job_repository)))
 }
