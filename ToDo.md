@@ -90,3 +90,16 @@ REST through the core (plans/rest_through_core_plan.md)
 - [x] Update REST tests / fixtures / mocks to the service-based AppState (sample service constructors)
 - [x] Add service unit tests (local in-memory repos; NotFound mapping + filter branching)
 - [x] make check + make test + make test-rest green
+
+Archive cache + CSV parsing (plans/archive_cache_and_parsing_plan.md)
+
+- [x] Add dependencies: ureq, zip, csv, chrono-tz
+- [x] Record-based DataProvider interface (core owns identity): CountingStationRecord / ChannelRecord / MeasurementRecord + MeasurementBatch records
+- [x] DataImportService maps records to entities (UUID generation, channel↔station linking, measurements attach channel id)
+- [x] site_min.json parsing (stations + channels; station-aggregate entry skipped)
+- [x] Monthly CSV parsing (Europe/Berlin → UTC, integer values, `-status` + aggregate columns skipped, empty cells skipped)
+- [x] Four-tier archive cache over PersistentStateAccess (fresh-extract reuse / re-extract stale ZIP / HEAD change detection / download)
+- [x] Münster adapter data-serving methods (stations, channels, paged measurements with exclusive `from`)
+- [x] Unit tests: parsers, timezone DST, cache tiers (fake fetcher), adapter end-to-end
+- [x] Existing DataProvider mocks and tests updated to the record interface
+- [x] Docs (README, ToDo, plans/archive_cache_and_parsing_plan.md)

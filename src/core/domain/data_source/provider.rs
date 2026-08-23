@@ -12,12 +12,10 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use crate::core::domain::channels::channel::Channel;
-use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::data_source::data_source::value_objects::Id;
 use crate::core::domain::data_source::persistent_state::PersistentStateStore;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::HealthStatus;
-use crate::core::domain::measurements::measurement::Measurement;
 
 /// An error raised while serving data from an external provider.
 #[derive(Debug)]
@@ -76,10 +74,38 @@ impl MeasurementQuery {
     }
 }
 
+/// An external counting-station record. No database identity crosses the
+/// boundary: the core generates the UUID and links the data source on persist.
+#[derive(Debug, Clone)]
+pub struct CountingStationRecord {
+    /// Stable identifier of the station in the external source.
+    pub external_id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// An external channel record, linked to its station by external id only.
+#[derive(Debug, Clone)]
+pub struct ChannelRecord {
+    pub external_id: String,
+    /// The external id of the counting station this channel belongs to.
+    pub counting_station_external_id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// An external measurement record. The core attaches the channel id and
+/// generates the UUID when persisting.
+#[derive(Debug, Clone)]
+pub struct MeasurementRecord {
+    pub value: i64,
+    pub timestamp: DateTime<Utc>,
+}
+
 /// A page of measurements for one channel.
 #[derive(Debug)]
 pub struct MeasurementBatch {
-    pub measurements: Vec<Measurement>,
+    pub measurements: Vec<MeasurementRecord>,
     /// Timestamp of the last returned measurement (for paging). `None` if empty.
     pub last_measurement_datetime: Option<DateTime<Utc>>,
     /// `true` when the batch-size limit was reached and more data may remain.
@@ -95,10 +121,10 @@ pub trait DataProvider: Send + Sync {
     fn check_health(&self) -> HealthStatus;
 
     /// All counting stations currently available from the external source.
-    fn get_all_counting_stations(&self) -> Result<Vec<CountingStation>, ProviderError>;
+    fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError>;
 
     /// All channels currently available from the external source.
-    fn get_all_channels(&self) -> Result<Vec<Channel>, ProviderError>;
+    fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError>;
 
     /// Measurements of a single channel, bounded by `query.max_batch_size`.
     fn get_measurements(&self, query: MeasurementQuery) -> Result<MeasurementBatch, ProviderError>;

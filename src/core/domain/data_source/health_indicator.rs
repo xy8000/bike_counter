@@ -33,8 +33,6 @@ mod tests {
     use std::sync::Arc;
 
     use super::ProviderHealthIndicator;
-    use crate::core::domain::channels::channel::Channel;
-    use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::provider::DataProvider;
     use crate::core::domain::data_source::provider::MeasurementBatch;
     use crate::core::domain::data_source::provider::MeasurementQuery;
@@ -50,11 +48,19 @@ mod tests {
             self.status.clone()
         }
 
-        fn get_all_counting_stations(&self) -> Result<Vec<CountingStation>, ProviderError> {
+        fn get_all_counting_stations(
+            &self,
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider::CountingStationRecord>,
+            ProviderError,
+        > {
             Ok(vec![])
         }
 
-        fn get_all_channels(&self) -> Result<Vec<Channel>, ProviderError> {
+        fn get_all_channels(
+            &self,
+        ) -> Result<Vec<crate::core::domain::data_source::provider::ChannelRecord>, ProviderError>
+        {
             Ok(vec![])
         }
 

@@ -140,14 +140,12 @@ mod tests {
     use chrono::{DateTime, Utc};
 
     use super::*;
-    use crate::core::domain::channels::channel::Channel;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
     };
     use crate::core::domain::configuration::configuration::{
         Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
-    use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
     use crate::core::domain::data_source::persistent_state::PersistentStateStore;
     use crate::core::domain::data_source::provider::{
@@ -294,11 +292,19 @@ mod tests {
             HealthStatus::Up
         }
 
-        fn get_all_counting_stations(&self) -> Result<Vec<CountingStation>, ProviderError> {
+        fn get_all_counting_stations(
+            &self,
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider::CountingStationRecord>,
+            ProviderError,
+        > {
             Ok(Vec::new())
         }
 
-        fn get_all_channels(&self) -> Result<Vec<Channel>, ProviderError> {
+        fn get_all_channels(
+            &self,
+        ) -> Result<Vec<crate::core::domain::data_source::provider::ChannelRecord>, ProviderError>
+        {
             Ok(Vec::new())
         }
 

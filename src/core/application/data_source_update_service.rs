@@ -228,7 +228,8 @@ mod tests {
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
     use crate::core::domain::data_source::provider::{
-        DataProvider, MeasurementBatch, MeasurementQuery, ProviderError,
+        ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch, MeasurementQuery,
+        MeasurementRecord, ProviderError,
     };
     use crate::core::domain::data_source::repository::DataSourceRepository;
     use crate::core::domain::health::HealthStatus;
@@ -261,33 +262,25 @@ mod tests {
         .unwrap()
     }
 
-    fn station(external_id: &str) -> CountingStation {
-        CountingStation {
-            id: station_vo::Id(Uuid::new_v4()),
-            name: station_vo::Name(format!("Station {external_id}")),
-            description: station_vo::Description("desc".to_string()),
-            external_datasource_id: Some(station_vo::ExternalDatasourceId(external_id.to_string())),
-            data_source_id: None,
+    fn station_record(external_id: &str) -> CountingStationRecord {
+        CountingStationRecord {
+            external_id: external_id.to_string(),
+            name: format!("Station {external_id}"),
+            description: "desc".to_string(),
         }
     }
 
-    fn channel(external_id: &str) -> Channel {
-        Channel {
-            id: channel_vo::Id(Uuid::new_v4()),
-            counting_station_id: channel_vo::CountingStationId(Uuid::new_v4()),
-            name: channel_vo::Name(format!("Channel {external_id}")),
-            description: channel_vo::Description("desc".to_string()),
-            external_datasource_id: Some(channel_vo::ExternalDatasourceId(external_id.to_string())),
+    fn channel_record(external_id: &str, station_external_id: &str) -> ChannelRecord {
+        ChannelRecord {
+            external_id: external_id.to_string(),
+            counting_station_external_id: station_external_id.to_string(),
+            name: format!("Channel {external_id}"),
+            description: "desc".to_string(),
         }
     }
 
-    fn measurement(id: u128, channel_id: Uuid, timestamp: DateTime<Utc>) -> Measurement {
-        Measurement {
-            id: measurement_vo::Id(Uuid::from_u128(id)),
-            channel_id: measurement_vo::ChannelId(channel_id),
-            value: measurement_vo::Value(1),
-            timestamp: measurement_vo::Timestamp(timestamp),
-        }
+    fn measurement_record(value: i64, timestamp: DateTime<Utc>) -> MeasurementRecord {
+        MeasurementRecord { value, timestamp }
     }
 
     /// An in-memory job repository that records the full lifecycle.
@@ -610,10 +603,10 @@ mod tests {
         }
     }
 
-    /// A provider that serves fixed stations/channels and a single page queue.
+    /// A provider that serves fixed external-id records and a single page queue.
     struct ScriptedProvider {
-        stations: Vec<CountingStation>,
-        channels: Vec<Channel>,
+        stations: Vec<CountingStationRecord>,
+        channels: Vec<ChannelRecord>,
         pages: Mutex<VecDeque<MeasurementBatch>>,
     }
 
@@ -622,11 +615,11 @@ mod tests {
             HealthStatus::Up
         }
 
-        fn get_all_counting_stations(&self) -> Result<Vec<CountingStation>, ProviderError> {
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
             Ok(self.stations.clone())
         }
 
-        fn get_all_channels(&self) -> Result<Vec<Channel>, ProviderError> {
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
             Ok(self.channels.clone())
         }
 
@@ -845,16 +838,14 @@ mod tests {
 
     #[test]
     fn records_progress_and_advances_last_updated_at() {
-        let station = station("station-1");
-        let channel = channel("channel-1");
         let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
         let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
-            stations: vec![station.clone()],
-            channels: vec![channel.clone()],
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
             pages: Mutex::new(VecDeque::from([MeasurementBatch {
-                measurements: vec![measurement(0x100, channel.id.0, t0)],
+                measurements: vec![measurement_record(1, t0)],
                 last_measurement_datetime: Some(t0),
                 batch_size_limit_reached: false,
             }])),

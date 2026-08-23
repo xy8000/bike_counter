@@ -57,7 +57,7 @@ an array entry under `[[data_sources]]`:
 - `provider.vars` – provider-specific key/value settings. The supported keys
   depend on the provider only; the Münster provider understands `url` (required),
   `max_measurement_batch_size` (optional, defaults to `500`) and `cache_duration`
-  (optional seconds, defaults to `300` — used by the deferred archive cache).
+  (optional seconds, defaults to `300` — the archive-cache window).
 
 On startup the application syncs the configured data sources into the
 `data_sources` table: new ones are added, ones that are no longer configured are
@@ -90,6 +90,19 @@ Scheduling semantics:
   data. Per data source the order is strict: counting stations, then channels,
   then measurements (paged in batches; the running `processed_measurements`
   count is persisted to the job metadata after each batch).
+
+The Münster provider downloads the configured GitHub ZIP, extracts it into an
+obscured `/tmp` folder, and serves counting stations, channels and measurements
+from the extracted files. The archive is cached with the persistent-state handle
+(`archive_downloaded_at`, `archive_extracted_at`, `archive_file`,
+`archive_extracted_dir`, `archive_etag`, `archive_last_modified`): a fresh
+extracted folder is reused, a fresh ZIP is re-extracted, and once the
+`cache_duration` window passes the provider re-downloads (skipped when a
+best-effort `HEAD` shows the upstream `ETag`/`Last-Modified` is unchanged). The
+station/channel metadata comes from `site_min.json`; measurements come from the
+per-station `YYYY-MM.csv` files (15-minute intervals, interpreted as
+Europe/Berlin local time and stored as UTC). The station-aggregate column and the
+`-status` columns are ignored.
 
 Every job is exposed through the read-only jobs API (see below).
 

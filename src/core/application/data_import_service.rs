@@ -2,19 +2,26 @@
 //! external data sources. The runtime trigger (CLI / scheduling) is a separate,
 //! deferred feature; the capability itself is built and tested here.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::core::domain::channels::channel::Channel;
+use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
+use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::provider::{DataProvider, MeasurementQuery};
+use crate::core::domain::data_source::provider::{
+    DataProvider, MeasurementQuery, MeasurementRecord,
+};
 use crate::core::domain::error::DomainError;
+use crate::core::domain::measurements::measurement::Measurement;
+use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
 /// A configured data source together with its built provider.
@@ -78,8 +85,8 @@ impl DataImportService {
         };
 
         for runtime in &self.runtimes {
-            self.sync_counting_stations(runtime, &mut summary)?;
-            let channels = self.sync_channels(runtime, &mut summary)?;
+            let station_ids = self.sync_counting_stations(runtime, &mut summary)?;
+            let channels = self.sync_channels(runtime, &station_ids, &mut summary)?;
             for channel in &channels {
                 self.import_measurements(runtime, channel, from, to, &mut summary)?;
             }
@@ -88,41 +95,54 @@ impl DataImportService {
         Ok(summary)
     }
 
+    /// Saves new counting stations and returns a map of `external_id -> station
+    /// UUID` so channels can be linked to their station. The core owns all
+    /// entity identity: every new station gets a fresh `Uuid::new_v4()`.
     fn sync_counting_stations(
         &self,
         runtime: &DataSourceRuntime,
         summary: &mut ImportSummary,
-    ) -> Result<(), DomainError> {
+    ) -> Result<HashMap<String, Uuid>, DomainError> {
         let stations = runtime
             .provider
             .get_all_counting_stations()
             .map_err(DomainError::from)?;
 
-        for mut station in stations {
-            let already_known = match &station.external_datasource_id {
-                Some(external_id) => self
-                    .counting_station_repository
-                    .find_by_external_datasource_id(external_id.clone())?
-                    .is_some(),
-                None => false,
+        let mut external_to_id = HashMap::with_capacity(stations.len());
+        for record in stations {
+            let external_id = station_vo::ExternalDatasourceId(record.external_id.clone());
+            let station = match self
+                .counting_station_repository
+                .find_by_external_datasource_id(external_id.clone())?
+            {
+                Some(existing) => existing,
+                None => {
+                    let station = CountingStation {
+                        id: station_vo::Id(Uuid::new_v4()),
+                        name: station_vo::Name(record.name),
+                        description: station_vo::Description(record.description),
+                        external_datasource_id: Some(external_id),
+                        data_source_id: Some(station_vo::DataSourceId(runtime.data_source_id.0)),
+                    };
+                    self.counting_station_repository.save(station.clone())?;
+                    summary.counting_stations += 1;
+                    station
+                }
             };
-            if already_known {
-                continue;
-            }
-            station.id = station_vo::Id(Uuid::new_v4());
-            station.data_source_id = Some(station_vo::DataSourceId(runtime.data_source_id.0));
-            self.counting_station_repository.save(station)?;
-            summary.counting_stations += 1;
+            external_to_id.insert(record.external_id, station.id.0);
         }
 
-        Ok(())
+        Ok(external_to_id)
     }
 
     /// Saves new channels and returns every channel (new + existing) so the
-    /// caller can page through its measurements.
+    /// caller can page through its measurements. Each new channel's
+    /// `counting_station_id` is resolved from the station map built by
+    /// [`Self::sync_counting_stations`].
     fn sync_channels(
         &self,
         runtime: &DataSourceRuntime,
+        station_ids: &HashMap<String, Uuid>,
         summary: &mut ImportSummary,
     ) -> Result<Vec<Channel>, DomainError> {
         let channels = runtime
@@ -131,17 +151,30 @@ impl DataImportService {
             .map_err(DomainError::from)?;
 
         let mut result = Vec::with_capacity(channels.len());
-        for channel in channels {
-            let existing = match &channel.external_datasource_id {
-                Some(external_id) => self
-                    .channel_repository
-                    .find_by_external_datasource_id(external_id.clone())?,
-                None => None,
-            };
+        for record in channels {
+            let external_id = channel_vo::ExternalDatasourceId(record.external_id.clone());
+            let existing = self
+                .channel_repository
+                .find_by_external_datasource_id(external_id.clone())?;
 
             match existing {
                 Some(existing) => result.push(existing),
                 None => {
+                    let counting_station_id = *station_ids
+                        .get(&record.counting_station_external_id)
+                        .ok_or_else(|| {
+                            DomainError::InvalidQuery(format!(
+                                "channel '{}' references unknown station '{}'",
+                                record.external_id, record.counting_station_external_id
+                            ))
+                        })?;
+                    let channel = Channel {
+                        id: channel_vo::Id(Uuid::new_v4()),
+                        counting_station_id: channel_vo::CountingStationId(counting_station_id),
+                        name: channel_vo::Name(record.name),
+                        description: channel_vo::Description(record.description),
+                        external_datasource_id: Some(external_id),
+                    };
                     self.channel_repository.save(channel.clone())?;
                     summary.channels += 1;
                     result.push(channel);
@@ -178,7 +211,8 @@ impl DataImportService {
                 .map_err(DomainError::from)?;
 
             summary.measurements += batch.measurements.len();
-            self.measurement_repository.save_batch(batch.measurements)?;
+            let measurements = to_measurements(batch.measurements, channel.id.0);
+            self.measurement_repository.save_batch(measurements)?;
 
             // Page while the batch-size limit was reached; use the last
             // measurement datetime as the next start. Guard against a missing
@@ -209,8 +243,8 @@ impl DataImportService {
         from: Option<DateTime<Utc>>,
         on_batch: impl Fn(usize) -> Result<(), DomainError>,
     ) -> Result<DataSourceUpdate, DomainError> {
-        self.sync_counting_stations(runtime, &mut ImportSummary::default())?;
-        let channels = self.sync_channels(runtime, &mut ImportSummary::default())?;
+        let station_ids = self.sync_counting_stations(runtime, &mut ImportSummary::default())?;
+        let channels = self.sync_channels(runtime, &station_ids, &mut ImportSummary::default())?;
 
         let mut processed = 0usize;
         let mut last_measurement_timestamp: Option<DateTime<Utc>> = None;
@@ -230,7 +264,8 @@ impl DataImportService {
                     .map_err(DomainError::from)?;
 
                 processed += batch.measurements.len();
-                self.measurement_repository.save_batch(batch.measurements)?;
+                let measurements = to_measurements(batch.measurements, channel.id.0);
+                self.measurement_repository.save_batch(measurements)?;
                 on_batch(processed)?;
 
                 match (
@@ -257,6 +292,20 @@ impl DataImportService {
     }
 }
 
+/// Converts provider measurement records into persisted entities: the core
+/// generates a fresh UUID per measurement and attaches the channel id.
+fn to_measurements(records: Vec<MeasurementRecord>, channel_id: Uuid) -> Vec<Measurement> {
+    records
+        .into_iter()
+        .map(|record| Measurement {
+            id: measurement_vo::Id(Uuid::new_v4()),
+            channel_id: measurement_vo::ChannelId(channel_id),
+            value: measurement_vo::Value(record.value),
+            timestamp: measurement_vo::Timestamp(record.timestamp),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, VecDeque};
@@ -267,7 +316,9 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::DataProviderConfiguration;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::data_source::DataSource;
-    use crate::core::domain::data_source::provider::{MeasurementBatch, ProviderError};
+    use crate::core::domain::data_source::provider::{
+        ChannelRecord, CountingStationRecord, MeasurementBatch, MeasurementRecord, ProviderError,
+    };
     use crate::core::domain::health::HealthStatus;
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
@@ -300,13 +351,25 @@ mod tests {
         }
     }
 
-    fn measurement(id: u128, channel_id: Uuid, timestamp: DateTime<Utc>) -> Measurement {
-        Measurement {
-            id: measurement_vo::Id(Uuid::from_u128(id)),
-            channel_id: measurement_vo::ChannelId(channel_id),
-            value: measurement_vo::Value(1),
-            timestamp: measurement_vo::Timestamp(timestamp),
+    fn station_record(external_id: &str) -> CountingStationRecord {
+        CountingStationRecord {
+            external_id: external_id.to_string(),
+            name: format!("Station {external_id}"),
+            description: "desc".to_string(),
         }
+    }
+
+    fn channel_record(external_id: &str, station_external_id: &str) -> ChannelRecord {
+        ChannelRecord {
+            external_id: external_id.to_string(),
+            counting_station_external_id: station_external_id.to_string(),
+            name: format!("Channel {external_id}"),
+            description: "desc".to_string(),
+        }
+    }
+
+    fn measurement_record(value: i64, timestamp: DateTime<Utc>) -> MeasurementRecord {
+        MeasurementRecord { value, timestamp }
     }
 
     fn timestamp(rfc3339: &str) -> DateTime<Utc> {
@@ -315,11 +378,12 @@ mod tests {
             .with_timezone(&Utc)
     }
 
-    /// A provider that serves fixed entities and a queue of measurement pages.
-    /// Every measurement query is recorded so tests can verify paging.
+    /// A provider that serves fixed external-id records and a queue of
+    /// measurement pages. Every measurement query is recorded so tests can
+    /// verify paging.
     struct MockProvider {
-        stations: Vec<CountingStation>,
-        channels: Vec<Channel>,
+        stations: Vec<CountingStationRecord>,
+        channels: Vec<ChannelRecord>,
         measurement_pages: Mutex<VecDeque<MeasurementBatch>>,
         recorded_queries: Mutex<Vec<MeasurementQuery>>,
         batch_size: usize,
@@ -330,11 +394,11 @@ mod tests {
             HealthStatus::Up
         }
 
-        fn get_all_counting_stations(&self) -> Result<Vec<CountingStation>, ProviderError> {
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
             Ok(self.stations.clone())
         }
 
-        fn get_all_channels(&self) -> Result<Vec<Channel>, ProviderError> {
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
             Ok(self.channels.clone())
         }
 
@@ -505,17 +569,15 @@ mod tests {
 
     #[test]
     fn imports_stations_channels_and_measurements() {
-        let station = station("station-1");
-        let channel = channel("channel-1");
         let t0 = timestamp("2024-01-01T00:00:00Z");
         let provider = Arc::new(MockProvider {
-            stations: vec![station.clone()],
-            channels: vec![channel.clone()],
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
             measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
                 measurements: vec![
-                    measurement(0x100, channel.id.0, t0),
-                    measurement(0x101, channel.id.0, t0),
-                    measurement(0x102, channel.id.0, t0),
+                    measurement_record(1, t0),
+                    measurement_record(1, t0),
+                    measurement_record(1, t0),
                 ],
                 last_measurement_datetime: Some(t0),
                 batch_size_limit_reached: false,
@@ -561,23 +623,20 @@ mod tests {
 
     #[test]
     fn pages_measurements_until_batch_size_limit_is_not_reached() {
-        let channel = channel("channel-1");
         let t1 = timestamp("2024-01-01T10:00:00Z");
         let page_one = MeasurementBatch {
-            measurements: (0..500)
-                .map(|i| measurement(0x1000 + i, channel.id.0, t1))
-                .collect(),
+            measurements: (0..500).map(|i| measurement_record(i as i64, t1)).collect(),
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: true,
         };
         let page_two = MeasurementBatch {
-            measurements: vec![measurement(0x9000, channel.id.0, t1)],
+            measurements: vec![measurement_record(1, t1)],
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: false,
         };
         let provider = Arc::new(MockProvider {
-            stations: Vec::new(),
-            channels: vec![channel.clone()],
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
             measurement_pages: Mutex::new(VecDeque::from([page_one, page_two])),
             recorded_queries: Mutex::new(Vec::new()),
             batch_size: 500,
@@ -610,7 +669,14 @@ mod tests {
             Some(t1),
             "second page resumes from last datetime"
         );
-        assert_eq!(queries[1].channel.id, channel.id);
+        assert_eq!(
+            queries[1]
+                .channel
+                .external_datasource_id
+                .as_ref()
+                .map(|e| e.0.as_str()),
+            Some("channel-1")
+        );
     }
 
     #[test]
@@ -618,8 +684,8 @@ mod tests {
         let station = station("station-1");
         let channel = channel("channel-1");
         let provider = Arc::new(MockProvider {
-            stations: vec![station.clone()],
-            channels: vec![channel.clone()],
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
             measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
                 measurements: Vec::new(),
                 last_measurement_datetime: None,
@@ -797,17 +863,12 @@ mod tests {
 
     #[test]
     fn update_data_source_updates_stations_then_channels_then_measurements() {
-        let station = station("station-1");
-        let channel = channel("channel-1");
         let t0 = timestamp("2024-01-01T00:00:00Z");
         let provider = Arc::new(MockProvider {
-            stations: vec![station.clone()],
-            channels: vec![channel.clone()],
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
             measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
-                measurements: vec![
-                    measurement(0x100, channel.id.0, t0),
-                    measurement(0x101, channel.id.0, t0),
-                ],
+                measurements: vec![measurement_record(1, t0), measurement_record(1, t0)],
                 last_measurement_datetime: Some(t0),
                 batch_size_limit_reached: false,
             }])),
@@ -844,25 +905,21 @@ mod tests {
 
     #[test]
     fn update_data_source_reports_progress_and_resumes_from_last_updated() {
-        let channel = channel("channel-1");
         let t1 = timestamp("2024-01-01T10:00:00Z");
         let last_updated = timestamp("2024-01-01T09:00:00Z");
         let page_one = MeasurementBatch {
-            measurements: vec![
-                measurement(0x1000, channel.id.0, t1),
-                measurement(0x1001, channel.id.0, t1),
-            ],
+            measurements: vec![measurement_record(1, t1), measurement_record(1, t1)],
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: true,
         };
         let page_two = MeasurementBatch {
-            measurements: vec![measurement(0x2000, channel.id.0, t1)],
+            measurements: vec![measurement_record(1, t1)],
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: false,
         };
         let provider = Arc::new(MockProvider {
-            stations: Vec::new(),
-            channels: vec![channel.clone()],
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
             measurement_pages: Mutex::new(VecDeque::from([page_one, page_two])),
             recorded_queries: Mutex::new(Vec::new()),
             batch_size: 500,

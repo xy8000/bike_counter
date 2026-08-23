@@ -57,3 +57,4 @@ config.toml
 # End of https://www.toptal.com/developers/gitignore/api/rust,visualstudiocode,git
 
 plans
+example
