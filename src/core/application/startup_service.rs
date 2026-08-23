@@ -14,7 +14,10 @@ use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
 use crate::core::domain::data_source::health_indicator::ProviderHealthIndicator;
 use crate::core::domain::data_source::persistent_state::PersistentStateStore;
-use crate::core::domain::data_source::provider::{PersistentStateAccess, ScopedPersistentState};
+use crate::core::domain::data_source::provider::{
+    PersistentStateAccess, ProviderMessageSink, ScopedPersistentState, ScopedProviderMessageSink,
+};
+use crate::core::domain::data_source::provider_message::ProviderMessageStore;
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::ServiceHealthIndicator;
@@ -53,6 +56,7 @@ pub struct StartupService {
     data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
     data_provider_factory: Arc<dyn DataProviderFactory>,
     persistent_state_store: Arc<dyn PersistentStateStore + Send + Sync>,
+    provider_message_store: Arc<dyn ProviderMessageStore + Send + Sync>,
 }
 
 impl StartupService {
@@ -61,12 +65,14 @@ impl StartupService {
         data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
         data_provider_factory: Arc<dyn DataProviderFactory>,
         persistent_state_store: Arc<dyn PersistentStateStore + Send + Sync>,
+        provider_message_store: Arc<dyn ProviderMessageStore + Send + Sync>,
     ) -> Self {
         Self {
             configuration_repository,
             data_source_repository,
             data_provider_factory,
             persistent_state_store,
+            provider_message_store,
         }
     }
 
@@ -98,6 +104,14 @@ impl StartupService {
                 data_source_id,
             )) as Arc<dyn PersistentStateAccess + Send + Sync>;
             provider.attach_persistent_state(state);
+
+            // Phase 2b: attach the scoped provider-message sink (row now exists),
+            // so the provider can emit read-only events instead of aborting.
+            let messages = Arc::new(ScopedProviderMessageSink::new(
+                self.provider_message_store.clone(),
+                data_source_id,
+            )) as Arc<dyn ProviderMessageSink + Send + Sync>;
+            provider.attach_provider_messages(messages);
 
             let name = format!(
                 "{}/{}",
@@ -150,6 +164,10 @@ mod tests {
     use crate::core::domain::data_source::persistent_state::PersistentStateStore;
     use crate::core::domain::data_source::provider::{
         DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
+        ProviderMessageSink,
+    };
+    use crate::core::domain::data_source::provider_message::{
+        ProviderMessageSeverity, ProviderMessageStore,
     };
     use crate::core::domain::health::HealthStatus;
 
@@ -276,6 +294,7 @@ mod tests {
     struct MockProvider {
         attach_called: AtomicBool,
         attached_state: Mutex<Option<Arc<dyn PersistentStateAccess + Send + Sync>>>,
+        attached_messages: Mutex<Option<Arc<dyn ProviderMessageSink + Send + Sync>>>,
     }
 
     impl MockProvider {
@@ -283,6 +302,7 @@ mod tests {
             Self {
                 attach_called: AtomicBool::new(false),
                 attached_state: Mutex::new(None),
+                attached_messages: Mutex::new(None),
             }
         }
     }
@@ -327,6 +347,10 @@ mod tests {
         fn attach_persistent_state(&self, state: Arc<dyn PersistentStateAccess + Send + Sync>) {
             self.attach_called.store(true, Ordering::SeqCst);
             *self.attached_state.lock().unwrap() = Some(state);
+        }
+
+        fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {
+            *self.attached_messages.lock().unwrap() = Some(sink);
         }
     }
 
@@ -409,6 +433,44 @@ mod tests {
         }
     }
 
+    /// In-memory provider message store that records what was emitted, so tests
+    /// can verify the scoped sink is bound to the right data source id.
+    #[derive(Default)]
+    struct MockProviderMessageStore {
+        records: Mutex<Vec<(DataSourceId, ProviderMessageSeverity, String)>>,
+    }
+
+    impl MockProviderMessageStore {
+        fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl ProviderMessageStore for MockProviderMessageStore {
+        fn record(
+            &self,
+            data_source_id: DataSourceId,
+            severity: ProviderMessageSeverity,
+            message: &str,
+        ) -> Result<(), DomainError> {
+            self.records
+                .lock()
+                .unwrap()
+                .push((data_source_id, severity, message.to_string()));
+            Ok(())
+        }
+
+        fn find_by_data_source(
+            &self,
+            _data_source_id: DataSourceId,
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider_message::ProviderMessage>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
     fn service(
         config_repo: MockConfigurationRepository,
         data_source_repo: Arc<MockDataSourceRepository>,
@@ -416,22 +478,25 @@ mod tests {
         StartupService,
         Arc<MockDataProviderFactory>,
         Arc<MockPersistentStateStore>,
+        Arc<MockProviderMessageStore>,
     ) {
         let factory = Arc::new(MockDataProviderFactory::new());
         let store = Arc::new(MockPersistentStateStore::new());
+        let messages = Arc::new(MockProviderMessageStore::new());
         let startup_service = StartupService::new(
             Arc::new(config_repo),
             data_source_repo,
             factory.clone(),
             store.clone(),
+            messages.clone(),
         );
-        (startup_service, factory, store)
+        (startup_service, factory, store, messages)
     }
 
     #[test]
     fn upserts_configured_data_sources_and_builds_indicators() {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
-        let (startup_service, _factory, _store) = service(
+        let (startup_service, _factory, _store, _messages) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -460,7 +525,7 @@ mod tests {
     fn removes_data_sources_that_are_no_longer_configured() {
         let stale = DataSource::new("Old".to_string(), "old_provider".to_string());
         let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![stale]));
-        let (startup_service, _factory, _store) = service(
+        let (startup_service, _factory, _store, _messages) = service(
             MockConfigurationRepository {
                 configuration: configuration(&[]),
             },
@@ -482,7 +547,7 @@ mod tests {
         let configured = DataSource::new("Münster".to_string(), "p".to_string());
         let stale = DataSource::new("Old".to_string(), "p".to_string());
         let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![configured, stale]));
-        let (startup_service, _factory, _store) = service(
+        let (startup_service, _factory, _store, _messages) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -502,7 +567,7 @@ mod tests {
             data_sources: Mutex::new(Vec::new()),
             fail_upsert: true,
         });
-        let (startup_service, _factory, _store) = service(
+        let (startup_service, _factory, _store, _messages) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -518,7 +583,7 @@ mod tests {
     #[test]
     fn attaches_scoped_state_after_the_data_source_is_upserted() {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
-        let (startup_service, factory, store) = service(
+        let (startup_service, factory, store, _messages) = service(
             MockConfigurationRepository {
                 configuration: configuration(&["Münster"]),
             },
@@ -553,5 +618,44 @@ mod tests {
             store.rows.lock().unwrap()[&source_id].get("k").unwrap(),
             "v"
         );
+    }
+
+    #[test]
+    fn attaches_scoped_message_sink_after_the_data_source_is_upserted() {
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let (startup_service, factory, _store, messages) = service(
+            MockConfigurationRepository {
+                configuration: configuration(&["Münster"]),
+            },
+            data_source_repo.clone(),
+        );
+
+        startup_service.run().expect("startup should succeed");
+
+        let provider = factory
+            .last_built
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("provider built");
+        let sink = provider
+            .attached_messages
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("message sink attached");
+
+        // The data source must have been persisted before the sink was attached,
+        // and the sink must be a working ScopedProviderMessageSink bound to that
+        // data source's id.
+        let source_id = data_source_repo.data_sources.lock().unwrap()[0].id;
+        sink.provider_event_occurred(ProviderMessageSeverity::Warning, "missing column")
+            .unwrap();
+
+        let records = messages.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, source_id);
+        assert_eq!(records[0].1, ProviderMessageSeverity::Warning);
+        assert_eq!(records[0].2, "missing column");
     }
 }

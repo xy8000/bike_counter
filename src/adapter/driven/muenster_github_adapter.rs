@@ -22,8 +22,9 @@ use crate::core::domain::configuration::configuration::value_objects::DataSource
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider::{
     ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch, MeasurementQuery,
-    MeasurementRecord, PersistentStateAccess, ProviderError,
+    MeasurementRecord, PersistentStateAccess, ProviderError, ProviderMessageSink,
 };
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::health::HealthStatus;
 
 const PROVIDER_TYPE: &str = "münster_opendata_github_provider";
@@ -138,6 +139,9 @@ pub struct MuensterGithubAdapter {
     /// Scoped persistent-state handle, attached by `StartupService` after the
     /// data source is persisted (two-phase handover). `None` until attached.
     state: Mutex<Option<Arc<dyn PersistentStateAccess + Send + Sync>>>,
+    /// Scoped provider-message sink, attached by `StartupService` after the data
+    /// source is persisted. `None` until attached.
+    messages: Mutex<Option<Arc<dyn ProviderMessageSink + Send + Sync>>>,
     /// Serializes cache refresh/extraction across threads.
     refresh_lock: Mutex<()>,
     /// In-memory index of the currently usable archive.
@@ -209,6 +213,7 @@ impl MuensterGithubAdapter {
             cache_duration,
             fetcher,
             state: Mutex::new(None),
+            messages: Mutex::new(None),
             refresh_lock: Mutex::new(()),
             index: Mutex::new(None),
         })
@@ -244,6 +249,20 @@ impl MuensterGithubAdapter {
             state.store(key, value)?;
         }
         Ok(())
+    }
+
+    /// The attached provider-message sink, if any (cloned handle for callers).
+    fn messages_sink(&self) -> Option<Arc<dyn ProviderMessageSink + Send + Sync>> {
+        self.messages.lock().unwrap().clone()
+    }
+
+    /// Emits a scoped provider message (best-effort). Recording a message is
+    /// never fatal for the provider's data-serving work, so a store failure here
+    /// is swallowed rather than propagated.
+    fn emit(&self, severity: ProviderMessageSeverity, message: impl AsRef<str>) {
+        if let Some(sink) = self.messages.lock().unwrap().as_ref() {
+            let _ = sink.provider_event_occurred(severity, message.as_ref());
+        }
     }
 
     /// True when the persisted extracted directory exists and is still inside
@@ -305,6 +324,10 @@ impl MuensterGithubAdapter {
             && at + cache >= now
             && dir.exists()
         {
+            self.emit(
+                ProviderMessageSeverity::Debug,
+                "archive cache fresh: reusing extracted folder",
+            );
             return Ok(());
         }
 
@@ -315,6 +338,10 @@ impl MuensterGithubAdapter {
         {
             let dir = self.extract(zip)?;
             self.store_extracted(&dir, now)?;
+            self.emit(
+                ProviderMessageSeverity::Info,
+                "archive cache fresh: re-extracted from existing zip",
+            );
             return Ok(());
         }
 
@@ -331,6 +358,10 @@ impl MuensterGithubAdapter {
             if zip.exists() && upstream.matches(&persisted) {
                 let dir = self.extract(zip)?;
                 self.store_extracted(&dir, now)?;
+                self.emit(
+                    ProviderMessageSeverity::Info,
+                    "upstream unchanged: re-extracted cached archive",
+                );
                 return Ok(());
             }
         }
@@ -351,6 +382,10 @@ impl MuensterGithubAdapter {
             .map_err(|message| ProviderError::Unreachable(format!("download failed: {message}")))?;
         self.store_state(KEY_DOWNLOADED_AT, &now.to_rfc3339())?;
         self.store_state(KEY_ARCHIVE_FILE, &target.to_string_lossy())?;
+        self.emit(
+            ProviderMessageSeverity::Info,
+            format!("archive downloaded: {}", target.to_string_lossy()),
+        );
         Ok((target, headers))
     }
 
@@ -391,6 +426,10 @@ impl MuensterGithubAdapter {
                     .map_err(|e| ProviderError::Storage(format!("cannot write {target:?}: {e}")))?;
             }
         }
+        self.emit(
+            ProviderMessageSeverity::Info,
+            format!("archive extracted: {}", dest.to_string_lossy()),
+        );
         Ok(dest)
     }
 
@@ -476,7 +515,8 @@ impl MuensterGithubAdapter {
         channel_external_id: &str,
     ) -> Result<Option<DateTime<Utc>>, ProviderError> {
         for csv in csvs {
-            let rows = parse_measurement_csv(csv, channel_external_id)?;
+            let rows =
+                parse_measurement_csv(csv, channel_external_id, self.messages_sink().as_deref())?;
             if let Some(first) = rows.into_iter().min_by_key(|record| record.timestamp) {
                 return Ok(Some(first.timestamp));
             }
@@ -513,7 +553,8 @@ impl MuensterGithubAdapter {
                 // Entire file lies before the window.
                 continue;
             }
-            let rows = parse_measurement_csv(csv, channel_external_id)?;
+            let rows =
+                parse_measurement_csv(csv, channel_external_id, self.messages_sink().as_deref())?;
             data_beyond |= rows.iter().any(|record| record.timestamp > window_end);
             in_window.extend(rows.into_iter().filter(|record| {
                 record.timestamp > window_start && record.timestamp <= window_end
@@ -612,6 +653,10 @@ impl DataProvider for MuensterGithubAdapter {
     fn attach_persistent_state(&self, state: Arc<dyn PersistentStateAccess + Send + Sync>) {
         *self.state.lock().unwrap() = Some(state);
     }
+
+    fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {
+        *self.messages.lock().unwrap() = Some(sink);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -683,9 +728,15 @@ fn csv_month_range(path: &Path) -> Option<(NaiveDate, NaiveDate)> {
 }
 
 /// Parses the measurements of one channel from a monthly CSV.
+///
+/// A channel that is simply absent from a file is a *known, non-fatal data
+/// quirk*: a `WARNING` is emitted (when a sink is available) and an empty batch
+/// is returned so the import continues. Genuine IO/parse failures (unreadable
+/// file, invalid CSV header) still return `ProviderError` and fail the job.
 fn parse_measurement_csv(
     path: &Path,
     channel_external_id: &str,
+    messages: Option<&(dyn ProviderMessageSink + Send + Sync)>,
 ) -> Result<Vec<MeasurementRecord>, ProviderError> {
     let file = File::open(path)
         .map_err(|e| ProviderError::InvalidData(format!("cannot open {path:?}: {e}")))?;
@@ -700,14 +751,22 @@ fn parse_measurement_csv(
 
     // Locate the data column for the channel; its header is "<id> (<name>)".
     let wanted = format!("{channel_external_id} ");
-    let column = headers
+    let column = match headers
         .iter()
         .position(|header| header.starts_with(&wanted))
-        .ok_or_else(|| {
-            ProviderError::InvalidData(format!(
-                "channel {channel_external_id} has no column in {path:?}"
-            ))
-        })?;
+    {
+        Some(column) => column,
+        None => {
+            // Known quirk: warn and skip this file instead of aborting the
+            // whole import with a major job failure.
+            if let Some(messages) = messages {
+                let message = format!("channel {channel_external_id} has no column in {path:?}");
+                let _ =
+                    messages.provider_event_occurred(ProviderMessageSeverity::Warning, &message);
+            }
+            return Ok(Vec::new());
+        }
+    };
 
     let mut records = Vec::new();
     for result in reader.records() {
@@ -796,7 +855,8 @@ mod tests {
         DataProviderConfiguration, DataSourceConfiguration,
     };
     use crate::core::domain::configuration::error::ConfigError;
-    use crate::core::domain::data_source::provider::PersistentStateAccess;
+    use crate::core::domain::data_source::provider::{PersistentStateAccess, ProviderMessageSink};
+    use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 
     fn data_source(vars: HashMap<String, String>) -> DataSourceConfiguration {
         let provider = DataProviderConfiguration::new(
@@ -1038,7 +1098,7 @@ mod tests {
         );
         fs::write(&path, csv).unwrap();
 
-        let records = parse_measurement_csv(&path, "102031297").unwrap();
+        let records = parse_measurement_csv(&path, "102031297", None).unwrap();
         assert_eq!(records.len(), 1, "empty and invalid rows are skipped");
         assert_eq!(records[0].value, 4);
         assert_eq!(
@@ -1453,6 +1513,136 @@ mod tests {
             *fetcher.get_calls.lock().unwrap(),
             1,
             "stale cache triggers a download"
+        );
+    }
+
+    // -- provider messages ----------------------------------------------------
+
+    /// In-memory provider-message sink recording every emitted event.
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<(ProviderMessageSeverity, String)>>,
+    }
+
+    impl ProviderMessageSink for RecordingSink {
+        fn provider_event_occurred(
+            &self,
+            severity: ProviderMessageSeverity,
+            message: &str,
+        ) -> Result<(), ProviderError> {
+            self.events
+                .lock()
+                .unwrap()
+                .push((severity, message.to_string()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn missing_channel_column_emits_warning_and_returns_empty_batch() {
+        let dir = std::env::temp_dir().join(format!("csv-warn-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("2023-01.csv");
+        // Only the station aggregate column exists; the queried channel is absent.
+        fs::write(
+            &path,
+            "Datetime,100031297 (Promenade)\n2023-01-01 00:00,3\n",
+        )
+        .unwrap();
+
+        let sink = RecordingSink::default();
+        let records = parse_measurement_csv(&path, "102031297", Some(&sink)).unwrap();
+
+        assert!(
+            records.is_empty(),
+            "a missing column is a known quirk and must not fail the parse"
+        );
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, ProviderMessageSeverity::Warning);
+        assert!(events[0].1.contains("102031297"));
+        assert!(events[0].1.contains("2023-01.csv"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn genuine_io_and_parse_errors_still_fail() {
+        // Unreadable file -> InvalidData (job fails as before).
+        let missing = std::env::temp_dir().join(format!("missing-{}.csv", Uuid::new_v4()));
+        assert!(matches!(
+            parse_measurement_csv(&missing, "1", None),
+            Err(ProviderError::InvalidData(_))
+        ));
+
+        // Invalid (non-UTF-8) CSV header bytes -> InvalidData (job fails as
+        // before); the csv reader cannot decode the header record.
+        let dir = std::env::temp_dir().join(format!("csv-bad-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("2023-01.csv");
+        fs::write(&path, [0xFF, 0xFE, 0x00, 0x01]).unwrap();
+        assert!(matches!(
+            parse_measurement_csv(&path, "1", None),
+            Err(ProviderError::InvalidData(_))
+        ));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn attach_provider_messages_stores_the_sink() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        let config = data_source(vars);
+        let adapter = MuensterGithubAdapter::new(&config).unwrap();
+
+        let sink = Arc::new(RecordingSink::default());
+        adapter.attach_provider_messages(sink.clone());
+        adapter.emit(ProviderMessageSeverity::Info, "archive downloaded");
+
+        assert_eq!(sink.events.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn emits_one_line_lifecycle_messages_on_cache_refresh() {
+        let stale = Utc::now() - chrono::Duration::hours(2);
+        let state = Arc::new(InMemoryAccess::default());
+        state.store(KEY_DOWNLOADED_AT, &stale.to_rfc3339()).unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        vars.insert("cache_duration".to_string(), "3600".to_string());
+        let config = data_source(vars);
+        let fetcher = Arc::new(FakeFetcher {
+            zip: build_fixture_zip(),
+            etag: None,
+            get_calls: Mutex::new(0),
+        });
+        let adapter = adapter_with(config, fetcher);
+        adapter.attach_persistent_state(state);
+
+        let sink = Arc::new(RecordingSink::default());
+        adapter.attach_provider_messages(sink.clone());
+
+        // Stale cache forces tier 3: download + extract.
+        adapter.get_all_counting_stations().unwrap();
+
+        let events = sink.events.lock().unwrap();
+        assert!(
+            events.iter().any(|(severity, message)| {
+                *severity == ProviderMessageSeverity::Info
+                    && message.starts_with("archive downloaded:")
+            }),
+            "expected an INFO 'archive downloaded' one-liner, got: {:?}",
+            *events
+        );
+        assert!(
+            events.iter().any(|(severity, message)| {
+                *severity == ProviderMessageSeverity::Info
+                    && message.starts_with("archive extracted:")
+            }),
+            "expected an INFO 'archive extracted' one-liner, got: {:?}",
+            *events
         );
     }
 }

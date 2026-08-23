@@ -9,3 +9,4 @@ pub mod postgres_job_repository;
 pub mod postgres_measurement_repository;
 pub mod postgres_persistent_state_repository;
 pub mod postgres_pool;
+pub mod postgres_provider_message_repository;

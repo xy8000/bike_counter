@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::tests::mocks::{
     MockChannelRepository, MockCountingStationRepository, MockJobRepository,
-    MockMeasurementRepository,
+    MockMeasurementRepository, MockProviderMessageStore,
 };
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
@@ -13,6 +13,9 @@ use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+use crate::core::domain::data_source::provider_message::{
+    ProviderMessage, ProviderMessageSeverity,
+};
 use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
@@ -27,6 +30,8 @@ pub const JOB_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_
 pub const JOB_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0032);
 pub const DATA_SOURCE_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0041);
 pub const DATA_SOURCE_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
+pub const MESSAGE_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0051);
+pub const MESSAGE_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0052);
 pub const UNKNOWN_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF);
 
 pub fn timestamp() -> DateTime<Utc> {
@@ -100,6 +105,33 @@ pub fn data_source_a() -> DataSource {
         provider_type: data_source_vo::ProviderType("münster_opendata_github_provider".to_string()),
         last_updated_at: None,
     }
+}
+
+pub fn message_a() -> ProviderMessage {
+    ProviderMessage {
+        id: MESSAGE_ID_A,
+        data_source_id: data_source_vo::Id(DATA_SOURCE_ID_A),
+        severity: ProviderMessageSeverity::Warning,
+        message: "channel 102031297 has no column in .../2019-07.csv".to_string(),
+        occurred_at: timestamp(),
+    }
+}
+
+pub fn message_b() -> ProviderMessage {
+    ProviderMessage {
+        id: MESSAGE_ID_B,
+        data_source_id: data_source_vo::Id(DATA_SOURCE_ID_A),
+        severity: ProviderMessageSeverity::Info,
+        message: "archive downloaded".to_string(),
+        occurred_at: timestamp() - chrono::Duration::minutes(5),
+    }
+}
+
+/// A message store seeded with the two sample messages for data source A.
+pub fn sample_provider_message_store() -> MockProviderMessageStore {
+    let store = MockProviderMessageStore::default();
+    store.seed(vec![message_a(), message_b()]);
+    store
 }
 
 /// Repository fixture holding the two sample stations.

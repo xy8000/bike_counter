@@ -14,6 +14,9 @@ use chrono::{DateTime, Utc};
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::data_source::data_source::value_objects::Id;
 use crate::core::domain::data_source::persistent_state::PersistentStateStore;
+use crate::core::domain::data_source::provider_message::{
+    ProviderMessageSeverity, ProviderMessageStore,
+};
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::HealthStatus;
 
@@ -141,6 +144,11 @@ pub trait DataProvider: Send + Sync {
     /// data source. The default is a no-op, so providers without persistent
     /// state (and all existing mocks) are unaffected.
     fn attach_persistent_state(&self, _state: Arc<dyn PersistentStateAccess + Send + Sync>) {}
+
+    /// Optional: called once at startup so a provider can emit scoped messages.
+    /// The sink is already scoped to this provider's data source. The default is
+    /// a no-op, so providers (and all existing mocks) are unaffected.
+    fn attach_provider_messages(&self, _sink: Arc<dyn ProviderMessageSink + Send + Sync>) {}
 }
 
 /// Opaque, key-value persistent state access for this provider's data source.
@@ -203,14 +211,58 @@ impl PersistentStateAccess for ScopedPersistentState {
     }
 }
 
+/// A callable sink through which a provider emits scoped messages.
+///
+/// The handle is already scoped to the provider's data source, so no identifier
+/// is passed. Obtain it by overriding [`DataProvider::attach_provider_messages`].
+pub trait ProviderMessageSink: Send + Sync {
+    /// Records a provider-emitted event for the bound data source.
+    fn provider_event_occurred(
+        &self,
+        severity: ProviderMessageSeverity,
+        message: &str,
+    ) -> Result<(), ProviderError>;
+}
+
+/// Concrete scoped sink: wraps the message store for one data source id and maps
+/// store errors into [`ProviderError::Storage`] (same as `ScopedPersistentState`).
+pub struct ScopedProviderMessageSink {
+    store: Arc<dyn ProviderMessageStore + Send + Sync>,
+    data_source_id: Id,
+}
+
+impl ScopedProviderMessageSink {
+    pub fn new(store: Arc<dyn ProviderMessageStore + Send + Sync>, data_source_id: Id) -> Self {
+        Self {
+            store,
+            data_source_id,
+        }
+    }
+}
+
+impl ProviderMessageSink for ScopedProviderMessageSink {
+    fn provider_event_occurred(
+        &self,
+        severity: ProviderMessageSeverity,
+        message: &str,
+    ) -> Result<(), ProviderError> {
+        self.store
+            .record(self.data_source_id, severity, message)
+            .map_err(ProviderError::from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    use super::{PersistentStateAccess, ScopedPersistentState};
+    use super::{PersistentStateAccess, ProviderMessageSink, ScopedPersistentState};
     use crate::core::domain::data_source::data_source::value_objects::Id;
     use crate::core::domain::data_source::persistent_state::PersistentStateStore;
+    use crate::core::domain::data_source::provider_message::{
+        ProviderMessageSeverity, ProviderMessageStore,
+    };
     use crate::core::domain::error::DomainError;
 
     /// In-memory store that records the data source ids it is called with, so
@@ -296,5 +348,59 @@ mod tests {
 
         assert!(first_handle.load().unwrap().is_empty());
         assert_eq!(second_handle.load().unwrap().get("k").unwrap(), "second");
+    }
+
+    /// In-memory message store that records the data source ids and messages it
+    /// is called with, so tests can assert the scoped sink is bound to the right
+    /// id.
+    #[derive(Default)]
+    struct RecordingMessageStore {
+        records: Mutex<Vec<(Id, ProviderMessageSeverity, String)>>,
+    }
+
+    impl ProviderMessageStore for RecordingMessageStore {
+        fn record(
+            &self,
+            data_source_id: Id,
+            severity: ProviderMessageSeverity,
+            message: &str,
+        ) -> Result<(), DomainError> {
+            self.records
+                .lock()
+                .unwrap()
+                .push((data_source_id, severity, message.to_string()));
+            Ok(())
+        }
+
+        fn find_by_data_source(
+            &self,
+            _data_source_id: Id,
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider_message::ProviderMessage>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn provider_message_sink_scopes_records_to_the_bound_data_source_id() {
+        use super::ScopedProviderMessageSink;
+
+        let store = Arc::new(RecordingMessageStore::default());
+        let first = id(1);
+        let sink = ScopedProviderMessageSink::new(store.clone(), first);
+
+        sink.provider_event_occurred(ProviderMessageSeverity::Warning, "missing column")
+            .unwrap();
+        sink.provider_event_occurred(ProviderMessageSeverity::Info, "archive downloaded")
+            .unwrap();
+
+        let records = store.records.lock().unwrap();
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|(bound_id, _, _)| *bound_id == first));
+        assert_eq!(records[0].1, ProviderMessageSeverity::Warning);
+        assert_eq!(records[0].2, "missing column");
+        assert_eq!(records[1].1, ProviderMessageSeverity::Info);
     }
 }

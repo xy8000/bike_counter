@@ -18,6 +18,7 @@ pub mod dto;
 pub mod fixtures;
 pub mod health;
 pub mod measurements;
+pub mod messages;
 pub mod mocks;
 pub mod persistent_state;
 pub mod root;
@@ -34,12 +35,13 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::persistent_state_service::PersistentStateService;
+use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::sample_job_repository;
 use mocks::{
     MockDataSourceRepository, MockJobRepository, mock_health_service, sample_channel_service,
     sample_counting_station_service, sample_data_source_service, sample_job_service,
-    sample_measurement_service, sample_persistent_state_service,
+    sample_measurement_service, sample_persistent_state_service, sample_provider_message_service,
 };
 
 /// Wraps the router under test and provides request helpers.
@@ -96,6 +98,26 @@ impl TestApp {
             sample_job_service(sample_job_repository()),
             mock_health_service(HealthStatus::Up),
             persistent_state_service,
+            sample_provider_message_service(),
+        )
+        .router();
+        Self { router }
+    }
+
+    /// Builds a router with a custom provider-message service (used by the
+    /// messages endpoint tests).
+    pub fn with_provider_message_service(
+        provider_message_service: Arc<ProviderMessageService>,
+    ) -> Self {
+        let router = RestApiAdapter::new(
+            sample_counting_station_service(),
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(MockDataSourceRepository::default()),
+            sample_job_service(sample_job_repository()),
+            mock_health_service(HealthStatus::Up),
+            sample_persistent_state_service(),
+            provider_message_service,
         )
         .router();
         Self { router }
@@ -115,6 +137,7 @@ impl TestApp {
             sample_job_service(job_repository),
             health_service,
             sample_persistent_state_service(),
+            sample_provider_message_service(),
         )
         .router();
         Self { router }

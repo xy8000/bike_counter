@@ -13,6 +13,7 @@ use crate::adapter::driven::postgres_job_repository::PostgresJobRepository;
 use crate::adapter::driven::postgres_measurement_repository::PostgresMeasurementRepository;
 use crate::adapter::driven::postgres_persistent_state_repository::PostgresPersistentStateRepository;
 use crate::adapter::driven::postgres_pool::create_pool;
+use crate::adapter::driven::postgres_provider_message_repository::PostgresProviderMessageRepository;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::channel_service::ChannelService;
@@ -23,6 +24,7 @@ use crate::core::application::data_source_update_service::DataSourceUpdateServic
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
+use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
 use crate::core::domain::configuration::repository::ConfigurationRepository;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
@@ -66,6 +68,7 @@ fn main() {
     let data_source_repo = Arc::new(PostgresDataSourceRepository::new(&pool));
     let job_repo = Arc::new(PostgresJobRepository::new(&pool));
     let persistent_state_repo = Arc::new(PostgresPersistentStateRepository::new(&pool));
+    let provider_message_repo = Arc::new(PostgresProviderMessageRepository::new(&pool));
 
     // Opaque per-data-source persistent state, exposed through the core and
     // handed (scoped) to each provider at startup.
@@ -76,12 +79,14 @@ fn main() {
 
     // The domain decides what happens at startup: read the configuration, build
     // a provider per data source, sync the persisted data sources, attach a
-    // scoped persistent-state handle per provider and prepare health indicators.
+    // scoped persistent-state handle and a scoped provider-message sink per
+    // provider, and prepare health indicators.
     let startup_service = StartupService::new(
         configuration_repository,
         data_source_repo.clone(),
         Arc::new(DataProviderFactoryImpl),
         persistent_state_repo.clone(),
+        provider_message_repo.clone(),
     );
     let startup = match startup_service.run() {
         Ok(startup) => startup,
@@ -126,8 +131,12 @@ fn main() {
     let counting_station_service = Arc::new(CountingStationService::new(counting_station_repo));
     let channel_service = Arc::new(ChannelService::new(channel_repo));
     let measurement_service = Arc::new(MeasurementService::new(measurement_repo));
-    let data_source_service = Arc::new(DataSourceService::new(data_source_repo));
     let job_service = Arc::new(JobService::new(job_repo));
+    let provider_message_service = Arc::new(ProviderMessageService::new(
+        provider_message_repo.clone(),
+        data_source_repo.clone(),
+    ));
+    let data_source_service = Arc::new(DataSourceService::new(data_source_repo));
 
     // Initialize driving REST API adapter
     let rest_adapter = RestApiAdapter::new(
@@ -138,6 +147,7 @@ fn main() {
         job_service,
         health_service,
         persistent_state_service,
+        provider_message_service,
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));

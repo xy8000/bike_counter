@@ -11,7 +11,7 @@ use crate::adapter::driving::rest::dto::{
     CountingStationListDto, CountingStationQueryParams, DataSourceDto, DataSourceListDto,
     ErrorResponseDto, HealthDto, JobDto, JobListDto, JobQueryParams, MeasurementDto,
     MeasurementListDto, MeasurementQueryParams, PersistentStateDto, PersistentStateEntryDto,
-    PersistentStateValueDto,
+    PersistentStateValueDto, ProviderMessageListDto,
 };
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
@@ -19,6 +19,7 @@ use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
+use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
@@ -36,6 +37,7 @@ pub struct AppState {
     pub job_service: Arc<JobService>,
     pub health_service: Arc<HealthService>,
     pub persistent_state_service: Arc<PersistentStateService>,
+    pub provider_message_service: Arc<ProviderMessageService>,
 }
 
 /// Default `offset`/`limit` for the measurements endpoint and its hard cap.
@@ -315,6 +317,31 @@ pub async fn get_data_source_by_id(
         .await
         .map_err(map_domain_error)?;
     Ok(Json(DataSourceDto::from(data_source)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/data-sources/{id}/messages",
+    tag = "Data Sources",
+    params(
+        ("id" = Uuid, Path, description = "Data source UUID")
+    ),
+    responses(
+        (status = 200, description = "Provider messages for the data source, newest first", body = ProviderMessageListDto),
+        (status = 404, description = "Data source not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn list_provider_messages(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ProviderMessageListDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.provider_message_service.clone();
+    let data_source_id = data_source_vo::Id(id);
+    let messages = blocking(move || service.list(data_source_id))
+        .await
+        .map_err(map_domain_error)?;
+    Ok(Json(ProviderMessageListDto::new(id, messages)))
 }
 
 #[utoipa::path(

@@ -7,4 +7,5 @@ pub mod data_source_update_service;
 pub mod job_service;
 pub mod measurement_service;
 pub mod persistent_state_service;
+pub mod provider_message_service;
 pub mod startup_service;

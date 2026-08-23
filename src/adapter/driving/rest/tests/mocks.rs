@@ -16,6 +16,7 @@ use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
+use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository::ChannelRepository;
@@ -25,6 +26,9 @@ use crate::core::domain::counting_stations::repository::CountingStationRepositor
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
 use crate::core::domain::data_source::persistent_state::PersistentStateStore;
+use crate::core::domain::data_source::provider_message::{
+    ProviderMessage, ProviderMessageSeverity, ProviderMessageStore,
+};
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthService, HealthStatus, ServiceHealthIndicator};
@@ -443,4 +447,69 @@ pub fn sample_data_source_service(
 /// A [`JobService`] backed by the given job repository.
 pub fn sample_job_service(job_repository: MockJobRepository) -> Arc<JobService> {
     Arc::new(JobService::new(Arc::new(job_repository)))
+}
+
+/// In-memory provider message store standing in for the database. `record`
+/// generates the id and `occurred_at` locally, mirroring the database defaults.
+#[derive(Default)]
+pub struct MockProviderMessageStore {
+    messages: Mutex<Vec<ProviderMessage>>,
+}
+
+impl MockProviderMessageStore {
+    /// Seeds the store with pre-built messages (deterministic fixtures).
+    pub fn seed(&self, messages: Vec<ProviderMessage>) {
+        self.messages.lock().unwrap().extend(messages);
+    }
+}
+
+impl ProviderMessageStore for MockProviderMessageStore {
+    fn record(
+        &self,
+        data_source_id: data_source_vo::Id,
+        severity: ProviderMessageSeverity,
+        message: &str,
+    ) -> Result<(), DomainError> {
+        self.messages.lock().unwrap().push(ProviderMessage {
+            id: Uuid::new_v4(),
+            data_source_id,
+            severity,
+            message: message.to_string(),
+            occurred_at: Utc::now(),
+        });
+        Ok(())
+    }
+
+    fn find_by_data_source(
+        &self,
+        data_source_id: data_source_vo::Id,
+    ) -> Result<Vec<ProviderMessage>, DomainError> {
+        let mut messages: Vec<ProviderMessage> = self
+            .messages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|message| message.data_source_id == data_source_id)
+            .cloned()
+            .collect();
+        messages.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
+        Ok(messages)
+    }
+}
+
+/// A [`ProviderMessageService`] backed by an in-memory store and a data source
+/// repository containing the sample data source.
+pub fn sample_provider_message_service() -> Arc<ProviderMessageService> {
+    sample_provider_message_service_with(Arc::new(MockProviderMessageStore::default()))
+}
+
+/// A [`ProviderMessageService`] backed by the given message store and a data
+/// source repository containing the sample data source.
+pub fn sample_provider_message_service_with(
+    store: Arc<MockProviderMessageStore>,
+) -> Arc<ProviderMessageService> {
+    let data_source_repository = Arc::new(MockDataSourceRepository {
+        data_sources: vec![data_source_a()],
+    });
+    Arc::new(ProviderMessageService::new(store, data_source_repository))
 }

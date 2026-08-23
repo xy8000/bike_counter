@@ -68,6 +68,13 @@ async fn lists_persisted_data_sources() {
         munster["_links"]["persistent_state_entry"]["templated"],
         true
     );
+    assert_eq!(
+        munster["_links"]["messages"]["href"],
+        format!(
+            "/api/v1/data-sources/{}/messages",
+            DataSource::id_from_name("Münster")
+        )
+    );
 
     let list_links = body["_links"]
         .as_object()
@@ -125,6 +132,10 @@ async fn gets_data_source_by_id() {
         format!("/api/v1/data-sources/{id}/persistent_state/{{key}}")
     );
     assert_eq!(body["_links"]["persistent_state_entry"]["templated"], true);
+    assert_eq!(
+        body["_links"]["messages"]["href"],
+        format!("/api/v1/data-sources/{id}/messages")
+    );
 }
 
 #[tokio::test]
