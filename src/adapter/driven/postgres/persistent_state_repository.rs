@@ -4,7 +4,7 @@ use crate::core::domain::data_source::data_source::value_objects::Id;
 use crate::core::domain::data_source::persistent_state::PersistentStateStore;
 use crate::core::domain::error::DomainError;
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 pub struct PostgresPersistentStateRepository {
     pool: PgPool,
@@ -87,8 +87,8 @@ mod tests {
     use testcontainers_modules::postgres::Postgres;
 
     use super::PostgresPersistentStateRepository;
-    use crate::adapter::driven::postgres_data_source_repository::PostgresDataSourceRepository;
-    use crate::adapter::driven::postgres_pool::create_pool;
+    use crate::adapter::driven::postgres::PostgresDataSourceRepository;
+    use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id;

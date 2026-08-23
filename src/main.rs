@@ -5,15 +5,11 @@ use std::sync::Arc;
 
 use crate::adapter::driven::configuration_toml_adapter::ConfigurationTomlAdapter;
 use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
-use crate::adapter::driven::postgres_channel_repository::PostgresChannelRepository;
-use crate::adapter::driven::postgres_counting_station_repository::PostgresCountingStationRepository;
-use crate::adapter::driven::postgres_data_source_repository::PostgresDataSourceRepository;
-use crate::adapter::driven::postgres_health_check::PostgresHealthCheck;
-use crate::adapter::driven::postgres_job_repository::PostgresJobRepository;
-use crate::adapter::driven::postgres_measurement_repository::PostgresMeasurementRepository;
-use crate::adapter::driven::postgres_persistent_state_repository::PostgresPersistentStateRepository;
-use crate::adapter::driven::postgres_pool::create_pool;
-use crate::adapter::driven::postgres_provider_message_repository::PostgresProviderMessageRepository;
+use crate::adapter::driven::postgres::{
+    PostgresChannelRepository, PostgresCountingStationRepository, PostgresDataSourceRepository,
+    PostgresHealthCheck, PostgresJobRepository, PostgresMeasurementRepository,
+    PostgresPersistentStateRepository, PostgresProviderMessageRepository, create_pool,
+};
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::channel_service::ChannelService;

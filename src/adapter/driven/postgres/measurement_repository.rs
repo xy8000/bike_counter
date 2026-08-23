@@ -4,7 +4,7 @@ use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository::MeasurementRepository;
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 pub struct PostgresMeasurementRepository {
     pool: PgPool,
@@ -207,7 +207,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::PostgresMeasurementRepository;
-    use crate::adapter::driven::postgres_pool::create_pool;
+    use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::measurements::measurement::{Measurement, value_objects};
     use crate::core::domain::measurements::repository::MeasurementRepository;

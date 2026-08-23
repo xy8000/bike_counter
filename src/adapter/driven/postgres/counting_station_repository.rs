@@ -2,7 +2,7 @@ use crate::core::domain::counting_stations::counting_station::{CountingStation, 
 use crate::core::domain::counting_stations::repository::CountingStationRepository;
 use crate::core::domain::error::DomainError;
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 pub struct PostgresCountingStationRepository {
     pool: PgPool,

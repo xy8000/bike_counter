@@ -16,7 +16,7 @@ use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::jobs::repository::JobRepository;
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 const SELECT_COLUMNS: &str = "id, name, job_type, status, started_at, finished_at, \
                               failure_message, metadata, lifetime_until, max_lifetime_exceeded";
@@ -260,7 +260,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::PostgresJobRepository;
-    use crate::adapter::driven::postgres_pool::create_pool;
+    use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::jobs::job::{Job, JobStatus};
     use crate::core::domain::jobs::repository::JobRepository;

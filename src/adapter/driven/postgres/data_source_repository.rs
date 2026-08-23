@@ -4,7 +4,7 @@ use crate::core::domain::data_source::data_source::{DataSource, value_objects};
 use crate::core::domain::data_source::repository::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 pub struct PostgresDataSourceRepository {
     pool: PgPool,

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::adapter::driven::muenster_github_adapter::MuensterGithubAdapter;
+use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
 use crate::core::application::data_provider_factory::DataProviderFactory;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
@@ -32,7 +32,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::DataProviderFactoryImpl;
-    use crate::adapter::driven::muenster_github_adapter::MuensterGithubAdapter;
+    use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
     use crate::core::application::data_provider_factory::DataProviderFactory;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration,

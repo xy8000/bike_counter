@@ -2,7 +2,7 @@ use crate::core::domain::channels::channel::{Channel, value_objects};
 use crate::core::domain::channels::repository::ChannelRepository;
 use crate::core::domain::error::DomainError;
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 pub struct PostgresChannelRepository {
     pool: PgPool,

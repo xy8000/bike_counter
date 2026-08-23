@@ -2,7 +2,7 @@
 
 use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
-use super::postgres_pool::PgPool;
+use super::pool::PgPool;
 
 /// Checks PostgreSQL availability by running `SELECT 1` on a pooled
 /// connection. The pool's connection timeout bounds the probe, so a readiness
@@ -47,7 +47,7 @@ mod tests {
     use testcontainers_modules::postgres::Postgres;
 
     use super::PostgresHealthCheck;
-    use crate::adapter::driven::postgres_pool::create_pool;
+    use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
