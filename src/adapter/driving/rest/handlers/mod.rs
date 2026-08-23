@@ -51,10 +51,10 @@ pub struct AppState {
     pub provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
 }
 
-/// Default `offset`/`limit` for the measurements endpoint and its hard cap.
+/// Default `offset`/`limit` for the measurements endpoint. `limit` has no upper
+/// bound: when the client omits it, 5000 rows are returned.
 const DEFAULT_PAGE_OFFSET: usize = 0;
-const DEFAULT_PAGE_LIMIT: usize = 100;
-const MAX_PAGE_LIMIT: usize = 1000;
+const DEFAULT_PAGE_LIMIT: usize = 5000;
 
 fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) {
     match error {

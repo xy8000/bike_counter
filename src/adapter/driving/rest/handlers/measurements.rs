@@ -3,9 +3,7 @@ use axum::http::StatusCode;
 use axum::response::Json;
 use uuid::Uuid;
 
-use super::{
-    AppState, DEFAULT_PAGE_LIMIT, DEFAULT_PAGE_OFFSET, MAX_PAGE_LIMIT, blocking, map_domain_error,
-};
+use super::{AppState, DEFAULT_PAGE_LIMIT, DEFAULT_PAGE_OFFSET, blocking, map_domain_error};
 use crate::adapter::driving::rest::dto::{
     ErrorResponseDto, MeasurementDto, MeasurementListDto, MeasurementQueryParams, RawMeasurementDto,
 };
@@ -31,10 +29,7 @@ pub async fn list_measurements(
     let channel_id_filter = params.channel_id;
     let channel_id = channel_id_filter.map(measurement_vo::ChannelId);
     let offset = params.offset.unwrap_or(DEFAULT_PAGE_OFFSET);
-    let limit = params
-        .limit
-        .unwrap_or(DEFAULT_PAGE_LIMIT)
-        .min(MAX_PAGE_LIMIT);
+    let limit = params.limit.unwrap_or(DEFAULT_PAGE_LIMIT);
 
     let (measurements, has_more) = blocking(move || service.list(channel_id, offset, limit))
         .await
@@ -68,10 +63,7 @@ pub async fn list_measurements_raw(
     let service = state.measurement_service.clone();
     let channel_id = params.channel_id.map(measurement_vo::ChannelId);
     let offset = params.offset.unwrap_or(DEFAULT_PAGE_OFFSET);
-    let limit = params
-        .limit
-        .unwrap_or(DEFAULT_PAGE_LIMIT)
-        .min(MAX_PAGE_LIMIT);
+    let limit = params.limit.unwrap_or(DEFAULT_PAGE_LIMIT);
 
     let (measurements, _has_more) = blocking(move || service.list(channel_id, offset, limit))
         .await

@@ -121,7 +121,7 @@ Import time-batching + API pagination & filters (plans/import_timeframe_and_api_
 - [x] `MeasurementBatch.timeframe_limit_reached` + import loop pages while `batch_size_limit_reached || timeframe_limit_reached`
 - [x] Migration V5: dedupe on `(channel_id, timestamp)` + `UNIQUE` natural key
 - [x] Idempotent `save`/`save_batch` (`INSERT ... ON CONFLICT (channel_id, timestamp) DO NOTHING`)
-- [x] Measurements offset/limit pagination (repository `find_page`, service `list`, DTO links + `offset`/`limit`, handler clamp ≤ 1000)
+- [x] Measurements offset/limit pagination (repository `find_page`, service `list`, DTO links + `offset`/`limit`; handler defaults `limit` to 5000 with no upper bound)
 - [x] Name filters for counting-stations and channels (`find_filtered` + ILIKE + DTO/handler + query params)
 - [x] Tests: adapter windowed/gap/config, import-loop timeframe paging, REST pagination + name filters, Postgres pagination + natural-key idempotency
 - [x] Docs (README, ToDo, plans/import_timeframe_and_api_pagination_plan.md)

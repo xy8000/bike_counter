@@ -301,7 +301,7 @@ and `DELETE` to manage the opaque per-data-source provider state:
 - `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
 - `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}`
 - `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
-- `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` is capped at 1000 and defaults to 100) / `GET /api/v1/measurements/{id}`
+- `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` defaults to 5000 with no upper bound) / `GET /api/v1/measurements/{id}`
 - `GET /api/v1/measurements/raw` – lean bulk export: same `?channel_id=`, `?offset=`/`?limit=` parameters, but returns a bare JSON array of plain measurement objects (no HATEOAS links and no pagination envelope) for scraping large volumes
 
 Every resource includes a `_links` object (HAL-style) pointing to related

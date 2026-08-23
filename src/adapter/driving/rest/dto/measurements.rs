@@ -122,6 +122,9 @@ impl MeasurementListDto {
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct MeasurementQueryParams {
     pub channel_id: Option<Uuid>,
+    /// Zero-based offset into the result set (newest first).
     pub offset: Option<usize>,
+    /// Maximum number of measurements to return. Defaults to 5000; there is no
+    /// upper bound, so explicitly supplied values above 5000 are honored.
     pub limit: Option<usize>,
 }

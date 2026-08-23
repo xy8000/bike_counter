@@ -14,6 +14,7 @@ this repository. **Read this file before making any change.**
 3. **Run the gates** before finishing (see below) — all must pass.
 4. **Update the docs** the change touches ([`README.md`](README.md),
    [`ToDo.md`](ToDo.md), and the plan file itself).
+5. Do not risk wasting tokens for commands. Use tail / head when possible
 
 ## Required gates (run before finishing any change)
 

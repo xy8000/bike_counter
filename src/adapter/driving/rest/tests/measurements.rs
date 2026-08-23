@@ -29,10 +29,10 @@ async fn list_returns_all_measurements_with_links() {
     );
 
     assert_eq!(body["offset"], 0);
-    assert_eq!(body["limit"], 100);
+    assert_eq!(body["limit"], 5000);
     assert_eq!(
         body["_links"]["self"]["href"],
-        "/api/v1/measurements?offset=0&limit=100"
+        "/api/v1/measurements?offset=0&limit=5000"
     );
 }
 
@@ -76,8 +76,25 @@ async fn list_filters_by_channel_id() {
     // The self link must reflect the applied filter plus the default page.
     assert_eq!(
         body["_links"]["self"]["href"],
-        format!("/api/v1/measurements?channel_id={CHANNEL_ID_A}&offset=0&limit=100")
+        format!("/api/v1/measurements?channel_id={CHANNEL_ID_A}&offset=0&limit=5000")
     );
+}
+
+#[tokio::test]
+async fn list_accepts_limit_above_default_without_clamping() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api/v1/measurements?limit=6000").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["limit"], 6000);
+    let items = body["items"].as_array().expect("items should be an array");
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        body["_links"]["self"]["href"],
+        "/api/v1/measurements?offset=0&limit=6000"
+    );
+    // All rows fit within the requested (uncapped) limit, so no next link.
+    assert!(body["_links"].get("next").is_none());
 }
 
 #[tokio::test]
