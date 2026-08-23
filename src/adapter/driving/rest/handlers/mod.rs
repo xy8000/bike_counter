@@ -100,3 +100,25 @@ where
         DomainError::Database(format!("Blocking task failed: {}", join_error))
     })?
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use super::map_domain_error;
+    use crate::core::domain::error::DomainError;
+
+    #[test]
+    fn maps_database_errors_to_internal_server_error() {
+        let (status, body) = map_domain_error(DomainError::Database("boom".to_string()));
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.0.error.contains("database error"));
+    }
+
+    #[test]
+    fn maps_provider_errors_to_internal_server_error() {
+        let (status, body) = map_domain_error(DomainError::Provider("nope".to_string()));
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.0.error.contains("Provider error"));
+    }
+}

@@ -342,6 +342,8 @@ make test       # all tests (repository tests spin up a Postgres test container 
 make test-rest  # only the REST endpoint tests (in-memory mocks, no database required)
 make test-e2e   # end-to-end smoke test against the real docker-compose stack (requires Docker)
 make test-all   # make check + make test
+make coverage   # coverage gate: overall (production) >= 80% AND core (src/core) >= 95% via cargo-llvm-cov
+make coverage-open  # open the HTML coverage report in a browser
 ```
 
 Under the hood the scripts are:
@@ -353,6 +355,19 @@ Under the hood the scripts are:
   jobs + data-sources APIs return `200`, verifies a `data_source_update` job with
   `lifetime_until` was recorded, and checks `jobs.lifetime_until TIMESTAMPTZ NOT
   NULL` and `data_sources.last_updated_at` via `psql`, then tears everything down.
+- [`scripts/coverage.sh`](scripts/coverage.sh) – coverage gate: runs the full
+  test suite under `cargo-llvm-cov` instrumentation, writes the standard lcov +
+  HTML report under `target/coverage/`, and fails non-zero when **overall
+  production** line coverage drops below `COVERAGE_THRESHOLD` (default 80%) or
+  when the **core** (`src/core/`) drops below `CORE_COVERAGE_THRESHOLD` (default
+  95%). Both thresholds count production code only — `#[cfg(test)]` scaffolding
+  and standalone test files are excluded — so the gate's percentages are printed
+  to the terminal and differ from the totals in the standard HTML report (which
+  still includes test scaffolding). The core is expected to be unit-tested in
+  isolation with in-memory mocks, hence the higher bar.
 
-`fmt-test.sh` is intended to be wired into CI; `docker-compose-test.sh` requires
-Docker and `docker compose` v2.
+`fmt-test.sh` and `coverage.sh` are intended to be wired into CI;
+`docker-compose-test.sh` requires Docker and `docker compose` v2. Install the
+coverage tooling once (`rustup component add llvm-tools-preview` and
+`cargo install cargo-llvm-cov`); the full coverage run needs Docker for the
+Postgres repository tests, like `make test`.

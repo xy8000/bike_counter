@@ -1,12 +1,14 @@
 //! Structural unit checks for the HATEOAS DTOs.
 
 use crate::adapter::driving::rest::dto::{
-    ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto, LinkDto,
-    MeasurementDto, MeasurementListDto,
+    ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto, JobDto, JobListDto,
+    JobStatusDto, LinkDto, MeasurementDto, MeasurementListDto,
 };
 use crate::adapter::driving::rest::tests::fixtures::{
-    CHANNEL_ID_A, MEASUREMENT_ID_A, STATION_ID_A, channel_a, measurement_a, station_a,
+    CHANNEL_ID_A, JOB_ID_A, MEASUREMENT_ID_A, STATION_ID_A, channel_a, job_a, job_b, measurement_a,
+    station_a,
 };
+use crate::core::domain::jobs::job::JobStatus;
 
 #[test]
 fn counting_station_dto_contains_expected_links() {
@@ -92,4 +94,44 @@ fn templated_link_serializes_with_templated_flag() {
         "/api/v1/data-sources/{id}/persistent_state/{key}"
     );
     assert_eq!(json["templated"], true);
+}
+
+#[test]
+fn job_status_dto_maps_all_domain_statuses() {
+    assert_eq!(
+        JobStatusDto::from(JobStatus::Pending),
+        JobStatusDto::Pending
+    );
+    assert_eq!(
+        JobStatusDto::from(JobStatus::Running),
+        JobStatusDto::Running
+    );
+    assert_eq!(
+        JobStatusDto::from(JobStatus::Finished),
+        JobStatusDto::Finished
+    );
+    assert_eq!(JobStatusDto::from(JobStatus::Failed), JobStatusDto::Failed);
+}
+
+#[test]
+fn job_dto_maps_fields_and_links() {
+    let dto = JobDto::from(job_a());
+
+    assert_eq!(dto.id, JOB_ID_A);
+    assert_eq!(dto.job_type, "data_source_update");
+    assert_eq!(dto.status, JobStatusDto::Finished);
+    assert_eq!(dto.links["self"].href, format!("/api/v1/jobs/{JOB_ID_A}"));
+    assert_eq!(dto.links["collection"].href, "/api/v1/jobs");
+    assert_eq!(dto.links["root"].href, "/api/v1");
+}
+
+#[test]
+fn job_list_dto_builds_items_and_links() {
+    let list = JobListDto::new(vec![job_a(), job_b()]);
+
+    assert_eq!(list.items.len(), 2);
+    assert_eq!(list.items[0].status, JobStatusDto::Finished);
+    assert_eq!(list.items[1].status, JobStatusDto::Running);
+    assert_eq!(list.links["self"].href, "/api/v1/jobs");
+    assert_eq!(list.links["root"].href, "/api/v1");
 }

@@ -17,6 +17,7 @@ pub mod data_sources;
 pub mod dto;
 pub mod fixtures;
 pub mod health;
+pub mod jobs;
 pub mod measurements;
 pub mod messages;
 pub mod mocks;

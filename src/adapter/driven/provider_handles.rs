@@ -135,15 +135,17 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    use super::{ScopedPersistentState, ScopedProviderMessageSink};
+    use super::{ProviderHandles, ScopedPersistentState, ScopedProviderMessageSink};
     use crate::core::domain::data_source::data_source::value_objects::Id;
-    use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
+    use crate::core::domain::data_source::persistent_state_port::{
+        PersistentStateHandleFactory, PersistentStateStore,
+    };
     use crate::core::domain::data_source::provider_message::{
         ProviderMessage, ProviderMessageSeverity,
     };
     use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
     use crate::core::domain::data_source::provider_port::{
-        PersistentStateAccess, ProviderMessageSink,
+        PersistentStateAccess, ProviderMessageSink, ProviderMessageSinkFactory,
     };
     use crate::core::domain::error::DomainError;
 
@@ -279,5 +281,32 @@ mod tests {
         assert_eq!(records[0].1, ProviderMessageSeverity::Warning);
         assert_eq!(records[0].2, "missing column");
         assert_eq!(records[1].1, ProviderMessageSeverity::Info);
+    }
+
+    #[test]
+    fn provider_handles_factories_scope_to_the_data_source_id() {
+        let state_store = Arc::new(RecordingStore::default());
+        let message_store = Arc::new(RecordingMessageStore::default());
+        let handles = ProviderHandles::new(state_store.clone(), message_store.clone());
+        let first = id(1);
+
+        let state = PersistentStateHandleFactory::scoped(&handles, first);
+        state.store("k", "v").unwrap();
+        assert_eq!(state.load().unwrap().get("k").unwrap(), "v");
+        assert!(
+            state_store
+                .touched
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|t| *t == first)
+        );
+
+        let sink = ProviderMessageSinkFactory::scoped(&handles, first);
+        sink.provider_event_occurred(ProviderMessageSeverity::Warning, "hello")
+            .unwrap();
+        let records = message_store.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, first);
     }
 }

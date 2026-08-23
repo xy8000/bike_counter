@@ -1107,4 +1107,111 @@ mod tests {
             "second page resumes from the last batch datetime"
         );
     }
+
+    #[test]
+    fn update_data_source_rejects_channel_referencing_unknown_station() {
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-99")],
+            measurement_pages: Mutex::new(VecDeque::new()),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        let error = service
+            .update_data_source(&runtime(provider.clone()), None, |_| Ok(()))
+            .expect_err("a channel referencing an unknown station must fail");
+        assert!(matches!(error, DomainError::InvalidQuery(_)));
+    }
+
+    #[test]
+    fn import_applies_the_to_bound_to_measurement_queries() {
+        let t1 = timestamp("2024-01-01T10:00:00Z");
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
+                measurements: vec![measurement_record(1, t1)],
+                last_measurement_datetime: Some(t1),
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            }])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime(provider.clone())],
+        );
+
+        let to = timestamp("2024-01-31T00:00:00Z");
+        let summary = service
+            .import(None, Some(to))
+            .expect("import should succeed");
+        assert_eq!(summary.measurements, 1);
+
+        let queries = provider.recorded_queries.lock().unwrap();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].to, Some(to), "query must carry the `to` bound");
+    }
+
+    #[test]
+    fn update_data_source_stops_when_batch_has_no_last_datetime() {
+        let t1 = timestamp("2024-01-01T10:00:00Z");
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
+                measurements: vec![measurement_record(1, t1)],
+                last_measurement_datetime: None,
+                batch_size_limit_reached: true,
+                timeframe_limit_reached: false,
+            }])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        let update = service
+            .update_data_source(&runtime(provider.clone()), None, |_| Ok(()))
+            .expect("update should succeed");
+        assert_eq!(update.processed_measurements, 1);
+        assert_eq!(update.last_measurement_timestamp, None);
+        assert_eq!(
+            provider.recorded_queries.lock().unwrap().len(),
+            1,
+            "a missing last datetime must stop paging"
+        );
+    }
 }

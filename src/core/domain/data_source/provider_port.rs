@@ -194,3 +194,129 @@ pub trait ProviderMessageSink: Send + Sync {
 pub trait ProviderMessageSinkFactory: Send + Sync {
     fn scoped(&self, data_source_id: Id) -> Arc<dyn ProviderMessageSink + Send + Sync>;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use chrono::{TimeZone, Utc};
+    use uuid::Uuid;
+
+    use super::{MeasurementQuery, ProviderError};
+    use crate::core::domain::channels::channel::Channel;
+    use crate::core::domain::channels::channel::value_objects::{
+        CountingStationId, Description, Id, Name,
+    };
+    use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+    use crate::core::domain::data_source::provider_port::{
+        ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch,
+    };
+    use crate::core::domain::error::DomainError;
+    use crate::core::domain::health::HealthStatus;
+
+    fn channel() -> Channel {
+        Channel {
+            id: Id(Uuid::from_u128(1)),
+            counting_station_id: CountingStationId(Uuid::from_u128(2)),
+            name: Name("channel".to_string()),
+            description: Description("desc".to_string()),
+            external_datasource_id: None,
+        }
+    }
+
+    #[test]
+    fn provider_error_converts_to_domain_error() {
+        let error: DomainError = ProviderError::Unreachable("nope".to_string()).into();
+        assert!(matches!(error, DomainError::Provider(_)));
+        assert!(format!("{error:?}").contains("Unreachable"));
+    }
+
+    #[test]
+    fn domain_error_converts_to_provider_error() {
+        let error: ProviderError = DomainError::Database("boom".to_string()).into();
+        assert!(matches!(error, ProviderError::Storage(_)));
+    }
+
+    #[test]
+    fn measurement_query_builders_set_time_bounds() {
+        let from = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
+        let query = MeasurementQuery::for_channel(channel(), 10)
+            .with_start(from)
+            .with_end(to);
+        assert_eq!(query.from, Some(from));
+        assert_eq!(query.to, Some(to));
+        assert_eq!(query.max_batch_size, 10);
+    }
+
+    struct NoStateProvider;
+
+    impl DataProvider for NoStateProvider {
+        fn check_health(&self) -> HealthStatus {
+            HealthStatus::Up
+        }
+
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
+            Ok(vec![])
+        }
+
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
+            Ok(vec![])
+        }
+
+        fn get_measurements(
+            &self,
+            _query: MeasurementQuery,
+        ) -> Result<MeasurementBatch, ProviderError> {
+            Ok(MeasurementBatch {
+                measurements: vec![],
+                last_measurement_datetime: None,
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            })
+        }
+
+        fn max_measurement_batch_size(&self) -> usize {
+            10
+        }
+    }
+
+    struct NoopState;
+    struct NoopSink;
+
+    impl super::PersistentStateAccess for NoopState {
+        fn load(&self) -> Result<HashMap<String, String>, ProviderError> {
+            Ok(HashMap::new())
+        }
+
+        fn store(&self, _key: &str, _value: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn delete(&self, _key: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    impl super::ProviderMessageSink for NoopSink {
+        fn provider_event_occurred(
+            &self,
+            _severity: ProviderMessageSeverity,
+            _message: &str,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn default_attach_handles_are_no_ops() {
+        let provider = NoStateProvider;
+        provider.attach_persistent_state(Arc::new(NoopState));
+        provider.attach_provider_messages(Arc::new(NoopSink));
+    }
+}

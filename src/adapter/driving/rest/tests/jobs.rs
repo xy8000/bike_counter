@@ -4,12 +4,10 @@ use axum::http::StatusCode;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::adapter::driving::rest::tests::assert_not_found;
-use crate::adapter::driving::rest::tests::fixtures::{
-    job_a, job_b, sample_job_repository, JOB_ID_A, UNKNOWN_ID,
-};
-use crate::adapter::driving::rest::tests::mocks::MockJobRepository;
 use crate::adapter::driving::rest::tests::TestApp;
+use crate::adapter::driving::rest::tests::assert_not_found;
+use crate::adapter::driving::rest::tests::fixtures::{JOB_ID_A, UNKNOWN_ID, job_a, job_b};
+use crate::adapter::driving::rest::tests::mocks::MockJobRepository;
 use crate::core::domain::jobs::job::{Job, JobStatus};
 
 /// A FAILED job of another type used to exercise the query filters.
@@ -63,7 +61,9 @@ async fn returns_empty_list_when_no_jobs_exist() {
 async fn filters_jobs_by_job_type_and_status() {
     let app = TestApp::with_jobs(MockJobRepository::new(vec![job_a(), job_b(), report_job()]));
 
-    let (_, by_type) = app.get_json("/api/v1/jobs?job_type=data_source_update").await;
+    let (_, by_type) = app
+        .get_json("/api/v1/jobs?job_type=data_source_update")
+        .await;
     assert_eq!(by_type["items"].as_array().unwrap().len(), 2);
 
     let (_, running) = app.get_json("/api/v1/jobs?status=RUNNING").await;
@@ -131,7 +131,9 @@ async fn openapi_document_contains_jobs_paths_and_schemas() {
     let (status, body) = app.get_json("/api-docs/openapi.json").await;
 
     assert_eq!(status, StatusCode::OK);
-    let paths = body["paths"].as_object().expect("paths should be an object");
+    let paths = body["paths"]
+        .as_object()
+        .expect("paths should be an object");
     assert!(
         paths.contains_key("/api/v1/jobs"),
         "OpenAPI document should contain /api/v1/jobs"

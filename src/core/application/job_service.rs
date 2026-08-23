@@ -61,6 +61,7 @@ mod tests {
     use crate::core::domain::error::DomainError;
     use crate::core::domain::jobs::job::{Job, JobStatus};
     use crate::core::domain::jobs::repository_port::JobRepository;
+    use crate::core::domain::jobs::service_port::JobServicePort;
 
     struct MemoryJobRepository {
         jobs: Vec<Job>,
@@ -200,5 +201,16 @@ mod tests {
             service().find_by_id(Uuid::from_u128(0x99)),
             Err(DomainError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn port_trait_delegates_to_the_service() {
+        let service = service();
+        let port: &dyn JobServicePort = &service;
+        assert_eq!(port.list(None, None).unwrap().len(), 3);
+        assert_eq!(
+            port.find_by_id(Uuid::from_u128(0x31)).unwrap().job_type,
+            "data_source_update"
+        );
     }
 }

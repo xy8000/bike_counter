@@ -276,6 +276,17 @@ mod tests {
     }
 
     #[test]
+    fn exposes_the_full_provider_var_map() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://example.com".to_string());
+        let provider = DataProviderConfiguration::new("github_zip".to_string(), vars).unwrap();
+        assert_eq!(
+            provider.vars(),
+            &HashMap::from([("url".to_string(), "https://example.com".to_string())])
+        );
+    }
+
+    #[test]
     fn rejects_duplicate_data_source_names() {
         let data_sources = vec![
             DataSourceConfiguration::new("Münster".to_string(), provider_config("type")).unwrap(),

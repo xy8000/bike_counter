@@ -194,6 +194,12 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn config_error_converts_to_startup_error() {
+        let error = StartupError::from(ConfigError::EmptyValue("db.port"));
+        assert!(matches!(error, StartupError::Configuration(_)));
+    }
+
     struct MockConfigurationRepository {
         configuration: Configuration,
     }
