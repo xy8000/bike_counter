@@ -72,6 +72,7 @@ mod tests {
                 measurements: vec![],
                 last_measurement_datetime: None,
                 batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
             })
         }
 

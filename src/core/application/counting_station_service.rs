@@ -16,9 +16,10 @@ impl CountingStationService {
         Self { repository }
     }
 
-    /// Lists all counting stations.
-    pub fn list(&self) -> Result<Vec<CountingStation>, DomainError> {
-        self.repository.find_all()
+    /// Lists counting stations, optionally filtered by a case-insensitive
+    /// name substring.
+    pub fn list(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+        self.repository.find_filtered(name)
     }
 
     /// Returns a single counting station; `DomainError::NotFound` if unknown.
@@ -66,6 +67,18 @@ mod tests {
         ) -> Result<Option<CountingStation>, DomainError> {
             Ok(None)
         }
+
+        fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+            Ok(match name {
+                Some(name) => self
+                    .stations
+                    .iter()
+                    .filter(|s| s.name.0.to_lowercase().contains(&name.to_lowercase()))
+                    .cloned()
+                    .collect(),
+                None => self.stations.clone(),
+            })
+        }
     }
 
     fn station(id: Uuid, name: &str) -> CountingStation {
@@ -89,8 +102,15 @@ mod tests {
 
     #[test]
     fn list_returns_all_stations() {
-        let stations = service().list().unwrap();
+        let stations = service().list(None).unwrap();
         assert_eq!(stations.len(), 2);
+    }
+
+    #[test]
+    fn list_filters_by_case_insensitive_name_substring() {
+        let stations = service().list(Some("a")).unwrap();
+        assert_eq!(stations.len(), 1);
+        assert_eq!(stations[0].name.0, "A");
     }
 
     #[test]

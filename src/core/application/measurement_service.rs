@@ -16,15 +16,19 @@ impl MeasurementService {
         Self { repository }
     }
 
-    /// Lists measurements, optionally filtered by channel.
+    /// Lists measurements, optionally filtered by channel, using `offset`/`limit`
+    /// pagination (newest first). Returns the page and whether more rows follow.
     pub fn list(
         &self,
         channel_id: Option<measurement_vo::ChannelId>,
-    ) -> Result<Vec<Measurement>, DomainError> {
-        match channel_id {
-            Some(channel_id) => self.repository.find_by_channel_id(channel_id),
-            None => self.repository.find_all(),
-        }
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<Measurement>, bool), DomainError> {
+        // Fetch one extra row so `has_more` can be computed without a second query.
+        let rows = self.repository.find_page(channel_id, offset, limit + 1)?;
+        let has_more = rows.len() > limit;
+        let measurements = rows.into_iter().take(limit).collect();
+        Ok((measurements, has_more))
     }
 
     /// Returns a single measurement; `DomainError::NotFound` if unknown.
@@ -82,6 +86,22 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        fn find_page(
+            &self,
+            channel_id: Option<measurement_vo::ChannelId>,
+            offset: usize,
+            limit: usize,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            let mut measurements: Vec<Measurement> = self
+                .measurements
+                .iter()
+                .filter(|measurement| channel_id.is_none_or(|id| measurement.channel_id.0 == id.0))
+                .cloned()
+                .collect();
+            measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
+            Ok(measurements.into_iter().skip(offset).take(limit).collect())
+        }
     }
 
     fn measurement(id: Uuid, channel_id: Uuid, value: i64) -> Measurement {
@@ -104,17 +124,36 @@ mod tests {
 
     #[test]
     fn list_without_filter_returns_all_measurements() {
-        let measurements = service().list(None).unwrap();
+        let (measurements, has_more) = service().list(None, 0, 100).unwrap();
         assert_eq!(measurements.len(), 2);
+        assert!(!has_more);
     }
 
     #[test]
     fn list_with_channel_filter_returns_only_matching_measurements() {
-        let measurements = service()
-            .list(Some(measurement_vo::ChannelId(Uuid::from_u128(0x11))))
+        let (measurements, _) = service()
+            .list(
+                Some(measurement_vo::ChannelId(Uuid::from_u128(0x11))),
+                0,
+                100,
+            )
             .unwrap();
         assert_eq!(measurements.len(), 1);
         assert_eq!(measurements[0].value.0, 1);
+    }
+
+    #[test]
+    fn list_respects_offset_and_limit_and_reports_has_more() {
+        let (first, has_more) = service().list(None, 0, 1).unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(
+            has_more,
+            "one extra row was fetched to detect the next page"
+        );
+
+        let (second, has_more) = service().list(None, 1, 1).unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(!has_more);
     }
 
     #[test]

@@ -110,6 +110,10 @@ pub struct MeasurementBatch {
     pub last_measurement_datetime: Option<DateTime<Utc>>,
     /// `true` when the batch-size limit was reached and more data may remain.
     pub batch_size_limit_reached: bool,
+    /// `true` when the provider's time window (e.g. 7 days) was exhausted while
+    /// more data exists beyond it. The core keeps paging while either limit flag
+    /// is set.
+    pub timeframe_limit_reached: bool,
 }
 
 /// Serves all entities of an external data source.

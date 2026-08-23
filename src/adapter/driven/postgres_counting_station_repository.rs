@@ -98,4 +98,37 @@ impl CountingStationRepository for PostgresCountingStationRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(row.as_ref().map(Self::map_row))
     }
+
+    fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = match name {
+            Some(name) => client
+                .query(
+                    "SELECT id, name, description, external_datasource_id, data_source_id
+                     FROM counting_stations WHERE name ILIKE $1 ORDER BY name ASC",
+                    &[&format!("%{}%", escape_like(name))],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?,
+            None => client
+                .query(
+                    "SELECT id, name, description, external_datasource_id, data_source_id
+                     FROM counting_stations ORDER BY name ASC",
+                    &[],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?,
+        };
+        Ok(rows.iter().map(Self::map_row).collect())
+    }
+}
+
+/// Escapes `LIKE`/`ILIKE` wildcards in a user-supplied substring so it is
+/// matched literally.
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }

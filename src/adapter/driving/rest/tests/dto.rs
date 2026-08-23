@@ -60,15 +60,15 @@ fn list_dtos_build_consistent_self_links() {
     let station_filter = Some(STATION_ID_A);
 
     assert_eq!(
-        ChannelListDto::new(vec![], station_filter).links["self"].href,
+        ChannelListDto::new(vec![], station_filter, None).links["self"].href,
         format!("/api/v1/channels?counting_station_id={STATION_ID_A}")
     );
     assert_eq!(
-        MeasurementListDto::new(vec![], station_filter).links["self"].href,
-        format!("/api/v1/measurements?channel_id={STATION_ID_A}")
+        MeasurementListDto::new(vec![], station_filter, 0, 100, false).links["self"].href,
+        format!("/api/v1/measurements?channel_id={STATION_ID_A}&offset=0&limit=100")
     );
     assert_eq!(
-        CountingStationListDto::new(vec![]).links["self"].href,
+        CountingStationListDto::new(vec![], None).links["self"].href,
         "/api/v1/counting-stations"
     );
 }

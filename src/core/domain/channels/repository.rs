@@ -13,4 +13,12 @@ pub trait ChannelRepository {
         &self,
         external_id: value_objects::ExternalDatasourceId,
     ) -> Result<Option<Channel>, DomainError>;
+
+    /// Lists channels, optionally filtered by counting station and/or a
+    /// case-insensitive name substring.
+    fn find_filtered(
+        &self,
+        counting_station_id: Option<value_objects::CountingStationId>,
+        name: Option<&str>,
+    ) -> Result<Vec<Channel>, DomainError>;
 }

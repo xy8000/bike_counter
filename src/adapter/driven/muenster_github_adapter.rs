@@ -13,7 +13,7 @@ use std::net::TcpStream;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
 use chrono_tz::Tz;
 use uuid::Uuid;
@@ -28,6 +28,8 @@ use crate::core::domain::health::HealthStatus;
 
 const PROVIDER_TYPE: &str = "münster_opendata_github_provider";
 const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 500;
+/// Default import time window per provider call: 7 days, in hours.
+const DEFAULT_MAX_MEASUREMENT_TIMEFRAME_HOURS: u64 = 168;
 const DEFAULT_CACHE_DURATION_SECS: u64 = 300;
 
 /// Persistent-state keys owned by this provider.
@@ -44,9 +46,6 @@ const SITE_INDEX_FILE: &str = "site_min.json";
 
 /// Timezone the raw CSVs are written in.
 const TIMEZONE: Tz = Berlin;
-
-/// Max number of parsed channel series kept in the in-memory LRU.
-const SERIES_CACHE_CAPACITY: usize = 4;
 
 // ---------------------------------------------------------------------------
 // HTTP abstraction (so cache tiers are testable without a network).
@@ -131,6 +130,9 @@ struct ArchiveIndex {
 pub struct MuensterGithubAdapter {
     url: String,
     max_measurement_batch_size: usize,
+    /// Import time window per page; bounds how much history a single provider
+    /// call reads regardless of the row-count batch size.
+    max_measurement_timeframe: Duration,
     cache_duration: u64,
     fetcher: Arc<dyn ArchiveFetcher>,
     /// Scoped persistent-state handle, attached by `StartupService` after the
@@ -140,8 +142,6 @@ pub struct MuensterGithubAdapter {
     refresh_lock: Mutex<()>,
     /// In-memory index of the currently usable archive.
     index: Mutex<Option<Arc<ArchiveIndex>>>,
-    /// Small LRU of parsed measurement series keyed by channel external id.
-    series_cache: Mutex<Vec<(String, Vec<MeasurementRecord>)>>,
 }
 
 impl MuensterGithubAdapter {
@@ -156,8 +156,9 @@ impl MuensterGithubAdapter {
     /// later via [`DataProvider::attach_persistent_state`].
     ///
     /// Required var: `url`. Optional vars: `max_measurement_batch_size`,
-    /// `cache_duration` (seconds, default `300`). A missing/invalid value is a
-    /// configuration error (blocks startup).
+    /// `max_measurement_timeframe_hours` (hours, default `168`), `cache_duration`
+    /// (seconds, default `300`). A missing/invalid value is a configuration
+    /// error (blocks startup).
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
         Self::with_fetcher(config, Arc::new(HttpFetcher))
     }
@@ -192,21 +193,35 @@ impl MuensterGithubAdapter {
             None => DEFAULT_CACHE_DURATION_SECS,
         };
 
+        let timeframe_hours = match config.provider().var("max_measurement_timeframe_hours") {
+            Some(raw) => raw.parse::<u64>().map_err(|_| {
+                ConfigError::InvalidFormat(format!(
+                    "{PROVIDER_TYPE}: var 'max_measurement_timeframe_hours' is not a valid number"
+                ))
+            })?,
+            None => DEFAULT_MAX_MEASUREMENT_TIMEFRAME_HOURS,
+        };
+
         Ok(Self {
             url,
             max_measurement_batch_size,
+            max_measurement_timeframe: Duration::hours(timeframe_hours as i64),
             cache_duration,
             fetcher,
             state: Mutex::new(None),
             refresh_lock: Mutex::new(()),
             index: Mutex::new(None),
-            series_cache: Mutex::new(Vec::new()),
         })
     }
 
     /// The configured cache window in seconds.
     pub fn cache_duration(&self) -> u64 {
         self.cache_duration
+    }
+
+    /// The configured import time window in hours (test-only read path).
+    pub fn max_measurement_timeframe_hours(&self) -> u64 {
+        self.max_measurement_timeframe.num_hours() as u64
     }
 
     /// The attached persistent-state handle, if any (test-only accessor).
@@ -419,29 +434,28 @@ impl MuensterGithubAdapter {
         })?;
         let (stations, channels) = parse_site_index(&site_json)?;
 
-        // Map channel external id -> monthly CSVs by scanning every header once.
+        // Map each channel's external id -> the sorted monthly CSVs of its
+        // station. All channels of a station share the station directory's
+        // monthly files, so no CSV header reads are needed.
         let mut channel_csvs: HashMap<String, Vec<PathBuf>> = HashMap::new();
-        for station_entry in fs::read_dir(&root)
-            .map_err(|e| ProviderError::InvalidData(format!("cannot list archive: {e}")))?
-        {
-            let station_entry =
-                station_entry.map_err(|e| ProviderError::InvalidData(format!("{e}")))?;
-            if !station_entry.path().is_dir() {
-                continue;
-            }
-            for month_entry in fs::read_dir(station_entry.path())
-                .map_err(|e| ProviderError::InvalidData(format!("{e}")))?
-            {
-                let month_entry =
-                    month_entry.map_err(|e| ProviderError::InvalidData(format!("{e}")))?;
-                let csv_path = month_entry.path();
-                if csv_path.extension().and_then(|e| e.to_str()) != Some("csv") {
+        for channel in &channels {
+            let station_dir = root.join(&channel.counting_station_external_id);
+            let mut csvs = Vec::new();
+            let entries = match fs::read_dir(&station_dir) {
+                Ok(entries) => entries,
+                Err(_) => continue, // station folder missing: no files for it
+            };
+            for entry in entries {
+                let Ok(entry) = entry else {
                     continue;
-                }
-                for id in read_csv_channel_ids(&csv_path)? {
-                    channel_csvs.entry(id).or_default().push(csv_path.clone());
+                };
+                let csv_path = entry.path();
+                if csv_path.extension().and_then(|e| e.to_str()) == Some("csv") {
+                    csvs.push(csv_path);
                 }
             }
+            csvs.sort();
+            channel_csvs.insert(channel.external_id.clone(), csvs);
         }
 
         Ok(Arc::new(ArchiveIndex {
@@ -454,26 +468,60 @@ impl MuensterGithubAdapter {
 
     // -- measurement serving -------------------------------------------------
 
-    /// Loads (and caches) the full, sorted measurement series for a channel.
-    fn series_for(
+    /// First measurement timestamp of the channel across all its monthly files.
+    /// Used to anchor the first window when no page cursor (`from`) is given.
+    fn earliest_timestamp(
+        &self,
+        csvs: &[PathBuf],
+        channel_external_id: &str,
+    ) -> Result<Option<DateTime<Utc>>, ProviderError> {
+        for csv in csvs {
+            let rows = parse_measurement_csv(csv, channel_external_id)?;
+            if let Some(first) = rows.into_iter().min_by_key(|record| record.timestamp) {
+                return Ok(Some(first.timestamp));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Parses only the monthly files overlapping `(window_start, window_end]`,
+    /// returning the in-window records (ascending) and whether data exists
+    /// beyond `window_end` (a later monthly file, or later rows in the
+    /// overlapping files).
+    fn windowed_series(
         &self,
         channel_external_id: &str,
         csvs: &[PathBuf],
-    ) -> Result<Vec<MeasurementRecord>, ProviderError> {
-        let mut cache = self.series_cache.lock().unwrap();
-        if let Some((_, series)) = cache.iter().find(|(id, _)| id == channel_external_id) {
-            return Ok(series.clone());
-        }
+        window_start: DateTime<Utc>,
+        window_end: DateTime<Utc>,
+    ) -> Result<(Vec<MeasurementRecord>, bool), ProviderError> {
+        let start_date = window_start.date_naive();
+        let end_date = window_end.date_naive();
+        let mut in_window = Vec::new();
+        let mut data_beyond = false;
 
-        let mut series = Vec::new();
         for csv in csvs {
-            series.extend(parse_measurement_csv(csv, channel_external_id)?);
+            let Some((file_start, file_end)) = csv_month_range(csv) else {
+                continue;
+            };
+            if file_start > end_date {
+                // Entire file lies after the window: more data exists time-wise.
+                data_beyond = true;
+                continue;
+            }
+            if file_end <= start_date {
+                // Entire file lies before the window.
+                continue;
+            }
+            let rows = parse_measurement_csv(csv, channel_external_id)?;
+            data_beyond |= rows.iter().any(|record| record.timestamp > window_end);
+            in_window.extend(rows.into_iter().filter(|record| {
+                record.timestamp > window_start && record.timestamp <= window_end
+            }));
         }
-        series.sort_by_key(|record| record.timestamp);
 
-        cache.insert(0, (channel_external_id.to_string(), series.clone()));
-        cache.truncate(SERIES_CACHE_CAPACITY);
-        Ok(series)
+        in_window.sort_by_key(|record| record.timestamp);
+        Ok((in_window, data_beyond))
     }
 }
 
@@ -512,22 +560,48 @@ impl DataProvider for MuensterGithubAdapter {
             .get(&channel_external_id)
             .cloned()
             .unwrap_or_default();
-        let series = self.series_for(&channel_external_id, &csvs)?;
 
-        let mut records: Vec<MeasurementRecord> = series
-            .into_iter()
-            .filter(|record| query.from.is_none_or(|from| record.timestamp > from))
-            .filter(|record| query.to.is_none_or(|to| record.timestamp <= to))
-            .collect();
+        let timeframe = self.max_measurement_timeframe;
+        let earliest = self.earliest_timestamp(&csvs, &channel_external_id)?;
+        let Some(earliest) = earliest else {
+            // The channel has no data anywhere: nothing to page.
+            return Ok(MeasurementBatch {
+                measurements: Vec::new(),
+                last_measurement_datetime: query.from,
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            });
+        };
+
+        // The window start is the page cursor (exclusive). Without a cursor,
+        // start just before the earliest sample so the first sample is included.
+        let window_start = query
+            .from
+            .unwrap_or_else(|| earliest - Duration::seconds(1));
+        let window_end = match query.to {
+            Some(to) => to,
+            None => query.from.unwrap_or(earliest) + timeframe,
+        };
+
+        let (mut records, data_beyond) =
+            self.windowed_series(&channel_external_id, &csvs, window_start, window_end)?;
 
         let batch_size_limit_reached = records.len() > query.max_batch_size;
         records.truncate(query.max_batch_size);
-        let last_measurement_datetime = records.last().map(|record| record.timestamp);
+
+        // Advance past gaps: when the window holds no rows, report the window
+        // end as the next cursor so the core can keep moving forward.
+        let last_measurement_datetime = if records.is_empty() {
+            Some(window_end)
+        } else {
+            records.last().map(|record| record.timestamp)
+        };
 
         Ok(MeasurementBatch {
             measurements: records,
             last_measurement_datetime,
             batch_size_limit_reached,
+            timeframe_limit_reached: query.to.is_none() && data_beyond,
         })
     }
 
@@ -588,31 +662,24 @@ fn parse_site_index(
     Ok((stations, channels))
 }
 
-/// Returns the numeric channel ids present in a monthly CSV header (excluding
-/// `-status` columns and the `Datetime` column).
-fn read_csv_channel_ids(path: &Path) -> Result<Vec<String>, ProviderError> {
-    let file = File::open(path)
-        .map_err(|e| ProviderError::InvalidData(format!("cannot open {path:?}: {e}")))?;
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(file);
-    let headers = reader
-        .headers()
-        .map_err(|e| ProviderError::InvalidData(format!("invalid CSV header in {path:?}: {e}")))?;
-
-    let mut ids = Vec::new();
-    for header in headers.iter() {
-        if header == "Datetime" || header.ends_with("-status") {
-            continue;
-        }
-        let Some(id) = header.split_whitespace().next() else {
-            continue;
-        };
-        if id.chars().all(|c| c.is_ascii_digit()) {
-            ids.push(id.to_string());
-        }
+/// Parses the `YYYY-MM` filename of a monthly CSV into its `[start, end)`
+/// month range as UTC dates. `None` when the filename is not a monthly CSV.
+fn csv_month_range(path: &Path) -> Option<(NaiveDate, NaiveDate)> {
+    let file_name = path.file_name()?.to_str()?;
+    let stem = file_name.strip_suffix(".csv")?;
+    let mut parts = stem.split('-');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let month: u32 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) {
+        return None;
     }
-    Ok(ids)
+    let start = NaiveDate::from_ymd_opt(year, month, 1)?;
+    let end = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)?
+    };
+    Some((start, end))
 }
 
 /// Parses the measurements of one channel from a monthly CSV.
@@ -832,6 +899,43 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn defaults_measurement_timeframe_when_unset() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        let config = data_source(vars);
+        let adapter = MuensterGithubAdapter::new(&config).unwrap();
+        assert_eq!(adapter.max_measurement_timeframe_hours(), 168);
+    }
+
+    #[test]
+    fn reads_measurement_timeframe_var() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        vars.insert(
+            "max_measurement_timeframe_hours".to_string(),
+            "24".to_string(),
+        );
+        let config = data_source(vars);
+        let adapter = MuensterGithubAdapter::new(&config).unwrap();
+        assert_eq!(adapter.max_measurement_timeframe_hours(), 24);
+    }
+
+    #[test]
+    fn rejects_invalid_measurement_timeframe_var() {
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        vars.insert(
+            "max_measurement_timeframe_hours".to_string(),
+            "not-a-number".to_string(),
+        );
+        let config = data_source(vars);
+        assert!(matches!(
+            MuensterGithubAdapter::new(&config),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+    }
+
     /// In-memory persistent-state access used to exercise the attach hook.
     #[derive(Default)]
     struct InMemoryAccess {
@@ -946,20 +1050,23 @@ mod tests {
     }
 
     #[test]
-    fn read_csv_channel_ids_skips_status_and_aggregate_columns() {
-        let dir = std::env::temp_dir().join(format!("csv-headers-{}", Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("2023-01.csv");
-        fs::write(
-            &path,
-            "Datetime,100031297 (Promenade),101031297 (Radfahrer),101031297-status\n",
-        )
-        .unwrap();
-
-        let ids = read_csv_channel_ids(&path).unwrap();
-        assert_eq!(ids, vec!["100031297", "101031297"]);
-
-        fs::remove_dir_all(&dir).unwrap();
+    fn csv_month_range_parses_the_filename_bounds() {
+        assert_eq!(
+            csv_month_range(Path::new("2023-01.csv")),
+            Some((
+                NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2023, 2, 1).unwrap()
+            ))
+        );
+        assert_eq!(
+            csv_month_range(Path::new("2023-12.csv")),
+            Some((
+                NaiveDate::from_ymd_opt(2023, 12, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+            ))
+        );
+        assert_eq!(csv_month_range(Path::new("readme.md")), None);
+        assert_eq!(csv_month_range(Path::new("2023-13.csv")), None);
     }
 
     // -- archive cache + data serving ----------------------------------------
@@ -1123,6 +1230,169 @@ mod tests {
         assert_eq!(*fetcher.get_calls.lock().unwrap(), 0);
 
         fs::remove_dir_all(&fixture).unwrap();
+    }
+
+    #[test]
+    fn get_measurements_windows_by_timeframe_and_advances_past_gaps() {
+        let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+        let root = fixture.join(ARCHIVE_ROOT);
+        fs::create_dir_all(root.join("100031297")).unwrap();
+        fs::write(root.join(SITE_INDEX_FILE), fixture_site_json()).unwrap();
+        fs::write(
+            root.join("100031297/2023-01.csv"),
+            concat!(
+                "Datetime,100031297 (Promenade),101031297 (Radfahrer),102031297 (Radfahrer),100031297-status,101031297-status,102031297-status\n",
+                "2023-01-01 00:00,3,5,1,0,0,0\n",
+                "2023-01-02 00:00,3,5,2,0,0,0\n",
+                "2023-01-05 00:00,3,5,9,0,0,0\n",
+            ),
+        )
+        .unwrap();
+
+        let state = Arc::new(InMemoryAccess::default());
+        state
+            .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+            .unwrap();
+        state
+            .store(KEY_EXTRACTED_AT, &Utc::now().to_rfc3339())
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        vars.insert(
+            "max_measurement_timeframe_hours".to_string(),
+            "48".to_string(),
+        );
+        let config = data_source(vars);
+        let fetcher = Arc::new(FakeFetcher {
+            zip: Vec::new(),
+            etag: None,
+            get_calls: Mutex::new(0),
+        });
+        let adapter = adapter_with(config, fetcher);
+        adapter.attach_persistent_state(state);
+
+        let channel = Channel {
+            id: crate::core::domain::channels::channel::value_objects::Id(Uuid::new_v4()),
+            counting_station_id:
+                crate::core::domain::channels::channel::value_objects::CountingStationId(
+                    Uuid::new_v4(),
+                ),
+            name: crate::core::domain::channels::channel::value_objects::Name(
+                "Radfahrer".to_string(),
+            ),
+            description: crate::core::domain::channels::channel::value_objects::Description(
+                String::new(),
+            ),
+            external_datasource_id: Some(
+                crate::core::domain::channels::channel::value_objects::ExternalDatasourceId(
+                    "102031297".to_string(),
+                ),
+            ),
+        };
+
+        // Page 1: first two days (48h window); more data exists beyond it.
+        let first = adapter
+            .get_measurements(MeasurementQuery::for_channel(channel.clone(), 500))
+            .unwrap();
+        assert_eq!(first.measurements.len(), 2);
+        assert!(!first.batch_size_limit_reached);
+        assert!(first.timeframe_limit_reached);
+        assert_eq!(
+            first.last_measurement_datetime.unwrap().to_rfc3339(),
+            "2023-01-01T23:00:00+00:00"
+        );
+
+        // Page 2: the ~3-day gap yields an empty window that advances to its end.
+        let gap = first.last_measurement_datetime.unwrap();
+        let second = adapter
+            .get_measurements(MeasurementQuery::for_channel(channel.clone(), 500).with_start(gap))
+            .unwrap();
+        assert!(second.measurements.is_empty());
+        assert!(second.timeframe_limit_reached);
+        assert_eq!(
+            second.last_measurement_datetime.unwrap().to_rfc3339(),
+            "2023-01-03T23:00:00+00:00"
+        );
+
+        // Page 3: the final day is imported and the channel is complete.
+        let resume = second.last_measurement_datetime.unwrap();
+        let third = adapter
+            .get_measurements(
+                MeasurementQuery::for_channel(channel.clone(), 500).with_start(resume),
+            )
+            .unwrap();
+        assert_eq!(third.measurements.len(), 1);
+        assert_eq!(third.measurements[0].value, 9);
+        assert!(!third.batch_size_limit_reached);
+        assert!(!third.timeframe_limit_reached);
+        assert_eq!(
+            third.last_measurement_datetime.unwrap().to_rfc3339(),
+            "2023-01-04T23:00:00+00:00"
+        );
+
+        fs::remove_dir_all(&fixture).unwrap();
+    }
+
+    #[test]
+    fn windowed_series_only_reads_overlapping_month_files() {
+        let dir = std::env::temp_dir().join(format!("window-{}", Uuid::new_v4()));
+        fs::create_dir_all(dir.join("100031297")).unwrap();
+        // Files before and after the window omit the channel column; if they were
+        // parsed, `parse_measurement_csv` would error. Only the overlapping
+        // month may be read.
+        fs::write(
+            dir.join("100031297/2022-12.csv"),
+            "Datetime,100031297 (Promenade)\n2022-12-15 00:00,1\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("100031297/2023-01.csv"),
+            concat!(
+                "Datetime,100031297 (Promenade),101031297 (Radfahrer),102031297 (Radfahrer),100031297-status,101031297-status,102031297-status\n",
+                "2023-01-15 00:00,3,5,1,0,0,0\n",
+                "2023-01-15 00:15,3,5,4,0,0,0\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("100031297/2023-03.csv"),
+            "Datetime,100031297 (Promenade)\n2023-03-15 00:00,1\n",
+        )
+        .unwrap();
+
+        let csvs = vec![
+            dir.join("100031297/2022-12.csv"),
+            dir.join("100031297/2023-01.csv"),
+            dir.join("100031297/2023-03.csv"),
+        ];
+
+        let mut vars = HashMap::new();
+        vars.insert("url".to_string(), "https://github.com".to_string());
+        let config = data_source(vars);
+        let fetcher = Arc::new(FakeFetcher {
+            zip: Vec::new(),
+            etag: None,
+            get_calls: Mutex::new(0),
+        });
+        let adapter = adapter_with(config, fetcher);
+
+        let window_start = DateTime::parse_from_rfc3339("2023-01-14T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let window_end = DateTime::parse_from_rfc3339("2023-01-16T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let (records, data_beyond) = adapter
+            .windowed_series("102031297", &csvs, window_start, window_end)
+            .unwrap();
+
+        assert_eq!(records.len(), 2, "only the overlapping month is read");
+        assert_eq!(records[0].value, 1);
+        assert_eq!(records[1].value, 4);
+        assert!(data_beyond, "the later March file signals more data");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

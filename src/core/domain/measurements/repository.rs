@@ -10,4 +10,14 @@ pub trait MeasurementRepository {
         &self,
         channel_id: value_objects::ChannelId,
     ) -> Result<Vec<Measurement>, DomainError>;
+
+    /// Returns up to `limit` rows for `offset`-based pagination, newest first,
+    /// optionally restricted to one channel. The caller passes `limit + 1` to
+    /// detect a following page.
+    fn find_page(
+        &self,
+        channel_id: Option<value_objects::ChannelId>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Measurement>, DomainError>;
 }

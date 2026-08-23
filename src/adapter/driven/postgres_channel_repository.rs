@@ -114,4 +114,57 @@ impl ChannelRepository for PostgresChannelRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(row.as_ref().map(Self::map_row))
     }
+
+    fn find_filtered(
+        &self,
+        counting_station_id: Option<value_objects::CountingStationId>,
+        name: Option<&str>,
+    ) -> Result<Vec<Channel>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = match (counting_station_id, name) {
+            (Some(station_id), Some(name)) => client
+                .query(
+                    "SELECT id, counting_station_id, name, description, external_datasource_id
+                     FROM channels
+                     WHERE counting_station_id = $1 AND name ILIKE $2
+                     ORDER BY name ASC",
+                    &[&station_id.0, &format!("%{}%", escape_like(name))],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?,
+            (Some(station_id), None) => client
+                .query(
+                    "SELECT id, counting_station_id, name, description, external_datasource_id
+                     FROM channels WHERE counting_station_id = $1 ORDER BY name ASC",
+                    &[&station_id.0],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?,
+            (None, Some(name)) => client
+                .query(
+                    "SELECT id, counting_station_id, name, description, external_datasource_id
+                     FROM channels WHERE name ILIKE $1 ORDER BY name ASC",
+                    &[&format!("%{}%", escape_like(name))],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?,
+            (None, None) => client
+                .query(
+                    "SELECT id, counting_station_id, name, description, external_datasource_id
+                     FROM channels ORDER BY name ASC",
+                    &[],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?,
+        };
+        Ok(rows.iter().map(Self::map_row).collect())
+    }
+}
+
+/// Escapes `LIKE`/`ILIKE` wildcards in a user-supplied substring so it is
+/// matched literally.
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }

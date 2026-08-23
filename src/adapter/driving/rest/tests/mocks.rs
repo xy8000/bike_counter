@@ -71,6 +71,18 @@ impl CountingStationRepository for MockCountingStationRepository {
             })
             .cloned())
     }
+
+    fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+        Ok(match name {
+            Some(name) => self
+                .stations
+                .iter()
+                .filter(|s| s.name.0.to_lowercase().contains(&name.to_lowercase()))
+                .cloned()
+                .collect(),
+            None => self.stations.clone(),
+        })
+    }
 }
 
 pub struct MockChannelRepository {
@@ -122,6 +134,22 @@ impl ChannelRepository for MockChannelRepository {
             })
             .cloned())
     }
+
+    fn find_filtered(
+        &self,
+        counting_station_id: Option<channel_vo::CountingStationId>,
+        name: Option<&str>,
+    ) -> Result<Vec<Channel>, DomainError> {
+        Ok(self
+            .channels
+            .iter()
+            .filter(|c| {
+                counting_station_id.is_none_or(|id| c.counting_station_id.0 == id.0)
+                    && name.is_none_or(|n| c.name.0.to_lowercase().contains(&n.to_lowercase()))
+            })
+            .cloned()
+            .collect())
+    }
 }
 
 pub struct MockMeasurementRepository {
@@ -159,6 +187,22 @@ impl MeasurementRepository for MockMeasurementRepository {
             .filter(|measurement| measurement.channel_id.0 == channel_id.0)
             .cloned()
             .collect())
+    }
+
+    fn find_page(
+        &self,
+        channel_id: Option<measurement_vo::ChannelId>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Measurement>, DomainError> {
+        let mut measurements: Vec<Measurement> = self
+            .measurements
+            .iter()
+            .filter(|measurement| channel_id.is_none_or(|id| measurement.channel_id.0 == id.0))
+            .cloned()
+            .collect();
+        measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
+        Ok(measurements.into_iter().skip(offset).take(limit).collect())
     }
 }
 

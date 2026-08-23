@@ -573,6 +573,10 @@ mod tests {
         ) -> Result<Option<CountingStation>, DomainError> {
             Ok(None)
         }
+
+        fn find_filtered(&self, _name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+            Ok(Vec::new())
+        }
     }
 
     impl ChannelRepository for RecordingDataRepositories {
@@ -602,6 +606,14 @@ mod tests {
         ) -> Result<Option<Channel>, DomainError> {
             Ok(None)
         }
+
+        fn find_filtered(
+            &self,
+            _counting_station_id: Option<channel_vo::CountingStationId>,
+            _name: Option<&str>,
+        ) -> Result<Vec<Channel>, DomainError> {
+            Ok(Vec::new())
+        }
     }
 
     impl MeasurementRepository for RecordingDataRepositories {
@@ -626,6 +638,15 @@ mod tests {
         fn find_by_channel_id(
             &self,
             _channel_id: measurement_vo::ChannelId,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        fn find_page(
+            &self,
+            _channel_id: Option<measurement_vo::ChannelId>,
+            _offset: usize,
+            _limit: usize,
         ) -> Result<Vec<Measurement>, DomainError> {
             Ok(Vec::new())
         }
@@ -912,6 +933,7 @@ mod tests {
                 measurements: vec![measurement_record(1, t0)],
                 last_measurement_datetime: Some(t0),
                 batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
             }])),
         });
 

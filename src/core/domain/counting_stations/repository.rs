@@ -9,4 +9,8 @@ pub trait CountingStationRepository {
         &self,
         external_id: value_objects::ExternalDatasourceId,
     ) -> Result<Option<CountingStation>, DomainError>;
+
+    /// Lists counting stations, optionally filtered by a case-insensitive
+    /// name substring.
+    fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError>;
 }

@@ -16,15 +16,14 @@ impl ChannelService {
         Self { repository }
     }
 
-    /// Lists channels, optionally filtered by counting station.
+    /// Lists channels, optionally filtered by counting station and/or a
+    /// case-insensitive name substring.
     pub fn list(
         &self,
         counting_station_id: Option<channel_vo::CountingStationId>,
+        name: Option<&str>,
     ) -> Result<Vec<Channel>, DomainError> {
-        match counting_station_id {
-            Some(station_id) => self.repository.find_by_counting_station_id(station_id),
-            None => self.repository.find_all(),
-        }
+        self.repository.find_filtered(counting_station_id, name)
     }
 
     /// Returns a single channel; `DomainError::NotFound` if unknown.
@@ -84,6 +83,22 @@ mod tests {
         ) -> Result<Option<Channel>, DomainError> {
             Ok(None)
         }
+
+        fn find_filtered(
+            &self,
+            counting_station_id: Option<channel_vo::CountingStationId>,
+            name: Option<&str>,
+        ) -> Result<Vec<Channel>, DomainError> {
+            Ok(self
+                .channels
+                .iter()
+                .filter(|c| {
+                    counting_station_id.is_none_or(|id| c.counting_station_id.0 == id.0)
+                        && name.is_none_or(|n| c.name.0.to_lowercase().contains(&n.to_lowercase()))
+                })
+                .cloned()
+                .collect())
+        }
     }
 
     fn channel(id: Uuid, station_id: Uuid, name: &str) -> Channel {
@@ -107,14 +122,29 @@ mod tests {
 
     #[test]
     fn list_without_filter_returns_all_channels() {
-        let channels = service().list(None).unwrap();
+        let channels = service().list(None, None).unwrap();
         assert_eq!(channels.len(), 2);
     }
 
     #[test]
     fn list_with_station_filter_returns_only_matching_channels() {
         let channels = service()
-            .list(Some(channel_vo::CountingStationId(Uuid::from_u128(0x1))))
+            .list(
+                Some(channel_vo::CountingStationId(Uuid::from_u128(0x1))),
+                None,
+            )
+            .unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].name.0, "A1");
+    }
+
+    #[test]
+    fn list_filters_by_name_and_station_together() {
+        let channels = service()
+            .list(
+                Some(channel_vo::CountingStationId(Uuid::from_u128(0x1))),
+                Some("a1"),
+            )
             .unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].name.0, "A1");

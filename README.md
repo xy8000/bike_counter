@@ -39,6 +39,8 @@ type = "münster_opendata_github_provider"
 [data_sources.provider.vars]
 url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
 max_measurement_batch_size = "500"
+# Import time window per provider call, in hours (default 7 days = 168).
+max_measurement_timeframe_hours = "168"
 ```
 
 Adjust the `database_*` values to match your PostgreSQL instance. The database
@@ -56,8 +58,10 @@ an array entry under `[[data_sources]]`:
   `münster_opendata_github_provider`).
 - `provider.vars` – provider-specific key/value settings. The supported keys
   depend on the provider only; the Münster provider understands `url` (required),
-  `max_measurement_batch_size` (optional, defaults to `500`) and `cache_duration`
-  (optional seconds, defaults to `300` — the archive-cache window).
+  `max_measurement_batch_size` (optional, defaults to `500`),
+  `max_measurement_timeframe_hours` (optional hours, defaults to `168` — the
+  import time window) and `cache_duration` (optional seconds, defaults to `300` —
+  the archive-cache window).
 
 On startup the application syncs the configured data sources into the
 `data_sources` table: new ones are added, ones that are no longer configured are
@@ -105,7 +109,17 @@ best-effort `HEAD` shows the upstream `ETag`/`Last-Modified` is unchanged). The
 station/channel metadata comes from `site_min.json`; measurements come from the
 per-station `YYYY-MM.csv` files (15-minute intervals, interpreted as
 Europe/Berlin local time and stored as UTC). The station-aggregate column and the
-`-status` columns are ignored.
+`-status` columns are ignored. The channel→file map is derived from the station
+directories (every channel of a station lives in that station's monthly files),
+so building the index never reads CSV headers.
+
+The measurements import is bounded by a **time window** so even the first
+multi-year import stays responsive: each provider call only reads the monthly
+files overlapping `(cursor, cursor + max_measurement_timeframe_hours]` (default
+7 days), and the core keeps paging until every channel is fully imported. Rows
+are written idempotently on the natural key `(channel_id, timestamp)`
+(`INSERT ... ON CONFLICT DO NOTHING`), so a partially-completed run can always
+be resumed without duplicating data.
 
 Every job is exposed through the read-only jobs API (see below).
 
@@ -254,9 +268,9 @@ and `DELETE` to manage the opaque per-data-source provider state:
 - `DELETE /api/v1/data-sources/{id}/persistent_state/{key}` – delete one entry (`204`; `404` unknown data source)
 - `DELETE /api/v1/data-sources/{id}/persistent_state` – clear the whole store (`204`; `404` unknown data source)
 - `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
-- `GET /api/v1/counting-stations` / `GET /api/v1/counting-stations/{id}`
-- `GET /api/v1/channels` (optional `?counting_station_id=` filter) / `GET /api/v1/channels/{id}`
-- `GET /api/v1/measurements` (optional `?channel_id=` filter) / `GET /api/v1/measurements/{id}`
+- `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}`
+- `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
+- `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` is capped at 1000 and defaults to 100) / `GET /api/v1/measurements/{id}`
 
 Every resource includes a `_links` object (HAL-style) pointing to related
 resources, e.g. a station links to its own `self`, its `channels`, and its

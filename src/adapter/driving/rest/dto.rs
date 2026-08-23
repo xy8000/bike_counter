@@ -123,17 +123,23 @@ pub struct CountingStationListDto {
 }
 
 impl CountingStationListDto {
-    pub fn new(stations: Vec<CountingStation>) -> Self {
+    pub fn new(stations: Vec<CountingStation>, name_filter: Option<&str>) -> Self {
         let items = stations.into_iter().map(CountingStationDto::from).collect();
+        let self_href = match name_filter {
+            Some(name) => format!("/api/v1/counting-stations?name={name}"),
+            None => "/api/v1/counting-stations".to_string(),
+        };
         let mut links = HashMap::new();
-        links.insert(
-            "self".to_string(),
-            LinkDto::new("/api/v1/counting-stations"),
-        );
+        links.insert("self".to_string(), LinkDto::new(self_href));
         links.insert("root".to_string(), LinkDto::new("/api/v1"));
 
         Self { items, links }
     }
+}
+
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+pub struct CountingStationQueryParams {
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -183,13 +189,25 @@ pub struct ChannelListDto {
 }
 
 impl ChannelListDto {
-    pub fn new(channels: Vec<Channel>, station_id_filter: Option<Uuid>) -> Self {
+    pub fn new(
+        channels: Vec<Channel>,
+        station_id_filter: Option<Uuid>,
+        name_filter: Option<&str>,
+    ) -> Self {
         let items = channels.into_iter().map(ChannelDto::from).collect();
-        let mut links = HashMap::new();
-        let self_href = match station_id_filter {
-            Some(station_id) => format!("/api/v1/channels?counting_station_id={station_id}"),
-            None => "/api/v1/channels".to_string(),
+        let mut query = Vec::new();
+        if let Some(station_id) = station_id_filter {
+            query.push(format!("counting_station_id={station_id}"));
+        }
+        if let Some(name) = name_filter {
+            query.push(format!("name={name}"));
+        }
+        let self_href = if query.is_empty() {
+            "/api/v1/channels".to_string()
+        } else {
+            format!("/api/v1/channels?{}", query.join("&"))
         };
+        let mut links = HashMap::new();
         links.insert("self".to_string(), LinkDto::new(self_href));
         links.insert("root".to_string(), LinkDto::new("/api/v1"));
 
@@ -200,6 +218,7 @@ impl ChannelListDto {
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct ChannelQueryParams {
     pub counting_station_id: Option<Uuid>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -243,28 +262,60 @@ impl From<Measurement> for MeasurementDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MeasurementListDto {
     pub items: Vec<MeasurementDto>,
+    pub offset: usize,
+    pub limit: usize,
     #[serde(rename = "_links")]
     pub links: HashMap<String, LinkDto>,
 }
 
 impl MeasurementListDto {
-    pub fn new(measurements: Vec<Measurement>, channel_id_filter: Option<Uuid>) -> Self {
+    pub fn new(
+        measurements: Vec<Measurement>,
+        channel_id_filter: Option<Uuid>,
+        offset: usize,
+        limit: usize,
+        has_more: bool,
+    ) -> Self {
         let items = measurements.into_iter().map(MeasurementDto::from).collect();
+        let channel_param = channel_id_filter
+            .map(|id| format!("channel_id={id}&"))
+            .unwrap_or_default();
         let mut links = HashMap::new();
-        let self_href = match channel_id_filter {
-            Some(channel_id) => format!("/api/v1/measurements?channel_id={channel_id}"),
-            None => "/api/v1/measurements".to_string(),
-        };
+
+        let self_href =
+            format!("/api/v1/measurements?{channel_param}offset={offset}&limit={limit}");
         links.insert("self".to_string(), LinkDto::new(self_href));
+
+        if has_more {
+            let next_href = format!(
+                "/api/v1/measurements?{channel_param}offset={}&limit={limit}",
+                offset + limit
+            );
+            links.insert("next".to_string(), LinkDto::new(next_href));
+        }
+        if offset > 0 {
+            let prev_href = format!(
+                "/api/v1/measurements?{channel_param}offset={}&limit={limit}",
+                offset.saturating_sub(limit)
+            );
+            links.insert("prev".to_string(), LinkDto::new(prev_href));
+        }
         links.insert("root".to_string(), LinkDto::new("/api/v1"));
 
-        Self { items, links }
+        Self {
+            items,
+            offset,
+            limit,
+            links,
+        }
     }
 }
 
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct MeasurementQueryParams {
     pub channel_id: Option<Uuid>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -214,15 +214,15 @@ impl DataImportService {
             let measurements = to_measurements(batch.measurements, channel.id.0);
             self.measurement_repository.save_batch(measurements)?;
 
-            // Page while the batch-size limit was reached; use the last
-            // measurement datetime as the next start. Guard against a missing
-            // last datetime to avoid an endless loop.
-            match (
-                batch.last_measurement_datetime,
-                batch.batch_size_limit_reached,
-            ) {
-                (Some(last), true) => current_from = Some(last),
-                _ => break,
+            // Page while either limit was reached (row-count or time window);
+            // use the last measurement datetime as the next start. Guard
+            // against a missing last datetime to avoid an endless loop.
+            if batch.last_measurement_datetime.is_some()
+                && (batch.batch_size_limit_reached || batch.timeframe_limit_reached)
+            {
+                current_from = batch.last_measurement_datetime;
+            } else {
+                break;
             }
         }
 
@@ -270,7 +270,7 @@ impl DataImportService {
 
                 match (
                     batch.last_measurement_datetime,
-                    batch.batch_size_limit_reached,
+                    batch.batch_size_limit_reached || batch.timeframe_limit_reached,
                 ) {
                     (Some(last), true) => {
                         current_from = Some(last);
@@ -466,6 +466,18 @@ mod tests {
                 })
                 .cloned())
         }
+
+        fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+            let stations = self.stations.lock().unwrap();
+            Ok(match name {
+                Some(name) => stations
+                    .iter()
+                    .filter(|s| s.name.0.to_lowercase().contains(&name.to_lowercase()))
+                    .cloned()
+                    .collect(),
+                None => stations.clone(),
+            })
+        }
     }
 
     struct MockChannelRepository {
@@ -521,6 +533,22 @@ mod tests {
                 })
                 .cloned())
         }
+
+        fn find_filtered(
+            &self,
+            counting_station_id: Option<channel_vo::CountingStationId>,
+            name: Option<&str>,
+        ) -> Result<Vec<Channel>, DomainError> {
+            let channels = self.channels.lock().unwrap();
+            Ok(channels
+                .iter()
+                .filter(|c| {
+                    counting_station_id.is_none_or(|id| c.counting_station_id == id)
+                        && name.is_none_or(|n| c.name.0.to_lowercase().contains(&n.to_lowercase()))
+                })
+                .cloned()
+                .collect())
+        }
     }
 
     struct MockMeasurementRepository {
@@ -565,6 +593,24 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        fn find_page(
+            &self,
+            channel_id: Option<measurement_vo::ChannelId>,
+            offset: usize,
+            limit: usize,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            let mut measurements: Vec<Measurement> = self
+                .measurements
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| channel_id.is_none_or(|id| m.channel_id.0 == id.0))
+                .cloned()
+                .collect();
+            measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
+            Ok(measurements.into_iter().skip(offset).take(limit).collect())
+        }
     }
 
     #[test]
@@ -581,6 +627,7 @@ mod tests {
                 ],
                 last_measurement_datetime: Some(t0),
                 batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
             }])),
             recorded_queries: Mutex::new(Vec::new()),
             batch_size: 500,
@@ -628,11 +675,13 @@ mod tests {
             measurements: (0..500).map(|i| measurement_record(i as i64, t1)).collect(),
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: true,
+            timeframe_limit_reached: false,
         };
         let page_two = MeasurementBatch {
             measurements: vec![measurement_record(1, t1)],
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: false,
+            timeframe_limit_reached: false,
         };
         let provider = Arc::new(MockProvider {
             stations: vec![station_record("station-1")],
@@ -680,6 +729,52 @@ mod tests {
     }
 
     #[test]
+    fn pages_measurements_until_timeframe_limit_is_not_reached() {
+        let t1 = timestamp("2024-01-01T10:00:00Z");
+        let page_one = MeasurementBatch {
+            measurements: vec![measurement_record(1, t1)],
+            last_measurement_datetime: Some(t1),
+            batch_size_limit_reached: false,
+            timeframe_limit_reached: true,
+        };
+        let page_two = MeasurementBatch {
+            measurements: vec![measurement_record(2, t1)],
+            last_measurement_datetime: Some(t1),
+            batch_size_limit_reached: false,
+            timeframe_limit_reached: false,
+        };
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            measurement_pages: Mutex::new(VecDeque::from([page_one, page_two])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let measurement_repo = Arc::new(MockMeasurementRepository {
+            measurements: Mutex::new(Vec::new()),
+        });
+
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            measurement_repo.clone(),
+            vec![runtime(provider.clone())],
+        );
+
+        let summary = service.import(None, None).expect("import should succeed");
+        assert_eq!(summary.measurements, 2);
+        assert_eq!(measurement_repo.measurements.lock().unwrap().len(), 2);
+
+        let queries = provider.recorded_queries.lock().unwrap();
+        assert_eq!(queries.len(), 2, "time-windowed paging must continue");
+        assert_eq!(queries[1].from, Some(t1));
+    }
+
+    #[test]
     fn does_not_duplicate_already_known_stations_and_channels() {
         let station = station("station-1");
         let channel = channel("channel-1");
@@ -690,6 +785,7 @@ mod tests {
                 measurements: Vec::new(),
                 last_measurement_datetime: None,
                 batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
             }])),
             recorded_queries: Mutex::new(Vec::new()),
             batch_size: 500,
@@ -765,6 +861,18 @@ mod tests {
                 })
                 .cloned())
         }
+
+        fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+            let stations = self.stations.lock().unwrap();
+            Ok(match name {
+                Some(name) => stations
+                    .iter()
+                    .filter(|s| s.name.0.to_lowercase().contains(&name.to_lowercase()))
+                    .cloned()
+                    .collect(),
+                None => stations.clone(),
+            })
+        }
     }
 
     impl ChannelRepository for LoggingRepositories {
@@ -817,6 +925,22 @@ mod tests {
                 })
                 .cloned())
         }
+
+        fn find_filtered(
+            &self,
+            counting_station_id: Option<channel_vo::CountingStationId>,
+            name: Option<&str>,
+        ) -> Result<Vec<Channel>, DomainError> {
+            let channels = self.channels.lock().unwrap();
+            Ok(channels
+                .iter()
+                .filter(|c| {
+                    counting_station_id.is_none_or(|id| c.counting_station_id == id)
+                        && name.is_none_or(|n| c.name.0.to_lowercase().contains(&n.to_lowercase()))
+                })
+                .cloned()
+                .collect())
+        }
     }
 
     impl MeasurementRepository for LoggingRepositories {
@@ -859,6 +983,24 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        fn find_page(
+            &self,
+            channel_id: Option<measurement_vo::ChannelId>,
+            offset: usize,
+            limit: usize,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            let mut measurements: Vec<Measurement> = self
+                .measurements
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| channel_id.is_none_or(|id| m.channel_id.0 == id.0))
+                .cloned()
+                .collect();
+            measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
+            Ok(measurements.into_iter().skip(offset).take(limit).collect())
+        }
     }
 
     #[test]
@@ -871,6 +1013,7 @@ mod tests {
                 measurements: vec![measurement_record(1, t0), measurement_record(1, t0)],
                 last_measurement_datetime: Some(t0),
                 batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
             }])),
             recorded_queries: Mutex::new(Vec::new()),
             batch_size: 500,
@@ -911,11 +1054,13 @@ mod tests {
             measurements: vec![measurement_record(1, t1), measurement_record(1, t1)],
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: true,
+            timeframe_limit_reached: false,
         };
         let page_two = MeasurementBatch {
             measurements: vec![measurement_record(1, t1)],
             last_measurement_datetime: Some(t1),
             batch_size_limit_reached: false,
+            timeframe_limit_reached: false,
         };
         let provider = Arc::new(MockProvider {
             stations: vec![station_record("station-1")],

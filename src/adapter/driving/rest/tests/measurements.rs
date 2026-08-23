@@ -28,7 +28,39 @@ async fn list_returns_all_measurements_with_links() {
         format!("/api/v1/channels/{CHANNEL_ID_A}")
     );
 
-    assert_eq!(body["_links"]["self"]["href"], "/api/v1/measurements");
+    assert_eq!(body["offset"], 0);
+    assert_eq!(body["limit"], 100);
+    assert_eq!(
+        body["_links"]["self"]["href"],
+        "/api/v1/measurements?offset=0&limit=100"
+    );
+}
+
+#[tokio::test]
+async fn list_paginates_with_offset_and_limit() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api/v1/measurements?offset=0&limit=1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["offset"], 0);
+    assert_eq!(body["limit"], 1);
+    let items = body["items"].as_array().expect("items should be an array");
+    assert_eq!(items.len(), 1);
+    // One more row exists, so a "next" link is advertised.
+    assert_eq!(
+        body["_links"]["next"]["href"],
+        "/api/v1/measurements?offset=1&limit=1"
+    );
+    assert!(body["_links"].get("prev").is_none());
+
+    let (status, body) = app.get_json("/api/v1/measurements?offset=1&limit=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        body["_links"]["prev"]["href"],
+        "/api/v1/measurements?offset=0&limit=1"
+    );
+    assert!(body["_links"].get("next").is_none());
 }
 
 #[tokio::test]
@@ -41,8 +73,11 @@ async fn list_filters_by_channel_id() {
     let items = body["items"].as_array().expect("items should be an array");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["channel_id"], CHANNEL_ID_A.to_string());
-    // The self link must reflect the applied filter.
-    assert_eq!(body["_links"]["self"]["href"], uri);
+    // The self link must reflect the applied filter plus the default page.
+    assert_eq!(
+        body["_links"]["self"]["href"],
+        format!("/api/v1/measurements?channel_id={CHANNEL_ID_A}&offset=0&limit=100")
+    );
 }
 
 #[tokio::test]

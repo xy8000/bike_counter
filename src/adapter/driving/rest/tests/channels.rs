@@ -48,6 +48,19 @@ async fn list_filters_by_counting_station_id() {
 }
 
 #[tokio::test]
+async fn list_filters_by_name() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api/v1/channels?name=a1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items should be an array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "Channel A1");
+    // The self link must reflect the applied name filter.
+    assert_eq!(body["_links"]["self"]["href"], "/api/v1/channels?name=a1");
+}
+
+#[tokio::test]
 async fn get_by_id_returns_single_channel() {
     let app = TestApp::new();
     let (status, body) = app

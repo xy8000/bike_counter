@@ -112,3 +112,17 @@ Overdue-run for the data-source update job (plans/startup_overdue_update_plan.md
 - [x] `run_scheduler` simplified: same `run_if_due()` for the immediate startup call and every cron tick
 - [x] Tests: `runs_when_last_run_is_overdue` + updated call sites (`finished_job_at` helper)
 - [x] make check + make test green (147 tests)
+
+Import time-batching + API pagination & filters (plans/import_timeframe_and_api_pagination_plan.md)
+
+- [x] Provider var `max_measurement_timeframe_hours` (default 168) parsed in the Münster adapter + config.toml(.example)
+- [x] Channel→CSV index derived from `site_min.json` + station directory listing (no CSV header reads; `read_csv_channel_ids` removed)
+- [x] Windowed file selection in `get_measurements` (only overlapping months parsed) + separate `timeframe_limit_reached` flag
+- [x] `MeasurementBatch.timeframe_limit_reached` + import loop pages while `batch_size_limit_reached || timeframe_limit_reached`
+- [x] Migration V5: dedupe on `(channel_id, timestamp)` + `UNIQUE` natural key
+- [x] Idempotent `save`/`save_batch` (`INSERT ... ON CONFLICT (channel_id, timestamp) DO NOTHING`)
+- [x] Measurements offset/limit pagination (repository `find_page`, service `list`, DTO links + `offset`/`limit`, handler clamp ≤ 1000)
+- [x] Name filters for counting-stations and channels (`find_filtered` + ILIKE + DTO/handler + query params)
+- [x] Tests: adapter windowed/gap/config, import-loop timeframe paging, REST pagination + name filters, Postgres pagination + natural-key idempotency
+- [x] Docs (README, ToDo, plans/import_timeframe_and_api_pagination_plan.md)
+- [x] make check + make test green

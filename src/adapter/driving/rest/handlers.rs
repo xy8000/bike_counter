@@ -8,9 +8,10 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, ChannelQueryParams, CountingStationDto,
-    CountingStationListDto, DataSourceDto, DataSourceListDto, ErrorResponseDto, HealthDto, JobDto,
-    JobListDto, JobQueryParams, MeasurementDto, MeasurementListDto, MeasurementQueryParams,
-    PersistentStateDto, PersistentStateEntryDto, PersistentStateValueDto,
+    CountingStationListDto, CountingStationQueryParams, DataSourceDto, DataSourceListDto,
+    ErrorResponseDto, HealthDto, JobDto, JobListDto, JobQueryParams, MeasurementDto,
+    MeasurementListDto, MeasurementQueryParams, PersistentStateDto, PersistentStateEntryDto,
+    PersistentStateValueDto,
 };
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
@@ -36,6 +37,11 @@ pub struct AppState {
     pub health_service: Arc<HealthService>,
     pub persistent_state_service: Arc<PersistentStateService>,
 }
+
+/// Default `offset`/`limit` for the measurements endpoint and its hard cap.
+const DEFAULT_PAGE_OFFSET: usize = 0;
+const DEFAULT_PAGE_LIMIT: usize = 100;
+const MAX_PAGE_LIMIT: usize = 1000;
 
 fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) {
     match error {
@@ -98,19 +104,28 @@ pub async fn get_api_root() -> impl IntoResponse {
     get,
     path = "/api/v1/counting-stations",
     tag = "Counting Stations",
+    params(
+        CountingStationQueryParams
+    ),
     responses(
-        (status = 200, description = "List all counting stations with HATEOAS links", body = CountingStationListDto),
+        (status = 200, description = "List counting stations with optional name filter and HATEOAS links", body = CountingStationListDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
 )]
 pub async fn list_counting_stations(
     State(state): State<AppState>,
+    Query(params): Query<CountingStationQueryParams>,
 ) -> Result<Json<CountingStationListDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let service = state.counting_station_service.clone();
-    let stations = blocking(move || service.list())
+    let name_filter = params.name.clone();
+    let dto_name = name_filter.clone();
+    let stations = blocking(move || service.list(name_filter.as_deref()))
         .await
         .map_err(map_domain_error)?;
-    Ok(Json(CountingStationListDto::new(stations)))
+    Ok(Json(CountingStationListDto::new(
+        stations,
+        dto_name.as_deref(),
+    )))
 }
 
 #[utoipa::path(
@@ -156,12 +171,18 @@ pub async fn list_channels(
 ) -> Result<Json<ChannelListDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let service = state.channel_service.clone();
     let station_id_filter = params.counting_station_id;
+    let name_filter = params.name.clone();
+    let dto_name = name_filter.clone();
     let station_id = station_id_filter.map(channel_vo::CountingStationId);
-    let channels = blocking(move || service.list(station_id))
+    let channels = blocking(move || service.list(station_id, name_filter.as_deref()))
         .await
         .map_err(map_domain_error)?;
 
-    Ok(Json(ChannelListDto::new(channels, station_id_filter)))
+    Ok(Json(ChannelListDto::new(
+        channels,
+        station_id_filter,
+        dto_name.as_deref(),
+    )))
 }
 
 #[utoipa::path(
@@ -208,13 +229,22 @@ pub async fn list_measurements(
     let service = state.measurement_service.clone();
     let channel_id_filter = params.channel_id;
     let channel_id = channel_id_filter.map(measurement_vo::ChannelId);
-    let measurements = blocking(move || service.list(channel_id))
+    let offset = params.offset.unwrap_or(DEFAULT_PAGE_OFFSET);
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .min(MAX_PAGE_LIMIT);
+
+    let (measurements, has_more) = blocking(move || service.list(channel_id, offset, limit))
         .await
         .map_err(map_domain_error)?;
 
     Ok(Json(MeasurementListDto::new(
         measurements,
         channel_id_filter,
+        offset,
+        limit,
+        has_more,
     )))
 }
 
