@@ -50,13 +50,13 @@ REST Driving Adapter (Axum + utoipa)
 Generic Job Tracking, Cron Scheduler & Data Source Updater
 
 - [x] Add cron crate + postgres with-serde_json-1 feature (Cargo.toml)
-- [x] Migration V3: jobs table + data_sources.last_updated_at
+- [x] Migration V3: jobs table + data_sources.imported_until (added as last_updated_at, renamed in V7)
 - [x] Jobs domain module: Job entity + JobStatus (PENDING/RUNNING/FINISHED/FAILED) + JobRepository trait
 - [x] PostgresJobRepository: lifetime_until TIMESTAMPTZ deadline, JSONB metadata (jsonb_set), atomic expire_running_jobs
-- [x] DataSource.last_updated_at (DB-only) + update_last_updated_at repository method
+- [x] DataSource.imported_until (DB-only, renamed in V7) + update_imported_until / clear_imported_until repository methods
 - [x] Configuration: data_source_update_cron (default hourly, validated) + REQUIRED data_source_update_max_lifetime_seconds
-- [x] DataImportService::update_data_source: stations -> channels -> paged measurements + progress callback + last_updated_at
-- [x] DataSourceUpdateService job runner: expire stale RUNNING, skip-when-running, startup-if-never-succeeded, cron-tick, job lifecycle (incl. PENDING->FAILED), processed_measurements metadata, advance last_updated_at
+- [x] DataImportService::update_data_source: stations -> channels -> paged measurements + progress callback + imported_until
+- [x] DataSourceUpdateService job runner: expire stale RUNNING, skip-when-running, startup-if-never-succeeded, cron-tick, job lifecycle (incl. PENDING->FAILED), processed_measurements + added_measurements metadata, advance imported_until
 - [x] Cron scheduler driver (tokio async loop) + wiring in main.rs
 - [x] REST jobs endpoints (list + filters + get by id) + JobDto (lifetime_until + max_lifetime_exceeded) + OpenAPI + root jobs link
 - [x] REST tests/mocks/fixtures for jobs + jobs integration tests
@@ -126,3 +126,10 @@ Import time-batching + API pagination & filters (plans/import_timeframe_and_api_
 - [x] Tests: adapter windowed/gap/config, import-loop timeframe paging, REST pagination + name filters, Postgres pagination + natural-key idempotency
 - [x] Docs (README, ToDo, plans/import_timeframe_and_api_pagination_plan.md)
 - [x] make check + make test green
+
+Raw measurements export (plans/17_measurement_counting_station_filter_plan.md)
+
+- [x] `GET /api/v1/measurements/raw`: bare JSON array of plain measurement objects (no HATEOAS links / no pagination envelope), same `channel_id`/`offset`/`limit` query parameters, handled in the driving adapter only
+- [x] Fix `ProviderMessageDto` self link (no single-message endpoint; points at the messages collection)
+- [x] Tests (raw endpoint, `RawMeasurementDto` mapping, provider-message self link, OpenAPI path) + docs
+- [x] make check + make test + make test-rest + make coverage green

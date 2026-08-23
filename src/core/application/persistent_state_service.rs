@@ -193,7 +193,7 @@ mod tests {
             Ok(())
         }
 
-        fn update_last_updated_at(
+        fn update_imported_until(
             &self,
             id: Id,
             timestamp: DateTime<Utc>,
@@ -205,7 +205,20 @@ mod tests {
                 .iter_mut()
                 .find(|ds| ds.id == id)
             {
-                data_source.last_updated_at = Some(timestamp);
+                data_source.imported_until = Some(timestamp);
+            }
+            Ok(())
+        }
+
+        fn clear_imported_until(&self, id: Id) -> Result<(), DomainError> {
+            if let Some(data_source) = self
+                .data_sources
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|ds| ds.id == id)
+            {
+                data_source.imported_until = None;
             }
             Ok(())
         }

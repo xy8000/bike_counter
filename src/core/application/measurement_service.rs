@@ -75,8 +75,8 @@ mod tests {
             Ok(())
         }
 
-        fn save_batch(&self, _measurements: Vec<Measurement>) -> Result<(), DomainError> {
-            Ok(())
+        fn save_batch(&self, _measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+            Ok(0)
         }
 
         fn find_by_id(&self, id: measurement_vo::Id) -> Result<Measurement, DomainError> {

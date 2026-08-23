@@ -28,6 +28,15 @@ impl DataSourceService {
             .find_by_id(id)?
             .ok_or(DomainError::NotFound(id.0))
     }
+
+    /// Clears the incremental import watermark so the next update re-imports
+    /// everything for the data source. `DomainError::NotFound` if unknown.
+    pub fn reset_imported_until(&self, id: data_source_vo::Id) -> Result<(), DomainError> {
+        self.repository
+            .find_by_id(id)?
+            .ok_or(DomainError::NotFound(id.0))?;
+        self.repository.clear_imported_until(id)
+    }
 }
 
 impl DataSourceServicePort for DataSourceService {
@@ -37,6 +46,10 @@ impl DataSourceServicePort for DataSourceService {
 
     fn find_by_id(&self, id: data_source_vo::Id) -> Result<DataSource, DomainError> {
         self.find_by_id(id)
+    }
+
+    fn reset_imported_until(&self, id: data_source_vo::Id) -> Result<(), DomainError> {
+        self.reset_imported_until(id)
     }
 }
 
@@ -82,11 +95,15 @@ mod tests {
             Ok(())
         }
 
-        fn update_last_updated_at(
+        fn update_imported_until(
             &self,
             _id: data_source_vo::Id,
             _timestamp: DateTime<Utc>,
         ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn clear_imported_until(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
             Ok(())
         }
     }
@@ -117,6 +134,21 @@ mod tests {
     fn find_by_unknown_id_is_not_found() {
         assert!(matches!(
             service().find_by_id(data_source_vo::Id(Uuid::from_u128(0x99))),
+            Err(DomainError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn reset_imported_until_clears_the_watermark() {
+        let service = service();
+        let id = data_source_vo::Id(DataSource::id_from_name("Münster"));
+        assert!(service.reset_imported_until(id).is_ok());
+    }
+
+    #[test]
+    fn reset_imported_until_on_unknown_id_is_not_found() {
+        assert!(matches!(
+            service().reset_imported_until(data_source_vo::Id(Uuid::from_u128(0x99))),
             Err(DomainError::NotFound(_))
         ));
     }

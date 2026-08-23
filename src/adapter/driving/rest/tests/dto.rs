@@ -2,11 +2,11 @@
 
 use crate::adapter::driving::rest::dto::{
     ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto, JobDto, JobListDto,
-    JobStatusDto, LinkDto, MeasurementDto, MeasurementListDto,
+    JobStatusDto, LinkDto, MeasurementDto, MeasurementListDto, RawMeasurementDto,
 };
 use crate::adapter::driving::rest::tests::fixtures::{
     CHANNEL_ID_A, JOB_ID_A, MEASUREMENT_ID_A, STATION_ID_A, channel_a, job_a, job_b, measurement_a,
-    station_a,
+    station_a, timestamp,
 };
 use crate::core::domain::jobs::job::JobStatus;
 
@@ -55,6 +55,16 @@ fn measurement_dto_contains_expected_links() {
         dto.links["channel"].href,
         format!("/api/v1/channels/{CHANNEL_ID_A}")
     );
+}
+
+#[test]
+fn raw_measurement_dto_maps_fields_without_links() {
+    let dto = RawMeasurementDto::from(measurement_a());
+
+    assert_eq!(dto.id, MEASUREMENT_ID_A);
+    assert_eq!(dto.channel_id, CHANNEL_ID_A);
+    assert_eq!(dto.value, 42);
+    assert_eq!(dto.timestamp, timestamp());
 }
 
 #[test]

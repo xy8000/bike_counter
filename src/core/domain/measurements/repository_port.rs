@@ -3,7 +3,9 @@ use crate::core::domain::error::DomainError;
 
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
-    fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError>;
+    /// Inserts a batch idempotently and returns the number of rows actually
+    /// inserted (rows skipped by `ON CONFLICT DO NOTHING` are not counted).
+    fn save_batch(&self, measurements: Vec<Measurement>) -> Result<u64, DomainError>;
     fn find_by_id(&self, id: value_objects::Id) -> Result<Measurement, DomainError>;
     fn find_all(&self) -> Result<Vec<Measurement>, DomainError>;
     fn find_by_channel_id(

@@ -49,6 +49,12 @@ async fn get_returns_messages_newest_first_for_known_source() {
         body["_links"]["self"]["href"],
         format!("/api/v1/data-sources/{}/messages", DATA_SOURCE_ID_A)
     );
+    // No single-message endpoint exists, so the item self link points at the
+    // collection that contains the message.
+    assert_eq!(
+        items[0]["_links"]["self"]["href"],
+        format!("/api/v1/data-sources/{}/messages", DATA_SOURCE_ID_A)
+    );
     assert_eq!(
         body["_links"]["data_source"]["href"],
         format!("/api/v1/data-sources/{}", DATA_SOURCE_ID_A)

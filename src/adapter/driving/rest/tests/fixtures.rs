@@ -103,7 +103,7 @@ pub fn data_source_a() -> DataSource {
         id: data_source_vo::Id(DATA_SOURCE_ID_A),
         name: data_source_vo::Name("Münster".to_string()),
         provider_type: data_source_vo::ProviderType("münster_opendata_github_provider".to_string()),
-        last_updated_at: None,
+        imported_until: None,
     }
 }
 

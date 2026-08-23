@@ -46,8 +46,11 @@ pub struct ImportSummary {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DataSourceUpdate {
     pub processed_measurements: usize,
+    /// Number of measurements actually inserted (rows skipped by
+    /// `ON CONFLICT DO NOTHING` are not counted).
+    pub added_measurements: u64,
     /// Timestamp of the last processed measurement (the cursor to advance
-    /// `data_sources.last_updated_at` to).
+    /// `data_sources.imported_until` to).
     pub last_measurement_timestamp: Option<DateTime<Utc>>,
 }
 
@@ -231,22 +234,24 @@ impl DataImportService {
 
     /// Incrementally updates a single data source in **strict order**:
     /// counting stations first, then channels, then measurements (paged from
-    /// `from`, the data source's `last_updated_at`). `on_batch` is invoked with
-    /// the running processed-measurement count after each persisted batch, so
-    /// the caller can record progress (e.g. `processed_measurements` metadata).
+    /// `from`, the data source's `imported_until`). `on_batch` is invoked with
+    /// the running (processed, added) counts after each persisted batch, so the
+    /// caller can record progress (e.g. `processed_measurements` and
+    /// `added_measurements` metadata).
     ///
-    /// Returns how many measurements were processed and the timestamp of the
-    /// last processed measurement (the cursor for the next run).
+    /// Returns how many measurements were processed and added and the timestamp
+    /// of the last processed measurement (the cursor for the next run).
     pub fn update_data_source(
         &self,
         runtime: &DataSourceRuntime,
         from: Option<DateTime<Utc>>,
-        on_batch: impl Fn(usize) -> Result<(), DomainError>,
+        on_batch: impl Fn(usize, u64) -> Result<(), DomainError>,
     ) -> Result<DataSourceUpdate, DomainError> {
         let station_ids = self.sync_counting_stations(runtime, &mut ImportSummary::default())?;
         let channels = self.sync_channels(runtime, &station_ids, &mut ImportSummary::default())?;
 
         let mut processed = 0usize;
+        let mut added = 0u64;
         let mut last_measurement_timestamp: Option<DateTime<Utc>> = None;
 
         for channel in &channels {
@@ -265,8 +270,8 @@ impl DataImportService {
 
                 processed += batch.measurements.len();
                 let measurements = to_measurements(batch.measurements, channel.id.0);
-                self.measurement_repository.save_batch(measurements)?;
-                on_batch(processed)?;
+                added += self.measurement_repository.save_batch(measurements)?;
+                on_batch(processed, added)?;
 
                 match (
                     batch.last_measurement_datetime,
@@ -287,6 +292,7 @@ impl DataImportService {
 
         Ok(DataSourceUpdate {
             processed_measurements: processed,
+            added_measurements: added,
             last_measurement_timestamp,
         })
     }
@@ -561,9 +567,10 @@ mod tests {
             Ok(())
         }
 
-        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError> {
+        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+            let len = measurements.len() as u64;
             self.measurements.lock().unwrap().extend(measurements);
-            Ok(())
+            Ok(len)
         }
 
         fn find_by_id(&self, id: measurement_vo::Id) -> Result<Measurement, DomainError> {
@@ -950,10 +957,11 @@ mod tests {
             Ok(())
         }
 
-        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError> {
+        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+            let len = measurements.len() as u64;
             self.log.lock().unwrap().push("measurements".to_string());
             self.measurements.lock().unwrap().extend(measurements);
-            Ok(())
+            Ok(len)
         }
 
         fn find_by_id(&self, id: measurement_vo::Id) -> Result<Measurement, DomainError> {
@@ -1033,10 +1041,11 @@ mod tests {
             DataImportService::new(station_repo, channel_repo, measurement_repo, Vec::new());
 
         let update = service
-            .update_data_source(&runtime(provider.clone()), None, |_| Ok(()))
+            .update_data_source(&runtime(provider.clone()), None, |_, _| Ok(()))
             .expect("update should succeed");
 
         assert_eq!(update.processed_measurements, 2);
+        assert_eq!(update.added_measurements, 2);
         assert_eq!(update.last_measurement_timestamp, Some(t0));
 
         // Strict order per data source: stations first, then channels, then measurements.
@@ -1084,13 +1093,18 @@ mod tests {
 
         let progress = Arc::new(Mutex::new(Vec::new()));
         let update = service
-            .update_data_source(&runtime(provider.clone()), Some(last_updated), |count| {
-                progress.lock().unwrap().push(count);
-                Ok(())
-            })
+            .update_data_source(
+                &runtime(provider.clone()),
+                Some(last_updated),
+                |count, _| {
+                    progress.lock().unwrap().push(count);
+                    Ok(())
+                },
+            )
             .expect("update should succeed");
 
         assert_eq!(update.processed_measurements, 3);
+        assert_eq!(update.added_measurements, 3);
         assert_eq!(update.last_measurement_timestamp, Some(t1));
         assert_eq!(*progress.lock().unwrap(), vec![2, 3]);
 
@@ -1099,7 +1113,7 @@ mod tests {
         assert_eq!(
             queries[0].from,
             Some(last_updated),
-            "resumes from the data source's last_updated_at"
+            "resumes from the data source's imported_until"
         );
         assert_eq!(
             queries[1].from,
@@ -1131,7 +1145,7 @@ mod tests {
         );
 
         let error = service
-            .update_data_source(&runtime(provider.clone()), None, |_| Ok(()))
+            .update_data_source(&runtime(provider.clone()), None, |_, _| Ok(()))
             .expect_err("a channel referencing an unknown station must fail");
         assert!(matches!(error, DomainError::InvalidQuery(_)));
     }
@@ -1204,9 +1218,10 @@ mod tests {
         );
 
         let update = service
-            .update_data_source(&runtime(provider.clone()), None, |_| Ok(()))
+            .update_data_source(&runtime(provider.clone()), None, |_, _| Ok(()))
             .expect("update should succeed");
         assert_eq!(update.processed_measurements, 1);
+        assert_eq!(update.added_measurements, 1);
         assert_eq!(update.last_measurement_timestamp, None);
         assert_eq!(
             provider.recorded_queries.lock().unwrap().len(),

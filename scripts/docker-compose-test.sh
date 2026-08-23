@@ -7,7 +7,7 @@
 #     startup because the job has never succeeded) exposing lifetime_until
 #   * The database schema is correct:
 #       - jobs.lifetime_until is TIMESTAMPTZ NOT NULL (absolute deadline)
-#       - data_sources.last_updated_at exists as TIMESTAMPTZ
+#       - data_sources.imported_until exists as TIMESTAMPTZ
 #
 # A temporary config.toml is created in the project root (the app mounts
 # ./config.toml). Any pre-existing config.toml is backed up and restored.
@@ -135,14 +135,14 @@ if [ "${LIFETIME_TYPE}" != "timestamp with time zone|NO" ]; then
 fi
 echo "Verified jobs.lifetime_until is TIMESTAMPTZ NOT NULL"
 
-# data_sources.last_updated_at must exist as TIMESTAMPTZ (nullable, DB-only).
-LAST_UPDATED_TYPE="$(
-  psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='data_sources' AND column_name='last_updated_at'"
+# data_sources.imported_until must exist as TIMESTAMPTZ (nullable, DB-only).
+IMPORTED_UNTIL_TYPE="$(
+  psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='data_sources' AND column_name='imported_until'"
 )"
-if [ "${LAST_UPDATED_TYPE}" != "timestamp with time zone" ]; then
-  echo "ERROR: data_sources.last_updated_at is missing or not TIMESTAMPTZ (got '${LAST_UPDATED_TYPE}')" >&2
+if [ "${IMPORTED_UNTIL_TYPE}" != "timestamp with time zone" ]; then
+  echo "ERROR: data_sources.imported_until is missing or not TIMESTAMPTZ (got '${IMPORTED_UNTIL_TYPE}')" >&2
   exit 1
 fi
-echo "Verified data_sources.last_updated_at is TIMESTAMPTZ"
+echo "Verified data_sources.imported_until is TIMESTAMPTZ"
 
 PASS=1

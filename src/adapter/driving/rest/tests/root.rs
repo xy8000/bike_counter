@@ -53,6 +53,7 @@ async fn openapi_document_is_served() {
         "/api/v1/counting-stations/{id}",
         "/api/v1/channels",
         "/api/v1/measurements",
+        "/api/v1/measurements/raw",
     ] {
         assert!(
             paths.contains_key(path),

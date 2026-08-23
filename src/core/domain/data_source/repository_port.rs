@@ -16,6 +16,10 @@ pub trait DataSourceRepository {
 
     fn delete(&self, id: Id) -> Result<(), DomainError>;
 
-    /// Advances the incremental update marker to the given timestamp.
-    fn update_last_updated_at(&self, id: Id, timestamp: DateTime<Utc>) -> Result<(), DomainError>;
+    /// Advances the incremental import watermark to the given timestamp.
+    fn update_imported_until(&self, id: Id, timestamp: DateTime<Utc>) -> Result<(), DomainError>;
+
+    /// Clears the incremental import watermark (`imported_until = NULL`), so the
+    /// next update re-imports everything for the data source.
+    fn clear_imported_until(&self, id: Id) -> Result<(), DomainError>;
 }

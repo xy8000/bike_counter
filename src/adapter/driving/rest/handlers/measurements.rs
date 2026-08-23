@@ -7,7 +7,7 @@ use super::{
     AppState, DEFAULT_PAGE_LIMIT, DEFAULT_PAGE_OFFSET, MAX_PAGE_LIMIT, blocking, map_domain_error,
 };
 use crate::adapter::driving::rest::dto::{
-    ErrorResponseDto, MeasurementDto, MeasurementListDto, MeasurementQueryParams,
+    ErrorResponseDto, MeasurementDto, MeasurementListDto, MeasurementQueryParams, RawMeasurementDto,
 };
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 
@@ -47,6 +47,42 @@ pub async fn list_measurements(
         limit,
         has_more,
     )))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/measurements/raw",
+    tag = "Measurements",
+    params(
+        MeasurementQueryParams
+    ),
+    responses(
+        (status = 200, description = "Raw measurements as a plain JSON array without HATEOAS links", body = Vec<RawMeasurementDto>),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn list_measurements_raw(
+    State(state): State<AppState>,
+    Query(params): Query<MeasurementQueryParams>,
+) -> Result<Json<Vec<RawMeasurementDto>>, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.measurement_service.clone();
+    let channel_id = params.channel_id.map(measurement_vo::ChannelId);
+    let offset = params.offset.unwrap_or(DEFAULT_PAGE_OFFSET);
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .min(MAX_PAGE_LIMIT);
+
+    let (measurements, _has_more) = blocking(move || service.list(channel_id, offset, limit))
+        .await
+        .map_err(map_domain_error)?;
+
+    Ok(Json(
+        measurements
+            .into_iter()
+            .map(RawMeasurementDto::from)
+            .collect(),
+    ))
 }
 
 #[utoipa::path(

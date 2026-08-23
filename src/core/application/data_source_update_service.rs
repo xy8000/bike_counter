@@ -25,8 +25,12 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 pub const DATA_SOURCE_UPDATE_JOB_TYPE: &str = "data_source_update";
 /// Human-readable name of the data-source update job.
 pub const DATA_SOURCE_UPDATE_JOB_NAME: &str = "Data source update";
-/// Job metadata key holding the running processed-measurement count.
+/// Job metadata key holding the running processed-measurement count (rows read
+/// from the provider).
 pub const PROCESSED_MEASUREMENTS_KEY: &str = "processed_measurements";
+/// Job metadata key holding the running added-measurement count (rows actually
+/// inserted).
+pub const ADDED_MEASUREMENTS_KEY: &str = "added_measurements";
 
 pub struct DataSourceUpdateService {
     job_repository: Arc<dyn JobRepository + Send + Sync>,
@@ -204,30 +208,38 @@ impl DataSourceUpdateService {
 
     /// Updates every configured data source, in strict order per source:
     /// counting stations, then channels, then measurements (paged from the
-    /// source's `last_updated_at`). After each persisted measurement batch the
-    /// running `processed_measurements` count is recorded in the job metadata.
-    /// On success the data source's `last_updated_at` is advanced to the last
-    /// processed measurement timestamp (incremental, no reprocessing).
+    /// source's `imported_until`). After each persisted measurement batch the
+    /// running `processed_measurements` and `added_measurements` counts are
+    /// recorded in the job metadata. On success the data source's
+    /// `imported_until` is advanced to the last processed measurement timestamp
+    /// (incremental, no reprocessing).
     fn run_updates(&self, job_id: Uuid) -> Result<(), DomainError> {
         for runtime in &self.runtimes {
             let from = self
                 .data_source_repository
                 .find_by_id(runtime.data_source_id)?
-                .and_then(|data_source| data_source.last_updated_at);
+                .and_then(|data_source| data_source.imported_until);
 
-            let update =
-                self.data_import_service
-                    .update_data_source(runtime, from, |processed| {
-                        self.job_repository.update_metadata(
-                            job_id,
-                            PROCESSED_MEASUREMENTS_KEY,
-                            json!(processed),
-                        )
-                    })?;
+            let update = self.data_import_service.update_data_source(
+                runtime,
+                from,
+                |processed, added| {
+                    self.job_repository.update_metadata(
+                        job_id,
+                        PROCESSED_MEASUREMENTS_KEY,
+                        json!(processed),
+                    )?;
+                    self.job_repository.update_metadata(
+                        job_id,
+                        ADDED_MEASUREMENTS_KEY,
+                        json!(added),
+                    )
+                },
+            )?;
 
             if let Some(last_timestamp) = update.last_measurement_timestamp {
                 self.data_source_repository
-                    .update_last_updated_at(runtime.data_source_id, last_timestamp)?;
+                    .update_imported_until(runtime.data_source_id, last_timestamp)?;
             }
         }
         Ok(())
@@ -525,7 +537,7 @@ mod tests {
             Ok(())
         }
 
-        fn update_last_updated_at(
+        fn update_imported_until(
             &self,
             id: DataSourceId,
             timestamp: DateTime<Utc>,
@@ -537,7 +549,20 @@ mod tests {
                 .iter_mut()
                 .find(|ds| ds.id == id)
             {
-                ds.last_updated_at = Some(timestamp);
+                ds.imported_until = Some(timestamp);
+            }
+            Ok(())
+        }
+
+        fn clear_imported_until(&self, id: DataSourceId) -> Result<(), DomainError> {
+            if let Some(ds) = self
+                .data_sources
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|ds| ds.id == id)
+            {
+                ds.imported_until = None;
             }
             Ok(())
         }
@@ -629,9 +654,10 @@ mod tests {
             Ok(())
         }
 
-        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError> {
+        fn save_batch(&self, measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+            let len = measurements.len() as u64;
             self.measurements.lock().unwrap().extend(measurements);
-            Ok(())
+            Ok(len)
         }
 
         fn find_by_id(&self, _id: measurement_vo::Id) -> Result<Measurement, DomainError> {
@@ -929,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn records_progress_and_advances_last_updated_at() {
+    fn records_progress_and_advances_imported_until() {
         let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -961,11 +987,15 @@ mod tests {
             jobs[0].metadata.get(PROCESSED_MEASUREMENTS_KEY),
             Some(&serde_json::json!(1))
         );
+        assert_eq!(
+            jobs[0].metadata.get(ADDED_MEASUREMENTS_KEY),
+            Some(&serde_json::json!(1))
+        );
 
         let stored = data_source_repo
             .find_by_id(DataSourceId(DataSource::id_from_name("Münster")))
             .unwrap()
             .unwrap();
-        assert_eq!(stored.last_updated_at, Some(t0));
+        assert_eq!(stored.imported_until, Some(t0));
     }
 }

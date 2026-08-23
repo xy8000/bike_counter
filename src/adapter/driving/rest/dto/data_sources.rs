@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -12,6 +13,9 @@ pub struct DataSourceDto {
     pub id: Uuid,
     pub name: String,
     pub provider_type: String,
+    /// Watermark timestamp up to which measurements have been imported.
+    /// `null` means the data source has not been imported yet.
+    pub imported_until: Option<DateTime<Utc>>,
     #[serde(rename = "_links")]
     pub links: HashMap<String, LinkDto>,
 }
@@ -43,11 +47,16 @@ impl From<DataSource> for DataSourceDto {
             "messages".to_string(),
             LinkDto::new(format!("/api/v1/data-sources/{id}/messages")),
         );
+        links.insert(
+            "imported_until".to_string(),
+            LinkDto::new(format!("/api/v1/data-sources/{id}/imported_until")),
+        );
 
         Self {
             id,
             name: data_source.name.0,
             provider_type: data_source.provider_type.0,
+            imported_until: data_source.imported_until,
             links,
         }
     }

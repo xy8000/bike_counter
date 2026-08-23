@@ -49,12 +49,11 @@ impl From<ProviderMessage> for ProviderMessageDto {
     fn from(message: ProviderMessage) -> Self {
         let data_source_id = message.data_source_id.0;
         let mut links = HashMap::new();
+        // No single-message endpoint exists, so the self link points at the
+        // collection that contains the message.
         links.insert(
             "self".to_string(),
-            LinkDto::new(format!(
-                "/api/v1/data-sources/{data_source_id}/messages/{}",
-                message.id
-            )),
+            LinkDto::new(format!("/api/v1/data-sources/{data_source_id}/messages")),
         );
         links.insert(
             "data_source".to_string(),

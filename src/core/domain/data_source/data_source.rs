@@ -11,9 +11,9 @@ pub struct DataSource {
     pub id: value_objects::Id,
     pub name: value_objects::Name,
     pub provider_type: value_objects::ProviderType,
-    /// Database-only indicator of the last processed measurement timestamp.
-    /// Not exposed through the REST API.
-    pub last_updated_at: Option<DateTime<Utc>>,
+    /// The incremental import watermark: everything on/before this timestamp has
+    /// been imported. `None` means "not yet imported" (full re-import).
+    pub imported_until: Option<DateTime<Utc>>,
 }
 
 impl DataSource {
@@ -22,7 +22,7 @@ impl DataSource {
             id: value_objects::Id(Self::id_from_name(&name)),
             name: value_objects::Name(name),
             provider_type: value_objects::ProviderType(provider_type),
-            last_updated_at: None,
+            imported_until: None,
         }
     }
 

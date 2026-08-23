@@ -77,3 +77,28 @@ pub async fn list_provider_messages(
         .map_err(map_domain_error)?;
     Ok(Json(ProviderMessageListDto::new(id, messages)))
 }
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/data-sources/{id}/imported_until",
+    tag = "Data Sources",
+    params(
+        ("id" = Uuid, Path, description = "Data source UUID")
+    ),
+    responses(
+        (status = 204, description = "Import watermark cleared; the next update re-imports everything"),
+        (status = 404, description = "Data source not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn reset_imported_until(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.data_source_service.clone();
+    let data_source_id = data_source_vo::Id(id);
+    blocking(move || service.reset_imported_until(data_source_id))
+        .await
+        .map_err(map_domain_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}

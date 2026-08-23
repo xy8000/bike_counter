@@ -15,6 +15,9 @@ use crate::core::domain::error::DomainError;
 pub trait DataSourceServicePort: Send + Sync {
     fn list(&self) -> Result<Vec<DataSource>, DomainError>;
     fn find_by_id(&self, id: Id) -> Result<DataSource, DomainError>;
+    /// Clears the incremental import watermark so the next update re-imports
+    /// everything for the data source.
+    fn reset_imported_until(&self, id: Id) -> Result<(), DomainError>;
 }
 
 /// Read access to provider-emitted messages for a data source.

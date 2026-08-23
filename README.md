@@ -92,11 +92,13 @@ Scheduling semantics:
 - Afterwards it runs on the CRON schedule.
 - While a job of the same type is `RUNNING` and within its `lifetime_until`, new
   runs are skipped (a warning is printed).
-- Updates are **incremental**: each data source's `last_updated_at` advances to
+- Updates are **incremental**: each data source's `imported_until` advances to
   the last processed measurement timestamp, so consecutive runs do not reprocess
   data. Per data source the order is strict: counting stations, then channels,
-  then measurements (paged in batches; the running `processed_measurements`
-  count is persisted to the job metadata after each batch).
+  then measurements (paged in batches; the running `processed_measurements` and
+  `added_measurements` counts are persisted to the job metadata after each
+  batch). `DELETE /api/v1/data-sources/{id}/imported_until` clears the cursor to
+  force a full re-import of one data source.
 
 The Münster provider downloads the configured GitHub ZIP, extracts it into an
 obscured `/tmp` folder, and serves counting stations, channels and measurements
@@ -300,6 +302,7 @@ and `DELETE` to manage the opaque per-data-source provider state:
 - `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}`
 - `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
 - `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` is capped at 1000 and defaults to 100) / `GET /api/v1/measurements/{id}`
+- `GET /api/v1/measurements/raw` – lean bulk export: same `?channel_id=`, `?offset=`/`?limit=` parameters, but returns a bare JSON array of plain measurement objects (no HATEOAS links and no pagination envelope) for scraping large volumes
 
 Every resource includes a `_links` object (HAL-style) pointing to related
 resources, e.g. a station links to its own `self`, its `channels`, and its
@@ -354,7 +357,7 @@ Under the hood the scripts are:
   real docker-compose stack (PostgreSQL + app), waits for readiness, asserts the
   jobs + data-sources APIs return `200`, verifies a `data_source_update` job with
   `lifetime_until` was recorded, and checks `jobs.lifetime_until TIMESTAMPTZ NOT
-  NULL` and `data_sources.last_updated_at` via `psql`, then tears everything down.
+  NULL` and `data_sources.imported_until` via `psql`, then tears everything down.
 - [`scripts/coverage.sh`](scripts/coverage.sh) – coverage gate: runs the full
   test suite under `cargo-llvm-cov` instrumentation, writes the standard lcov +
   HTML report under `target/coverage/`, and fails non-zero when **overall

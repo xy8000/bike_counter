@@ -1,6 +1,6 @@
 //! Tests for the `/api/v1/data-sources` endpoints.
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::tests::TestApp;
@@ -75,6 +75,14 @@ async fn lists_persisted_data_sources() {
             DataSource::id_from_name("Münster")
         )
     );
+    assert_eq!(
+        munster["_links"]["imported_until"]["href"],
+        format!(
+            "/api/v1/data-sources/{}/imported_until",
+            DataSource::id_from_name("Münster")
+        )
+    );
+    assert!(munster["imported_until"].is_null());
 
     let list_links = body["_links"]
         .as_object()
@@ -136,6 +144,11 @@ async fn gets_data_source_by_id() {
         body["_links"]["messages"]["href"],
         format!("/api/v1/data-sources/{id}/messages")
     );
+    assert_eq!(
+        body["_links"]["imported_until"]["href"],
+        format!("/api/v1/data-sources/{id}/imported_until")
+    );
+    assert!(body["imported_until"].is_null());
 }
 
 #[tokio::test]
@@ -144,6 +157,40 @@ async fn returns_404_when_data_source_does_not_exist() {
     let id = Uuid::new_v4();
 
     assert_not_found(&app, "/api/v1/data-sources", id).await;
+}
+
+#[tokio::test]
+async fn reset_imported_until_clears_the_watermark_for_a_known_source() {
+    let munster = data_source("Münster", "münster_opendata_github_provider");
+    let app = TestApp::with_repositories(
+        MockDataSourceRepository {
+            data_sources: vec![munster.clone()],
+        },
+        mock_health_service(HealthStatus::Up),
+    );
+
+    let id = munster.id.0;
+    let response = app
+        .send(
+            Method::DELETE,
+            &format!("/api/v1/data-sources/{id}/imported_until"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn reset_imported_until_returns_404_for_an_unknown_source() {
+    let app = TestApp::new();
+    let id = Uuid::new_v4();
+
+    let response = app
+        .send(
+            Method::DELETE,
+            &format!("/api/v1/data-sources/{id}/imported_until"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -163,5 +210,9 @@ async fn openapi_document_contains_data_sources_paths() {
     assert!(
         paths.contains_key("/api/v1/data-sources/{id}"),
         "OpenAPI document should contain /api/v1/data-sources/{{id}}"
+    );
+    assert!(
+        paths.contains_key("/api/v1/data-sources/{id}/imported_until"),
+        "OpenAPI document should contain /api/v1/data-sources/{{id}}/imported_until"
     );
 }

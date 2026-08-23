@@ -32,9 +32,9 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(())
     }
 
-    fn save_batch(&self, measurements: Vec<Measurement>) -> Result<(), DomainError> {
+    fn save_batch(&self, measurements: Vec<Measurement>) -> Result<u64, DomainError> {
         if measurements.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         let mut client = self
             .pool
@@ -75,14 +75,14 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             params.push(&measurement.timestamp.0);
         }
 
-        transaction
+        let inserted = transaction
             .execute(&query, &params)
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
         transaction
             .commit()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        Ok(())
+        Ok(inserted)
     }
 
     fn find_by_id(&self, id: value_objects::Id) -> Result<Measurement, DomainError> {
@@ -267,7 +267,15 @@ mod tests {
         let first_measurement = measurement(1, 42);
         let measurement_id = first_measurement.id;
         repository.save(first_measurement).unwrap();
-        repository.save_batch(vec![measurement(2, 84)]).unwrap();
+        let inserted = repository.save_batch(vec![measurement(2, 84)]).unwrap();
+        assert_eq!(inserted, 1, "the batch must report one inserted row");
+
+        // Re-inserting the same rows is idempotent: nothing new is added.
+        let reinserted = repository.save_batch(vec![measurement(2, 84)]).unwrap();
+        assert_eq!(
+            reinserted, 0,
+            "a duplicate batch must report zero inserted rows"
+        );
 
         let stored = repository.find_by_id(measurement_id).unwrap();
 

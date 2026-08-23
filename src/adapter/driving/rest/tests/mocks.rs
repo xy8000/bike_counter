@@ -166,8 +166,8 @@ impl MeasurementRepository for MockMeasurementRepository {
         Ok(())
     }
 
-    fn save_batch(&self, _measurements: Vec<Measurement>) -> Result<(), DomainError> {
-        Ok(())
+    fn save_batch(&self, _measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+        Ok(0)
     }
 
     fn find_by_id(&self, id: measurement_vo::Id) -> Result<Measurement, DomainError> {
@@ -245,11 +245,15 @@ impl DataSourceRepository for MockDataSourceRepository {
         Ok(())
     }
 
-    fn update_last_updated_at(
+    fn update_imported_until(
         &self,
         _id: data_source_vo::Id,
         _timestamp: DateTime<Utc>,
     ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    fn clear_imported_until(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
         Ok(())
     }
 }

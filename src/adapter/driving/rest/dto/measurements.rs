@@ -46,6 +46,27 @@ impl From<Measurement> for MeasurementDto {
     }
 }
 
+/// A plain measurement without any HATEOAS links, used by the lean raw export
+/// endpoint for bulk scraping.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RawMeasurementDto {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub value: i64,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl From<Measurement> for RawMeasurementDto {
+    fn from(measurement: Measurement) -> Self {
+        Self {
+            id: measurement.id.0,
+            channel_id: measurement.channel_id.0,
+            value: measurement.value.0,
+            timestamp: measurement.timestamp.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MeasurementListDto {
     pub items: Vec<MeasurementDto>,

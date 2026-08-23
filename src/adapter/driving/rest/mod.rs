@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::{get, put};
+use axum::routing::{delete, get, put};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -18,8 +18,8 @@ use crate::adapter::driving::rest::handlers::{
     clear_persistent_state, delete_persistent_state_entry, get_api_root, get_channel_by_id,
     get_counting_station_by_id, get_data_source_by_id, get_health_live, get_health_ready,
     get_job_by_id, get_measurement_by_id, get_persistent_state, list_channels,
-    list_counting_stations, list_data_sources, list_jobs, list_measurements,
-    list_provider_messages, put_persistent_state_entry,
+    list_counting_stations, list_data_sources, list_jobs, list_measurements, list_measurements_raw,
+    list_provider_messages, put_persistent_state_entry, reset_imported_until,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
 use crate::core::domain::channels::service_port::ChannelServicePort;
@@ -78,6 +78,7 @@ impl RestApiAdapter {
             .route("/api/v1/channels", get(list_channels))
             .route("/api/v1/channels/:id", get(get_channel_by_id))
             .route("/api/v1/measurements", get(list_measurements))
+            .route("/api/v1/measurements/raw", get(list_measurements_raw))
             .route("/api/v1/measurements/:id", get(get_measurement_by_id))
             .route("/api/v1/data-sources", get(list_data_sources))
             .route("/api/v1/data-sources/:id", get(get_data_source_by_id))
@@ -92,6 +93,10 @@ impl RestApiAdapter {
             .route(
                 "/api/v1/data-sources/:id/messages",
                 get(list_provider_messages),
+            )
+            .route(
+                "/api/v1/data-sources/:id/imported_until",
+                delete(reset_imported_until),
             )
             .route("/api/v1/jobs", get(list_jobs))
             .route("/api/v1/jobs/:id", get(get_job_by_id))

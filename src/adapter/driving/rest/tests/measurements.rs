@@ -81,6 +81,42 @@ async fn list_filters_by_channel_id() {
 }
 
 #[tokio::test]
+async fn raw_list_returns_plain_measurements_without_links() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api/v1/measurements/raw").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body
+        .as_array()
+        .expect("raw export should be a bare JSON array");
+    assert_eq!(items.len(), 2);
+
+    let first = &items[0];
+    assert_eq!(first["id"], MEASUREMENT_ID_A.to_string());
+    assert_eq!(first["channel_id"], CHANNEL_ID_A.to_string());
+    assert_eq!(first["value"], 42);
+    assert_eq!(first["timestamp"], "2024-01-01T12:00:00Z");
+    // No HATEOAS overhead: no per-item links and no pagination envelope.
+    assert!(first.get("_links").is_none());
+    assert!(body.get("offset").is_none());
+    assert!(body.get("limit").is_none());
+}
+
+#[tokio::test]
+async fn raw_list_supports_channel_filter_and_pagination() {
+    let app = TestApp::new();
+    let uri = format!("/api/v1/measurements/raw?channel_id={CHANNEL_ID_A}&offset=0&limit=1");
+    let (status, body) = app.get_json(&uri).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body
+        .as_array()
+        .expect("raw export should be a bare JSON array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["channel_id"], CHANNEL_ID_A.to_string());
+}
+
+#[tokio::test]
 async fn get_by_id_returns_single_measurement() {
     let app = TestApp::new();
     let (status, body) = app
