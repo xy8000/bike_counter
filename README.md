@@ -81,7 +81,10 @@ through a lifecycle: `PENDING -> RUNNING -> FINISHED` (or `FAILED`).
 
 Scheduling semantics:
 
-- The update job runs immediately at startup if it has never succeeded.
+- The same always-on rule applies at startup and on every cron tick: the job runs
+  if it has never succeeded or if the last successful run is overdue (the next
+  scheduled trigger after its `finished_at` has already passed). A missed slot
+  while the process was down is therefore caught up on the next startup.
 - Afterwards it runs on the CRON schedule.
 - While a job of the same type is `RUNNING` and within its `lifetime_until`, new
   runs are skipped (a warning is printed).

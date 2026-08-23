@@ -6,6 +6,7 @@
 //! it blocks other runs of the same type; stale RUNNING jobs past their
 //! lifetime are expired (flagged with `max_lifetime_exceeded`).
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -54,13 +55,14 @@ impl DataSourceUpdateService {
     /// Decides whether the data-source update job should run now and executes
     /// it if so.
     ///
-    /// - `startup == true`: run immediately if the job has never succeeded.
-    /// - `startup == false`: a cron tick, so run (unless already running).
-    /// - A RUNNING job within its lifetime always blocks: print a warning and
-    ///   do NOT start a second run.
-    /// - Stale RUNNING jobs past their `lifetime_until` are expired first, so
-    ///   the next job can proceed even after a worker crash.
-    pub fn run_if_due(&self, startup: bool) {
+    /// The same always-on rule applies on every invocation (startup and cron
+    /// ticks): run if the job has never succeeded or the last successful run is
+    /// overdue (at least one scheduled cron trigger was missed since it
+    /// finished). A RUNNING job within its lifetime always blocks: print a
+    /// warning and do NOT start a second run. Stale RUNNING jobs past their
+    /// `lifetime_until` are expired first, so the next job can proceed even
+    /// after a worker crash.
+    pub fn run_if_due(&self) {
         let now = Utc::now();
 
         // 1. Expire stale RUNNING jobs (past their lifetime_until deadline).
@@ -96,30 +98,51 @@ impl DataSourceUpdateService {
             }
         }
 
-        // 3. Startup: run immediately if the job has never succeeded.
-        if startup {
-            let has_succeeded = match self
-                .job_repository
-                .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
-            {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(error) => {
-                    eprintln!(
-                        "Failed to check the last finished data-source update job: {error:?}"
-                    );
-                    return;
-                }
-            };
-            if !has_succeeded {
-                println!("Data source update job has never succeeded; running at startup");
+        // 3. Run when the job has never succeeded or the last successful run is
+        //    overdue.
+        match self
+            .job_repository
+            .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
+        {
+            Ok(None) => {
+                println!("Data source update job has never succeeded; running");
                 self.execute(now);
             }
-            return;
+            Ok(Some(last)) => {
+                if self.is_overdue(&last, now) {
+                    println!(
+                        "Data source update job is overdue (last run at {}); running",
+                        last.finished_at
+                            .map(|ts| ts.to_rfc3339())
+                            .unwrap_or_else(|| "unknown".to_string())
+                    );
+                    self.execute(now);
+                }
+            }
+            Err(error) => {
+                eprintln!("Failed to check the last finished data-source update job: {error:?}");
+            }
         }
+    }
 
-        // 4. Cron tick: run.
-        self.execute(now);
+    /// Whether the last successful run is overdue: the next scheduled cron
+    /// trigger after its finish time has already passed.
+    fn is_overdue(&self, last: &Job, now: DateTime<Utc>) -> bool {
+        let schedule = match cron::Schedule::from_str(self.configuration.data_source_update_cron())
+        {
+            Ok(schedule) => schedule,
+            // The configuration validates the cron expression at construction;
+            // this is a defensive fallback.
+            Err(_) => return false,
+        };
+        match last.finished_at.or(last.started_at) {
+            Some(anchor) => schedule
+                .after(&anchor)
+                .next()
+                .is_some_and(|next| next <= now),
+            // A finished job without timestamps: treat as overdue.
+            None => true,
+        }
     }
 
     /// Runs one full data-source update as a tracked job.
@@ -131,9 +154,10 @@ impl DataSourceUpdateService {
             now + self.configuration.data_source_update_max_lifetime(),
         );
         let job_id = job.id;
+        let job_name = job.name.clone();
 
         if let Err(error) = self.job_repository.insert(job) {
-            eprintln!("Failed to record data-source update job: {error:?}");
+            eprintln!("Failed to record data-source update job {job_name} ({job_id}): {error:?}");
             return;
         }
 
@@ -143,19 +167,23 @@ impl DataSourceUpdateService {
             let message = format!("failed to start job: {error:?}");
             if let Err(fail_error) = self.job_repository.set_failed(job_id, Utc::now(), &message) {
                 eprintln!(
-                    "Failed to mark data-source update job {job_id} as failed: {fail_error:?}"
+                    "Failed to mark data-source update job {job_name} ({job_id}) as failed: {fail_error:?}"
                 );
             }
             return;
         }
 
+        println!("Data source update job {job_name} ({job_id}) started");
+
         // RUNNING -> FINISHED / FAILED.
         match self.run_updates(job_id) {
             Ok(()) => {
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
-                    eprintln!("Failed to finish data-source update job {job_id}: {error:?}");
+                    eprintln!(
+                        "Failed to finish data-source update job {job_name} ({job_id}): {error:?}"
+                    );
                 } else {
-                    println!("Data source update job {job_id} finished");
+                    println!("Data source update job {job_name} ({job_id}) finished");
                 }
             }
             Err(error) => {
@@ -164,10 +192,10 @@ impl DataSourceUpdateService {
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
                 {
                     eprintln!(
-                        "Failed to mark data-source update job {job_id} as failed: {set_failed_error:?}"
+                        "Failed to mark data-source update job {job_name} ({job_id}) as failed: {set_failed_error:?}"
                     );
                 } else {
-                    eprintln!("Data source update job {job_id} failed: {error:?}");
+                    eprintln!("Data source update job {job_name} ({job_id}) failed: {error:?}");
                 }
             }
         }
@@ -673,6 +701,21 @@ mod tests {
         job
     }
 
+    /// A FINISHED job whose `finished_at` is the given instant, so tests can
+    /// control whether the last successful run is overdue.
+    fn finished_job_at(job_type: &str, finished_at: DateTime<Utc>) -> Job {
+        let mut job = Job::new(
+            Uuid::new_v4(),
+            "Data source update".to_string(),
+            job_type.to_string(),
+            finished_at + Duration::seconds(3600),
+        );
+        job.status = JobStatus::Finished;
+        job.started_at = Some(finished_at - Duration::seconds(60));
+        job.finished_at = Some(finished_at);
+        job
+    }
+
     /// A service with no configured data sources (empty runtimes).
     fn service_with(
         job_repo: Arc<MockJobRepository>,
@@ -703,12 +746,12 @@ mod tests {
     }
 
     #[test]
-    fn runs_at_startup_when_job_has_never_succeeded() {
+    fn runs_when_job_has_never_succeeded() {
         let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        service.run_if_due(true);
+        service.run_if_due();
 
         let jobs = job_repo.jobs();
         assert_eq!(jobs.len(), 1);
@@ -729,7 +772,7 @@ mod tests {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        service.run_if_due(true);
+        service.run_if_due();
 
         // No new job was created (the RUNNING job still blocks).
         assert_eq!(job_repo.jobs().len(), 1);
@@ -737,20 +780,41 @@ mod tests {
     }
 
     #[test]
-    fn skips_at_startup_when_job_already_succeeded() {
+    fn skips_when_job_already_succeeded_and_not_overdue() {
         let job_repo = Arc::new(MockJobRepository::new(vec![finished_job(
             DATA_SOURCE_UPDATE_JOB_TYPE,
         )]));
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        service.run_if_due(true);
+        service.run_if_due();
 
         assert_eq!(
             job_repo.jobs().len(),
             1,
-            "no new job on startup after success"
+            "no new job after a recent success"
         );
+    }
+
+    #[test]
+    fn runs_when_last_run_is_overdue() {
+        // The last successful run finished ~2 hours ago: with the hourly cron
+        // at least one trigger (the last hour boundary) has been missed, so the
+        // job must run now.
+        let finished = Utc::now() - Duration::hours(2);
+        let job_repo = Arc::new(MockJobRepository::new(vec![finished_job_at(
+            DATA_SOURCE_UPDATE_JOB_TYPE,
+            finished,
+        )]));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 2, "seeded finished job + a new overdue run");
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+        assert_eq!(jobs[1].status, JobStatus::Finished);
     }
 
     #[test]
@@ -759,7 +823,7 @@ mod tests {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        service.run_if_due(false);
+        service.run_if_due();
 
         let jobs = job_repo.jobs();
         assert_eq!(jobs.len(), 1);
@@ -780,7 +844,7 @@ mod tests {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        service.run_if_due(false);
+        service.run_if_due();
 
         let jobs = job_repo.jobs();
         assert_eq!(jobs.len(), 2, "stale job expired + new job inserted");
@@ -804,7 +868,7 @@ mod tests {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        service.run_if_due(false);
+        service.run_if_due();
 
         // PENDING -> FAILED is a valid transition.
         let jobs = job_repo.jobs();
@@ -826,7 +890,7 @@ mod tests {
         });
         let service = service_with(job_repo.clone(), data_source_repo, vec![runtime(provider)]);
 
-        service.run_if_due(false);
+        service.run_if_due();
 
         // RUNNING -> FAILED.
         let jobs = job_repo.jobs();
@@ -859,7 +923,7 @@ mod tests {
             vec![runtime(provider)],
         );
 
-        service.run_if_due(false);
+        service.run_if_due();
 
         let jobs = job_repo.jobs();
         assert_eq!(jobs.len(), 1);

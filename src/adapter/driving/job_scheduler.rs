@@ -13,15 +13,17 @@ use chrono::Utc;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
 use crate::core::domain::configuration::configuration::Configuration;
 
-/// Runs the data-source update job immediately at startup (if it has never
-/// succeeded) and then on the configured CRON schedule, forever.
+/// Runs the data-source update job immediately at startup and then on the
+/// configured CRON schedule, forever. The job service decides whether to run
+/// (never succeeded or overdue).
 pub async fn run_scheduler(
     service: Arc<DataSourceUpdateService>,
     configuration: Arc<Configuration>,
 ) {
-    // Startup check: run now if the job has never succeeded.
+    // Run now: the job service starts the job only when it has never succeeded
+    // or the last successful run is overdue (missed cron triggers).
     let service_for_startup = service.clone();
-    let _ = tokio::task::spawn_blocking(move || service_for_startup.run_if_due(true)).await;
+    let _ = tokio::task::spawn_blocking(move || service_for_startup.run_if_due()).await;
 
     let schedule = match cron::Schedule::from_str(configuration.data_source_update_cron()) {
         Ok(schedule) => schedule,
@@ -42,6 +44,6 @@ pub async fn run_scheduler(
         tokio::time::sleep(delay).await;
 
         let service_for_tick = service.clone();
-        let _ = tokio::task::spawn_blocking(move || service_for_tick.run_if_due(false)).await;
+        let _ = tokio::task::spawn_blocking(move || service_for_tick.run_if_due()).await;
     }
 }

@@ -103,3 +103,12 @@ Archive cache + CSV parsing (plans/archive_cache_and_parsing_plan.md)
 - [x] Unit tests: parsers, timezone DST, cache tiers (fake fetcher), adapter end-to-end
 - [x] Existing DataProvider mocks and tests updated to the record interface
 - [x] Docs (README, ToDo, plans/archive_cache_and_parsing_plan.md)
+
+Overdue-run for the data-source update job (plans/startup_overdue_update_plan.md)
+
+- [x] Remove the `startup` flag; `run_if_due()` applies one always-on rule: run if never succeeded or the last successful run is overdue
+- [x] `is_overdue` helper: first cron trigger after the last `finished_at` has passed (uses the validated cron schedule)
+- [x] Job logs include name + id: `Data source update job {name} ({id}) started` / `finished` / `failed`
+- [x] `run_scheduler` simplified: same `run_if_due()` for the immediate startup call and every cron tick
+- [x] Tests: `runs_when_last_run_is_overdue` + updated call sites (`finished_job_at` helper)
+- [x] make check + make test green (147 tests)
