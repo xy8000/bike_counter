@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::{Job, JobStatus};
-use crate::core::domain::jobs::repository::JobRepository;
+use crate::core::domain::jobs::repository_port::JobRepository;
 
 use super::pool::PgPool;
 
@@ -263,7 +263,7 @@ mod tests {
     use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::jobs::job::{Job, JobStatus};
-    use crate::core::domain::jobs::repository::JobRepository;
+    use crate::core::domain::jobs::repository_port::JobRepository;
 
     /// A running Postgres test instance plus its repository and connection
     /// details, so tests can also open a raw client to manipulate rows.

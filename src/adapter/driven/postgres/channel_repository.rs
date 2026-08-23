@@ -1,5 +1,5 @@
 use crate::core::domain::channels::channel::{Channel, value_objects};
-use crate::core::domain::channels::repository::ChannelRepository;
+use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::error::DomainError;
 
 use super::pool::PgPool;

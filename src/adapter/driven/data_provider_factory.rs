@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
-use crate::core::application::data_provider_factory::DataProviderFactory;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
-use crate::core::domain::data_source::provider::DataProvider;
+use crate::core::domain::data_source::data_provider_factory_port::DataProviderFactory;
+use crate::core::domain::data_source::provider_port::DataProvider;
 
 pub struct DataProviderFactoryImpl;
 
@@ -33,11 +33,11 @@ mod tests {
 
     use super::DataProviderFactoryImpl;
     use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
-    use crate::core::application::data_provider_factory::DataProviderFactory;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration,
     };
     use crate::core::domain::configuration::error::ConfigError;
+    use crate::core::domain::data_source::data_provider_factory_port::DataProviderFactory;
 
     fn data_source(provider_type: &str, vars: HashMap<String, String>) -> DataSourceConfiguration {
         let provider = DataProviderConfiguration::new(provider_type.to_string(), vars).unwrap();

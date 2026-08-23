@@ -8,10 +8,10 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
 use chrono_tz::Tz;
 
-use crate::core::domain::data_source::provider::{
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+use crate::core::domain::data_source::provider_port::{
     ChannelRecord, CountingStationRecord, MeasurementRecord, ProviderError, ProviderMessageSink,
 };
-use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 
 /// Timezone the raw CSVs are written in.
 const TIMEZONE: Tz = Berlin;

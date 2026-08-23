@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
-use crate::core::domain::channels::repository::ChannelRepository;
+use crate::core::domain::channels::repository_port::ChannelRepository;
+use crate::core::domain::channels::service_port::ChannelServicePort;
 use crate::core::domain::error::DomainError;
 
 pub struct ChannelService {
@@ -32,6 +33,20 @@ impl ChannelService {
     }
 }
 
+impl ChannelServicePort for ChannelService {
+    fn list(
+        &self,
+        counting_station_id: Option<channel_vo::CountingStationId>,
+        name: Option<&str>,
+    ) -> Result<Vec<Channel>, DomainError> {
+        self.list(counting_station_id, name)
+    }
+
+    fn find_by_id(&self, id: channel_vo::Id) -> Result<Channel, DomainError> {
+        self.find_by_id(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -41,7 +56,7 @@ mod tests {
     use super::ChannelService;
     use crate::core::domain::channels::channel::Channel;
     use crate::core::domain::channels::channel::value_objects as channel_vo;
-    use crate::core::domain::channels::repository::ChannelRepository;
+    use crate::core::domain::channels::repository_port::ChannelRepository;
     use crate::core::domain::error::DomainError;
 
     struct MemoryChannelRepository {

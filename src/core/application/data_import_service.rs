@@ -10,19 +10,19 @@ use uuid::Uuid;
 
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
-use crate::core::domain::channels::repository::ChannelRepository;
+use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::provider::{
+use crate::core::domain::data_source::provider_port::{
     DataProvider, MeasurementQuery, MeasurementRecord,
 };
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
-use crate::core::domain::measurements::repository::MeasurementRepository;
+use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
 /// A configured data source together with its built provider.
 #[derive(Clone)]
@@ -316,7 +316,7 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::DataProviderConfiguration;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::data_source::DataSource;
-    use crate::core::domain::data_source::provider::{
+    use crate::core::domain::data_source::provider_port::{
         ChannelRecord, CountingStationRecord, MeasurementBatch, MeasurementRecord, ProviderError,
     };
     use crate::core::domain::health::HealthStatus;

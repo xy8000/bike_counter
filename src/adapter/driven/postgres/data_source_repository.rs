@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::core::domain::data_source::data_source::{DataSource, value_objects};
-use crate::core::domain::data_source::repository::DataSourceRepository;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 
 use super::pool::PgPool;

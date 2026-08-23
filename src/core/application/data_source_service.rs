@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-use crate::core::domain::data_source::repository::DataSourceRepository;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
+use crate::core::domain::data_source::service_port::DataSourceServicePort;
 use crate::core::domain::error::DomainError;
 
 pub struct DataSourceService {
@@ -29,6 +30,16 @@ impl DataSourceService {
     }
 }
 
+impl DataSourceServicePort for DataSourceService {
+    fn list(&self) -> Result<Vec<DataSource>, DomainError> {
+        self.list()
+    }
+
+    fn find_by_id(&self, id: data_source_vo::Id) -> Result<DataSource, DomainError> {
+        self.find_by_id(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -39,7 +50,7 @@ mod tests {
     use super::DataSourceService;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-    use crate::core::domain::data_source::repository::DataSourceRepository;
+    use crate::core::domain::data_source::repository_port::DataSourceRepository;
     use crate::core::domain::error::DomainError;
 
     struct MemoryDataSourceRepository {

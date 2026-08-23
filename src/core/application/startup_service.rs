@@ -7,20 +7,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::core::application::data_import_service::DataSourceRuntime;
-use crate::core::application::data_provider_factory::DataProviderFactory;
 use crate::core::domain::configuration::error::ConfigError;
-use crate::core::domain::configuration::repository::ConfigurationRepository;
+use crate::core::domain::configuration::repository_port::ConfigurationRepository;
+use crate::core::domain::data_source::data_provider_factory_port::DataProviderFactory;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::health_indicator::ProviderHealthIndicator;
-use crate::core::domain::data_source::persistent_state::PersistentStateStore;
-use crate::core::domain::data_source::provider::{
-    PersistentStateAccess, ProviderMessageSink, ScopedPersistentState, ScopedProviderMessageSink,
-};
-use crate::core::domain::data_source::provider_message::ProviderMessageStore;
-use crate::core::domain::data_source::repository::DataSourceRepository;
+use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
+use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::ServiceHealthIndicator;
+use crate::core::domain::health::provider_health_indicator::ProviderHealthIndicator;
 
 /// The artifacts produced by a successful startup run.
 pub struct StartupResult {
@@ -55,8 +52,8 @@ pub struct StartupService {
     configuration_repository: Arc<dyn ConfigurationRepository + Send + Sync>,
     data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
     data_provider_factory: Arc<dyn DataProviderFactory>,
-    persistent_state_store: Arc<dyn PersistentStateStore + Send + Sync>,
-    provider_message_store: Arc<dyn ProviderMessageStore + Send + Sync>,
+    persistent_state_handle_factory: Arc<dyn PersistentStateHandleFactory>,
+    provider_message_sink_factory: Arc<dyn ProviderMessageSinkFactory>,
 }
 
 impl StartupService {
@@ -64,15 +61,15 @@ impl StartupService {
         configuration_repository: Arc<dyn ConfigurationRepository + Send + Sync>,
         data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
         data_provider_factory: Arc<dyn DataProviderFactory>,
-        persistent_state_store: Arc<dyn PersistentStateStore + Send + Sync>,
-        provider_message_store: Arc<dyn ProviderMessageStore + Send + Sync>,
+        persistent_state_handle_factory: Arc<dyn PersistentStateHandleFactory>,
+        provider_message_sink_factory: Arc<dyn ProviderMessageSinkFactory>,
     ) -> Self {
         Self {
             configuration_repository,
             data_source_repository,
             data_provider_factory,
-            persistent_state_store,
-            provider_message_store,
+            persistent_state_handle_factory,
+            provider_message_sink_factory,
         }
     }
 
@@ -99,18 +96,12 @@ impl StartupService {
             ))?;
 
             // Phase 2: attach the scoped persistent-state handle (row now exists).
-            let state = Arc::new(ScopedPersistentState::new(
-                self.persistent_state_store.clone(),
-                data_source_id,
-            )) as Arc<dyn PersistentStateAccess + Send + Sync>;
+            let state = self.persistent_state_handle_factory.scoped(data_source_id);
             provider.attach_persistent_state(state);
 
             // Phase 2b: attach the scoped provider-message sink (row now exists),
             // so the provider can emit read-only events instead of aborting.
-            let messages = Arc::new(ScopedProviderMessageSink::new(
-                self.provider_message_store.clone(),
-                data_source_id,
-            )) as Arc<dyn ProviderMessageSink + Send + Sync>;
+            let messages = self.provider_message_sink_factory.scoped(data_source_id);
             provider.attach_provider_messages(messages);
 
             let name = format!(
@@ -161,13 +152,14 @@ mod tests {
         Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
     use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-    use crate::core::domain::data_source::persistent_state::PersistentStateStore;
-    use crate::core::domain::data_source::provider::{
-        DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
-        ProviderMessageSink,
+    use crate::core::domain::data_source::persistent_state_port::{
+        PersistentStateHandleFactory, PersistentStateStore,
     };
-    use crate::core::domain::data_source::provider_message::{
-        ProviderMessageSeverity, ProviderMessageStore,
+    use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+    use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
+    use crate::core::domain::data_source::provider_port::{
+        DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
+        ProviderMessageSink, ProviderMessageSinkFactory,
     };
     use crate::core::domain::health::HealthStatus;
 
@@ -315,7 +307,7 @@ mod tests {
         fn get_all_counting_stations(
             &self,
         ) -> Result<
-            Vec<crate::core::domain::data_source::provider::CountingStationRecord>,
+            Vec<crate::core::domain::data_source::provider_port::CountingStationRecord>,
             ProviderError,
         > {
             Ok(Vec::new())
@@ -323,8 +315,10 @@ mod tests {
 
         fn get_all_channels(
             &self,
-        ) -> Result<Vec<crate::core::domain::data_source::provider::ChannelRecord>, ProviderError>
-        {
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider_port::ChannelRecord>,
+            ProviderError,
+        > {
             Ok(Vec::new())
         }
 
@@ -471,6 +465,102 @@ mod tests {
         }
     }
 
+    /// In-memory test scoped state handle: wraps the in-memory store for one
+    /// data source id, mirroring the adapter's `ScopedPersistentState`.
+    struct TestScopedPersistentState {
+        store: Arc<MockPersistentStateStore>,
+        data_source_id: DataSourceId,
+    }
+
+    impl PersistentStateAccess for TestScopedPersistentState {
+        fn load(&self) -> Result<HashMap<String, String>, ProviderError> {
+            self.store
+                .get(self.data_source_id)
+                .map_err(ProviderError::from)
+        }
+
+        fn store(&self, key: &str, value: &str) -> Result<(), ProviderError> {
+            self.store
+                .set(self.data_source_id, key, value)
+                .map_err(ProviderError::from)
+        }
+
+        fn delete(&self, key: &str) -> Result<(), ProviderError> {
+            self.store
+                .delete(self.data_source_id, key)
+                .map_err(ProviderError::from)
+        }
+
+        fn clear(&self) -> Result<(), ProviderError> {
+            self.store
+                .clear(self.data_source_id)
+                .map_err(ProviderError::from)
+        }
+    }
+
+    /// In-memory test scoped message sink: wraps the in-memory message store for
+    /// one data source id, mirroring the adapter's `ScopedProviderMessageSink`.
+    struct TestScopedProviderMessageSink {
+        store: Arc<MockProviderMessageStore>,
+        data_source_id: DataSourceId,
+    }
+
+    impl ProviderMessageSink for TestScopedProviderMessageSink {
+        fn provider_event_occurred(
+            &self,
+            severity: ProviderMessageSeverity,
+            message: &str,
+        ) -> Result<(), ProviderError> {
+            self.store
+                .record(self.data_source_id, severity, message)
+                .map_err(ProviderError::from)
+        }
+    }
+
+    /// In-memory handle factory: implements the two factory ports by wrapping
+    /// the in-memory stores, so `StartupService` can be tested without the
+    /// driven adapter's `ProviderHandles`.
+    struct MockHandleFactory {
+        persistent_state_store: Arc<MockPersistentStateStore>,
+        provider_message_store: Arc<MockProviderMessageStore>,
+    }
+
+    impl MockHandleFactory {
+        fn new(
+            persistent_state_store: Arc<MockPersistentStateStore>,
+            provider_message_store: Arc<MockProviderMessageStore>,
+        ) -> Self {
+            Self {
+                persistent_state_store,
+                provider_message_store,
+            }
+        }
+    }
+
+    impl PersistentStateHandleFactory for MockHandleFactory {
+        fn scoped(
+            &self,
+            data_source_id: DataSourceId,
+        ) -> Arc<dyn PersistentStateAccess + Send + Sync> {
+            Arc::new(TestScopedPersistentState {
+                store: self.persistent_state_store.clone(),
+                data_source_id,
+            })
+        }
+    }
+
+    impl ProviderMessageSinkFactory for MockHandleFactory {
+        fn scoped(
+            &self,
+            data_source_id: DataSourceId,
+        ) -> Arc<dyn ProviderMessageSink + Send + Sync> {
+            Arc::new(TestScopedProviderMessageSink {
+                store: self.provider_message_store.clone(),
+                data_source_id,
+            })
+        }
+    }
+
     fn service(
         config_repo: MockConfigurationRepository,
         data_source_repo: Arc<MockDataSourceRepository>,
@@ -483,12 +573,13 @@ mod tests {
         let factory = Arc::new(MockDataProviderFactory::new());
         let store = Arc::new(MockPersistentStateStore::new());
         let messages = Arc::new(MockProviderMessageStore::new());
+        let handle_factory = Arc::new(MockHandleFactory::new(store.clone(), messages.clone()));
         let startup_service = StartupService::new(
             Arc::new(config_repo),
             data_source_repo,
             factory.clone(),
-            store.clone(),
-            messages.clone(),
+            handle_factory.clone() as Arc<dyn PersistentStateHandleFactory>,
+            handle_factory as Arc<dyn ProviderMessageSinkFactory>,
         );
         (startup_service, factory, store, messages)
     }

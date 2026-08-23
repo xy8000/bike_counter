@@ -2,8 +2,9 @@ use std::str::FromStr;
 
 use crate::core::domain::data_source::data_source::value_objects::Id;
 use crate::core::domain::data_source::provider_message::{
-    ProviderMessage, ProviderMessageSeverity, ProviderMessageStore,
+    ProviderMessage, ProviderMessageSeverity,
 };
+use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
 use crate::core::domain::error::DomainError;
 
 use super::pool::PgPool;
@@ -85,10 +86,9 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id;
-    use crate::core::domain::data_source::provider_message::{
-        ProviderMessageSeverity, ProviderMessageStore,
-    };
-    use crate::core::domain::data_source::repository::DataSourceRepository;
+    use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+    use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
+    use crate::core::domain::data_source::repository_port::DataSourceRepository;
 
     /// A running Postgres test instance plus the repositories under test, so
     /// tests can also insert/delete data sources to exercise the FK cascade.

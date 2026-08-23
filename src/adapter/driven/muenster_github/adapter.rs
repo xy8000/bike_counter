@@ -16,11 +16,11 @@ use uuid::Uuid;
 
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
-use crate::core::domain::data_source::provider::{
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+use crate::core::domain::data_source::provider_port::{
     DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
     ProviderMessageSink,
 };
-use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::health::HealthStatus;
 
 use super::archive::{ARCHIVE_ROOT, ArchiveIndex, SITE_INDEX_FILE, sanitize_zip_path};
@@ -451,7 +451,7 @@ impl MuensterGithubAdapter {
         window_end: DateTime<Utc>,
     ) -> Result<
         (
-            Vec<crate::core::domain::data_source::provider::MeasurementRecord>,
+            Vec<crate::core::domain::data_source::provider_port::MeasurementRecord>,
             bool,
         ),
         ProviderError,
@@ -502,14 +502,17 @@ impl DataProvider for MuensterGithubAdapter {
 
     fn get_all_counting_stations(
         &self,
-    ) -> Result<Vec<crate::core::domain::data_source::provider::CountingStationRecord>, ProviderError>
-    {
+    ) -> Result<
+        Vec<crate::core::domain::data_source::provider_port::CountingStationRecord>,
+        ProviderError,
+    > {
         Ok(self.ensure_archive()?.stations.clone())
     }
 
     fn get_all_channels(
         &self,
-    ) -> Result<Vec<crate::core::domain::data_source::provider::ChannelRecord>, ProviderError> {
+    ) -> Result<Vec<crate::core::domain::data_source::provider_port::ChannelRecord>, ProviderError>
+    {
         Ok(self.ensure_archive()?.channels.clone())
     }
 

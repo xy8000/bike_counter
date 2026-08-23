@@ -6,8 +6,10 @@
 use std::sync::Arc;
 
 use crate::core::domain::data_source::data_source::value_objects::Id;
-use crate::core::domain::data_source::provider_message::{ProviderMessage, ProviderMessageStore};
-use crate::core::domain::data_source::repository::DataSourceRepository;
+use crate::core::domain::data_source::provider_message::ProviderMessage;
+use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
+use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
 use crate::core::domain::error::DomainError;
 
 pub struct ProviderMessageService {
@@ -35,6 +37,12 @@ impl ProviderMessageService {
     }
 }
 
+impl ProviderMessageServicePort for ProviderMessageService {
+    fn list(&self, id: Id) -> Result<Vec<ProviderMessage>, DomainError> {
+        self.list(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -43,9 +51,10 @@ mod tests {
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id;
     use crate::core::domain::data_source::provider_message::{
-        ProviderMessage, ProviderMessageSeverity, ProviderMessageStore,
+        ProviderMessage, ProviderMessageSeverity,
     };
-    use crate::core::domain::data_source::repository::DataSourceRepository;
+    use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
+    use crate::core::domain::data_source::repository_port::DataSourceRepository;
     use crate::core::domain::error::DomainError;
 
     /// In-memory message store.

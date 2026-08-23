@@ -10,6 +10,7 @@ use crate::adapter::driven::postgres::{
     PostgresHealthCheck, PostgresJobRepository, PostgresMeasurementRepository,
     PostgresPersistentStateRepository, PostgresProviderMessageRepository, create_pool,
 };
+use crate::adapter::driven::provider_handles::ProviderHandles;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::channel_service::ChannelService;
@@ -22,7 +23,9 @@ use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
-use crate::core::domain::configuration::repository::ConfigurationRepository;
+use crate::core::domain::configuration::repository_port::ConfigurationRepository;
+use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
+use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
 
 mod adapter;
@@ -77,12 +80,18 @@ fn main() {
     // a provider per data source, sync the persisted data sources, attach a
     // scoped persistent-state handle and a scoped provider-message sink per
     // provider, and prepare health indicators.
+    // The driven adapter builds the scoped provider handles from the store
+    // ports; StartupService consumes them through the two factory ports.
+    let provider_handles = Arc::new(ProviderHandles::new(
+        persistent_state_repo.clone(),
+        provider_message_repo.clone(),
+    ));
     let startup_service = StartupService::new(
         configuration_repository,
         data_source_repo.clone(),
         Arc::new(DataProviderFactoryImpl),
-        persistent_state_repo.clone(),
-        provider_message_repo.clone(),
+        provider_handles.clone() as Arc<dyn PersistentStateHandleFactory>,
+        provider_handles as Arc<dyn ProviderMessageSinkFactory>,
     );
     let startup = match startup_service.run() {
         Ok(startup) => startup,

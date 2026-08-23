@@ -6,8 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::domain::data_source::data_source::value_objects::Id;
-use crate::core::domain::data_source::persistent_state::PersistentStateStore;
-use crate::core::domain::data_source::repository::DataSourceRepository;
+use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
+use crate::core::domain::data_source::service_port::PersistentStateServicePort;
 use crate::core::domain::error::DomainError;
 
 pub struct PersistentStateService {
@@ -58,6 +59,24 @@ impl PersistentStateService {
     }
 }
 
+impl PersistentStateServicePort for PersistentStateService {
+    fn get(&self, id: Id) -> Result<HashMap<String, String>, DomainError> {
+        self.get(id)
+    }
+
+    fn set(&self, id: Id, key: &str, value: &str) -> Result<(), DomainError> {
+        self.set(id, key, value)
+    }
+
+    fn delete(&self, id: Id, key: &str) -> Result<(), DomainError> {
+        self.delete(id, key)
+    }
+
+    fn clear(&self, id: Id) -> Result<(), DomainError> {
+        self.clear(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -68,8 +87,8 @@ mod tests {
     use super::PersistentStateService;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id;
-    use crate::core::domain::data_source::persistent_state::PersistentStateStore;
-    use crate::core::domain::data_source::repository::DataSourceRepository;
+    use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
+    use crate::core::domain::data_source::repository_port::DataSourceRepository;
     use crate::core::domain::error::DomainError;
 
     /// In-memory persistent state store.

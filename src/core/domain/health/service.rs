@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use super::indicator::{HealthComponent, ServiceHealthIndicator};
+use super::indicator::HealthComponent;
+use super::indicator_port::ServiceHealthIndicator;
+use crate::core::domain::health::service_port::HealthServicePort;
 
 /// Runs all registered downstream health checks and aggregates the results.
 pub struct HealthService {
@@ -23,6 +25,12 @@ impl HealthService {
                 status: indicator.check(),
             })
             .collect()
+    }
+}
+
+impl HealthServicePort for HealthService {
+    fn check(&self) -> Vec<HealthComponent> {
+        self.check()
     }
 }
 

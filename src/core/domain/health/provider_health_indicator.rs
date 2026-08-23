@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::core::domain::data_source::provider::DataProvider;
+use crate::core::domain::data_source::provider_port::DataProvider;
 use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
 /// A [`ServiceHealthIndicator`] backed by a single data provider.
@@ -33,10 +33,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::ProviderHealthIndicator;
-    use crate::core::domain::data_source::provider::DataProvider;
-    use crate::core::domain::data_source::provider::MeasurementBatch;
-    use crate::core::domain::data_source::provider::MeasurementQuery;
-    use crate::core::domain::data_source::provider::ProviderError;
+    use crate::core::domain::data_source::provider_port::DataProvider;
+    use crate::core::domain::data_source::provider_port::MeasurementBatch;
+    use crate::core::domain::data_source::provider_port::MeasurementQuery;
+    use crate::core::domain::data_source::provider_port::ProviderError;
     use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
     struct MockProvider {
@@ -51,7 +51,7 @@ mod tests {
         fn get_all_counting_stations(
             &self,
         ) -> Result<
-            Vec<crate::core::domain::data_source::provider::CountingStationRecord>,
+            Vec<crate::core::domain::data_source::provider_port::CountingStationRecord>,
             ProviderError,
         > {
             Ok(vec![])
@@ -59,8 +59,10 @@ mod tests {
 
         fn get_all_channels(
             &self,
-        ) -> Result<Vec<crate::core::domain::data_source::provider::ChannelRecord>, ProviderError>
-        {
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider_port::ChannelRecord>,
+            ProviderError,
+        > {
             Ok(vec![])
         }
 

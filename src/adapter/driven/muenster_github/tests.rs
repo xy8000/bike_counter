@@ -18,10 +18,10 @@ use crate::core::domain::configuration::configuration::value_objects::{
     DataProviderConfiguration, DataSourceConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
-use crate::core::domain::data_source::provider::{
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+use crate::core::domain::data_source::provider_port::{
     DataProvider, MeasurementQuery, PersistentStateAccess, ProviderError, ProviderMessageSink,
 };
-use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::health::HealthStatus;
 use uuid::Uuid;
 

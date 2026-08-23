@@ -22,14 +22,14 @@ use crate::adapter::driving::rest::handlers::{
     list_provider_messages, put_persistent_state_entry,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
-use crate::core::application::channel_service::ChannelService;
-use crate::core::application::counting_station_service::CountingStationService;
-use crate::core::application::data_source_service::DataSourceService;
-use crate::core::application::job_service::JobService;
-use crate::core::application::measurement_service::MeasurementService;
-use crate::core::application::persistent_state_service::PersistentStateService;
-use crate::core::application::provider_message_service::ProviderMessageService;
-use crate::core::domain::health::HealthService;
+use crate::core::domain::channels::service_port::ChannelServicePort;
+use crate::core::domain::counting_stations::service_port::CountingStationServicePort;
+use crate::core::domain::data_source::service_port::DataSourceServicePort;
+use crate::core::domain::data_source::service_port::PersistentStateServicePort;
+use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
+use crate::core::domain::health::service_port::HealthServicePort;
+use crate::core::domain::jobs::service_port::JobServicePort;
+use crate::core::domain::measurements::service_port::MeasurementServicePort;
 
 pub struct RestApiAdapter {
     app_state: AppState,
@@ -39,14 +39,14 @@ impl RestApiAdapter {
     /// Pure dependency wiring: the adapter takes every backing core service.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        counting_station_service: Arc<CountingStationService>,
-        channel_service: Arc<ChannelService>,
-        measurement_service: Arc<MeasurementService>,
-        data_source_service: Arc<DataSourceService>,
-        job_service: Arc<JobService>,
-        health_service: Arc<HealthService>,
-        persistent_state_service: Arc<PersistentStateService>,
-        provider_message_service: Arc<ProviderMessageService>,
+        counting_station_service: Arc<dyn CountingStationServicePort + Send + Sync>,
+        channel_service: Arc<dyn ChannelServicePort + Send + Sync>,
+        measurement_service: Arc<dyn MeasurementServicePort + Send + Sync>,
+        data_source_service: Arc<dyn DataSourceServicePort + Send + Sync>,
+        job_service: Arc<dyn JobServicePort + Send + Sync>,
+        health_service: Arc<dyn HealthServicePort + Send + Sync>,
+        persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
+        provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
     ) -> Self {
         Self {
             app_state: AppState {

@@ -1,7 +1,6 @@
 pub mod channel_service;
 pub mod counting_station_service;
 pub mod data_import_service;
-pub mod data_provider_factory;
 pub mod data_source_service;
 pub mod data_source_update_service;
 pub mod job_service;

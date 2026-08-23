@@ -19,24 +19,25 @@ use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
-use crate::core::domain::channels::repository::ChannelRepository;
+use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-use crate::core::domain::data_source::persistent_state::PersistentStateStore;
+use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
 use crate::core::domain::data_source::provider_message::{
-    ProviderMessage, ProviderMessageSeverity, ProviderMessageStore,
+    ProviderMessage, ProviderMessageSeverity,
 };
-use crate::core::domain::data_source::repository::DataSourceRepository;
+use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthService, HealthStatus, ServiceHealthIndicator};
 use crate::core::domain::jobs::job::{Job, JobStatus};
-use crate::core::domain::jobs::repository::JobRepository;
+use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
-use crate::core::domain::measurements::repository::MeasurementRepository;
+use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
 pub struct MockCountingStationRepository {
     pub stations: Vec<CountingStation>,

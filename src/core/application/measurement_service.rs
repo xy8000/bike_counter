@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
-use crate::core::domain::measurements::repository::MeasurementRepository;
+use crate::core::domain::measurements::repository_port::MeasurementRepository;
+use crate::core::domain::measurements::service_port::MeasurementServicePort;
 
 pub struct MeasurementService {
     repository: Arc<dyn MeasurementRepository + Send + Sync>,
@@ -37,6 +38,21 @@ impl MeasurementService {
     }
 }
 
+impl MeasurementServicePort for MeasurementService {
+    fn list(
+        &self,
+        channel_id: Option<measurement_vo::ChannelId>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<Measurement>, bool), DomainError> {
+        self.list(channel_id, offset, limit)
+    }
+
+    fn find_by_id(&self, id: measurement_vo::Id) -> Result<Measurement, DomainError> {
+        self.find_by_id(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -48,7 +64,7 @@ mod tests {
     use crate::core::domain::error::DomainError;
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
-    use crate::core::domain::measurements::repository::MeasurementRepository;
+    use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
     struct MemoryMeasurementRepository {
         measurements: Vec<Measurement>,

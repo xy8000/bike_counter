@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
+use crate::core::domain::counting_stations::service_port::CountingStationServicePort;
 use crate::core::domain::error::DomainError;
 
 pub struct CountingStationService {
@@ -28,6 +29,16 @@ impl CountingStationService {
     }
 }
 
+impl CountingStationServicePort for CountingStationService {
+    fn list(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+        self.list(name)
+    }
+
+    fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {
+        self.find_by_id(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -37,7 +48,7 @@ mod tests {
     use super::CountingStationService;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
-    use crate::core::domain::counting_stations::repository::CountingStationRepository;
+    use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
     use crate::core::domain::error::DomainError;
 
     struct MemoryCountingStationRepository {

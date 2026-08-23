@@ -6,7 +6,8 @@ use uuid::Uuid;
 
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::{Job, JobStatus};
-use crate::core::domain::jobs::repository::JobRepository;
+use crate::core::domain::jobs::repository_port::JobRepository;
+use crate::core::domain::jobs::service_port::JobServicePort;
 
 pub struct JobService {
     repository: Arc<dyn JobRepository + Send + Sync>,
@@ -34,6 +35,20 @@ impl JobService {
     }
 }
 
+impl JobServicePort for JobService {
+    fn list(
+        &self,
+        job_type: Option<String>,
+        status: Option<JobStatus>,
+    ) -> Result<Vec<Job>, DomainError> {
+        self.list(job_type, status)
+    }
+
+    fn find_by_id(&self, id: Uuid) -> Result<Job, DomainError> {
+        self.find_by_id(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -45,7 +60,7 @@ mod tests {
     use super::JobService;
     use crate::core::domain::error::DomainError;
     use crate::core::domain::jobs::job::{Job, JobStatus};
-    use crate::core::domain::jobs::repository::JobRepository;
+    use crate::core::domain::jobs::repository_port::JobRepository;
 
     struct MemoryJobRepository {
         jobs: Vec<Job>,

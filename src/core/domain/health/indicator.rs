@@ -1,4 +1,7 @@
-//! Health status types and the service health indicator abstraction.
+//! Health status models.
+//!
+//! The [`ServiceHealthIndicator`](super::indicator_port) driven port lives in
+//! the sibling `indicator_port.rs`.
 
 /// Describes the health of a single downstream service.
 #[derive(Debug, Clone, PartialEq, Eq)]

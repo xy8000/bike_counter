@@ -1,8 +1,17 @@
-//! Opaque persistent key-value storage for provider state, scoped per data source.
+//! Driven (outbound) ports: opaque persistent key-value storage for provider
+//! state, scoped per data source, plus a factory that builds a scoped
+//! [`PersistentStateAccess`] handle for one data source.
+//!
+//! The store is implemented by `PostgresPersistentStateRepository`; the factory
+//! by `adapter::driven::provider_handles::ProviderHandles`. Neither the core nor
+//! REST interprets keys or values; only the concrete provider adapter
+//! understands its keys.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::data_source::value_objects::Id;
+use super::provider_port::PersistentStateAccess;
 use crate::core::domain::error::DomainError;
 
 /// Opaque persistent key-value store for provider state, scoped per data source.
@@ -21,4 +30,12 @@ pub trait PersistentStateStore: Send + Sync {
 
     /// Wipes all state for a data source.
     fn clear(&self, data_source_id: Id) -> Result<(), DomainError>;
+}
+
+/// Builds a scoped [`PersistentStateAccess`] handle for one data source id.
+///
+/// Implemented by the driven adapter (`ProviderHandles`), so the core can obtain
+/// scoped handles without constructing the concrete implementation itself.
+pub trait PersistentStateHandleFactory: Send + Sync {
+    fn scoped(&self, data_source_id: Id) -> Arc<dyn PersistentStateAccess + Send + Sync>;
 }

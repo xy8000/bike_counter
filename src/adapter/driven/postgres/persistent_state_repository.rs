@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::domain::data_source::data_source::value_objects::Id;
-use crate::core::domain::data_source::persistent_state::PersistentStateStore;
+use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
 use crate::core::domain::error::DomainError;
 
 use super::pool::PgPool;
@@ -92,8 +92,8 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id;
-    use crate::core::domain::data_source::persistent_state::PersistentStateStore;
-    use crate::core::domain::data_source::repository::DataSourceRepository;
+    use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
+    use crate::core::domain::data_source::repository_port::DataSourceRepository;
 
     /// A running Postgres test instance plus the repositories under test, so
     /// tests can also insert/update/delete data sources to exercise the FK

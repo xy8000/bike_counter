@@ -7,7 +7,7 @@ use crate::core::domain::configuration::configuration::{
     Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
 };
 use crate::core::domain::configuration::error::ConfigError;
-use crate::core::domain::configuration::repository::ConfigurationRepository;
+use crate::core::domain::configuration::repository_port::ConfigurationRepository;
 use serde::Deserialize;
 
 #[derive(Deserialize)]

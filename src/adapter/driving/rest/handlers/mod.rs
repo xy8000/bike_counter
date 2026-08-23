@@ -29,26 +29,26 @@ use axum::http::StatusCode;
 use axum::response::Json;
 
 use crate::adapter::driving::rest::dto::ErrorResponseDto;
-use crate::core::application::channel_service::ChannelService;
-use crate::core::application::counting_station_service::CountingStationService;
-use crate::core::application::data_source_service::DataSourceService;
-use crate::core::application::job_service::JobService;
-use crate::core::application::measurement_service::MeasurementService;
-use crate::core::application::persistent_state_service::PersistentStateService;
-use crate::core::application::provider_message_service::ProviderMessageService;
+use crate::core::domain::channels::service_port::ChannelServicePort;
+use crate::core::domain::counting_stations::service_port::CountingStationServicePort;
+use crate::core::domain::data_source::service_port::DataSourceServicePort;
+use crate::core::domain::data_source::service_port::PersistentStateServicePort;
+use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::health::HealthService;
+use crate::core::domain::health::service_port::HealthServicePort;
+use crate::core::domain::jobs::service_port::JobServicePort;
+use crate::core::domain::measurements::service_port::MeasurementServicePort;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub counting_station_service: Arc<CountingStationService>,
-    pub channel_service: Arc<ChannelService>,
-    pub measurement_service: Arc<MeasurementService>,
-    pub data_source_service: Arc<DataSourceService>,
-    pub job_service: Arc<JobService>,
-    pub health_service: Arc<HealthService>,
-    pub persistent_state_service: Arc<PersistentStateService>,
-    pub provider_message_service: Arc<ProviderMessageService>,
+    pub counting_station_service: Arc<dyn CountingStationServicePort + Send + Sync>,
+    pub channel_service: Arc<dyn ChannelServicePort + Send + Sync>,
+    pub measurement_service: Arc<dyn MeasurementServicePort + Send + Sync>,
+    pub data_source_service: Arc<dyn DataSourceServicePort + Send + Sync>,
+    pub job_service: Arc<dyn JobServicePort + Send + Sync>,
+    pub health_service: Arc<dyn HealthServicePort + Send + Sync>,
+    pub persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
+    pub provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
 }
 
 /// Default `offset`/`limit` for the measurements endpoint and its hard cap.

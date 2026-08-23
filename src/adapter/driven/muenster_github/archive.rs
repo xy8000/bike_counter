@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
-use crate::core::domain::data_source::provider::{ChannelRecord, CountingStationRecord};
+use crate::core::domain::data_source::provider_port::{ChannelRecord, CountingStationRecord};
 
 /// Archive internals (verified against the example archive).
 pub const ARCHIVE_ROOT: &str = "radverkehr-zaehlstellen-main";

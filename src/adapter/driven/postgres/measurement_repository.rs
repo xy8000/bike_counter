@@ -2,7 +2,7 @@ use postgres::types::ToSql;
 
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
-use crate::core::domain::measurements::repository::MeasurementRepository;
+use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
 use super::pool::PgPool;
 
@@ -210,7 +210,7 @@ mod tests {
     use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::measurements::measurement::{Measurement, value_objects};
-    use crate::core::domain::measurements::repository::MeasurementRepository;
+    use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
     #[test]
     fn persists_and_reads_measurements_in_postgres() {

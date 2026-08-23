@@ -10,14 +10,14 @@ use std::time::Duration as StdDuration;
 
 use chrono::Utc;
 
-use crate::core::application::data_source_update_service::DataSourceUpdateService;
 use crate::core::domain::configuration::configuration::Configuration;
+use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
 
 /// Runs the data-source update job immediately at startup and then on the
 /// configured CRON schedule, forever. The job service decides whether to run
 /// (never succeeded or overdue).
 pub async fn run_scheduler(
-    service: Arc<DataSourceUpdateService>,
+    service: Arc<dyn DataSourceUpdateServicePort + Send + Sync>,
     configuration: Arc<Configuration>,
 ) {
     // Run now: the job service starts the job only when it has never succeeded

@@ -1,5 +1,5 @@
 use crate::core::domain::counting_stations::counting_station::{CountingStation, value_objects};
-use crate::core::domain::counting_stations::repository::CountingStationRepository;
+use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::error::DomainError;
 
 use super::pool::PgPool;
