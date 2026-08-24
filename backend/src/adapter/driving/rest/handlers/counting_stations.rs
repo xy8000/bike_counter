@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use super::{AppState, blocking, map_domain_error};
 use crate::adapter::driving::rest::dto::{
-    CountingStationDto, CountingStationListDto, CountingStationQueryParams, ErrorResponseDto,
+    CountingStationDto, CountingStationListDto, CountingStationPatchDto,
+    CountingStationQueryParams, ErrorResponseDto,
 };
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 
@@ -57,6 +58,40 @@ pub async fn get_counting_station_by_id(
     let service = state.counting_station_service.clone();
     let station_id = station_vo::Id(id);
     let station = blocking(move || service.find_by_id(station_id))
+        .await
+        .map_err(map_domain_error)?;
+    Ok(Json(CountingStationDto::from(station)))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/counting-stations/{id}",
+    tag = "Counting Stations",
+    params(
+        ("id" = Uuid, Path, description = "Counting Station UUID")
+    ),
+    request_body = CountingStationPatchDto,
+    responses(
+        (status = 200, description = "Counting station coordinates updated", body = CountingStationDto),
+        (status = 404, description = "Counting station not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn patch_counting_station(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(patch): Json<CountingStationPatchDto>,
+) -> Result<Json<CountingStationDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.counting_station_service.clone();
+    let station_id = station_vo::Id(id);
+    let coordinates = match (patch.latitude, patch.longitude) {
+        (Some(latitude), Some(longitude)) => Some(station_vo::GeoCoordinates {
+            latitude,
+            longitude,
+        }),
+        _ => None,
+    };
+    let station = blocking(move || service.update_coordinates(station_id, coordinates))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(CountingStationDto::from(station)))

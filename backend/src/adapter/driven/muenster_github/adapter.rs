@@ -28,6 +28,7 @@ use super::fetcher::{ArchiveFetcher, HttpFetcher, UpstreamHeaders};
 use super::parsing::{
     csv_month_range, parse_host_and_port, parse_measurement_csv, parse_rfc3339, parse_site_index,
 };
+use super::station_metadata;
 
 pub(crate) const PROVIDER_TYPE: &str = "münster_opendata_github_provider";
 pub(crate) const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 500;
@@ -386,7 +387,10 @@ impl MuensterGithubAdapter {
         let site_json = fs::read_to_string(&site_path).map_err(|e| {
             ProviderError::InvalidData(format!("cannot read site index {site_path:?}: {e}"))
         })?;
-        let (stations, channels) = parse_site_index(&site_json)?;
+        let (mut stations, channels) = parse_site_index(&site_json)?;
+        for station in &mut stations {
+            station_metadata::overlay(station);
+        }
 
         // Map each channel's external id -> the sorted monthly CSVs of its
         // station. All channels of a station share the station directory's

@@ -11,6 +11,7 @@
 //! [`TestApp`] wraps the full Axum router and exposes small request helpers so
 //! individual tests stay short and focused.
 
+pub mod bff;
 pub mod channels;
 pub mod counting_stations;
 pub mod data_sources;

@@ -1,0 +1,47 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  color: #213547;
+  background-color: #ffffff;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+#root {
+  height: 100%;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app h1 {
+  margin: 0.5rem 1rem;
+  font-size: 1.5rem;
+}
+
+.map {
+  flex: 1;
+  width: 100%;
+  /* Give the map its own stacking context so Leaflet's controls never float
+     above the page header. */
+  z-index: 0;
+}
+
+.error {
+  margin: 0 1rem;
+  color: #b00020;
+  font-weight: 600;
+}
+
+.bff {
+  margin: 0 1rem;
+  color: #2c7a2c;
+  font-weight: 600;
+}

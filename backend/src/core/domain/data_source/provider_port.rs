@@ -90,6 +90,10 @@ pub struct CountingStationRecord {
     pub external_id: String,
     pub name: String,
     pub description: String,
+    /// Optional GPS latitude (WGS84 decimal degrees); `None` = not provided.
+    pub latitude: Option<f64>,
+    /// Optional GPS longitude (WGS84 decimal degrees); `None` = not provided.
+    pub longitude: Option<f64>,
 }
 
 /// An external channel record, linked to its station by external id only.

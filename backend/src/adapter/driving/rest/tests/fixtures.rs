@@ -47,6 +47,10 @@ pub fn station_a() -> CountingStation {
         description: station_vo::Description("First station".to_string()),
         external_datasource_id: None,
         data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
+        coordinates: Some(station_vo::GeoCoordinates {
+            latitude: 51.9565,
+            longitude: 7.6152,
+        }),
     }
 }
 
@@ -57,6 +61,7 @@ pub fn station_b() -> CountingStation {
         description: station_vo::Description("Second station".to_string()),
         external_datasource_id: None,
         data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
+        coordinates: None,
     }
 }
 
@@ -69,6 +74,7 @@ pub fn station_linked_to_data_source_a() -> CountingStation {
         description: station_vo::Description("First station".to_string()),
         external_datasource_id: Some(station_vo::ExternalDatasourceId("300037926".to_string())),
         data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
+        coordinates: None,
     }
 }
 
@@ -148,9 +154,7 @@ pub fn sample_provider_message_store() -> MockProviderMessageStore {
 
 /// Repository fixture holding the two sample stations.
 pub fn sample_counting_station_repository() -> MockCountingStationRepository {
-    MockCountingStationRepository {
-        stations: vec![station_a(), station_b()],
-    }
+    MockCountingStationRepository::new(vec![station_a(), station_b()])
 }
 
 /// Repository fixture holding the two sample channels.

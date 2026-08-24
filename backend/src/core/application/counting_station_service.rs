@@ -27,6 +27,19 @@ impl CountingStationService {
     pub fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {
         self.repository.find_by_id(id)
     }
+
+    /// Sets the GPS coordinates of a counting station; `None` clears them.
+    /// Returns the updated station; `DomainError::NotFound` if unknown.
+    pub fn update_coordinates(
+        &self,
+        id: station_vo::Id,
+        coordinates: Option<station_vo::GeoCoordinates>,
+    ) -> Result<CountingStation, DomainError> {
+        let mut station = self.repository.find_by_id(id)?;
+        station.coordinates = coordinates;
+        self.repository.update(station.clone())?;
+        Ok(station)
+    }
 }
 
 impl CountingStationServicePort for CountingStationService {
@@ -36,6 +49,14 @@ impl CountingStationServicePort for CountingStationService {
 
     fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {
         self.find_by_id(id)
+    }
+
+    fn update_coordinates(
+        &self,
+        id: station_vo::Id,
+        coordinates: Option<station_vo::GeoCoordinates>,
+    ) -> Result<CountingStation, DomainError> {
+        self.update_coordinates(id, coordinates)
     }
 }
 
@@ -57,6 +78,10 @@ mod tests {
 
     impl CountingStationRepository for MemoryCountingStationRepository {
         fn save(&self, _station: CountingStation) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn update(&self, _station: CountingStation) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -99,6 +124,7 @@ mod tests {
             description: station_vo::Description(String::new()),
             external_datasource_id: None,
             data_source_id: None,
+            coordinates: None,
         }
     }
 
@@ -136,6 +162,43 @@ mod tests {
     fn find_by_unknown_id_is_not_found() {
         assert!(matches!(
             service().find_by_id(station_vo::Id(Uuid::from_u128(0x99))),
+            Err(DomainError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn update_coordinates_sets_the_coordinates_on_the_station() {
+        let updated = service()
+            .update_coordinates(
+                station_vo::Id(Uuid::from_u128(0x1)),
+                Some(station_vo::GeoCoordinates {
+                    latitude: 51.9565,
+                    longitude: 7.6152,
+                }),
+            )
+            .unwrap();
+        assert_eq!(updated.name.0, "A");
+        assert_eq!(
+            updated.coordinates,
+            Some(station_vo::GeoCoordinates {
+                latitude: 51.9565,
+                longitude: 7.6152,
+            })
+        );
+    }
+
+    #[test]
+    fn update_coordinates_can_clear_them_to_not_provided() {
+        let updated = service()
+            .update_coordinates(station_vo::Id(Uuid::from_u128(0x1)), None)
+            .unwrap();
+        assert_eq!(updated.coordinates, None);
+    }
+
+    #[test]
+    fn update_coordinates_unknown_station_is_not_found() {
+        assert!(matches!(
+            service().update_coordinates(station_vo::Id(Uuid::from_u128(0x99)), None),
             Err(DomainError::NotFound(_))
         ));
     }

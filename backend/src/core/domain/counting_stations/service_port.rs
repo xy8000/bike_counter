@@ -12,4 +12,12 @@ pub trait CountingStationServicePort: Send + Sync {
 
     /// Returns a single counting station; `DomainError::NotFound` if unknown.
     fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError>;
+
+    /// Sets the GPS coordinates of a counting station; `None` clears them.
+    /// Returns the updated station; `DomainError::NotFound` if unknown.
+    fn update_coordinates(
+        &self,
+        id: station_vo::Id,
+        coordinates: Option<station_vo::GeoCoordinates>,
+    ) -> Result<CountingStation, DomainError>;
 }

@@ -1,16 +1,6 @@
-# Rust build artifacts
+# Root-level ignore. Each sub-project (backend/, frontend/) ships its own
+# .dockerignore; this file only guards against stray build artifacts if a
+# Dockerfile is ever built from the repository root.
 target/
-debug/
-
-# Version control
+node_modules/
 .git/
-.gitignore
-
-# Local configuration / secrets (all configuration lives in config.toml)
-
-# Compose / docs (not needed for the image build)
-docker-compose.yml
-Dockerfile
-README.md
-ToDo.md
-plans/

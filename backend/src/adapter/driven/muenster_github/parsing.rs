@@ -71,6 +71,8 @@ pub fn parse_site_index(
             external_id: station_external_id,
             name: station_name,
             description: String::new(),
+            latitude: None,
+            longitude: None,
         });
     }
     Ok((stations, channels))

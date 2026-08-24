@@ -14,6 +14,10 @@ pub struct CountingStationDto {
     pub description: String,
     /// Id of the data source this counting station was imported from.
     pub data_source_id: Uuid,
+    /// Optional GPS latitude (WGS84 decimal degrees).
+    pub latitude: Option<f64>,
+    /// Optional GPS longitude (WGS84 decimal degrees).
+    pub longitude: Option<f64>,
     #[serde(rename = "_links")]
     pub links: HashMap<String, LinkDto>,
 }
@@ -46,11 +50,18 @@ impl From<CountingStation> for CountingStationDto {
             LinkDto::new(format!("/api/v1/data-sources/{data_source_id}")),
         );
 
+        let (latitude, longitude) = station
+            .coordinates
+            .map(|c| (Some(c.latitude), Some(c.longitude)))
+            .unwrap_or((None, None));
+
         Self {
             id,
             name: station.name.0,
             description: station.description.0,
             data_source_id,
+            latitude,
+            longitude,
             links,
         }
     }
@@ -81,4 +92,14 @@ impl CountingStationListDto {
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct CountingStationQueryParams {
     pub name: Option<String>,
+}
+
+/// Patch payload for the counting-station coordinates. `latitude`/`longitude`
+/// are optional; providing `null` clears that coordinate.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct CountingStationPatchDto {
+    /// New GPS latitude (WGS84 decimal degrees); `null` clears it.
+    pub latitude: Option<f64>,
+    /// New GPS longitude (WGS84 decimal degrees); `null` clears it.
+    pub longitude: Option<f64>,
 }

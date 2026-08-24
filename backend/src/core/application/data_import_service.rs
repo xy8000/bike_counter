@@ -114,11 +114,37 @@ impl DataImportService {
         let mut external_to_id = HashMap::with_capacity(stations.len());
         for record in stations {
             let external_id = station_vo::ExternalDatasourceId(record.external_id.clone());
+            // Coordinates are optional: both lat/lng must be present.
+            let coordinates = match (record.latitude, record.longitude) {
+                (Some(latitude), Some(longitude)) => Some(station_vo::GeoCoordinates {
+                    latitude,
+                    longitude,
+                }),
+                _ => None,
+            };
+
             let station = match self
                 .counting_station_repository
                 .find_by_external_datasource_id(external_id.clone())?
             {
-                Some(existing) => existing,
+                // The external id is stable: keep the identity and refresh the
+                // mutable attributes (name, description, coordinates) from the
+                // adapter on every sync.
+                Some(existing) => {
+                    let updated = CountingStation {
+                        name: station_vo::Name(record.name),
+                        description: station_vo::Description(record.description),
+                        coordinates,
+                        ..existing.clone()
+                    };
+                    let changed = updated.name.0 != existing.name.0
+                        || updated.description.0 != existing.description.0
+                        || updated.coordinates != existing.coordinates;
+                    if changed {
+                        self.counting_station_repository.update(updated.clone())?;
+                    }
+                    updated
+                }
                 None => {
                     let station = CountingStation {
                         id: station_vo::Id(Uuid::new_v4()),
@@ -126,6 +152,7 @@ impl DataImportService {
                         description: station_vo::Description(record.description),
                         external_datasource_id: Some(external_id),
                         data_source_id: Some(station_vo::DataSourceId(runtime.data_source_id.0)),
+                        coordinates,
                     };
                     self.counting_station_repository.save(station.clone())?;
                     summary.counting_stations += 1;
@@ -344,6 +371,7 @@ mod tests {
             description: station_vo::Description("desc".to_string()),
             external_datasource_id: Some(station_vo::ExternalDatasourceId(external_id.to_string())),
             data_source_id: None,
+            coordinates: None,
         }
     }
 
@@ -362,6 +390,8 @@ mod tests {
             external_id: external_id.to_string(),
             name: format!("Station {external_id}"),
             description: "desc".to_string(),
+            latitude: None,
+            longitude: None,
         }
     }
 
@@ -440,6 +470,14 @@ mod tests {
     impl CountingStationRepository for MockCountingStationRepository {
         fn save(&self, station: CountingStation) -> Result<(), DomainError> {
             self.stations.lock().unwrap().push(station);
+            Ok(())
+        }
+
+        fn update(&self, station: CountingStation) -> Result<(), DomainError> {
+            let mut stations = self.stations.lock().unwrap();
+            if let Some(existing) = stations.iter_mut().find(|s| s.id == station.id) {
+                *existing = station;
+            }
             Ok(())
         }
 
@@ -823,6 +861,60 @@ mod tests {
         assert_eq!(channel_repo.channels.lock().unwrap().len(), 1);
     }
 
+    #[test]
+    fn resync_updates_existing_station_attributes_and_coordinates() {
+        let existing = CountingStation {
+            id: station_vo::Id(Uuid::from_u128(0x42)),
+            name: station_vo::Name("Old Name".to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId("station-1".to_string())),
+            data_source_id: None,
+            coordinates: None,
+        };
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing]),
+        });
+        let provider = Arc::new(MockProvider {
+            stations: vec![CountingStationRecord {
+                external_id: "station-1".to_string(),
+                name: "Station 1".to_string(),
+                description: "desc".to_string(),
+                latitude: Some(51.96),
+                longitude: Some(7.63),
+            }],
+            channels: Vec::new(),
+            measurement_pages: Mutex::new(VecDeque::new()),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime(provider)],
+        );
+
+        let summary = service.import(None, None).expect("import should succeed");
+
+        // The station already exists: the resync must not count it as new, but
+        // must refresh its name and coordinates.
+        assert_eq!(summary.counting_stations, 0);
+        let stations = station_repo.stations.lock().unwrap();
+        assert_eq!(stations.len(), 1);
+        assert_eq!(stations[0].name.0, "Station 1");
+        assert_eq!(
+            stations[0].coordinates,
+            Some(station_vo::GeoCoordinates {
+                latitude: 51.96,
+                longitude: 7.63,
+            })
+        );
+    }
+
     /// Records every repository save into a shared log so tests can assert the
     /// strict stations -> channels -> measurements ordering.
     struct LoggingRepositories {
@@ -836,6 +928,15 @@ mod tests {
         fn save(&self, station: CountingStation) -> Result<(), DomainError> {
             self.log.lock().unwrap().push("station".to_string());
             self.stations.lock().unwrap().push(station);
+            Ok(())
+        }
+
+        fn update(&self, station: CountingStation) -> Result<(), DomainError> {
+            self.log.lock().unwrap().push("station-update".to_string());
+            let mut stations = self.stations.lock().unwrap();
+            if let Some(existing) = stations.iter_mut().find(|s| s.id == station.id) {
+                *existing = station;
+            }
             Ok(())
         }
 

@@ -1,13 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Build stage ----------
-FROM rust:1-slim AS builder
+FROM rust:1-alpine AS builder
 WORKDIR /build
 
 # utoipa-swagger-ui downloads its UI assets at build time via curl.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache curl
 
 # Cache dependencies by compiling a minimal stub first, so the real build
 # only recompiles the crate itself.
@@ -27,11 +25,9 @@ RUN find src migrations -type f -exec touch {} + \
     && cargo build --release
 
 # ---------- Runtime stage ----------
-FROM debian:bookworm-slim
+FROM alpine:3.24
 # `curl` is required by the HEALTHCHECK below.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates curl
 
 WORKDIR /app
 COPY --from=builder /build/target/release/bike_counter /usr/local/bin/bike_counter

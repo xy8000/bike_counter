@@ -26,6 +26,8 @@ fn counting_station_dto_contains_expected_links() {
     // Every counting station was imported from a data source, so the id and the
     // `data_source` link are always present.
     assert_eq!(dto.data_source_id, DATA_SOURCE_ID_A);
+    assert_eq!(dto.latitude, Some(51.9565));
+    assert_eq!(dto.longitude, Some(7.6152));
     assert_eq!(
         dto.links["data_source"].href,
         format!("/api/v1/data-sources/{DATA_SOURCE_ID_A}")
@@ -37,6 +39,9 @@ fn counting_station_dto_exposes_data_source_id_and_link_when_linked() {
     let dto = CountingStationDto::from(station_linked_to_data_source_a());
 
     assert_eq!(dto.data_source_id, DATA_SOURCE_ID_A);
+    // This fixture has no coordinates: the DTO fields are "not provided".
+    assert_eq!(dto.latitude, None);
+    assert_eq!(dto.longitude, None);
     assert_eq!(
         dto.links["data_source"].href,
         format!("/api/v1/data-sources/{DATA_SOURCE_ID_A}")

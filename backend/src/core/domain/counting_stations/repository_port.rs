@@ -13,4 +13,8 @@ pub trait CountingStationRepository {
     /// Lists counting stations, optionally filtered by a case-insensitive
     /// name substring.
     fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError>;
+
+    /// Updates the mutable attributes (name, description, coordinates) of an
+    /// existing station, keyed by its id.
+    fn update(&self, station: CountingStation) -> Result<(), DomainError>;
 }

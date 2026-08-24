@@ -40,16 +40,35 @@ use crate::core::domain::measurements::measurement::value_objects as measurement
 use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
 pub struct MockCountingStationRepository {
-    pub stations: Vec<CountingStation>,
+    pub stations: Mutex<Vec<CountingStation>>,
+}
+
+impl MockCountingStationRepository {
+    pub fn new(stations: Vec<CountingStation>) -> Self {
+        Self {
+            stations: Mutex::new(stations),
+        }
+    }
 }
 
 impl CountingStationRepository for MockCountingStationRepository {
-    fn save(&self, _station: CountingStation) -> Result<(), DomainError> {
+    fn save(&self, station: CountingStation) -> Result<(), DomainError> {
+        self.stations.lock().unwrap().push(station);
+        Ok(())
+    }
+
+    fn update(&self, station: CountingStation) -> Result<(), DomainError> {
+        let mut stations = self.stations.lock().unwrap();
+        if let Some(existing) = stations.iter_mut().find(|s| s.id == station.id) {
+            *existing = station;
+        }
         Ok(())
     }
 
     fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {
         self.stations
+            .lock()
+            .unwrap()
             .iter()
             .find(|station| station.id.0 == id.0)
             .cloned()
@@ -57,7 +76,7 @@ impl CountingStationRepository for MockCountingStationRepository {
     }
 
     fn find_all(&self) -> Result<Vec<CountingStation>, DomainError> {
-        Ok(self.stations.clone())
+        Ok(self.stations.lock().unwrap().clone())
     }
 
     fn find_by_external_datasource_id(
@@ -66,6 +85,8 @@ impl CountingStationRepository for MockCountingStationRepository {
     ) -> Result<Option<CountingStation>, DomainError> {
         Ok(self
             .stations
+            .lock()
+            .unwrap()
             .iter()
             .find(|station| {
                 station
@@ -78,14 +99,14 @@ impl CountingStationRepository for MockCountingStationRepository {
     }
 
     fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
+        let stations = self.stations.lock().unwrap();
         Ok(match name {
-            Some(name) => self
-                .stations
+            Some(name) => stations
                 .iter()
                 .filter(|s| s.name.0.to_lowercase().contains(&name.to_lowercase()))
                 .cloned()
                 .collect(),
-            None => self.stations.clone(),
+            None => stations.clone(),
         })
     }
 }

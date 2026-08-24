@@ -314,6 +314,8 @@ mod tests {
             external_id: external_id.to_string(),
             name: format!("Station {external_id}"),
             description: "desc".to_string(),
+            latitude: None,
+            longitude: None,
         }
     }
 
@@ -588,6 +590,14 @@ mod tests {
     impl CountingStationRepository for RecordingDataRepositories {
         fn save(&self, station: CountingStation) -> Result<(), DomainError> {
             self.stations.lock().unwrap().push(station);
+            Ok(())
+        }
+
+        fn update(&self, station: CountingStation) -> Result<(), DomainError> {
+            let mut stations = self.stations.lock().unwrap();
+            if let Some(existing) = stations.iter_mut().find(|s| s.id == station.id) {
+                *existing = station;
+            }
             Ok(())
         }
 

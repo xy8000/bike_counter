@@ -2,12 +2,24 @@
 
 This Repository can be used to analyse the Bike-Counter-Stations of Münster.
 
-It exposes a REST API (with HATEOAS links) backed by a PostgreSQL database,
-documented via auto-generated OpenAPI and browsable through Swagger-UI.
+It is a **monorepo** with two sub-projects:
+
+- [`backend/`](backend) — Rust (Axum, hexagonal architecture) REST API backed by
+  a PostgreSQL database, documented via auto-generated OpenAPI and browsable
+  through Swagger-UI. It also exposes a **Backend-for-Frontend (BFF)** API under
+  `/api/bff` that is consumed by the frontend **only** and appears in Swagger
+  under its own `BFF API` collection.
+- [`frontend/`](frontend) — React (Vite) single-page application served by nginx
+  in the Docker stack, whose first view is a Leaflet map showing every counting
+  station that has GPS coordinates.
+
+Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
 ## Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, edition 2024)
+- [Node.js](https://nodejs.org) 24 LTS (for the React frontend; pinned in
+  [`frontend/.nvmrc`](frontend/.nvmrc) — Vite 7 needs at least Node 20.19/22.12)
 - A running PostgreSQL server (see [Configuration](#configuration) below)
 
 ## Configuration
@@ -16,7 +28,7 @@ All settings live in [`config.toml`](config.toml) (gitignored). Start from the
 tracked template [`config.toml.example`](config.toml.example):
 
 ```bash
-cp config.toml.example config.toml
+cp backend/config.toml.example backend/config.toml
 ```
 
 ```toml
@@ -197,31 +209,35 @@ docker run --name bike_counter_db \
 
 ## Run
 
-The easiest way to run the whole stack (PostgreSQL + application) is through the
-[`Makefile`](Makefile):
+The easiest way to run the whole stack (PostgreSQL + backend + frontend) is
+through the [`Makefile`](Makefile):
 
 ```bash
 make run    # docker compose up --build (foreground, follows logs; Ctrl-C to stop)
 make down   # stop and remove the stack (keeps the database volume)
-make logs   # follow the application logs
+make logs   # follow the logs of all services
 ```
 
-This requires a [`config.toml`](config.toml) with `database_url` set to the
-compose service name `db` (see [Run with Docker Compose](#run-with-docker-compose)).
+This requires a [`backend/config.toml`](backend/config.toml) with `database_url`
+set to the compose service name `db` (see
+[Run with Docker Compose](#run-with-docker-compose)).
 
-Alternatively, run the binary locally (reads `config.toml`, applies migrations,
-serves the API) — this needs a reachable PostgreSQL, so set
+Alternatively, run the backend binary locally (reads `backend/config.toml`,
+applies migrations, serves the API) — this needs a reachable PostgreSQL, so set
 `database_url="postgres://localhost:5432"`:
 
 ```bash
+cd backend
 cargo build
 cargo run
 ```
 
-The application prints the loaded configuration and then serves:
+The backend prints the loaded configuration and then serves:
 
 | Resource               | URL                                        |
 |------------------------|--------------------------------------------|
+| Frontend (React)       | <http://localhost:8081>                    |
+| BFF API base           | <http://localhost:8080/api/bff>            |
 | REST API base          | <http://localhost:8080/api/v1>             |
 | Swagger-UI             | <http://localhost:8080/swagger-ui/>        |
 | OpenAPI JSON document  | <http://localhost:8080/api-docs/openapi.json> |
@@ -230,25 +246,29 @@ The application prints the loaded configuration and then serves:
 
 ## Run with Docker Compose
 
-The repository includes a [`Dockerfile`](Dockerfile) and a [`docker-compose.yml`](docker-compose.yml)
-that ramp up both the PostgreSQL database and the application:
+The repository includes Dockerfiles for both sub-projects and a
+[`docker-compose.yml`](docker-compose.yml) that ramps up the whole stack:
 
 ```bash
 # Copy the template, adjust database_url to "postgres://db:5432", then start
-cp config.toml.example config.toml
+cp backend/config.toml.example backend/config.toml
 # Either directly, or via the Makefile:
 docker compose up --build        # make run
 docker compose down              # make down
-docker compose logs -f app       # make logs
+docker compose logs -f           # make logs
 ```
 
 - The `db` service runs PostgreSQL with the development defaults
   (`postgres` / `postgres` / `bike_counter`) and persists data in a named volume.
-- The `app` service builds the Rust binary inside a multi-stage Docker build and
-  mounts a [`config.toml`](config.toml) into the container. Its
-  [`docker/entrypoint.sh`](docker/entrypoint.sh) refuses to start without a
-  `config.toml` and otherwise just runs the REST server (which applies the
-  refinery migrations on startup).
+- The `backend` service builds the Rust binary inside a multi-stage Docker build
+  and mounts [`backend/config.toml`](backend/config.toml) into the container.
+  Its [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to
+  start without a `config.toml` and otherwise just runs the REST server (which
+  applies the refinery migrations on startup).
+- The `frontend` service builds the React app (Vite) into static assets served by
+  nginx, which reverse-proxies `/api` to the `backend` service so the browser
+  only ever talks same-origin (no CORS). It is exposed on
+  <http://localhost:8081>.
 - **All configuration is TOML-only.** There are no configuration environment
   variables and no `.env` file – neither for the database nor for data sources.
   When running under docker compose, set `database_url` to the compose service
@@ -289,7 +309,8 @@ docker compose down -v       # stop containers and delete the database volume
 
 The API uses a flat URL hierarchy under `/api/v1`. The resource endpoints are
 **read-only (GET)**; the `persistent_state` endpoints additionally support `PUT`
-and `DELETE` to manage the opaque per-data-source provider state:
+and `DELETE` to manage the opaque per-data-source provider state, and the
+counting-station endpoint supports `PATCH` to set a station's GPS coordinates:
 
 - `GET /api/v1` – root discovery with HATEOAS links
 - `GET /api/v1/data-sources` / `GET /api/v1/data-sources/{id}` – list / fetch the configured (persisted) data sources
@@ -299,7 +320,8 @@ and `DELETE` to manage the opaque per-data-source provider state:
 - `DELETE /api/v1/data-sources/{id}/persistent_state` – clear the whole store (`204`; `404` unknown data source)
 - `GET /api/v1/data-sources/{id}/messages` – read-only provider messages for a data source, newest first
 - `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
-- `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}`
+- `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}` — stations carry optional `latitude`/`longitude` (WGS84)
+- `PATCH /api/v1/counting-stations/{id}` with body `{"latitude": ..., "longitude": ...}` (fields optional; `null` clears a coordinate) — sets a station's GPS coordinates
 - `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
 - `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` defaults to 5000 with no upper bound) / `GET /api/v1/measurements/{id}`
 - `GET /api/v1/measurements/raw` – lean bulk export: same `?channel_id=`, `?offset=`/`?limit=` parameters, but returns a bare JSON array of plain measurement objects (no HATEOAS links and no pagination envelope) for scraping large volumes
@@ -313,6 +335,21 @@ source links to its `self`, `collection`, `persistent_state`, and
 (marked `"templated": true`). The root discovery endpoint (`/api/v1`)
 additionally links to the operational health endpoints via `health-live` and
 `health-ready`.
+
+### BFF API (frontend-only)
+
+In addition to the public `/api/v1` REST API, the backend exposes a
+**Backend-for-Frontend** API reserved for the React frontend. It lives under
+`/api/bff` and is documented in the **same** Swagger document but grouped under
+its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
+
+- `GET /api/bff/hello` – returns `{"message": "Hello from BFF"}`. It remains the
+  BFF seam/probe; the frontend's map view consumes the public
+  `GET /api/v1/counting-stations` endpoint instead.
+
+The BFF module lives in [`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff)
+and is the seam for future frontend-only endpoints (for example aggregations or
+transformations of the `/api/v1` data).
 
 ## Name uniqueness
 
@@ -365,14 +402,18 @@ A [`Makefile`](Makefile) wraps the common commands. Run `make help` for the full
 list:
 
 ```bash
-make check      # CI gate: cargo fmt --check + cargo clippy --all-targets -- -D warnings
-make test       # all tests (repository tests spin up a Postgres test container via Docker)
-make test-rest  # only the REST endpoint tests (in-memory mocks, no database required)
+make check      # backend CI gate: cargo fmt --check + cargo clippy --all-targets -- -D warnings
+make test       # backend: all tests (repository tests spin up a Postgres test container via Docker)
+make test-rest  # backend: only the REST endpoint tests (in-memory mocks, no database required)
 make test-e2e   # end-to-end smoke test against the real docker-compose stack (requires Docker)
 make test-all   # make check + make test
-make coverage   # coverage gate: overall (production) >= 80% AND core (src/core) >= 95% via cargo-llvm-cov
+make coverage   # backend coverage gate: overall (production) >= 80% AND core (src/core) >= 95% via cargo-llvm-cov
 make coverage-open  # open the HTML coverage report in a browser
+make frontend-build # build the React frontend (production bundle into frontend/dist)
 ```
+
+The Cargo-based targets operate on the [`backend/`](backend) crate; the
+frontend is built with `make frontend-build` (or `cd frontend && npm run build`).
 
 Under the hood the scripts are:
 

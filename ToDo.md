@@ -142,3 +142,35 @@ Unique counting-station and channel names (plans/19_counting_station_channel_nam
 - [x] Counting-station Swagger schema exposes the required `data_source_id` and an always-present `data_source` HATEOAS link
 - [x] Tests (Münster parser dedup, counting-station DTO field/link, REST endpoint `data_source_id`) + docs
 - [x] make check + make test + make test-rest + make coverage green
+
+Frontend + BFF module + monorepo restructure (plans/20_frontend_bff_monorepo_plan.md)
+
+- [x] Monorepo layout: backend files moved to `backend/` (Cargo.toml, src/, migrations/, config.toml.example, Dockerfile, docker/); Makefile, docker-compose.yml, scripts/, plans/ and docs stay at the root
+- [x] Docker Compose ramps up the whole stack: `db` + `backend` (renamed from `app`, builds `./backend`) + `frontend` (nginx on 8081, reverse-proxies `/api` to backend:8080)
+- [x] BFF Rust module `backend/src/adapter/driving/bff/` exposing `GET /api/bff/hello` -> `{"message": "Hello from BFF"}`, wired into the router and the same Swagger doc under a new `BFF API` tag
+- [x] BFF REST tests (hello returns 200 + message; OpenAPI contains `/api/bff/hello` and the `BFF API` tag)
+- [x] React (Vite + TypeScript) frontend in `frontend/`: static build served by nginx, fetches `/api/bff/hello` and renders "Hello World" + the BFF message
+- [x] `frontend/Dockerfile` (node build -> nginx) + `nginx.conf` (SPA + `/api` reverse proxy) + `package-lock.json`
+- [x] Makefile + scripts (`fmt-test.sh`, `coverage.sh`, `docker-compose-test.sh`) updated for the `backend/` crate; `docker-compose-test.sh` now also asserts `/api/bff/hello` and the frontend page
+- [x] Docs (README, ToDo, plans/20_frontend_bff_monorepo_plan.md)
+- [ ] make check + make test + make test-rest + make coverage + make test-e2e green
+
+Tooling upgrade: npm/Node + deps + slimmer Docker images (plans/21_tooling_upgrade_plan.md)
+
+- [x] Bump frontend deps to latest stable majors (React 19.2, Vite 7.3, TypeScript 5.9, @vitejs/plugin-react 5.2, @types/react 19) + `engines` + `frontend/.nvmrc` (Node 24 LTS); regenerate `package-lock.json`
+- [x] `frontend/Dockerfile`: `node:24-alpine` build (latest stable npm) -> pinned `nginx:1.31-alpine` runtime
+- [x] `backend/Dockerfile`: `rust:1-alpine` (musl static) build -> `alpine:3.24` runtime, keeping `curl` + curl HEALTHCHECK (image ~39 MB vs ~90 MB Debian-based)
+- [x] Scripts verified backend-only: `coverage.sh` + `fmt-test.sh` already `cd backend`; no frontend coverage/format script added
+- [x] Gates green: `make check`, `make test` (221), `make test-rest` (66), `make coverage` (overall 82.10%, core 96.40%), `make test-e2e`, `make frontend-build`
+
+Map view + counting-station GPS coordinates (plans/22_map_view_gps_coordinates_plan.md)
+
+- [x] Hardcoded Münster station metadata (external id -> name/lat/lng) overlay in `get_all_counting_stations`; unlisted stations have "not provided" coordinates
+- [x] Optional `GeoCoordinates` value object on `CountingStation` + optional `latitude`/`longitude` on `CountingStationRecord`
+- [x] Migration V10: nullable `latitude`/`longitude` columns on `counting_stations`
+- [x] Repository: read/write coordinates + new `update` method (upsert of name/description/coordinates)
+- [x] Import `sync_counting_stations` upserts stations by external id (updates name/description/coordinates on every sync, inserts new); resync test
+- [x] `CountingStationService::update_coordinates` + `PATCH /api/v1/counting-stations/{id}` (optional/nullable lat/lng) + OpenAPI/Swagger
+- [x] REST counting-station DTO exposes `latitude`/`longitude`
+- [x] Frontend: Leaflet map view (`react-leaflet`), centered on Münster, one marker per station with coordinates (name popup), loading/error states
+- [x] Gates green: `make check`, `make test` (235), `make test-rest`, `make coverage` (overall 84.67%, core 96.56%), `make frontend-build`

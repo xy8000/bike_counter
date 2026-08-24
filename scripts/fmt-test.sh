@@ -11,7 +11,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-cd "${PROJECT_ROOT}"
+# The Rust crate lives in backend/; the script operates on that directory.
+cd "${PROJECT_ROOT}/backend"
 
 echo "--- cargo fmt --check"
 cargo fmt --check

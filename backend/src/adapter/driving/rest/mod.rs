@@ -13,13 +13,15 @@ use axum::routing::{delete, get, put};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::adapter::driving::bff::get_bff_hello;
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
     clear_persistent_state, delete_persistent_state_entry, get_api_root, get_channel_by_id,
     get_counting_station_by_id, get_data_source_by_id, get_health_live, get_health_ready,
     get_job_by_id, get_measurement_by_id, get_persistent_state, list_channels,
     list_counting_stations, list_data_sources, list_jobs, list_measurements, list_measurements_raw,
-    list_provider_messages, put_persistent_state_entry, reset_imported_until,
+    list_provider_messages, patch_counting_station, put_persistent_state_entry,
+    reset_imported_until,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
 use crate::core::domain::channels::service_port::ChannelServicePort;
@@ -69,11 +71,12 @@ impl RestApiAdapter {
     pub fn create_router(app_state: AppState) -> Router {
         Router::new()
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+            .route("/api/bff/hello", get(get_bff_hello))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))
             .route(
                 "/api/v1/counting-stations/:id",
-                get(get_counting_station_by_id),
+                get(get_counting_station_by_id).patch(patch_counting_station),
             )
             .route("/api/v1/channels", get(list_channels))
             .route("/api/v1/channels/:id", get(get_channel_by_id))

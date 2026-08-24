@@ -1,0 +1,64 @@
+# Plans Overview / Progress
+
+This page gives an overview of the current and upcoming plans in this repository.
+Each plan lives in this `plans/` directory and is numbered with a zero-padded
+two-digit prefix in chronological order. Statuses:
+
+- `[x]` — decided / closed
+- `[-]` — in progress / drafted
+- `[ ]` — planned / not started
+
+## Current plan
+
+| Status | Plan | File | Summary |
+|---|---|---|---|
+| [x] | Map view + counting-station GPS coordinates | [`22_map_view_gps_coordinates_plan.md`](22_map_view_gps_coordinates_plan.md) | Adds optional GPS coordinates to counting stations (a hardcoded Münster adapter table keyed by external id, stored via migration `V10`, exposed on the counting-station DTO), makes the import sync upsert stations by external id (name/description/coordinates), adds `PATCH /api/v1/counting-stations/{id}` for coordinates, and turns the frontend into a Leaflet map view with one marker per station. |
+| [x] | Tooling upgrade: npm/Node + deps + slimmer Docker images | [`21_tooling_upgrade_plan.md`](21_tooling_upgrade_plan.md) | Upgrades the frontend to the latest stable npm/Node and latest dependency majors (React 19, Vite 7, TypeScript 5.9, plugin-react 5), slims the backend Docker image to a musl static build on `alpine:3.24` (39 MB), builds the frontend on `node:24-alpine` with a pinned `nginx:1.31-alpine` runtime, and confirms coverage/format gates stay backend-only. |
+| [-] | Unique counting-station and channel names | [`19_counting_station_channel_name_uniqueness_plan.md`](19_counting_station_channel_name_uniqueness_plan.md) | Ensures counting-station names are unique per data source and channel names are unique per counting station. The Münster adapter appends the external id to duplicate names, migration `V8` repairs existing duplicate rows and adds unique indexes, and the counting-station Swagger schema exposes `data_source_id` plus a `data_source` HATEOAS link. |
+| [-] | Raise measurements `limit` default to 5000, drop the cap | [`18_remove_measurements_limit_cap_plan.md`](18_remove_measurements_limit_cap_plan.md) | Changes `DEFAULT_PAGE_LIMIT` to 5000 and removes `MAX_PAGE_LIMIT` so `GET /api/v1/measurements` (and `/raw`) defaults to 5000 rows when `limit` is omitted and honors any explicitly supplied `limit` verbatim (no upper clamp). The 5000 default and no-upper-bound note are documented in Swagger via the `MeasurementQueryParams.limit` doc comment. |
+| [-] | Raw measurements export + provider-message HATEOAS fix | [`17_measurement_counting_station_filter_plan.md`](17_measurement_counting_station_filter_plan.md) | Adds a raw `GET /api/v1/measurements/raw` endpoint (same `channel_id`/`offset`/`limit` query parameters) returning a bare JSON array of plain measurement objects without HATEOAS links or a pagination envelope, fixed entirely in the driving adapter on top of the existing measurement service, plus fixes the dead `ProviderMessageDto` `self` link to the messages list endpoint. No core/domain changes. |
+| [x] | Import cursor `imported_until` + `added_measurements` | [`16_imported_until_and_added_measurements_plan.md`](16_imported_until_and_added_measurements_plan.md) | Renames the incremental cursor `data_sources.last_updated_at` to `imported_until` everywhere (migration V7), adds a job `added_measurements` metadata key counting actually inserted rows computed by the core, exposes `imported_until` on the data-source DTO, and adds `DELETE /api/v1/data-sources/{id}/imported_until` to reset the cursor and force a full re-import. |
+| [x] | Coverage thresholds | [`15_coverage_thresholds_plan.md`](15_coverage_thresholds_plan.md) | Raises the coverage gate to **80% overall** and adds a per-path gate for the core (`src/core/`) at **95%**, both measured on **production code only** (`#[cfg(test)]` scaffolding and standalone test files excluded) by parsing the lcov report in `scripts/coverage.sh`; adds isolated core unit tests and adapter tests. Final: overall 80.36%, core 96.45%, 206 tests. Also wired the previously-orphaned `rest/tests/jobs.rs` into the suite. |
+
+## Completed plans
+
+| Status | Plan | File | Summary |
+|---|---|---|---|
+| [x] | Frontend + BFF module + monorepo restructure | [`20_frontend_bff_monorepo_plan.md`](20_frontend_bff_monorepo_plan.md) | Restructures the repo into `/frontend` and `/backend`, adds a React (Vite) frontend served by nginx, and adds a BFF Rust module exposing `GET /api/bff/hello` on port 8080, documented in the same Swagger doc under a new `BFF API` tag. Docker Compose ramps up `db` + `backend` + `frontend` and `make run` keeps working. |
+| [x] | External Data Sources Baseline | [`01_data_source_baseline_plan.md`](01_data_source_baseline_plan.md) | Data sources configured in `config.toml`, the `DataProvider` trait, `data_sources` persistence with startup sync, `DataProviderFactory`, the Münster adapter baseline, and `GET /api/v1/data-sources` + root HATEOAS link. |
+| [x] | RESTful read-only API with HATEOAS & Swagger UI | [`02_rest_api_hateoas_plan.md`](02_rest_api_hateoas_plan.md) | Axum + utoipa driving adapter: read-only GET endpoints under `/api/v1`, HATEOAS `_links`, auto-generated OpenAPI and Swagger UI. |
+| [x] | Health-check (liveness + readiness) | [`03_health_check_plan.md`](03_health_check_plan.md) | `GET /health/live` and `GET /health/ready` with a real PostgreSQL probe, plus a Docker `HEALTHCHECK`. |
+| [x] | Optimize the persistence adapter | [`04_persistence_adapter_optimization_plan.md`](04_persistence_adapter_optimization_plan.md) | One shared Postgres pool, migrations run once, concurrent queries, multi-row measurement `INSERT`, and SQL-pushed job filters. |
+| [x] | Generic job tracking, cron scheduler & data source updater | [`05_job_scheduler_plan.md`](05_job_scheduler_plan.md) | ShedLock-style `jobs` table, cron-driven data-source update job with incremental updates, and the read-only jobs REST API. |
+| [x] | Data source persistent-state storage + REST API | [`06_provider_state_storage_plan.md`](06_provider_state_storage_plan.md) | Opaque persistent KV store per data source, a two-phase handover that attaches a scoped `PersistentStateAccess` to each provider after its data source is upserted, and new `persistent_state` REST endpoints through a core service. Migration V4 + DB trigger for provider-change revocation. |
+| [x] | REST through the core | [`07_rest_through_core_plan.md`](07_rest_through_core_plan.md) | Migrated the existing read endpoints (counting stations, channels, measurements, data sources, jobs) from direct repository calls in the handlers to five thin core application services (`CountingStationService`, `ChannelService`, `MeasurementService`, `DataSourceService`, `JobService`). DTO mapping stays in the driving adapter. |
+| [x] | Archive cache + CSV parsing | [`08_archive_cache_and_parsing_plan.md`](08_archive_cache_and_parsing_plan.md) | Refactored `DataProvider` to an external-id record interface (the core owns all identity), then realized the motivating case: download the Münster GitHub ZIP, extract it into an obscured `/tmp` folder with a four-tier cache over `PersistentStateAccess`, and serve stations/channels/measurements parsed from `site_min.json` and the per-station monthly CSVs. |
+| [x] | Overdue-run for the data-source update job | [`09_startup_overdue_update_plan.md`](09_startup_overdue_update_plan.md) | Removed the `startup` flag: `DataSourceUpdateService::run_if_due()` now applies one always-on rule (run if never succeeded or the last successful run is overdue), so missed cron slots are caught up at the next startup; job logs now include the job name and id. |
+| [x] | Import time-batching + API pagination & filters | [`10_import_timeframe_and_api_pagination_plan.md`](10_import_timeframe_and_api_pagination_plan.md) | Bounded each import page by a configurable time window (default 7 days) so the Münster adapter reads only the monthly files overlapping the window; added `offset`/`limit` pagination to measurements and `name` filters for channels/counting-stations; added the measurements natural key `UNIQUE (channel_id, timestamp)` with idempotent `ON CONFLICT` imports (migration V5). |
+| [x] | Data-provider messages (events) | [`11_provider_messages_plan.md`](11_provider_messages_plan.md) | A `data_source_provider_messages` table scoped per data source (migration V6), a scoped `ProviderMessageSink` handed to providers via `attach_provider_messages`, read-only `GET /api/v1/data-sources/{id}/messages`, and converting the Münster missing-column abort into a `WARNING` event plus concise `INFO`/`DEBUG` cache-lifecycle one-liners. Genuine IO/parse errors still fail the job with its `failure_message`. |
+| [x] | Adapter structure refactor | [`12_adapter_refactor_plan.md`](12_adapter_refactor_plan.md) | Pure structural refactor of `src/adapter/`: grouped the nine Postgres adapters into `driven/postgres/` (with a re-export `mod.rs`), split the 1649-line Münster GitHub monolith into `driven/muenster_github/` (`adapter.rs`, `fetcher.rs`, `archive.rs`, `parsing.rs`, `tests.rs`), and split the driving `rest/handlers.rs` / `rest/dto.rs` into per-resource modules behind re-exporting `mod.rs` files. No behavior change; all 179 tests pass. |
+| [x] | Domain structure refactor | [`13_domain_refactor_plan.md`](13_domain_refactor_plan.md) | Structural refactor of `src/core/domain/`: every port trait now lives in a `<subject>_port.rs` file (`repository_port.rs`, `provider_port.rs`, `persistent_state_port.rs`, `provider_message_port.rs`, `data_provider_factory_port.rs`, `indicator_port.rs` for driven ports; `service_port.rs` for driving ports) with per-module port-index docs. The scoped-handle implementations (`ScopedPersistentState`, `ScopedProviderMessageSink`) moved to `adapter/driven/provider_handles.rs` with a `ProviderHandles` factory port; `DataProviderFactory` moved from the application layer into the domain; introduced 9 driving port traits so the REST adapter and job scheduler depend on `Arc<dyn ...Port>` instead of concrete services. Removed dead code (`station/`, `measurements/provider.rs`, `application/station_import_service.rs`). No behavior change; all 179 tests pass. |
+| [x] | Coverage scan | [`14_coverage_scan_plan.md`](14_coverage_scan_plan.md) | Added a `cargo-llvm-cov` based coverage scan with a hard line-coverage gate (`make coverage`), an `agents.md` convention file that enforces running the gate and writing a plan file per change, `.gitignore` coverage entries, and README documentation. Baseline 76.68% lines; global threshold set to 75%. Superseded by plan 15 (80% overall / 95% core). |
+
+## Decided / closed
+
+| Status | Item | Note |
+|---|---|---|
+| [x] | Adapter visibility enforcement | Decided **not** to enforce that the core cannot see the adapters. The project stays a single crate; the boundary already holds by convention (the core has zero references to the adapters). A Cargo workspace split remains the recommended migration path if the project grows. |
+| [x] | Measurements partitioning | Scrapped. Monthly declarative partitioning of `measurements` is dropped; the plan document (`partition-measurements.md`) is removed. The natural key `UNIQUE (channel_id, timestamp)` plus idempotent `ON CONFLICT` imports remain the approach. |
+
+## Plan dependency graph
+
+```mermaid
+flowchart LR
+    A[06_provider_state_storage_plan] --> B[07_rest_through_core_plan]
+    A --> C[08_archive_cache_and_parsing_plan]
+    A --> F[11_provider_messages_plan]
+    B[07_rest_through_core_plan]
+    B --> F
+    C[08_archive_cache_and_parsing_plan] --> D[10_import_timeframe_and_api_pagination_plan]
+    F[11_provider_messages_plan]
+```
+
+The persistent-state plan establishes the core service pattern and the
+`PersistentStateAccess` handle that the follow-up plans build on.

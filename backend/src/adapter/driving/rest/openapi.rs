@@ -1,11 +1,13 @@
 use utoipa::OpenApi;
 
+use crate::adapter::driving::bff::{__path_get_bff_hello, BffHelloDto};
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto,
-    DataSourceDto, DataSourceListDto, ErrorResponseDto, HealthComponentDto, HealthDto, JobDto,
-    JobListDto, JobQueryParams, JobStatusDto, LinkDto, MeasurementDto, MeasurementListDto,
-    PersistentStateDto, PersistentStateEntryDto, PersistentStateValueDto, ProviderMessageDto,
-    ProviderMessageListDto, ProviderMessageSeverityDto, RawMeasurementDto,
+    CountingStationPatchDto, DataSourceDto, DataSourceListDto, ErrorResponseDto,
+    HealthComponentDto, HealthDto, JobDto, JobListDto, JobQueryParams, JobStatusDto, LinkDto,
+    MeasurementDto, MeasurementListDto, PersistentStateDto, PersistentStateEntryDto,
+    PersistentStateValueDto, ProviderMessageDto, ProviderMessageListDto,
+    ProviderMessageSeverityDto, RawMeasurementDto,
 };
 use crate::adapter::driving::rest::handlers::{
     __path_clear_persistent_state, __path_delete_persistent_state_entry, __path_get_api_root,
@@ -14,15 +16,17 @@ use crate::adapter::driving::rest::handlers::{
     __path_get_measurement_by_id, __path_get_persistent_state, __path_list_channels,
     __path_list_counting_stations, __path_list_data_sources, __path_list_jobs,
     __path_list_measurements, __path_list_measurements_raw, __path_list_provider_messages,
-    __path_put_persistent_state_entry, __path_reset_imported_until,
+    __path_patch_counting_station, __path_put_persistent_state_entry, __path_reset_imported_until,
 };
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        get_bff_hello,
         get_api_root,
         list_counting_stations,
         get_counting_station_by_id,
+        patch_counting_station,
         list_channels,
         get_channel_by_id,
         list_measurements,
@@ -43,9 +47,11 @@ use crate::adapter::driving::rest::handlers::{
     ),
     components(
         schemas(
+            BffHelloDto,
             ApiRootDto,
             CountingStationDto,
             CountingStationListDto,
+            CountingStationPatchDto,
             ChannelDto,
             ChannelListDto,
             MeasurementDto,
@@ -70,6 +76,7 @@ use crate::adapter::driving::rest::handlers::{
         )
     ),
     tags(
+        (name = "BFF API", description = "Backend-for-Frontend endpoints consumed by the React frontend only"),
         (name = "Root", description = "Root discovery endpoint"),
         (name = "Counting Stations", description = "Operations on bike counting stations"),
         (name = "Channels", description = "Operations on counting station channels"),

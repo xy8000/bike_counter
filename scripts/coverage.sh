@@ -30,7 +30,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-cd "${PROJECT_ROOT}"
+# The Rust crate lives in backend/; the script operates on that directory and
+# writes the coverage report under backend/target/coverage.
+cd "${PROJECT_ROOT}/backend"
 
 COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-80}"
 CORE_COVERAGE_THRESHOLD="${CORE_COVERAGE_THRESHOLD:-95}"

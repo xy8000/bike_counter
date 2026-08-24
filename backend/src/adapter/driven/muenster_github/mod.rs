@@ -11,11 +11,13 @@
 //! - [`fetcher`] - HTTP abstraction (`ArchiveFetcher`, `HttpFetcher`)
 //! - [`archive`] - in-memory archive index + zip-path safety
 //! - [`parsing`] - `site_min.json` and monthly-CSV parsers
+//! - [`station_metadata`] - hardcoded station names + GPS coordinates
 
 mod adapter;
 mod archive;
 mod fetcher;
 mod parsing;
+mod station_metadata;
 
 #[cfg(test)]
 mod tests;

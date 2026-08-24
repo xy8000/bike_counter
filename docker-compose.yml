@@ -17,17 +17,17 @@ services:
       timeout: 5s
       retries: 10
 
-  app:
+  backend:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
-    container_name: bike_counter_app
+    container_name: bike_counter_backend
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./config.toml:/app/config.toml:ro
+      - ./backend/config.toml:/app/config.toml:ro
     ports:
       - "8080:8080"
     healthcheck:
@@ -35,6 +35,28 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bike_counter_frontend
+    restart: unless-stopped
+    depends_on:
+      # Only require the backend container to be running. Readiness can report
+      # 503 while a data-source provider is temporarily unreachable, which
+      # would otherwise leave the frontend waiting forever; the nginx config
+      # resolves the backend hostname at request time and handles that.
+      backend:
+        condition: service_started
+    ports:
+      - "8081:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
       retries: 3
 
 volumes:

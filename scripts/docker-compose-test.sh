@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
 # End-to-end test against the real Docker Compose stack.
 #
-# Boots PostgreSQL + the application, waits for readiness, then asserts:
+# Boots PostgreSQL + backend + frontend, waits for readiness, then asserts:
 #   * GET /api/v1/jobs and GET /api/v1/data-sources return 200
 #   * The scheduler recorded a FINISHED data_source_update job (it runs at
 #     startup because the job has never succeeded) exposing lifetime_until
+#   * GET /api/bff/hello returns the BFF greeting (frontend-facing BFF API)
+#   * The frontend page is served
 #   * The database schema is correct:
 #       - jobs.lifetime_until is TIMESTAMPTZ NOT NULL (absolute deadline)
 #       - data_sources.imported_until exists as TIMESTAMPTZ
 #
-# A temporary config.toml is created in the project root (the app mounts
-# ./config.toml). Any pre-existing config.toml is backed up and restored.
+# A temporary config.toml is created in backend/ (the backend service mounts
+# ./backend/config.toml). Any pre-existing config.toml is backed up/restored.
 #
 # Requirements: Docker, Docker Compose v2 (`docker compose`), curl.
-# Override the app endpoint with APP_URL (default http://localhost:8080).
+# Override the endpoints with APP_URL (default http://localhost:8080) and
+# FRONTEND_URL (default http://localhost:8081).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
-CONFIG_FILE="${PROJECT_ROOT}/config.toml"
+CONFIG_FILE="${PROJECT_ROOT}/backend/config.toml"
 CONFIG_BACKUP="$(mktemp)"
 
 APP_URL="${APP_URL:-http://localhost:8080}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:8081}"
 DB_SERVICE="db"
 DB_USER="${DB_USER:-postgres}"
 DB_NAME="${DB_NAME:-bike_counter}"
@@ -85,7 +89,7 @@ for _ in $(seq 1 60); do
 done
 if [ "${READY}" -ne 1 ]; then
   echo "ERROR: app did not become ready at ${APP_URL}/health/ready" >&2
-  docker compose -f "${COMPOSE_FILE}" logs app 2>/dev/null | tail -n 40 || true
+  docker compose -f "${COMPOSE_FILE}" logs backend 2>/dev/null | tail -n 40 || true
   exit 1
 fi
 echo "App is ready."
@@ -104,6 +108,32 @@ assert_status() {
 
 assert_status 200 /api/v1/jobs
 assert_status 200 /api/v1/data-sources
+
+# The BFF API is frontend-only; verify it answers with the greeting.
+assert_status 200 /api/bff/hello
+BFF_JSON="$(curl --silent "${APP_URL}/api/bff/hello")"
+if ! echo "${BFF_JSON}" | grep -q "Hello from BFF"; then
+  echo "ERROR: expected the BFF greeting in /api/bff/hello" >&2
+  echo "${BFF_JSON}" >&2
+  exit 1
+fi
+echo "Verified /api/bff/hello returns the BFF greeting"
+
+# The frontend must serve the SPA shell (React renders "Hello World"
+# client-side, so only the mount point is present in the raw HTML).
+if ! curl --fail --silent "${FRONTEND_URL}/" | grep -q '<div id="root"></div>'; then
+  echo "ERROR: frontend did not serve the SPA shell at ${FRONTEND_URL}" >&2
+  exit 1
+fi
+echo "Verified frontend SPA shell at ${FRONTEND_URL}"
+
+# The nginx reverse proxy must forward /api to the backend: reaching the BFF
+# greeting through the frontend URL proves browser -> nginx -> backend works.
+if ! curl --fail --silent "${FRONTEND_URL}/api/bff/hello" | grep -q "Hello from BFF"; then
+  echo "ERROR: nginx did not proxy /api/bff/hello to the backend" >&2
+  exit 1
+fi
+echo "Verified nginx proxies /api/bff/hello to the backend"
 
 # The scheduler runs the data-source update at startup (it has never succeeded),
 # so a data_source_update job with a lifetime_until deadline must exist.
