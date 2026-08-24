@@ -133,3 +133,12 @@ Raw measurements export (plans/17_measurement_counting_station_filter_plan.md)
 - [x] Fix `ProviderMessageDto` self link (no single-message endpoint; points at the messages collection)
 - [x] Tests (raw endpoint, `RawMeasurementDto` mapping, provider-message self link, OpenAPI path) + docs
 - [x] make check + make test + make test-rest + make coverage green
+
+Unique counting-station and channel names (plans/19_counting_station_channel_name_uniqueness_plan.md)
+
+- [x] Adapter dedup: `parse_site_index` appends the external id to duplicate channel names (per station) and duplicate station names (per archive)
+- [x] Migration V8: repair existing duplicate rows (append external id / fallback to row id), then `UNIQUE (data_source_id, name)` partial + `UNIQUE (counting_station_id, name)`
+- [x] DB-enforced `data_source_id`: migration V9 backfills pre-linking rows (single data source), adds `NOT NULL`, and switches the FK chain to `ON DELETE CASCADE` (no core changes)
+- [x] Counting-station Swagger schema exposes the required `data_source_id` and an always-present `data_source` HATEOAS link
+- [x] Tests (Münster parser dedup, counting-station DTO field/link, REST endpoint `data_source_id`) + docs
+- [x] make check + make test + make test-rest + make coverage green

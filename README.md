@@ -305,12 +305,37 @@ and `DELETE` to manage the opaque per-data-source provider state:
 - `GET /api/v1/measurements/raw` – lean bulk export: same `?channel_id=`, `?offset=`/`?limit=` parameters, but returns a bare JSON array of plain measurement objects (no HATEOAS links and no pagination envelope) for scraping large volumes
 
 Every resource includes a `_links` object (HAL-style) pointing to related
-resources, e.g. a station links to its own `self`, its `channels`, and its
-`collection`; a data source links to its `self`, `collection`,
-`persistent_state`, and `messages`, plus an RFC 6570 templated
-`persistent_state_entry` for a single key (marked `"templated": true`). The root
-discovery endpoint (`/api/v1`) additionally links to the operational health
-endpoints via `health-live` and `health-ready`.
+resources, e.g. a station links to its own `self`, its `channels`, its
+`collection`, and its `data_source`; counting stations also expose the
+`data_source_id` field of the data source they were imported from. A data
+source links to its `self`, `collection`, `persistent_state`, and
+`messages`, plus an RFC 6570 templated `persistent_state_entry` for a single key
+(marked `"templated": true`). The root discovery endpoint (`/api/v1`)
+additionally links to the operational health endpoints via `health-live` and
+`health-ready`.
+
+## Name uniqueness
+
+Two naming invariants are enforced on imported data (see
+[`plans/19_counting_station_channel_name_uniqueness_plan.md`](plans/19_counting_station_channel_name_uniqueness_plan.md)):
+
+- A counting-station name is unique **per data source**
+  (`UNIQUE (data_source_id, name)` where `data_source_id IS NOT NULL`).
+- A counting station has no two channels with the same name
+  (`UNIQUE (counting_station_id, name)`).
+
+When an upstream source does not provide unique names (true for the Münster
+archive, which repeats channel names within a station), the adapter appends the
+channel's/station's external id to the duplicate name, e.g.
+`Bohlweg Fahrräder Stadteinwärts (353484923)`. Migration `V8` repairs rows that
+were imported before this rule and creates the two unique indexes.
+
+Counting stations always carry their importing `data_source_id`, enforced by
+the database: `counting_stations.data_source_id` is `NOT NULL`. Rows imported
+before data-source linking existed are backfilled by migration `V9` (only when
+exactly one data source is configured); `V9` also switches the FK chain to
+`ON DELETE CASCADE` so removing a data source removes its stations (and their
+channels/measurements) instead of orphaning them.
 
 ## Health checks
 

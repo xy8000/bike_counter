@@ -5,8 +5,8 @@ use crate::adapter::driving::rest::dto::{
     JobStatusDto, LinkDto, MeasurementDto, MeasurementListDto, RawMeasurementDto,
 };
 use crate::adapter::driving::rest::tests::fixtures::{
-    CHANNEL_ID_A, JOB_ID_A, MEASUREMENT_ID_A, STATION_ID_A, channel_a, job_a, job_b, measurement_a,
-    station_a, timestamp,
+    CHANNEL_ID_A, DATA_SOURCE_ID_A, JOB_ID_A, MEASUREMENT_ID_A, STATION_ID_A, channel_a, job_a,
+    job_b, measurement_a, station_a, station_linked_to_data_source_a, timestamp,
 };
 use crate::core::domain::jobs::job::JobStatus;
 
@@ -23,6 +23,24 @@ fn counting_station_dto_contains_expected_links() {
         format!("/api/v1/channels?counting_station_id={STATION_ID_A}")
     );
     assert_eq!(dto.links["collection"].href, "/api/v1/counting-stations");
+    // Every counting station was imported from a data source, so the id and the
+    // `data_source` link are always present.
+    assert_eq!(dto.data_source_id, DATA_SOURCE_ID_A);
+    assert_eq!(
+        dto.links["data_source"].href,
+        format!("/api/v1/data-sources/{DATA_SOURCE_ID_A}")
+    );
+}
+
+#[test]
+fn counting_station_dto_exposes_data_source_id_and_link_when_linked() {
+    let dto = CountingStationDto::from(station_linked_to_data_source_a());
+
+    assert_eq!(dto.data_source_id, DATA_SOURCE_ID_A);
+    assert_eq!(
+        dto.links["data_source"].href,
+        format!("/api/v1/data-sources/{DATA_SOURCE_ID_A}")
+    );
 }
 
 #[test]

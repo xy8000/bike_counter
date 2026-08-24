@@ -12,6 +12,8 @@ pub struct CountingStationDto {
     pub id: Uuid,
     pub name: String,
     pub description: String,
+    /// Id of the data source this counting station was imported from.
+    pub data_source_id: Uuid,
     #[serde(rename = "_links")]
     pub links: HashMap<String, LinkDto>,
 }
@@ -19,6 +21,13 @@ pub struct CountingStationDto {
 impl From<CountingStation> for CountingStationDto {
     fn from(station: CountingStation) -> Self {
         let id = station.id.0;
+        // Every counting station was imported from a data source (the database
+        // enforces NOT NULL on `counting_stations.data_source_id`), so the id is
+        // always present.
+        let data_source_id = station
+            .data_source_id
+            .map(|id| id.0)
+            .expect("counting station always has a data source");
         let mut links = HashMap::new();
         links.insert(
             "self".to_string(),
@@ -32,11 +41,16 @@ impl From<CountingStation> for CountingStationDto {
             "collection".to_string(),
             LinkDto::new("/api/v1/counting-stations"),
         );
+        links.insert(
+            "data_source".to_string(),
+            LinkDto::new(format!("/api/v1/data-sources/{data_source_id}")),
+        );
 
         Self {
             id,
             name: station.name.0,
             description: station.description.0,
+            data_source_id,
             links,
         }
     }

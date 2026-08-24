@@ -2,7 +2,7 @@
 
 use axum::http::StatusCode;
 
-use crate::adapter::driving::rest::tests::fixtures::{STATION_ID_A, UNKNOWN_ID};
+use crate::adapter::driving::rest::tests::fixtures::{DATA_SOURCE_ID_A, STATION_ID_A, UNKNOWN_ID};
 use crate::adapter::driving::rest::tests::{TestApp, assert_not_found};
 
 #[tokio::test]
@@ -17,6 +17,13 @@ async fn list_returns_all_stations_with_links() {
     let first = &items[0];
     assert_eq!(first["id"], STATION_ID_A.to_string());
     assert_eq!(first["name"], "Station A");
+    // Every station was imported from a data source, so the field and the
+    // `data_source` link are always present.
+    assert_eq!(first["data_source_id"], DATA_SOURCE_ID_A.to_string());
+    assert_eq!(
+        first["_links"]["data_source"]["href"],
+        format!("/api/v1/data-sources/{DATA_SOURCE_ID_A}")
+    );
     assert_eq!(
         first["_links"]["self"]["href"],
         format!("/api/v1/counting-stations/{STATION_ID_A}")
@@ -62,6 +69,7 @@ async fn get_by_id_returns_single_station() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], STATION_ID_A.to_string());
     assert_eq!(body["name"], "Station A");
+    assert_eq!(body["data_source_id"], DATA_SOURCE_ID_A.to_string());
     assert_eq!(
         body["_links"]["self"]["href"],
         format!("/api/v1/counting-stations/{STATION_ID_A}")

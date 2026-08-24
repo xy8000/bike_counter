@@ -46,7 +46,7 @@ pub fn station_a() -> CountingStation {
         name: station_vo::Name("Station A".to_string()),
         description: station_vo::Description("First station".to_string()),
         external_datasource_id: None,
-        data_source_id: None,
+        data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
     }
 }
 
@@ -56,7 +56,19 @@ pub fn station_b() -> CountingStation {
         name: station_vo::Name("Station B".to_string()),
         description: station_vo::Description("Second station".to_string()),
         external_datasource_id: None,
-        data_source_id: None,
+        data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
+    }
+}
+
+/// A counting station linked to data source A (exercises the `data_source_id`
+/// field and the `data_source` HATEOAS link on the DTO).
+pub fn station_linked_to_data_source_a() -> CountingStation {
+    CountingStation {
+        id: station_vo::Id(STATION_ID_A),
+        name: station_vo::Name("Station A".to_string()),
+        description: station_vo::Description("First station".to_string()),
+        external_datasource_id: Some(station_vo::ExternalDatasourceId("300037926".to_string())),
+        data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
     }
 }
 

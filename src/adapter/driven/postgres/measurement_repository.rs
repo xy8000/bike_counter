@@ -239,6 +239,7 @@ mod tests {
         let repository = PostgresMeasurementRepository::new(&pool);
 
         let station_id = Uuid::from_u128(200);
+        let data_source_id = Uuid::from_u128(210);
         let setup_channel_id = channel_id().0;
         let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
         setup_client
@@ -248,8 +249,19 @@ mod tests {
         let mut setup_client = setup_client.connect(NoTls).unwrap();
         setup_client
             .execute(
-                "INSERT INTO counting_stations (id, name, description) VALUES ($1, $2, $3)",
-                &[&station_id, &"Test station", &"Test station description"],
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                ],
             )
             .unwrap();
         setup_client
@@ -329,6 +341,7 @@ mod tests {
         let repository = PostgresMeasurementRepository::new(&pool);
 
         let station_id = Uuid::from_u128(300);
+        let data_source_id = Uuid::from_u128(310);
         let setup_channel_id = channel_id().0;
         let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
         setup_client
@@ -338,8 +351,19 @@ mod tests {
         let mut setup_client = setup_client.connect(NoTls).unwrap();
         setup_client
             .execute(
-                "INSERT INTO counting_stations (id, name, description) VALUES ($1, $2, $3)",
-                &[&station_id, &"Test station", &"Test station description"],
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                ],
             )
             .unwrap();
         setup_client
@@ -394,6 +418,7 @@ mod tests {
         let repository = PostgresMeasurementRepository::new(&pool);
 
         let station_id = Uuid::from_u128(400);
+        let data_source_id = Uuid::from_u128(410);
         let setup_channel_id = channel_id().0;
         let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
         setup_client
@@ -403,8 +428,19 @@ mod tests {
         let mut setup_client = setup_client.connect(NoTls).unwrap();
         setup_client
             .execute(
-                "INSERT INTO counting_stations (id, name, description) VALUES ($1, $2, $3)",
-                &[&station_id, &"Test station", &"Test station description"],
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                ],
             )
             .unwrap();
         setup_client

@@ -233,6 +233,106 @@ fn parse_site_index_skips_the_aggregate_entry() {
 }
 
 #[test]
+fn parse_site_index_deduplicates_channel_names_within_a_station() {
+    let json = r#"[
+        {
+            "name": "Bohlweg",
+            "directory": "300037926",
+            "start": 2023,
+            "channels": [
+                [300037926, "Bohlweg"],
+                [353413831, "Bohlweg Fahrräder Stadteinwärts"],
+                [353484923, "Bohlweg Fahrräder Stadteinwärts"],
+                [353484927, "Bohlweg Fahrräder Stadteinwärts"]
+            ]
+        }
+    ]"#;
+
+    let (stations, channels) = parse_site_index(json).unwrap();
+
+    assert_eq!(stations.len(), 1);
+    assert_eq!(stations[0].name, "Bohlweg");
+    assert_eq!(channels.len(), 3, "the aggregate entry must be skipped");
+
+    let names: Vec<&str> = channels
+        .iter()
+        .map(|channel| channel.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "Bohlweg Fahrräder Stadteinwärts",
+            "Bohlweg Fahrräder Stadteinwärts (353484923)",
+            "Bohlweg Fahrräder Stadteinwärts (353484927)"
+        ]
+    );
+}
+
+#[test]
+fn parse_site_index_keeps_identical_channel_names_in_different_stations() {
+    // Channel-name uniqueness is scoped per counting station: the same name in
+    // two different stations must NOT be renamed.
+    let json = r#"[
+        {
+            "name": "Bohlweg",
+            "directory": "300037926",
+            "start": 2023,
+            "channels": [
+                [300037926, "Bohlweg"],
+                [353413831, "Bohlweg Fahrräder Stadteinwärts"]
+            ]
+        },
+        {
+            "name": "Gasselstiege",
+            "directory": "300037931",
+            "start": 2023,
+            "channels": [
+                [300037931, "Gasselstiege"],
+                [353413846, "Gasselstiege Fahrräder Stadteinwärts"]
+            ]
+        }
+    ]"#;
+
+    let (_, channels) = parse_site_index(json).unwrap();
+
+    let names: Vec<&str> = channels
+        .iter()
+        .map(|channel| channel.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "Bohlweg Fahrräder Stadteinwärts",
+            "Gasselstiege Fahrräder Stadteinwärts"
+        ]
+    );
+}
+
+#[test]
+fn parse_site_index_deduplicates_station_names_across_the_archive() {
+    let json = r#"[
+        {
+            "name": "Promenade",
+            "directory": "100031297",
+            "start": 2023,
+            "channels": [[100031297, "Promenade"]]
+        },
+        {
+            "name": "Promenade",
+            "directory": "300037405",
+            "start": 2023,
+            "channels": [[300037405, "Promenade"]]
+        }
+    ]"#;
+
+    let (stations, _) = parse_site_index(json).unwrap();
+
+    assert_eq!(stations.len(), 2);
+    assert_eq!(stations[0].name, "Promenade");
+    assert_eq!(stations[1].name, "Promenade (300037405)");
+}
+
+#[test]
 fn berlin_to_utc_handles_winter_time() {
     let naive =
         chrono::NaiveDateTime::parse_from_str("2024-01-15 12:00", "%Y-%m-%d %H:%M").unwrap();
