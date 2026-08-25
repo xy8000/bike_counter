@@ -1,3 +1,5 @@
+import { Search } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { formatNumber, formatTimestamp } from '../../lib/format'
 import { useGlobalSummary } from './useGlobalSummary'
 
@@ -6,27 +8,33 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
   const { summary, error } = useGlobalSummary()
 
   return (
-    <header className="topbar">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden="true">
+    <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 bg-primary px-4 py-2 text-primary-foreground shadow-md">
+      <div className="flex items-center gap-2 font-bold whitespace-nowrap justify-self-start">
+        <span className="text-xl" aria-hidden="true">
           🚴
         </span>
-        <span className="brand-name">Bike Counter</span>
+        <span>Bike Counter</span>
       </div>
 
-      <button type="button" className="search-trigger" onClick={onOpenSearch}>
-        <span aria-hidden="true">🔍</span> Search counting stations…
-      </button>
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={onOpenSearch}
+        className="w-[26rem] max-w-[60vw] justify-start gap-2 rounded-lg bg-white/15 px-3 py-2 text-left font-normal text-primary-foreground hover:bg-white/25 hover:text-primary-foreground"
+      >
+        <Search aria-hidden="true" />
+        Search counting stations…
+      </Button>
 
-      <div className="topbar-right">
+      <div className="flex items-center gap-3 justify-self-end">
         {summary && (
-          <span className="global-summary">
+          <span className="text-sm whitespace-nowrap text-primary-foreground/80">
             {summary.station_count} stations · {formatNumber(summary.channel_count)}{' '}
             channels · {formatNumber(summary.bikes_last_24h_total)} bikes / 24 h · updated{' '}
             {formatTimestamp(summary.last_update)}
           </span>
         )}
-        {error && <span className="global-summary error">Global summary unavailable.</span>}
+        {error && <span className="text-sm text-red-200">Global summary unavailable.</span>}
       </div>
     </header>
   )

@@ -1,3 +1,7 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { StationListItem } from '../stations/StationListItem'
 import type { StationSummary, StationSummarySidebar } from '../stations/types'
 
@@ -18,55 +22,67 @@ export function Sidebar({
 }) {
   if (collapsed) {
     return (
-      <aside className="sidebar collapsed">
-        <button
+      <aside className="absolute inset-y-0 left-0 z-[500] flex w-10 min-h-0 flex-col bg-primary shadow-md">
+        <Button
           type="button"
-          className="sidebar-edge"
+          variant="ghost"
           onClick={onToggle}
           title="Show station list (H)"
           aria-label="Show station list"
+          className="flex-1 rounded-none text-primary-foreground hover:bg-white/15 hover:text-primary-foreground"
         >
-          {'>'}
-        </button>
+          <ChevronRight />
+        </Button>
       </aside>
     )
   }
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <h2>Visible counting stations</h2>
-        <div className="sidebar-header-actions">
-          <span className="count-badge">
+    <aside className="absolute inset-y-0 left-0 z-[500] flex w-[360px] min-h-0 flex-col border-r bg-background shadow-lg transition-[width]">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="min-w-0 flex-1 text-base font-semibold">Visible counting stations</h2>
+        <div className="flex items-center gap-2">
+          <Badge variant="default" className="rounded-full">
             {sidebar ? `${sidebar.visible_count} / ${sidebar.total_count}` : '–'}
-          </span>
-          <button
+          </Badge>
+          <Button
             type="button"
-            className="collapse-toggle"
+            variant="ghost"
+            size="icon"
             onClick={onToggle}
             title="Hide station list (H)"
             aria-label="Hide station list"
           >
-            {'<'}
-          </button>
+            <ChevronLeft />
+          </Button>
         </div>
       </div>
-      <ul className="station-list">
-        {error && <li className="state error">Could not load counting stations.</li>}
-        {!error && sidebar === null && <li className="state">Loading counting stations…</li>}
-        {!error && sidebar !== null && sidebar.items.length === 0 && (
-          <li className="state">No counting stations visible in this area.</li>
-        )}
-        {!error &&
-          (sidebar?.items ?? []).map((station) => (
-            <StationListItem
-              key={station.id}
-              station={station}
-              onSelect={onSelectStation}
-              showFind={false}
-            />
-          ))}
-      </ul>
+      <ScrollArea className="min-h-0 flex-1">
+        <ul className="list-none">
+          {error && (
+            <li className="p-4 text-sm font-semibold text-destructive">
+              Could not load counting stations.
+            </li>
+          )}
+          {!error && sidebar === null && (
+            <li className="p-4 text-sm text-muted-foreground">Loading counting stations…</li>
+          )}
+          {!error && sidebar !== null && sidebar.items.length === 0 && (
+            <li className="p-4 text-sm text-muted-foreground">
+              No counting stations visible in this area.
+            </li>
+          )}
+          {!error &&
+            (sidebar?.items ?? []).map((station) => (
+              <StationListItem
+                key={station.id}
+                station={station}
+                onSelect={onSelectStation}
+                showFind={false}
+              />
+            ))}
+        </ul>
+      </ScrollArea>
     </aside>
   )
 }

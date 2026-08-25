@@ -4,8 +4,9 @@ import type { Bounds } from '../../lib/geo'
 import { MUENSTER_CENTER } from '../../lib/geo'
 import type { StationMap } from '../stations/types'
 import { MapController } from './MapController'
-// Side effect: sets up the default marker icons and imports leaflet.css.
-import '../../lib/leaflet'
+// Side effect: sets up the default marker icons and imports leaflet.css. Also
+// exports the emerald stationIcon used by the markers below.
+import { stationIcon } from '../../lib/leaflet'
 
 /// The interactive Leaflet map with one marker per visible station.
 export function MapView({
@@ -18,7 +19,7 @@ export function MapView({
   onReady: (map: LeafletMap) => void
 }) {
   return (
-    <MapContainer center={MUENSTER_CENTER} zoom={13} className="map">
+    <MapContainer center={MUENSTER_CENTER} zoom={13} className="absolute inset-0 z-0">
       {/* OpenStreetMap's public tile server (tile.openstreetmap.org) blocks
           client-side requests it can't attribute to a real app and returns
           its usage-policy 403 image instead of tiles. CARTO's free raster
@@ -28,7 +29,11 @@ export function MapView({
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
       />
       {(stations ?? []).map((station) => (
-        <Marker key={station.id} position={[station.latitude, station.longitude]}>
+        <Marker
+          key={station.id}
+          position={[station.latitude, station.longitude]}
+          icon={stationIcon}
+        >
           <Popup>{station.name}</Popup>
         </Marker>
       ))}

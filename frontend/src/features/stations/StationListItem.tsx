@@ -1,3 +1,5 @@
+import { LocateFixed } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { formatNumber } from '../../lib/format'
 import type { StationSummary } from './types'
 
@@ -16,18 +18,37 @@ export function StationListItem({
 }) {
   const findable = station.latitude !== null && station.longitude !== null
   return (
-    <li className="station-item">
-      <button type="button" className="station-item-main" onClick={() => onSelect(station)}>
-        <span className="station-name">{station.name}</span>
-        <span className="station-description">{station.description}</span>
-        <span className="station-meta">
-          {station.channel_count} channels · {formatNumber(station.bikes_last_24h)} bikes / 24 h
+    <li className="flex items-stretch border-b">
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={() => onSelect(station)}
+        className="flex h-auto min-w-0 flex-1 flex-col items-start justify-start gap-0.5 rounded-none px-4 py-3 text-left"
+      >
+        <span className="text-sm font-semibold text-foreground">{station.name}</span>
+        <span className="w-full truncate text-sm text-muted-foreground">{station.description}</span>
+        <span className="mt-0.5 flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          <span>{station.channel_count} channels</span>
+          <span aria-hidden="true">·</span>
+          <span>
+            <span className="font-medium text-foreground">
+              {formatNumber(station.bikes_last_24h)}
+            </span>{' '}
+            bikes / 24 h
+          </span>
         </span>
-      </button>
+      </Button>
       {showFind && onFind && findable && (
-        <button type="button" className="station-find" onClick={() => onFind(station)}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onFind(station)}
+          className="my-auto mr-3 shrink-0"
+        >
+          <LocateFixed />
           Find on map
-        </button>
+        </Button>
       )}
     </li>
   )

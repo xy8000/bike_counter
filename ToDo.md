@@ -213,3 +213,13 @@ Frontend component refactor + centered search bar (plans/27_frontend_component_r
 - [x] Turn `App.tsx` into a thin composition root that only owns bounds/mapRef/searchOpen/sidebarCollapsed, keyboard shortcuts, and focusStation
 - [x] Center the header search trigger via a three-column grid in `frontend/src/index.css`
 - [x] `make frontend-build` green (tsc + vite build); manual `make run` check of map/sidebar/search/find-on-map
+
+Frontend shadcn/ui migration (plans/28_frontend_shadcn_ui_migration_plan.md)
+
+- [x] Tailwind CSS v4 via `@tailwindcss/vite` (no tailwind.config.js); `@/*` path alias in `tsconfig.json` + `vite.config.ts`; `components.json`; `@types/node`
+- [x] Rewrite `frontend/src/index.css` to the shadcn theme tokens (emerald primary on a slate neutral base, light default + `.dark` vars) with a base layer incl. the Leaflet preflight override
+- [x] Add `src/lib/utils.ts` (`cn`) + shadcn components (`button`, `input`, `dialog`, `badge`, `scroll-area`, `separator`) + `lucide-react` icons
+- [x] Convert App / TopBar / Sidebar / SearchDialog / StationListItem / MapView to shadcn components + Tailwind utilities; the hand-written global stylesheet is gone
+- [x] Search dialog uses the Radix-based shadcn `Dialog` (z-index 2000, near-top position) preserving the overlay/sidebar/header stacking order
+- [x] Sidebar list items: station name on top, description, and a readable stats row with emphasised numbers; Leaflet markers use a custom emerald (`#059669`) pin matching the header bar
+- [x] `make frontend-build` green (tsc strict + vite build); `npm run dev` boots cleanly

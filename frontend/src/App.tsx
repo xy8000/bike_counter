@@ -56,10 +56,10 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="flex h-screen flex-col">
       <TopBar onOpenSearch={() => setSearchOpen(true)} />
 
-      <div className="workspace">
+      <div className="relative flex min-h-0 flex-1">
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
@@ -68,7 +68,7 @@ export default function App() {
           onSelectStation={focusStation}
         />
 
-        <main className="map-area">
+        <main className="relative min-w-0 flex-1">
           <MapView
             stations={mapStations}
             onBounds={setBounds}
