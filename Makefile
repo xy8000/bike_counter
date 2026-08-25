@@ -4,10 +4,12 @@
 #   make run       -> boot the whole stack (PostgreSQL + backend + frontend) via docker compose
 #   make check     -> backend formatting + lint gate (scripts/fmt-test.sh)
 #   make test-e2e  -> end-to-end docker-compose smoke test (scripts/docker-compose-test.sh)
+#   make test-playwright -> Playwright browser e2e tests against the real stack (scripts/e2e-playwright.sh)
+#   make playwright-install -> install the Playwright Chromium browser (once)
 #   make coverage  -> backend line-coverage gate, overall >= 80% and core >= 95% (scripts/coverage.sh)
 #   make coverage-open -> open the HTML coverage report in a browser
 
-.PHONY: help build run down logs fmt check test test-rest test-e2e test-all coverage coverage-open clean frontend-build
+.PHONY: help build run down logs fmt check test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -38,6 +40,12 @@ test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker requi
 
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
 	./scripts/docker-compose-test.sh
+
+test-playwright: ## Playwright browser e2e tests against the real stack with a real Münster import (requires Docker + GitHub access; scripts/e2e-playwright.sh)
+	./scripts/e2e-playwright.sh
+
+playwright-install: ## Install the Playwright Chromium browser into the frontend node_modules (once)
+	cd frontend && npx playwright install chromium
 
 test-all: check test ## Formatting/lint gate, then the full test suite
 

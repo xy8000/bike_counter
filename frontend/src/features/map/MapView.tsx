@@ -33,6 +33,11 @@ export function MapView({
           key={station.id}
           position={[station.latitude, station.longitude]}
           icon={stationIcon}
+          // Leaflet forwards both to the marker <img>; used by the Playwright
+          // e2e tests to locate a marker and to assert its popup, and improves
+          // accessibility (screen readers + tooltip).
+          alt={station.name}
+          title={station.name}
         >
           <Popup>{station.name}</Popup>
         </Marker>

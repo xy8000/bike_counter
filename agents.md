@@ -24,6 +24,7 @@ this repository. **Read this file before making any change.**
 | `make test` | Full test suite (Postgres repository tests spin up a Docker test container) |
 | `make test-rest` | REST endpoint tests only (in-memory mocks, no Docker required) |
 | `make coverage` | **Coverage gate — fails when overall *production* line coverage is below `COVERAGE_THRESHOLD` (default 80%) or the core (`src/core/`) is below `CORE_COVERAGE_THRESHOLD` (default 95%)** |
+| `make test-playwright` | **Frontend browser e2e — Playwright against the real Docker Compose stack with a real Münster import (requires Docker + GitHub; see [Frontend e2e](#frontend-e2e-playwright) below)** |
 
 ### Coverage
 
@@ -57,6 +58,31 @@ Notes:
   `CORE_COVERAGE_THRESHOLD=<percent> make coverage` — never commit a lowered
   threshold.
 
+### Frontend e2e (Playwright)
+
+`make test-playwright` runs the browser e2e suite against the **real** Docker
+Compose stack with a real Münster import (nginx → backend BFF → Postgres). The
+specs live in [`frontend/e2e/`](frontend/e2e) with the config in
+[`frontend/playwright.config.ts`](frontend/playwright.config.ts); the
+[`scripts/e2e-playwright.sh`](scripts/e2e-playwright.sh) orchestrator boots the
+stack, waits for readiness and the counting-station import, runs
+`npx playwright test`, then tears everything down (a pre-existing `config.toml`
+is backed up and restored).
+
+- **Run**: `make test-playwright` (needs Docker + GitHub access; first run also
+  installs the Chromium browser via `npx playwright install chromium`, or run
+  `make playwright-install` once).
+- **Requirements**: Docker Compose v2, Node.js/npm with the frontend deps
+  installed (`npm ci` in [`frontend/`](frontend)), and network access to GitHub
+  (the Münster archive). The CARTO map tiles may be blocked without breaking the
+  tests (markers/popups render independently of the tile layer).
+- **Update**: add/change specs in [`frontend/e2e/`](frontend/e2e) and re-run
+  `make test-playwright`. Keep assertions robust to a still-importing dataset
+  (the station phase finishes before the multi-year measurements import). The
+  map markers expose the station name via `alt`/`title` for locators.
+- **Target**: point Playwright at another frontend with `FRONTEND_URL`
+  (default `http://localhost:8081`).
+
 ## Definition of done
 
 - [ ] Plan file in [`plans/`](plans) updated and registered in
@@ -64,4 +90,5 @@ Notes:
 - [ ] `make check` green
 - [ ] `make test` and/or `make test-rest` green
 - [ ] `make coverage` green (coverage at/above the threshold)
+- [ ] `make test-playwright` green when the change touches the frontend UI
 - [ ] `README.md` / `ToDo.md` / plan docs updated as needed

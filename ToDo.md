@@ -223,3 +223,17 @@ Frontend shadcn/ui migration (plans/28_frontend_shadcn_ui_migration_plan.md)
 - [x] Search dialog uses the Radix-based shadcn `Dialog` (z-index 2000, near-top position) preserving the overlay/sidebar/header stacking order
 - [x] Sidebar list items: station name on top, description, and a readable stats row with emphasised numbers; Leaflet markers use a custom emerald (`#059669`) pin matching the header bar
 - [x] `make frontend-build` green (tsc strict + vite build); `npm run dev` boots cleanly
+
+Playwright end-to-end testing (plans/29_playwright_e2e_plan.md)
+
+- [x] `@playwright/test` devDependency + `test:e2e` npm script in `frontend/package.json` (+ regenerated `package-lock.json`)
+- [x] `frontend/playwright.config.ts` (Chromium, baseURL `FRONTEND_URL` default `http://localhost:8081`, list + html reporters, trace/screenshot/video on failure)
+- [x] Map markers expose the station name via `alt`/`title` in `frontend/src/features/map/MapView.tsx` (test hook + a11y)
+- [x] `frontend/e2e/map.spec.ts`: clicking a rendered map marker opens a popup with the same station name
+- [x] `frontend/e2e/search.spec.ts`: search dialog filters "Bohlweg" and "Find on map" closes the dialog and opens its popup
+- [x] `frontend/e2e/sidebar.spec.ts`: sidebar badge visible/total matches the rendered entries, marker count == sidebar item count, and zooming in shrinks the visible set
+- [x] `scripts/e2e-playwright.sh`: boots the stack with a real Münster data source, waits for readiness + station import, runs Playwright, tears down + restores `config.toml`
+- [x] Makefile `test-playwright` + `playwright-install` targets (`.PHONY` + help)
+- [x] `.gitignore` Playwright artifacts (`frontend/test-results/`, `frontend/playwright-report/`, `frontend/blob-report/`)
+- [x] Docs: `agents.md` (gate + Frontend e2e section + definition of done), `README.md` (Running tests), `ToDo.md`, `plans/29_playwright_e2e_plan.md` registered in `plans/README.md`
+- [ ] Gates green: `make frontend-build`, `make check`, `make test-rest`, `make test-playwright`

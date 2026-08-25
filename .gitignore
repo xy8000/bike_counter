@@ -63,6 +63,12 @@ config.toml
 frontend/node_modules/
 frontend/dist/
 
+# Playwright test artifacts (results, reports, traces).
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
 # Local sample data (large upstream archive, not part of the build).
 example
 
