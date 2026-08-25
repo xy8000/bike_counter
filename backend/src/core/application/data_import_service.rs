@@ -8,6 +8,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::core::domain::assets::asset::Asset;
 use crate::core::domain::assets::asset::value_objects::{ContentType, Sha256};
 use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::channel::Channel;
@@ -125,6 +126,13 @@ impl DataImportService {
             .get_all_counting_stations()
             .map_err(DomainError::from)?;
 
+        // Resolve the built-in fallback image once per import (instead of once
+        // per station): every station without a provider image points to it.
+        let default_asset = match &self.asset_service {
+            Some(service) => Some(service.default_asset()?),
+            None => None,
+        };
+
         let mut external_to_id = HashMap::with_capacity(stations.len());
         for record in stations {
             let external_id = station_vo::ExternalDatasourceId(record.external_id.clone());
@@ -152,12 +160,15 @@ impl DataImportService {
                         timezone: station_vo::Timezone(record.timezone.clone()),
                         ..existing.clone()
                     };
-                    if let Some(asset_service) = &self.asset_service {
+                    if let (Some(asset_service), Some(default_asset)) =
+                        (&self.asset_service, default_asset.as_ref())
+                    {
                         self.sync_station_image(
                             asset_service,
                             &mut updated,
                             &record,
                             runtime.provider.as_ref(),
+                            default_asset,
                         )?;
                     }
                     let changed = updated.name.0 != existing.name.0
@@ -183,12 +194,15 @@ impl DataImportService {
                         image_asset_id: None,
                         image_sha256: None,
                     };
-                    if let Some(asset_service) = &self.asset_service {
+                    if let (Some(asset_service), Some(default_asset)) =
+                        (&self.asset_service, default_asset.as_ref())
+                    {
                         self.sync_station_image(
                             asset_service,
                             &mut station,
                             &record,
                             runtime.provider.as_ref(),
+                            default_asset,
                         )?;
                     }
                     self.counting_station_repository.save(station.clone())?;
@@ -211,11 +225,11 @@ impl DataImportService {
         station: &mut CountingStation,
         record: &CountingStationRecord,
         provider: &dyn DataProvider,
+        default_asset: &Asset,
     ) -> Result<(), DomainError> {
         let Some(provider_hash) = &record.image_sha256 else {
             // No provider image: fall back to the built-in default (idempotent).
-            let default = asset_service.default_asset()?;
-            station.image_asset_id = Some(default.id);
+            station.image_asset_id = Some(default_asset.id);
             station.image_sha256 = None;
             return Ok(());
         };
@@ -241,8 +255,7 @@ impl DataImportService {
                 station.image_sha256 = Some(provider_hash.clone());
             }
             None => {
-                let default = asset_service.default_asset()?;
-                station.image_asset_id = Some(default.id);
+                station.image_asset_id = Some(default_asset.id);
                 station.image_sha256 = None;
             }
         }

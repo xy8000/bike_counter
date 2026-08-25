@@ -595,7 +595,6 @@ impl AssetStorage for MockAssetStorage {
         bytes: &[u8],
     ) -> Result<AssetObjectInfo, DomainError> {
         Ok(AssetObjectInfo {
-            etag: "etag".to_string(),
             byte_size: bytes.len() as i64,
         })
     }

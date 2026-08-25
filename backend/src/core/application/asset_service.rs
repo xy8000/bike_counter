@@ -120,6 +120,16 @@ impl AssetServicePort for AssetService {
         content_type: ContentType,
         bytes: &[u8],
     ) -> Result<Asset, DomainError> {
+        // Reject a hash that does not match the actual bytes: the object key is
+        // content-addressed, so a mismatch would otherwise persist an object
+        // whose key disagrees with its stored sha256.
+        let actual = Self::sha256_of(bytes);
+        if actual != sha256.0 {
+            return Err(DomainError::InvalidQuery(format!(
+                "provider image hash {} does not match its content (sha256 {})",
+                sha256.0, actual
+            )));
+        }
         // Content-addressed object key: two stations sharing an image share one
         // object (deduplicated by the sha256).
         let object_key = ObjectKey(format!(
@@ -248,7 +258,6 @@ mod tests {
                 .unwrap()
                 .insert(object_key.0.clone(), bytes.to_vec());
             Ok(AssetObjectInfo {
-                etag: format!("\"{}\"", AssetService::sha256_of(bytes)),
                 byte_size: bytes.len() as i64,
             })
         }
@@ -378,6 +387,22 @@ mod tests {
         assert_eq!(first.object_key.0, format!("provider/{}.png", sha256.0));
         assert_eq!(repository.list().unwrap().len(), 1);
         assert_eq!(storage.list_object_keys().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn store_provider_image_rejects_a_hash_that_does_not_match_the_bytes() {
+        let repository = Arc::new(MemoryAssetRepository::new());
+        let storage = Arc::new(MemoryAssetStorage::new());
+        let service = service(repository.clone(), storage.clone());
+
+        let bytes = b"actual-content".to_vec();
+        let wrong = Sha256("f".repeat(64));
+        let result =
+            service.store_provider_image(wrong, ContentType("image/png".to_string()), &bytes);
+
+        assert!(matches!(result, Err(DomainError::InvalidQuery(_))));
+        assert_eq!(repository.list().unwrap().len(), 0);
+        assert_eq!(storage.list_object_keys().unwrap().len(), 0);
     }
 
     #[test]

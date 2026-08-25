@@ -326,10 +326,7 @@ mod tests {
             _content_type: &ContentType,
             _bytes: &[u8],
         ) -> Result<AssetObjectInfo, DomainError> {
-            Ok(AssetObjectInfo {
-                etag: String::new(),
-                byte_size: 0,
-            })
+            Ok(AssetObjectInfo { byte_size: 0 })
         }
         fn list_object_keys(&self) -> Result<Vec<ObjectKey>, DomainError> {
             Ok(self
@@ -571,10 +568,7 @@ mod tests {
             _content_type: &ContentType,
             _bytes: &[u8],
         ) -> Result<AssetObjectInfo, DomainError> {
-            Ok(AssetObjectInfo {
-                etag: String::new(),
-                byte_size: 0,
-            })
+            Ok(AssetObjectInfo { byte_size: 0 })
         }
         fn list_object_keys(&self) -> Result<Vec<ObjectKey>, DomainError> {
             Ok(vec![ObjectKey("provider/orphan.jpg".to_string())])

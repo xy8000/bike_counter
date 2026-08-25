@@ -46,10 +46,12 @@ pub trait AssetStorage: Send + Sync {
 }
 
 /// Result of a `put` — the values the domain persists as asset metadata.
+///
+/// The BFF derives the streaming response headers (`Content-Type`, `ETag`,
+/// `Content-Length`) from the asset's DB metadata, so only the byte size crosses
+/// this boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetObjectInfo {
-    /// ETag reported by the storage (used as the HTTP ETag on streamed content).
-    pub etag: String,
     /// Size of the uploaded content in bytes.
     pub byte_size: i64,
 }
