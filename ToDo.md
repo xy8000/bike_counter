@@ -208,8 +208,8 @@ BFF endpoint separation + global summary + frontend polish (plans/25_bff_endpoin
 
 Frontend component refactor + centered search bar (plans/27_frontend_component_refactor_and_centered_search_plan.md)
 
-- [ ] Split `frontend/src/App.tsx` into a feature-based structure under `frontend/src/features/` (header, map, sidebar, search, stations) with co-located components and data-fetching hooks
-- [ ] Add `frontend/src/lib/` (format.ts, geo.ts, leaflet.ts) holding the pure helpers and Leaflet bootstrap moved out of `App.tsx`
-- [ ] Turn `App.tsx` into a thin composition root that only owns bounds/mapRef/searchOpen/sidebarCollapsed, keyboard shortcuts, and focusStation
-- [ ] Center the header search trigger via a three-column grid in `frontend/src/index.css`
-- [ ] `make frontend-build` green (tsc + vite build); manual `make run` check of map/sidebar/search/find-on-map
+- [x] Split `frontend/src/App.tsx` into a feature-based structure under `frontend/src/features/` (header, map, sidebar, search, stations) with co-located components and data-fetching hooks
+- [x] Add `frontend/src/lib/` (format.ts, geo.ts, leaflet.ts) holding the pure helpers and Leaflet bootstrap moved out of `App.tsx`
+- [x] Turn `App.tsx` into a thin composition root that only owns bounds/mapRef/searchOpen/sidebarCollapsed, keyboard shortcuts, and focusStation
+- [x] Center the header search trigger via a three-column grid in `frontend/src/index.css`
+- [x] `make frontend-build` green (tsc + vite build); manual `make run` check of map/sidebar/search/find-on-map

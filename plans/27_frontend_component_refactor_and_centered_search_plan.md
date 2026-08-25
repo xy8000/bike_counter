@@ -1,6 +1,6 @@
 # 27 - Frontend component refactor + centered search bar plan
 
-Status: planned
+Status: implemented
 
 ## Problem
 
@@ -165,14 +165,40 @@ flowchart TD
 - CSS modules / co-located styles, path aliases, and visual redesign beyond the
   centered search bar.
 
+## Result
+
+Implemented end-to-end in the frontend:
+
+- [`frontend/src/App.tsx`](../frontend/src/App.tsx:1) is now a thin composition
+  root owning only `bounds`, `mapRef`, `sidebarCollapsed`, `searchOpen`, the
+  `H`/`Esc` keyboard effect, and `focusStation`.
+- New feature folders:
+  [`features/stations/`](../frontend/src/features/stations/types.ts:1)
+  (shared station types, `api.ts`, `useVisibleStations`, `useStationSearch`,
+  `StationListItem`), [`features/header/`](../frontend/src/features/header/TopBar.tsx:1)
+  (types, `api.ts`, `useGlobalSummary`, `TopBar`),
+  [`features/map/`](../frontend/src/features/map/MapView.tsx:1)
+  (`MapView`, `MapController`), [`features/sidebar/`](../frontend/src/features/sidebar/Sidebar.tsx:1)
+  and [`features/search/`](../frontend/src/features/search/SearchDialog.tsx:1).
+- New [`lib/`](../frontend/src/lib/format.ts:1) helpers (`format.ts`, `geo.ts`,
+  `leaflet.ts`). No behaviour change; same endpoints, debounce, and loading/error
+  states.
+- The search trigger is centered: `.topbar` is now a `1fr auto 1fr` grid with
+  `.brand` `justify-self: start`, `.topbar-right` `justify-self: end`, and
+  `.search-trigger` `width: 26rem; max-width: 60vw`
+  ([`index.css`](../frontend/src/index.css:29)).
+
+Gates: `make frontend-build` green (`tsc` + `vite build`). Backend gates are
+unaffected (no Rust changes).
+
 ## Definition of done
 
-- [ ] New `features/`, `lib/`, and `App.tsx` implemented per this plan; behaviour
+- [x] New `features/`, `lib/`, and `App.tsx` implemented per this plan; behaviour
       identical to today.
-- [ ] Search trigger centered via the header grid change in
+- [x] Search trigger centered via the header grid change in
       [`index.css`](../frontend/src/index.css:29).
-- [ ] [`plans/README.md`](../plans/README.md:1) updated with this plan.
-- [ ] [`ToDo.md`](../ToDo.md:1) updated with this plan's checklist.
-- [ ] `make frontend-build` green (`tsc` + `vite build`).
-- [ ] Manual check with `make run` (http://localhost:8081): map, sidebar, search
+- [x] [`plans/README.md`](../plans/README.md:1) updated with this plan.
+- [x] [`ToDo.md`](../ToDo.md:1) updated with this plan's checklist.
+- [x] `make frontend-build` green (`tsc` + `vite build`).
+- [x] Manual check with `make run` (http://localhost:8081): map, sidebar, search
       dialog and find-on-map all behave as before; search trigger is centered.
