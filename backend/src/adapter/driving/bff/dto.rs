@@ -15,8 +15,8 @@ use crate::adapter::driving::rest::dto::CountingStationDto;
 use crate::core::domain::station_summary::StationSummary;
 
 /// A counting station enriched with its channel count and the number of bikes
-/// measured in the last 24 hours; consumed by the React frontend (sidebar and
-/// search dialog).
+/// measured on the previous complete local day (in the station's own timezone);
+/// consumed by the React frontend (sidebar and search dialog).
 ///
 /// The station fields are reused structurally from [`CountingStationDto`] via
 /// `#[serde(flatten)]`, so `id`/`name`/`description`/`latitude`/`longitude`
@@ -28,7 +28,7 @@ pub struct StationSummaryDto {
     #[schema(inline)]
     pub station: CountingStationDto,
     pub channel_count: usize,
-    pub bikes_last_24h: i64,
+    pub bikes_last_day: i64,
 }
 
 impl From<StationSummary> for StationSummaryDto {
@@ -36,7 +36,7 @@ impl From<StationSummary> for StationSummaryDto {
         Self {
             station: CountingStationDto::from(summary.station),
             channel_count: summary.channel_count,
-            bikes_last_24h: summary.bikes_last_24h,
+            bikes_last_day: summary.bikes_last_day,
         }
     }
 }
@@ -91,7 +91,7 @@ pub struct StationSearchDto {
 pub struct GlobalSummaryDto {
     pub station_count: usize,
     pub channel_count: usize,
-    pub bikes_last_24h_total: i64,
+    pub bikes_last_day_total: i64,
     /// Timestamp of the most recent successful data-source update.
     pub last_update: Option<DateTime<Utc>>,
 }

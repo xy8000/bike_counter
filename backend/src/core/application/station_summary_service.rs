@@ -1,5 +1,11 @@
 //! Application service computing per-station summaries (channel count + bikes
-//! measured in the last 24 h) for the BFF "visible stations" endpoints.
+//! measured on the previous complete local day) for the BFF "visible stations"
+//! endpoints.
+//!
+//! Each station's "last day" is computed in the station's own timezone
+//! (DST-aware), so a provider may serve stations from several timezones. The
+//! low-level measurement sum stays generic (`sum(from, to, channel)`); only the
+//! window selection is business logic here.
 //!
 //! The aggregation is computed on the fly per request; a cache (e.g. Redis) may
 //! be introduced later.
@@ -11,6 +17,7 @@ use chrono::{DateTime, Utc};
 
 use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
+use crate::core::domain::counting_stations::counting_station::previous_local_day;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
@@ -39,12 +46,12 @@ impl StationSummaryService {
     }
 
     /// Enriches the already-filtered stations with their channel count and the
-    /// sum of measurements in the `from..=to` window, ordered by name.
+    /// sum of measurements over each station's previous complete local day (in
+    /// the station's own timezone), ordered by name.
     fn compute(
         &self,
         stations: Vec<CountingStation>,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
+        now: DateTime<Utc>,
     ) -> Result<Vec<StationSummary>, DomainError> {
         let channels = self.channel_repository.find_filtered(None, None)?;
 
@@ -60,10 +67,13 @@ impl StationSummaryService {
                 .push(measurement_vo::ChannelId(channel.id.0));
         }
 
-        // Sum each visible station's channels individually (the repository sums
-        // a scalar over a window, optionally restricted to one channel).
+        // Sum each visible station's channels individually over its own
+        // local-day window (the repository sums a scalar over a window,
+        // optionally restricted to one channel).
         let mut bikes_by_station: HashMap<uuid::Uuid, i64> = HashMap::new();
         for station in &stations {
+            let tz = station.timezone.parse()?;
+            let (from, to) = previous_local_day(tz, now)?;
             let mut bikes = 0i64;
             if let Some(channel_ids) = channels_by_station.get(&station.id.0) {
                 for channel_id in channel_ids {
@@ -83,11 +93,11 @@ impl StationSummaryService {
                     .get(&station_id)
                     .copied()
                     .unwrap_or(0);
-                let bikes_last_24h = bikes_by_station.get(&station_id).copied().unwrap_or(0);
+                let bikes_last_day = bikes_by_station.get(&station_id).copied().unwrap_or(0);
                 StationSummary {
                     station,
                     channel_count,
-                    bikes_last_24h,
+                    bikes_last_day,
                 }
             })
             .collect();
@@ -100,8 +110,7 @@ impl StationSummaryServicePort for StationSummaryService {
     fn summarize(
         &self,
         bounds: Option<GeoBounds>,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
+        now: DateTime<Utc>,
     ) -> Result<Vec<StationSummary>, DomainError> {
         let stations = self
             .counting_station_repository
@@ -115,7 +124,7 @@ impl StationSummaryServicePort for StationSummaryService {
                 })
             })
             .collect();
-        self.compute(stations, from, to)
+        self.compute(stations, now)
     }
 }
 
@@ -123,7 +132,7 @@ impl StationSummaryServicePort for StationSummaryService {
 mod tests {
     use std::sync::Arc;
 
-    use chrono::{Duration, Utc};
+    use chrono::{TimeZone, Utc};
     use uuid::Uuid;
 
     use super::*;
@@ -135,9 +144,22 @@ mod tests {
 
     const STATION_A: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0001;
     const STATION_B: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0002;
+    const STATION_C: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0003;
     const CHANNEL_A1: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0011;
     const CHANNEL_A2: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0012;
     const CHANNEL_B1: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0013;
+    const CHANNEL_C1: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0014;
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+    }
+
+    /// Fixed "now": 2024-01-02 12:00 UTC = 13:00 Berlin (CET, UTC+1), so
+    /// yesterday is the Berlin day 2024-01-01 = UTC
+    /// `[2023-12-31T23:00:00Z, 2024-01-01T23:00:00Z)`.
+    fn now() -> DateTime<Utc> {
+        utc(2024, 1, 2, 12, 0, 0)
+    }
 
     struct MemoryCountingStationRepository {
         stations: Vec<CountingStation>,
@@ -260,6 +282,7 @@ mod tests {
                 latitude,
                 longitude,
             }),
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         }
     }
 
@@ -287,8 +310,7 @@ mod tests {
         }
     }
 
-    fn service() -> StationSummaryService {
-        let now = Utc::now();
+    fn service(measurements: Vec<Measurement>) -> StationSummaryService {
         let station_repo = MemoryCountingStationRepository {
             stations: vec![
                 station(STATION_A, "A", Some((51.96, 7.63))),
@@ -302,14 +324,7 @@ mod tests {
                 channel(CHANNEL_B1, STATION_B),
             ],
         };
-        let measurement_repo = MemoryMeasurementRepository {
-            measurements: vec![
-                measurement(1, CHANNEL_A1, 10, now - Duration::hours(2)),
-                measurement(2, CHANNEL_A1, 5, now - Duration::hours(23)),
-                measurement(3, CHANNEL_A1, 100, now - Duration::hours(48)),
-                measurement(4, CHANNEL_A2, 3, now - Duration::hours(1)),
-            ],
-        };
+        let measurement_repo = MemoryMeasurementRepository { measurements };
         StationSummaryService::new(
             Arc::new(station_repo),
             Arc::new(channel_repo),
@@ -328,9 +343,8 @@ mod tests {
 
     #[test]
     fn summarize_in_bounds_filters_stations_and_counts_channels() {
-        let now = Utc::now();
-        let summaries = service()
-            .summarize(Some(bounds()), now - Duration::hours(24), now)
+        let summaries = service(Vec::new())
+            .summarize(Some(bounds()), now())
             .unwrap();
 
         assert_eq!(summaries.len(), 1, "only station A lies inside the bounds");
@@ -348,23 +362,27 @@ mod tests {
     }
 
     #[test]
-    fn bikes_last_24h_sums_only_measurements_inside_the_window() {
-        let now = Utc::now();
-        let summaries = service()
-            .summarize(Some(bounds()), now - Duration::hours(24), now)
-            .unwrap();
+    fn bikes_last_day_sums_only_measurements_inside_the_window() {
+        let summaries = service(vec![
+            // Berlin day 2024-01-01 (yesterday): 12:00 and 08:00 local.
+            measurement(1, CHANNEL_A1, 10, utc(2024, 1, 1, 11, 0, 0)),
+            measurement(2, CHANNEL_A1, 5, utc(2024, 1, 1, 7, 0, 0)),
+            // Before yesterday (2023-12-31 12:00 local): excluded.
+            measurement(3, CHANNEL_A1, 100, utc(2023, 12, 31, 11, 0, 0)),
+            // Today (2024-01-02 10:00 local): must be excluded (it is not the
+            // "last day").
+            measurement(4, CHANNEL_A2, 3, utc(2024, 1, 2, 9, 0, 0)),
+        ])
+        .summarize(Some(bounds()), now())
+        .unwrap();
 
-        // Channel A1: 10 (2h ago) + 5 (23h ago) = 15; the 48h-old one is excluded.
-        // Channel A2: 3 (1h ago).
-        assert_eq!(summaries[0].bikes_last_24h, 18);
+        assert_eq!(summaries.len(), 1, "only station A lies inside the bounds");
+        assert_eq!(summaries[0].bikes_last_day, 15);
     }
 
     #[test]
     fn summarize_all_includes_stations_without_coordinates() {
-        let now = Utc::now();
-        let summaries = service()
-            .summarize(None, now - Duration::hours(24), now)
-            .unwrap();
+        let summaries = service(Vec::new()).summarize(None, now()).unwrap();
 
         assert_eq!(summaries.len(), 2, "all stations are returned");
         let station_b = summaries
@@ -373,6 +391,60 @@ mod tests {
             .expect("station B present");
         assert_eq!(station_b.station.coordinates, None);
         assert_eq!(station_b.channel_count, 1);
-        assert_eq!(station_b.bikes_last_24h, 0, "station B has no measurements");
+        assert_eq!(station_b.bikes_last_day, 0, "station B has no measurements");
+    }
+
+    #[test]
+    fn per_station_timezone_uses_each_station_local_day() {
+        // Station C sits in America/New_York (EST, UTC-5 in winter). "Now" is
+        // 2024-01-02 12:00 UTC = 07:00 EST. A measurement at 2024-01-01T23:30Z
+        // is 2024-01-02 00:30 in Berlin (today -> excluded) but 2024-01-01
+        // 18:30 in New York (yesterday -> included), so the same instant must
+        // count only for station C.
+        let station_c = CountingStation {
+            id: station_vo::Id(Uuid::from_u128(STATION_C)),
+            name: station_vo::Name("C".to_string()),
+            description: station_vo::Description("C description".to_string()),
+            external_datasource_id: None,
+            data_source_id: None,
+            coordinates: Some(station_vo::GeoCoordinates {
+                latitude: 51.99,
+                longitude: 7.6,
+            }),
+            timezone: station_vo::Timezone("America/New_York".to_string()),
+        };
+        let service = StationSummaryService::new(
+            Arc::new(MemoryCountingStationRepository {
+                stations: vec![station(STATION_A, "A", Some((51.96, 7.63))), station_c],
+            }),
+            Arc::new(MemoryChannelRepository {
+                channels: vec![
+                    channel(CHANNEL_A1, STATION_A),
+                    channel(CHANNEL_C1, STATION_C),
+                ],
+            }),
+            Arc::new(MemoryMeasurementRepository {
+                measurements: vec![
+                    measurement(1, CHANNEL_A1, 99, utc(2024, 1, 1, 23, 30, 0)),
+                    measurement(2, CHANNEL_C1, 99, utc(2024, 1, 1, 23, 30, 0)),
+                ],
+            }),
+        );
+
+        let summaries = service.summarize(None, now()).unwrap();
+        let by_name: HashMap<_, _> = summaries
+            .iter()
+            .map(|s| (s.station.name.0.clone(), s.bikes_last_day))
+            .collect();
+        assert_eq!(
+            by_name.get("A"),
+            Some(&0),
+            "00:30 Berlin is already today for station A"
+        );
+        assert_eq!(
+            by_name.get("C"),
+            Some(&99),
+            "18:30 New York is still yesterday for station C"
+        );
     }
 }

@@ -54,7 +54,7 @@ mkdir -p "${COVERAGE_DIR}"
 echo "--- cargo llvm-cov (production line coverage: overall >= ${COVERAGE_THRESHOLD}%, core >= ${CORE_COVERAGE_THRESHOLD}%)"
 # Run the instrumented test suite once and write the lcov report. Both gates are
 # computed from this report below; the standard HTML report is rendered after.
-cargo llvm-cov --lcov --output-path "${LCOV_FILE}"
+cargo llvm-cov --quiet --lcov --output-path "${LCOV_FILE}"
 
 # Computes production-only line coverage from the lcov report. An optional awk
 # regex filters the files by path (e.g. '/src/core/').
@@ -97,7 +97,7 @@ overall_percent="$(production_coverage "")"
 core_percent="$(production_coverage '/src/core/')"
 
 # Standard cargo-llvm-cov HTML report (unchanged, includes test scaffolding).
-cargo llvm-cov report --html --output-dir "${COVERAGE_DIR}"
+cargo llvm-cov report --quiet --html --output-dir "${COVERAGE_DIR}"
 
 echo "coverage: overall (production) ${overall_percent}% (>= ${COVERAGE_THRESHOLD}%)"
 echo "coverage: core (src/core/, production) ${core_percent}% (>= ${CORE_COVERAGE_THRESHOLD}%)"

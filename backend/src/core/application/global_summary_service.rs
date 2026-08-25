@@ -5,18 +5,25 @@
 //! nothing about the map view, bounding boxes or per-station counts, so
 //! non-station statistics (last update now, jobs later) can be added without
 //! touching the station-summary model.
+//!
+//! The "last day" total is the sum of every station's previous complete local
+//! day total, each computed in the station's own timezone (DST-aware). The
+//! low-level measurement sum stays generic (`sum(from, to, channel)`).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
 use crate::core::application::data_source_update_service::DATA_SOURCE_UPDATE_JOB_TYPE;
 use crate::core::domain::channels::repository_port::ChannelRepository;
+use crate::core::domain::counting_stations::counting_station::previous_local_day;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::global_summary::GlobalSummary;
 use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::jobs::repository_port::JobRepository;
+use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
 pub struct GlobalSummaryService {
@@ -41,15 +48,36 @@ impl GlobalSummaryService {
         }
     }
 
-    /// Computes the whole-system statistics.
-    fn compute(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Result<GlobalSummary, DomainError> {
-        let station_count = self.counting_station_repository.find_all()?.len();
-        let channel_count = self.channel_repository.find_all()?.len();
-        let bikes_last_24h_total = self.measurement_repository.sum(from, to, None)?;
+    /// Computes the whole-system statistics for `now`: the sum of every
+    /// station's previous complete local day total (each in its own timezone).
+    fn compute(&self, now: DateTime<Utc>) -> Result<GlobalSummary, DomainError> {
+        let stations = self.counting_station_repository.find_all()?;
+        let channels = self.channel_repository.find_all()?;
+
+        let mut channels_by_station: HashMap<uuid::Uuid, Vec<measurement_vo::ChannelId>> =
+            HashMap::new();
+        for channel in &channels {
+            channels_by_station
+                .entry(channel.counting_station_id.0)
+                .or_default()
+                .push(measurement_vo::ChannelId(channel.id.0));
+        }
+
+        let mut bikes_last_day_total = 0i64;
+        for station in &stations {
+            let tz = station.timezone.parse()?;
+            let (from, to) = previous_local_day(tz, now)?;
+            if let Some(channel_ids) = channels_by_station.get(&station.id.0) {
+                for channel_id in channel_ids {
+                    bikes_last_day_total +=
+                        self.measurement_repository
+                            .sum(from, to, Some(*channel_id))?;
+                }
+            }
+        }
+
+        let station_count = stations.len();
+        let channel_count = channels.len();
         let last_update = self
             .job_repository
             .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)?
@@ -58,19 +86,15 @@ impl GlobalSummaryService {
         Ok(GlobalSummary {
             station_count,
             channel_count,
-            bikes_last_24h_total,
+            bikes_last_day_total,
             last_update,
         })
     }
 }
 
 impl GlobalSummaryServicePort for GlobalSummaryService {
-    fn summarize(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Result<GlobalSummary, DomainError> {
-        self.compute(from, to)
+    fn summarize(&self, now: DateTime<Utc>) -> Result<GlobalSummary, DomainError> {
+        self.compute(now)
     }
 }
 
@@ -78,7 +102,7 @@ impl GlobalSummaryServicePort for GlobalSummaryService {
 mod tests {
     use std::sync::Arc;
 
-    use chrono::{Duration, Utc};
+    use chrono::{TimeZone, Utc};
     use uuid::Uuid;
 
     use super::*;
@@ -90,6 +114,17 @@ mod tests {
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+    }
+
+    /// Fixed "now": 2024-01-02 12:00 UTC = 13:00 Berlin (CET, UTC+1), so
+    /// yesterday is the Berlin day 2024-01-01 = UTC
+    /// `[2023-12-31T23:00:00Z, 2024-01-01T23:00:00Z)`.
+    fn now() -> DateTime<Utc> {
+        utc(2024, 1, 2, 12, 0, 0)
+    }
+
     fn station(id: u128, name: &str) -> CountingStation {
         CountingStation {
             id: station_vo::Id(Uuid::from_u128(id)),
@@ -98,6 +133,7 @@ mod tests {
             external_datasource_id: None,
             data_source_id: None,
             coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         }
     }
 
@@ -125,10 +161,10 @@ mod tests {
             Uuid::from_u128(id),
             "Data source update".to_string(),
             DATA_SOURCE_UPDATE_JOB_TYPE.to_string(),
-            finished_at + Duration::hours(1),
+            finished_at + chrono::Duration::hours(1),
         );
         job.status = JobStatus::Finished;
-        job.started_at = Some(finished_at - Duration::minutes(5));
+        job.started_at = Some(finished_at - chrono::Duration::minutes(5));
         job.finished_at = Some(finished_at);
         job
     }
@@ -303,7 +339,7 @@ mod tests {
         }
     }
 
-    fn service(now: DateTime<Utc>) -> GlobalSummaryService {
+    fn service(measurements: Vec<Measurement>) -> GlobalSummaryService {
         GlobalSummaryService::new(
             Arc::new(MemoryCountingStationRepository {
                 stations: vec![station(0x1, "A"), station(0x2, "B")],
@@ -311,36 +347,33 @@ mod tests {
             Arc::new(MemoryChannelRepository {
                 channels: vec![channel(0x11, 0x1), channel(0x12, 0x1), channel(0x13, 0x2)],
             }),
-            Arc::new(MemoryMeasurementRepository {
-                measurements: vec![
-                    measurement(0x21, 0x11, 10, now - Duration::hours(1)),
-                    measurement(0x22, 0x11, 5, now - Duration::hours(23)),
-                    measurement(0x23, 0x12, 3, now - Duration::hours(48)),
-                ],
-            }),
+            Arc::new(MemoryMeasurementRepository { measurements }),
             Arc::new(MemoryJobRepository {
-                jobs: vec![finished_job(0x31, now - Duration::hours(2))],
+                jobs: vec![finished_job(0x31, utc(2024, 1, 2, 10, 0, 0))],
             }),
         )
     }
 
     #[test]
     fn summarize_returns_global_counts_and_last_update() {
-        let now = Utc::now();
-        let summary = service(now)
-            .summarize(now - Duration::hours(24), now)
-            .unwrap();
+        let summary = service(vec![
+            // Inside yesterday (Berlin 2024-01-01): 12:00 and 08:00 local.
+            measurement(0x21, 0x11, 10, utc(2024, 1, 1, 11, 0, 0)),
+            measurement(0x22, 0x11, 5, utc(2024, 1, 1, 7, 0, 0)),
+            // Today (Berlin 2024-01-02 10:00 local): excluded.
+            measurement(0x23, 0x12, 3, utc(2024, 1, 2, 9, 0, 0)),
+        ])
+        .summarize(now())
+        .unwrap();
 
         assert_eq!(summary.station_count, 2);
         assert_eq!(summary.channel_count, 3);
-        // Only the two measurements inside the window (10 + 5), the 48h one is out.
-        assert_eq!(summary.bikes_last_24h_total, 15);
-        assert_eq!(summary.last_update, Some(now - Duration::hours(2)));
+        assert_eq!(summary.bikes_last_day_total, 15);
+        assert_eq!(summary.last_update, Some(utc(2024, 1, 2, 10, 0, 0)));
     }
 
     #[test]
     fn summarize_has_no_last_update_without_finished_jobs() {
-        let now = Utc::now();
         let summary = GlobalSummaryService::new(
             Arc::new(MemoryCountingStationRepository { stations: vec![] }),
             Arc::new(MemoryChannelRepository { channels: vec![] }),
@@ -349,30 +382,33 @@ mod tests {
             }),
             Arc::new(MemoryJobRepository { jobs: vec![] }),
         )
-        .summarize(now - Duration::hours(24), now)
+        .summarize(now())
         .unwrap();
 
         assert_eq!(summary.station_count, 0);
         assert_eq!(summary.channel_count, 0);
-        assert_eq!(summary.bikes_last_24h_total, 0);
+        assert_eq!(summary.bikes_last_day_total, 0);
         assert_eq!(summary.last_update, None);
     }
 
     #[test]
     fn summarize_sums_all_channels_in_the_window() {
-        let now = Utc::now();
-        // A channel repo with no channels must not affect the scalar sum.
+        // One station A with one channel; a measurement inside yesterday.
         let summary = GlobalSummaryService::new(
-            Arc::new(MemoryCountingStationRepository { stations: vec![] }),
-            Arc::new(MemoryChannelRepository { channels: vec![] }),
+            Arc::new(MemoryCountingStationRepository {
+                stations: vec![station(0x1, "A")],
+            }),
+            Arc::new(MemoryChannelRepository {
+                channels: vec![channel(0x11, 0x1)],
+            }),
             Arc::new(MemoryMeasurementRepository {
-                measurements: vec![measurement(0x41, 0x99, 7, now - Duration::hours(1))],
+                measurements: vec![measurement(0x41, 0x11, 7, utc(2024, 1, 1, 11, 0, 0))],
             }),
             Arc::new(MemoryJobRepository { jobs: vec![] }),
         )
-        .summarize(now - Duration::hours(24), now)
+        .summarize(now())
         .unwrap();
 
-        assert_eq!(summary.bikes_last_24h_total, 7);
+        assert_eq!(summary.bikes_last_day_total, 7);
     }
 }

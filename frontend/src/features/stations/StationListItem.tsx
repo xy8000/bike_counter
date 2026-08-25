@@ -32,9 +32,9 @@ export function StationListItem({
           <span aria-hidden="true">·</span>
           <span>
             <span className="font-medium text-foreground">
-              {formatNumber(station.bikes_last_24h)}
+              {formatNumber(station.bikes_last_day)}
             </span>{' '}
-            bikes / 24 h
+            bikes / last day
           </span>
         </span>
       </Button>

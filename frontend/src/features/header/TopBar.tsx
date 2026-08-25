@@ -30,7 +30,7 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
         {summary && (
           <span className="text-sm whitespace-nowrap text-primary-foreground/80">
             {summary.station_count} stations · {formatNumber(summary.channel_count)}{' '}
-            channels · {formatNumber(summary.bikes_last_24h_total)} bikes / 24 h · updated{' '}
+            channels · {formatNumber(summary.bikes_last_day_total)} bikes / last day · updated{' '}
             {formatTimestamp(summary.last_update)}
           </span>
         )}

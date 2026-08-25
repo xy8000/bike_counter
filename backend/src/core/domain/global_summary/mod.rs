@@ -17,7 +17,9 @@ use chrono::{DateTime, Utc};
 pub struct GlobalSummary {
     pub station_count: usize,
     pub channel_count: usize,
-    pub bikes_last_24h_total: i64,
+    /// Sum of every station's previous complete local day total (each in its
+    /// own timezone).
+    pub bikes_last_day_total: i64,
     /// Timestamp of the most recent successful data-source update.
     pub last_update: Option<DateTime<Utc>>,
 }

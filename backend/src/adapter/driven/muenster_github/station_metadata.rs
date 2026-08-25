@@ -87,8 +87,8 @@ mod tests {
     fn metadata_for_known_station_returns_name_and_coordinates() {
         let metadata = metadata_for("300037926").expect("Bohlweg must be listed");
         assert_eq!(metadata.name, "Bohlweg");
-        assert_eq!(metadata.latitude, 51.9688);
-        assert_eq!(metadata.longitude, 7.6432);
+        assert_eq!(metadata.latitude, 51.9687);
+        assert_eq!(metadata.longitude, 7.6437);
     }
 
     #[test]
@@ -104,11 +104,12 @@ mod tests {
             description: String::new(),
             latitude: None,
             longitude: None,
+            timezone: "Europe/Berlin".to_string(),
         };
         overlay(&mut station);
         assert_eq!(station.name, "Promenade (nördlich Salzstraße)");
-        assert_eq!(station.latitude, Some(51.9617));
-        assert_eq!(station.longitude, Some(7.6335));
+        assert_eq!(station.latitude, Some(51.9606));
+        assert_eq!(station.longitude, Some(7.6340));
     }
 
     #[test]
@@ -119,6 +120,7 @@ mod tests {
             description: String::new(),
             latitude: None,
             longitude: None,
+            timezone: "Europe/Berlin".to_string(),
         };
         overlay(&mut station);
         assert_eq!(station.name, "Unlisted Station");

@@ -18,7 +18,7 @@ export interface StationSummary {
   latitude: number | null
   longitude: number | null
   channel_count: number
-  bikes_last_24h: number
+  bikes_last_day: number
 }
 
 /// Sidebar payload: summaries + the visible/global counter.

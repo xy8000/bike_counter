@@ -6,7 +6,7 @@ use super::pool::PgPool;
 
 /// Shared column list for every counting-station read.
 const STATION_COLUMNS: &str =
-    "id, name, description, external_datasource_id, data_source_id, latitude, longitude";
+    "id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone";
 
 pub struct PostgresCountingStationRepository {
     pool: PgPool,
@@ -35,6 +35,7 @@ impl PostgresCountingStationRepository {
                 }),
                 _ => None,
             },
+            timezone: value_objects::Timezone(row.get(7)),
         }
     }
 }
@@ -47,8 +48,8 @@ impl CountingStationRepository for PostgresCountingStationRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
-                "INSERT INTO counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 &[
                     &station.id.0,
                     &station.name.0,
@@ -60,6 +61,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     &station.data_source_id.map(|id| id.0),
                     &station.coordinates.map(|c| c.latitude),
                     &station.coordinates.map(|c| c.longitude),
+                    &station.timezone.0.as_str(),
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -75,7 +77,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
             .execute(
                 "UPDATE counting_stations
                  SET name = $2, description = $3, external_datasource_id = $4,
-                     data_source_id = $5, latitude = $6, longitude = $7
+                     data_source_id = $5, latitude = $6, longitude = $7, timezone = $8
                  WHERE id = $1",
                 &[
                     &station.id.0,
@@ -88,6 +90,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     &station.data_source_id.map(|id| id.0),
                     &station.coordinates.map(|c| c.latitude),
                     &station.coordinates.map(|c| c.longitude),
+                    &station.timezone.0.as_str(),
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -259,12 +262,14 @@ mod tests {
             external_datasource_id: Some(station_vo::ExternalDatasourceId("100031297".to_string())),
             data_source_id: Some(station_vo::DataSourceId(data_source_id.0)),
             coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         };
         db.repository.save(station.clone()).unwrap();
 
         let stored = db.repository.find_by_id(station.id).unwrap();
         assert_eq!(stored.name.0, "Promenade");
         assert_eq!(stored.coordinates, None);
+        assert_eq!(stored.timezone, station.timezone);
 
         // Attach coordinates through the repository update path.
         station.coordinates = Some(station_vo::GeoCoordinates {
@@ -303,11 +308,13 @@ mod tests {
                 latitude: 51.9673,
                 longitude: 7.6184,
             }),
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         };
         db.repository.save(station.clone()).unwrap();
 
         let all = db.repository.find_all().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].coordinates, station.coordinates);
+        assert_eq!(all[0].timezone, station.timezone);
     }
 }

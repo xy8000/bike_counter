@@ -14,7 +14,13 @@ this repository. **Read this file before making any change.**
 3. **Run the gates** before finishing (see below) — all must pass.
 4. **Update the docs** the change touches ([`README.md`](README.md),
    [`ToDo.md`](ToDo.md), and the plan file itself).
-5. Do not risk wasting tokens for commands. Use tail / head when possible
+5. Do not risk wasting tokens for commands. Use tail / head when possible. The
+   Make targets and [`scripts/`](scripts) are intentionally quiet: cargo runs
+   with `--quiet`, and docker/npm build logs are redirected to a temp log that
+   is only `tail`-ed on failure. When running a gate yourself, prefer `make
+   check` / `make test-rest` over raw cargo, and pipe anything verbose through
+   `tail -n 40` (or the script's own failure-only output) instead of dumping the
+   full log.
 
 ## Required gates (run before finishing any change)
 

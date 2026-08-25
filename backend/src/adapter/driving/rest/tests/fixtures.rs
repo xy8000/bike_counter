@@ -51,6 +51,7 @@ pub fn station_a() -> CountingStation {
             latitude: 51.9565,
             longitude: 7.6152,
         }),
+        timezone: station_vo::Timezone("Europe/Berlin".to_string()),
     }
 }
 
@@ -62,6 +63,7 @@ pub fn station_b() -> CountingStation {
         external_datasource_id: None,
         data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
         coordinates: None,
+        timezone: station_vo::Timezone("Europe/Berlin".to_string()),
     }
 }
 
@@ -75,6 +77,7 @@ pub fn station_linked_to_data_source_a() -> CountingStation {
         external_datasource_id: Some(station_vo::ExternalDatasourceId("300037926".to_string())),
         data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
         coordinates: None,
+        timezone: station_vo::Timezone("Europe/Berlin".to_string()),
     }
 }
 

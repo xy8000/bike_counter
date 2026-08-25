@@ -316,6 +316,7 @@ mod tests {
             description: "desc".to_string(),
             latitude: None,
             longitude: None,
+            timezone: "Europe/Berlin".to_string(),
         }
     }
 

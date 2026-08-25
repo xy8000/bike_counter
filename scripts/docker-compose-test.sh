@@ -76,7 +76,14 @@ echo "--- Clearing any leftover containers from a previous run"
 docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
 
 echo "--- Building and starting the stack (this builds the release binary)"
-docker compose -f "${COMPOSE_FILE}" up -d --build
+BUILD_LOG="$(mktemp)"
+if ! docker compose -f "${COMPOSE_FILE}" up -d --build >"${BUILD_LOG}" 2>&1; then
+  echo "ERROR: docker compose up --build failed (see log tail)" >&2
+  tail -n 60 "${BUILD_LOG}" >&2 || true
+  rm -f "${BUILD_LOG}"
+  exit 1
+fi
+rm -f "${BUILD_LOG}"
 
 echo "--- Waiting for ${APP_URL}/health/ready"
 READY=0

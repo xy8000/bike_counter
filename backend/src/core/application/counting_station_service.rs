@@ -125,6 +125,7 @@ mod tests {
             external_datasource_id: None,
             data_source_id: None,
             coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         }
     }
 

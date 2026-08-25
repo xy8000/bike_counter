@@ -94,6 +94,9 @@ pub struct CountingStationRecord {
     pub latitude: Option<f64>,
     /// Optional GPS longitude (WGS84 decimal degrees); `None` = not provided.
     pub longitude: Option<f64>,
+    /// IANA timezone (e.g. `Europe/Berlin`) the station's measurements are
+    /// reported in. A single provider may serve stations from several timezones.
+    pub timezone: String,
 }
 
 /// An external channel record, linked to its station by external id only.

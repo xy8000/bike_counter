@@ -15,7 +15,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the backend (debug)
-	cd backend && cargo build
+	cd backend && cargo build --quiet
 
 run: ## Boot the full docker-compose stack (PostgreSQL + backend + frontend) in the foreground
 	docker compose up --build
@@ -27,16 +27,16 @@ logs: ## Follow the logs of all services
 	docker compose logs -f
 
 fmt: ## Apply rustfmt formatting to the backend
-	cd backend && cargo fmt
+	cd backend && cargo fmt --quiet
 
 check: ## CI gate: rustfmt --check + clippy -D warnings (scripts/fmt-test.sh)
 	./scripts/fmt-test.sh
 
 test: ## Run all backend tests (repository tests spin up a Postgres test container via Docker)
-	cd backend && cargo test
+	cd backend && cargo test --quiet
 
 test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker required)
-	cd backend && cargo test adapter::driving::rest::tests
+	cd backend && cargo test --quiet adapter::driving::rest::tests
 
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
 	./scripts/docker-compose-test.sh

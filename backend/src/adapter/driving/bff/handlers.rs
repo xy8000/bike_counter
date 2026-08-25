@@ -63,13 +63,6 @@ fn parse_required_bounds(params: &BffStationQueryParams) -> Result<GeoBounds, Do
     }
 }
 
-/// The last-24h window used by the BFF endpoints: `(from, to)` inclusive.
-fn last_24h_window() -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
-    let to = chrono::Utc::now();
-    let from = to - chrono::Duration::hours(24);
-    (from, to)
-}
-
 #[utoipa::path(
     get,
     path = "/api/bff/stations",
@@ -130,10 +123,10 @@ pub async fn get_bff_stations_sidebar(
     Query(params): Query<BffStationQueryParams>,
 ) -> Result<Json<StationSummarySidebarDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = parse_required_bounds(&params).map_err(map_domain_error)?;
-    let (from, to) = last_24h_window();
+    let now = chrono::Utc::now();
 
     let summary_service = state.station_summary_service.clone();
-    let summaries = blocking(move || summary_service.summarize(Some(bounds), from, to))
+    let summaries = blocking(move || summary_service.summarize(Some(bounds), now))
         .await
         .map_err(map_domain_error)?;
 
@@ -165,9 +158,9 @@ pub async fn get_bff_stations_sidebar(
 pub async fn get_bff_stations_search(
     State(state): State<AppState>,
 ) -> Result<Json<StationSearchDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let (from, to) = last_24h_window();
+    let now = chrono::Utc::now();
     let service = state.station_summary_service.clone();
-    let summaries = blocking(move || service.summarize(None, from, to))
+    let summaries = blocking(move || service.summarize(None, now))
         .await
         .map_err(map_domain_error)?;
 
@@ -190,16 +183,16 @@ pub async fn get_bff_stations_search(
 pub async fn get_bff_global_summary(
     State(state): State<AppState>,
 ) -> Result<Json<GlobalSummaryDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let (from, to) = last_24h_window();
+    let now = chrono::Utc::now();
     let service = state.global_summary_service.clone();
-    let summary = blocking(move || service.summarize(from, to))
+    let summary = blocking(move || service.summarize(now))
         .await
         .map_err(map_domain_error)?;
 
     Ok(Json(GlobalSummaryDto {
         station_count: summary.station_count,
         channel_count: summary.channel_count,
-        bikes_last_24h_total: summary.bikes_last_24h_total,
+        bikes_last_day_total: summary.bikes_last_day_total,
         last_update: summary.last_update,
     }))
 }

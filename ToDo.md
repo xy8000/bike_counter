@@ -237,3 +237,16 @@ Playwright end-to-end testing (plans/29_playwright_e2e_plan.md)
 - [x] `.gitignore` Playwright artifacts (`frontend/test-results/`, `frontend/playwright-report/`, `frontend/blob-report/`)
 - [x] Docs: `agents.md` (gate + Frontend e2e section + definition of done), `README.md` (Running tests), `ToDo.md`, `plans/29_playwright_e2e_plan.md` registered in `plans/README.md`
 - [ ] Gates green: `make frontend-build`, `make check`, `make test-rest`, `make test-playwright`
+
+Quiet make output + local last-day summary (plan 30)
+
+- [x] Quiet Make targets: `--quiet` on `cargo build` / `cargo test` / `cargo test-rest` / `cargo fmt`
+- [x] Quiet `scripts/fmt-test.sh` (`--quiet` on fmt-check + clippy) and `scripts/coverage.sh` (`--quiet` on llvm-cov)
+- [x] Redirect `docker compose up --build` to a temp log (tail only on failure) in `docker-compose-test.sh` / `e2e-playwright.sh`; silence `npm ci` / `playwright install`
+- [x] Per-counting-station IANA `timezone` (domain VO + migration V11 + repository + Münster `parsing.rs` + import upsert)
+- [x] `StationSummary.bikes_last_24h` -> `bikes_last_day`; `GlobalSummary.bikes_last_24h_total` -> `bikes_last_day_total` (domain + BFF DTO + frontend types)
+- [x] DST-aware `previous_local_day` helper (chrono_tz) with unit tests (winter / spring-forward 23h / fall-back 25h)
+- [x] `StationSummaryService` / `GlobalSummaryService` compute each station's previous local day in its own timezone
+- [x] BFF handlers drop `last_24h_window()` and pass `now`; frontend text `bikes / 24 h` -> `bikes / last day`
+- [x] Docs: `agents.md` (quiet convention), `README.md` (BFF field names + local-day semantics), `plans/30_..._plan.md` registered in `plans/README.md`
+- [ ] Gates green: `make check`, `make test` / `make test-rest`, `make coverage`, `make test-playwright`

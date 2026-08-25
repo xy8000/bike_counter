@@ -2,6 +2,6 @@
 export interface GlobalSummary {
   station_count: number
   channel_count: number
-  bikes_last_24h_total: number
+  bikes_last_day_total: number
   last_update: string | null
 }

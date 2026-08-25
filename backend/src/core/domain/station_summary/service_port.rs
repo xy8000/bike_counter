@@ -9,15 +9,14 @@ use crate::core::domain::station_summary::bounds::GeoBounds;
 
 pub trait StationSummaryServicePort: Send + Sync {
     /// Summaries for every station, optionally restricted to those whose
-    /// coordinates lie inside `bounds`, for measurements between `from`
-    /// (inclusive) and `to` (inclusive).
+    /// coordinates lie inside `bounds`, over each station's previous complete
+    /// local day (computed from `now` in the station's own timezone).
     ///
     /// `None` bounds return every station (used by the search dialog); `Some`
     /// returns only the stations inside the bounding box (used by the sidebar).
     fn summarize(
         &self,
         bounds: Option<GeoBounds>,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
+        now: DateTime<Utc>,
     ) -> Result<Vec<StationSummary>, DomainError>;
 }

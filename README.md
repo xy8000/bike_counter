@@ -349,15 +349,17 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   `id`, `name`, `latitude`, `longitude`.
 - `GET /api/bff/stations/sidebar` – station summaries for the current viewport
   (same required bounding box). Each item carries `id`, `name`, `description`,
-  `latitude`, `longitude`, `channel_count` and `bikes_last_24h` (the sum of
-  `measurements.value` across the station's channels in the last 24 hours,
-  computed on the fly), plus `visible_count` / `total_count` (stations visible in
-  the viewport vs. all counting stations).
+  `latitude`, `longitude`, `channel_count` and `bikes_last_day` (the sum of
+  `measurements.value` across the station's channels on the **previous complete
+  local day**, computed on the fly in the station's own timezone, DST-aware),
+  plus `visible_count` / `total_count` (stations visible in the viewport vs. all
+  counting stations).
 - `GET /api/bff/stations/search` – every counting-station summary (no bounds)
   plus the map of possible actions (for now `find_on_map` is always enabled).
 - `GET /api/bff/global-summary` – whole-system statistics for the header:
-  `station_count`, `channel_count`, `bikes_last_24h_total` and the `last_update`
-  timestamp of the most recent successful data-source update.
+  `station_count`, `channel_count`, `bikes_last_day_total` (sum of every
+  station's previous local-day total) and the `last_update` timestamp of the most
+  recent successful data-source update.
 
 The aggregations are computed **on the fly** per request by the core
 `StationSummaryService` / `GlobalSummaryService`; a cache (e.g. Redis) may be

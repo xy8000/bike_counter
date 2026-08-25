@@ -15,9 +15,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}/backend"
 
 echo "--- cargo fmt --check"
-cargo fmt --check
+cargo fmt --check --quiet
 
 echo "--- cargo clippy --all-targets -- -D warnings"
-cargo clippy --all-targets -- -D warnings
+cargo clippy --quiet --all-targets -- -D warnings
 
 echo "fmt-test: OK"

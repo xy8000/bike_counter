@@ -7,11 +7,7 @@ use crate::core::domain::error::DomainError;
 use crate::core::domain::global_summary::GlobalSummary;
 
 pub trait GlobalSummaryServicePort: Send + Sync {
-    /// Computes whole-system statistics for measurements between `from`
-    /// (inclusive) and `to` (inclusive).
-    fn summarize(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Result<GlobalSummary, DomainError>;
+    /// Computes whole-system statistics: the sum of every station's previous
+    /// complete local day total (each in its own timezone), based on `now`.
+    fn summarize(&self, now: DateTime<Utc>) -> Result<GlobalSummary, DomainError>;
 }

@@ -55,7 +55,7 @@ async fn bff_map_returns_only_positioned_stations_inside_the_bounds() {
     // The map DTO is minimal: no summary-only fields.
     assert!(item.get("description").is_none());
     assert!(item.get("channel_count").is_none());
-    assert!(item.get("bikes_last_24h").is_none());
+    assert!(item.get("bikes_last_day").is_none());
 }
 
 #[tokio::test]
@@ -123,8 +123,9 @@ async fn bff_sidebar_returns_summaries_and_visible_total_counters() {
         item["channel_count"], 2,
         "station A has two sample channels"
     );
-    // The sample fixtures' timestamps are older than 24 h, so the sum is zero.
-    assert_eq!(item["bikes_last_24h"], 0);
+    // The sample fixtures' timestamps are not on the previous local day, so the
+    // sum is zero.
+    assert_eq!(item["bikes_last_day"], 0);
 
     assert_eq!(body["visible_count"], 1);
     assert_eq!(body["total_count"], 2, "there are two stations in total");
@@ -145,7 +146,7 @@ async fn bff_sidebar_requires_bounds() {
 }
 
 #[tokio::test]
-async fn bff_sidebar_counts_bikes_in_the_last_24h() {
+async fn bff_sidebar_counts_bikes_on_the_last_day() {
     let station = CountingStation {
         id: station_vo::Id(fixtures::STATION_ID_A),
         name: station_vo::Name("Station A".to_string()),
@@ -156,6 +157,8 @@ async fn bff_sidebar_counts_bikes_in_the_last_24h() {
             latitude: 51.9565,
             longitude: 7.6152,
         }),
+        // UTC keeps the window deterministic: "yesterday" is the previous UTC day.
+        timezone: station_vo::Timezone("UTC".to_string()),
     };
     let channel = Channel {
         id: channel_vo::Id(fixtures::CHANNEL_ID_A),
@@ -164,11 +167,20 @@ async fn bff_sidebar_counts_bikes_in_the_last_24h() {
         description: channel_vo::Description("Northbound lane".to_string()),
         external_datasource_id: None,
     };
+    // Yesterday, 12:00 UTC — always inside the previous complete UTC day.
+    let yesterday_noon = {
+        let now = Utc::now();
+        let yesterday = now.date_naive().pred_opt().expect("valid date");
+        yesterday
+            .and_hms_opt(12, 0, 0)
+            .expect("valid time")
+            .and_utc()
+    };
     let measurement = Measurement {
         id: measurement_vo::Id(Uuid::new_v4()),
         value: measurement_vo::Value(17),
         channel_id: measurement_vo::ChannelId(fixtures::CHANNEL_ID_A),
-        timestamp: measurement_vo::Timestamp(Utc::now()),
+        timestamp: measurement_vo::Timestamp(yesterday_noon),
     };
     let service = Arc::new(StationSummaryService::new(
         Arc::new(MockCountingStationRepository::new(vec![station])),
@@ -187,7 +199,7 @@ async fn bff_sidebar_counts_bikes_in_the_last_24h() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["items"][0]["channel_count"], 1);
-    assert_eq!(body["items"][0]["bikes_last_24h"], 17);
+    assert_eq!(body["items"][0]["bikes_last_day"], 17);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,8 +237,9 @@ async fn bff_global_summary_returns_whole_system_stats() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["station_count"], 2);
     assert_eq!(body["channel_count"], 2);
-    // The sample measurements are older than 24 h, so the total is zero.
-    assert_eq!(body["bikes_last_24h_total"], 0);
+    // The sample measurements are not on the previous local day, so the total is
+    // zero.
+    assert_eq!(body["bikes_last_day_total"], 0);
     // The sample finished job has finished_at == fixtures::timestamp().
     assert_eq!(
         body["last_update"], "2024-01-01T12:00:00Z",

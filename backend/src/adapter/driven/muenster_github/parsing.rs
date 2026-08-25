@@ -73,6 +73,7 @@ pub fn parse_site_index(
             description: String::new(),
             latitude: None,
             longitude: None,
+            timezone: TIMEZONE.name().to_string(),
         });
     }
     Ok((stations, channels))

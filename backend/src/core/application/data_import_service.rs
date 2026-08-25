@@ -135,11 +135,13 @@ impl DataImportService {
                         name: station_vo::Name(record.name),
                         description: station_vo::Description(record.description),
                         coordinates,
+                        timezone: station_vo::Timezone(record.timezone.clone()),
                         ..existing.clone()
                     };
                     let changed = updated.name.0 != existing.name.0
                         || updated.description.0 != existing.description.0
-                        || updated.coordinates != existing.coordinates;
+                        || updated.coordinates != existing.coordinates
+                        || updated.timezone != existing.timezone;
                     if changed {
                         self.counting_station_repository.update(updated.clone())?;
                     }
@@ -153,6 +155,7 @@ impl DataImportService {
                         external_datasource_id: Some(external_id),
                         data_source_id: Some(station_vo::DataSourceId(runtime.data_source_id.0)),
                         coordinates,
+                        timezone: station_vo::Timezone(record.timezone.clone()),
                     };
                     self.counting_station_repository.save(station.clone())?;
                     summary.counting_stations += 1;
@@ -372,6 +375,7 @@ mod tests {
             external_datasource_id: Some(station_vo::ExternalDatasourceId(external_id.to_string())),
             data_source_id: None,
             coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         }
     }
 
@@ -392,6 +396,7 @@ mod tests {
             description: "desc".to_string(),
             latitude: None,
             longitude: None,
+            timezone: "Europe/Berlin".to_string(),
         }
     }
 
@@ -887,6 +892,7 @@ mod tests {
             external_datasource_id: Some(station_vo::ExternalDatasourceId("station-1".to_string())),
             data_source_id: None,
             coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         };
         let station_repo = Arc::new(MockCountingStationRepository {
             stations: Mutex::new(vec![existing]),
@@ -898,6 +904,7 @@ mod tests {
                 description: "desc".to_string(),
                 latitude: Some(51.96),
                 longitude: Some(7.63),
+                timezone: "Europe/Berlin".to_string(),
             }],
             channels: Vec::new(),
             measurement_pages: Mutex::new(VecDeque::new()),
