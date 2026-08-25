@@ -39,21 +39,40 @@ function mergeSeries(series: LineSeries[]): MergedPoint[] {
 /// component. The optional `xDomain` lets the caller extend the axis past the
 /// latest data point so a running window (e.g. the current week) shows its
 /// leftover days without fabricating buckets.
+///
+/// Series without any data are dropped before rendering, and the legend is only
+/// drawn when more than one series actually has data — so the chart never shows
+/// legend entries for channels that have no traffic.
 export function TimeSeriesLineChart({
   series,
   xFormatter,
+  tooltipFormatter,
   xDomain,
   className,
 }: {
   series: LineSeries[]
   xFormatter: (time: number) => string
+  tooltipFormatter?: (time: number) => string
   xDomain?: [number, number]
   className?: string
 }) {
-  const data = mergeSeries(series)
+  const visibleSeries = series.filter((item) => item.data.length > 0)
+  const data = mergeSeries(visibleSeries)
   const config: ChartConfig = Object.fromEntries(
-    series.map((item, index) => [item.key, { label: item.label, color: seriesColor(index) }]),
+    visibleSeries.map((item, index) => [
+      item.key,
+      { label: item.label, color: seriesColor(index) },
+    ]),
   )
+  const labelFor = tooltipFormatter ?? xFormatter
+
+  if (visibleSeries.length === 0) {
+    return (
+      <div className={cn('flex aspect-[16/9] items-center justify-center', className)}>
+        <p className="text-sm text-muted-foreground">No data for this period.</p>
+      </div>
+    )
+  }
 
   return (
     <ChartContainer config={config} className={cn('aspect-[16/9]', className)}>
@@ -77,14 +96,15 @@ export function TimeSeriesLineChart({
             <ChartTooltipContent
               labelFormatter={(_, payload) => {
                 const first = payload[0]
-                const time = typeof first?.payload?.time === 'number' ? first.payload.time : NaN
-                return xFormatter(Number.isFinite(time) ? time : Date.now())
+                const time =
+                  typeof first?.payload?.time === 'number' ? first.payload.time : NaN
+                return labelFor(Number.isFinite(time) ? time : Date.now())
               }}
             />
           }
         />
-        <ChartLegend content={<ChartLegendContent />} />
-        {series.map((item) => (
+        {visibleSeries.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
+        {visibleSeries.map((item) => (
           <Line
             key={item.key}
             dataKey={item.key}

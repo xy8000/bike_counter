@@ -1,20 +1,25 @@
-import { LocateFixed } from 'lucide-react'
+import { FileText, LocateFixed } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatNumber } from '../../lib/format'
 import type { StationSummary } from './types'
 
 /// A shared list entry used by both the sidebar and the search dialog. When
-/// `showFind` is set, a "find on map" button is rendered next to the entry.
+/// `showFind` is set, a "find on map" button is rendered next to the entry; when
+/// `showDetail` is set, an "open detail" button opens the station's detail page.
 export function StationListItem({
   station,
   onSelect,
   onFind,
+  onDetail,
   showFind,
+  showDetail,
 }: {
   station: StationSummary
   onSelect: (station: StationSummary) => void
   onFind?: (station: StationSummary) => void
+  onDetail?: (station: StationSummary) => void
   showFind: boolean
+  showDetail?: boolean
 }) {
   const findable = station.latitude !== null && station.longitude !== null
   return (
@@ -44,10 +49,22 @@ export function StationListItem({
           variant="outline"
           size="sm"
           onClick={() => onFind(station)}
-          className="my-auto mr-3 shrink-0"
+          className="my-auto mr-2 shrink-0"
         >
           <LocateFixed />
           Find on map
+        </Button>
+      )}
+      {showDetail && onDetail && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onDetail(station)}
+          className="my-auto mr-3 shrink-0"
+        >
+          <FileText />
+          Open detail
         </Button>
       )}
     </li>

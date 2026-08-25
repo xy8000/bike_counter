@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { Map as LeafletMap } from 'leaflet'
 import type { Bounds } from '../../lib/geo'
 import { parseBoundsQuery, serializeBounds } from '../../lib/geo'
 import { useVisibleStations } from '../stations/useVisibleStations'
-import { TopBar } from '../header/TopBar'
+import { SearchableHeader } from '../header/SearchableHeader'
 import { Sidebar } from '../sidebar/Sidebar'
 import { MapView } from './MapView'
-import { SearchDialog } from '../search/SearchDialog'
 import { StationOverview } from '../stationOverview/StationOverview'
 
 /// The minimal station location needed to focus the map on a selection. Both the
@@ -20,15 +19,16 @@ interface StationLocation {
 }
 
 /// The map route: owns the cross-cutting state (map bounds, map instance,
-/// sidebar/search visibility) and mirrors the visible view + open station
-/// overview into the URL, so sharing a link restores them.
+/// sidebar visibility) and mirrors the visible view + open station overview into
+/// the URL, so sharing a link restores them. The header/search live in the shared
+/// [`SearchableHeader`].
 export default function MapPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   // The visible bounding box and the open overview are seeded from the URL once;
   // the sync effect below keeps the URL in lock-step with these after that.
   const [bounds, setBounds] = useState<Bounds | null>(() => parseBoundsQuery(searchParams))
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
   const [selectedStationId, setSelectedStationId] = useState<string | null>(
     () => searchParams.get('station') ?? null,
   )
@@ -36,18 +36,17 @@ export default function MapPage() {
   const mapRef = useRef<LeafletMap | null>(null)
   const { mapStations, sidebar, error: stationsError } = useVisibleStations(bounds)
 
-  // Keyboard shortcuts: H collapses/expands the sidebar, Esc closes the search.
+  // Keyboard shortcut: H collapses/expands the sidebar (Esc is handled by the
+  // searchable header, which owns the search dialog).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === 'h') {
         setSidebarCollapsed((collapsed) => !collapsed)
-      } else if (event.key === 'Escape' && searchOpen) {
-        setSearchOpen(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [searchOpen])
+  }, [])
 
   // Mirror the visible bounds + open overview into the URL: panning/zooming
   // updates the bbox params, selecting/closing a station updates `station`.
@@ -85,12 +84,15 @@ export default function MapPage() {
 
   const findAndClose = (station: StationLocation) => {
     selectStation(station)
-    setSearchOpen(false)
+  }
+
+  const openDetail = (station: StationLocation) => {
+    navigate(`/stations/${station.id}`)
   }
 
   return (
     <div className="flex h-screen flex-col">
-      <TopBar onOpenSearch={() => setSearchOpen(true)} />
+      <SearchableHeader onSelect={findAndClose} onFind={findAndClose} onDetail={openDetail} />
 
       <div className="relative flex min-h-0 flex-1">
         {selectedStationId === null ? (
@@ -121,14 +123,6 @@ export default function MapPage() {
           />
         </main>
       </div>
-
-      {searchOpen && (
-        <SearchDialog
-          onClose={() => setSearchOpen(false)}
-          onSelect={findAndClose}
-          onFind={findAndClose}
-        />
-      )}
     </div>
   )
 }

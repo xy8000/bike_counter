@@ -81,9 +81,54 @@ pub fn previous_local_day(
     previous_local_days(tz, now, 1)
 }
 
+/// The `n` complete local days that end `offset_days` days before today in `tz`,
+/// as a closed UTC interval `(from, to)` (inclusive upper bound, consistent with
+/// [`previous_local_day`] and
+/// [`MeasurementRepository::sum`](crate::core::domain::measurements::repository_port::MeasurementRepository)).
+///
+/// `from` is the local midnight `offset_days + n` days before today, `to` is one
+/// microsecond *before* the local midnight `offset_days` days before today.
+/// `offset_days = 0` yields the `n` days ending yesterday (the same window as
+/// [`previous_local_days`]); a non-zero offset moves the whole window further
+/// back (used e.g. for the previous period of the last complete day or the last
+/// 30 days). DST-aware: each day is 23 h or 25 h long on the days the clocks
+/// change.
+pub fn local_days_window(
+    tz: Tz,
+    now: DateTime<Utc>,
+    n: u32,
+    offset_days: u32,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    if n == 0 {
+        return Err(crate::core::domain::error::DomainError::InvalidQuery(
+            "local_days_window requires n >= 1".to_string(),
+        ));
+    }
+    let now_local = now.with_timezone(&tz);
+    let today = now_local.date_naive();
+    let to_date = today
+        .checked_sub_signed(chrono::Duration::days(i64::from(offset_days)))
+        .ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery(
+                "cannot compute the previous days (date out of range)".to_string(),
+            )
+        })?;
+    let from_date = to_date
+        .checked_sub_signed(chrono::Duration::days(i64::from(n)))
+        .ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery(
+                "cannot compute the previous days (date out of range)".to_string(),
+            )
+        })?;
+    let from = local_midnight_utc(tz, from_date)?;
+    let to = local_midnight_utc(tz, to_date)? - chrono::Duration::microseconds(1);
+    Ok((from, to))
+}
+
 /// The `n` complete local days immediately before today in `tz` as a closed UTC
 /// interval `(from, to)` (inclusive upper bound, consistent with
-/// [`previous_local_day`] and [`MeasurementRepository::sum`](crate::core::domain::measurements::repository_port::MeasurementRepository)).
+/// [`previous_local_day`] and
+/// [`MeasurementRepository::sum`](crate::core::domain::measurements::repository_port::MeasurementRepository)).
 ///
 /// `from` is the local midnight `n` days before today, `to` is one microsecond
 /// *before* today's local midnight. DST-aware: each day is 23 h or 25 h long on
@@ -93,23 +138,7 @@ pub fn previous_local_days(
     now: DateTime<Utc>,
     n: u32,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
-    if n == 0 {
-        return Err(crate::core::domain::error::DomainError::InvalidQuery(
-            "previous_local_days requires n >= 1".to_string(),
-        ));
-    }
-    let now_local = now.with_timezone(&tz);
-    let today = now_local.date_naive();
-    let start_date = today
-        .checked_sub_signed(chrono::Duration::days(i64::from(n)))
-        .ok_or_else(|| {
-            crate::core::domain::error::DomainError::InvalidQuery(
-                "cannot compute the previous days (date out of range)".to_string(),
-            )
-        })?;
-    let from = local_midnight_utc(tz, start_date)?;
-    let to = local_midnight_utc(tz, today)? - chrono::Duration::microseconds(1);
-    Ok((from, to))
+    local_days_window(tz, now, n, 0)
 }
 
 /// The previous complete calendar month in `tz` as a closed UTC interval
@@ -263,9 +292,9 @@ mod tests {
     use chrono_tz::{Europe::Berlin, Tz};
 
     use super::{
-        calendar_month_window, calendar_year_window, local_midnight_utc, local_week_start,
-        local_year_start, previous_calendar_month, previous_calendar_year, previous_local_day,
-        previous_local_days,
+        calendar_month_window, calendar_year_window, local_days_window, local_midnight_utc,
+        local_week_start, local_year_start, previous_calendar_month, previous_calendar_year,
+        previous_local_day, previous_local_days,
     };
     use crate::core::domain::error::DomainError;
 
@@ -387,6 +416,39 @@ mod tests {
             previous_local_days(Berlin, utc(2024, 1, 2, 12, 0, 0), 0),
             Err(DomainError::InvalidQuery(_))
         ));
+    }
+
+    #[test]
+    fn local_days_window_with_offset_returns_the_days_before_the_previous_window() {
+        // Berlin (CET, UTC+1): for 2024-01-11 the day before the previous
+        // complete day is the local day 2024-01-09,
+        // i.e. [2024-01-08T23:00:00Z, 2024-01-09T23:00:00Z).
+        let (from, to) = local_days_window(Berlin, utc(2024, 1, 11, 12, 0, 0), 1, 1).unwrap();
+        assert_eq!(from, utc(2024, 1, 8, 23, 0, 0));
+        assert_eq!(to, utc(2024, 1, 9, 23, 0, 0) - Duration::microseconds(1));
+
+        // 30 days ending 30 days ago (the period before the last 30 complete
+        // days): for 2024-01-11 that is the local days 2023-11-12..2023-12-11,
+        // i.e. [2023-11-11T23:00:00Z, 2023-12-11T23:00:00Z).
+        let (from30, to30) = local_days_window(Berlin, utc(2024, 1, 11, 12, 0, 0), 30, 30).unwrap();
+        assert_eq!(from30, utc(2023, 11, 11, 23, 0, 0));
+        assert_eq!(
+            to30,
+            utc(2023, 12, 11, 23, 0, 0) - Duration::microseconds(1)
+        );
+    }
+
+    #[test]
+    fn local_days_window_errors_on_date_out_of_range() {
+        // chrono's earliest date is year -262143-01-01; subtracting one more day
+        // overflows the checked subtraction. offset_days = 1 fails in `to_date`,
+        // offset_days = 0 keeps `to_date` valid but fails in `from_date`, so both
+        // error closures are exercised.
+        let min_date_now = Utc.with_ymd_and_hms(-262_143, 1, 1, 0, 0, 0).single().unwrap();
+        let result_to = local_days_window(Berlin, min_date_now, 1, 1);
+        assert!(matches!(result_to, Err(DomainError::InvalidQuery(_))));
+        let result_from = local_days_window(Berlin, min_date_now, 1, 0);
+        assert!(matches!(result_from, Err(DomainError::InvalidQuery(_))));
     }
 
     #[test]

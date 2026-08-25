@@ -34,6 +34,15 @@ pub struct ChannelTotal {
     pub total: i64,
 }
 
+/// Total per local calendar month (year + ISO month 1..=12) over the whole
+/// history of the requested channels (monthly bar chart).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonthTotal {
+    pub year: i32,
+    pub month: u8,
+    pub total: i64,
+}
+
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
     /// Inserts a batch idempotently and returns the number of rows actually
@@ -108,4 +117,12 @@ pub trait MeasurementRepository {
         to: DateTime<Utc>,
         channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<ChannelTotal>, DomainError>;
+
+    /// Sums `value` per local calendar month (year + ISO month 1..=12) over the
+    /// whole history of the requested channels (used for the monthly bar chart).
+    fn sum_by_month(
+        &self,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<MonthTotal>, DomainError>;
 }

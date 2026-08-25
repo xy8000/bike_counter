@@ -1,7 +1,8 @@
 //! Application service computing the per-station **detail page graphs**: the
-//! time-bucketed series (last day, current/last week, last 30 days, current/last
-//! year), the weekday radar and the per-channel series + pie — all over the
-//! station's own timezone and without zero-filling.
+//! four selectable timeframes (24 h, current + last week, last 30 days, current
+//! year) with their previous-period comparison series, the weekday radar and the
+//! per-channel series + pie — all over the station's own timezone and without
+//! zero-filling.
 //!
 //! The station metadata and the overview metrics (with the year stat) come from
 //! `StationOverviewService`; the BFF handler merges both page shapes.
@@ -13,48 +14,29 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
 use uuid::Uuid;
 
+use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects::CountingStationId;
 use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::counting_stations::counting_station::{
-    local_week_start, local_year_start, previous_calendar_year, previous_local_days,
+    local_days_window, local_week_start, local_year_start, previous_calendar_year,
+    previous_local_days,
 };
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, MeasurementRepository, TimeBucket, WeekdayTotal,
+    MeasurementRepository, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_detail::service_port::StationDetailServicePort;
-use crate::core::domain::station_detail::{PerChannelSeries, StationDetail, StationDetailGraphs};
+use crate::core::domain::station_detail::{
+    PerChannelSeries, PeriodGraphs, StationDetail, StationDetailGraphs,
+};
 
 /// Fixed bucket widths (seconds) used by the detail graphs.
 const SECONDS_PER_5_MINUTES: i64 = 5 * 60;
-const SECONDS_PER_15_MINUTES: i64 = 15 * 60;
-const SECONDS_PER_30_MINUTES: i64 = 30 * 60;
+const SECONDS_PER_HOUR: i64 = 60 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
-
-/// Which window a per-channel bucket belongs to (drives the series assembly).
-#[derive(Debug, Clone, Copy)]
-enum Window {
-    LastDay,
-    CurrentWeek,
-    LastWeek,
-    Last30Days,
-    CurrentYear,
-    LastYear,
-}
-
-/// Mutable accumulator collecting one channel's six time-series.
-#[derive(Debug, Default)]
-struct SeriesAccum {
-    last_day: Vec<TimeBucket>,
-    current_week: Vec<TimeBucket>,
-    last_week: Vec<TimeBucket>,
-    last_30_days: Vec<TimeBucket>,
-    current_year: Vec<TimeBucket>,
-    last_year: Vec<TimeBucket>,
-}
 
 pub struct StationDetailService {
     counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
@@ -75,29 +57,11 @@ impl StationDetailService {
         }
     }
 
-    /// Folds per-channel buckets into the matching window slot of each channel's
-    /// `SeriesAccum`.
-    fn accumulate(map: &mut HashMap<Uuid, SeriesAccum>, rows: Vec<ChannelBucket>, window: Window) {
-        for row in rows {
-            let accum = map.entry(row.channel_id).or_default();
-            let bucket = TimeBucket {
-                start: row.start,
-                total: row.total,
-            };
-            match window {
-                Window::LastDay => accum.last_day.push(bucket),
-                Window::CurrentWeek => accum.current_week.push(bucket),
-                Window::LastWeek => accum.last_week.push(bucket),
-                Window::Last30Days => accum.last_30_days.push(bucket),
-                Window::CurrentYear => accum.current_year.push(bucket),
-                Window::LastYear => accum.last_year.push(bucket),
-            }
-        }
-    }
-
-    /// Folds 30-minute buckets into per-weekday totals (ISO Mon = 1 .. Sun = 7)
-    /// in the station's local timezone. Only weekdays with traffic are returned,
-    /// mirroring the aggregate `sum_weekdays`.
+    /// Folds buckets into per-weekday totals (ISO Mon = 1 .. Sun = 7) in the
+    /// station's local timezone. Every bucket belongs to a single local weekday,
+    /// so summing them yields the correct weekday totals regardless of the
+    /// bucket width (5 minutes, 1 hour or 1 day). Only weekdays with traffic are
+    /// returned, mirroring the aggregate `sum_weekdays`.
     fn weekday_totals(buckets: &[TimeBucket], tz: Tz) -> Vec<WeekdayTotal> {
         let mut totals = [0i64; 7];
         for bucket in buckets {
@@ -118,6 +82,117 @@ impl StationDetailService {
             })
             .collect()
     }
+
+    /// Computes all graph data for one timeframe: the aggregate current/previous
+    /// series, the current-period weekday radar + channel pie, and one
+    /// `PerChannelSeries` per channel that has data (current + previous + its own
+    /// current-period weekday radar).
+    #[allow(clippy::too_many_arguments)]
+    fn period_graphs(
+        &self,
+        current_from: DateTime<Utc>,
+        current_to: DateTime<Utc>,
+        current_bucket_seconds: i64,
+        current_origin: DateTime<Utc>,
+        previous_from: DateTime<Utc>,
+        previous_to: DateTime<Utc>,
+        previous_bucket_seconds: i64,
+        previous_origin: DateTime<Utc>,
+        timezone: &str,
+        tz: Tz,
+        channel_ids: &[ChannelId],
+        channels: &[Channel],
+    ) -> Result<PeriodGraphs, DomainError> {
+        let current = self.measurement_repository.sum_buckets(
+            current_from,
+            current_to,
+            current_bucket_seconds,
+            current_origin,
+            timezone,
+            channel_ids,
+        )?;
+        let previous = self.measurement_repository.sum_buckets(
+            previous_from,
+            previous_to,
+            previous_bucket_seconds,
+            previous_origin,
+            timezone,
+            channel_ids,
+        )?;
+        let weekday_radar = self.measurement_repository.sum_weekdays(
+            current_from,
+            current_to,
+            timezone,
+            channel_ids,
+        )?;
+        let channel_pie =
+            self.measurement_repository
+                .sum_by_channel(current_from, current_to, channel_ids)?;
+
+        let mut current_by_channel: HashMap<Uuid, Vec<TimeBucket>> = HashMap::new();
+        for row in self.measurement_repository.sum_buckets_by_channel(
+            current_from,
+            current_to,
+            current_bucket_seconds,
+            current_origin,
+            timezone,
+            channel_ids,
+        )? {
+            current_by_channel
+                .entry(row.channel_id)
+                .or_default()
+                .push(TimeBucket {
+                    start: row.start,
+                    total: row.total,
+                });
+        }
+        let mut previous_by_channel: HashMap<Uuid, Vec<TimeBucket>> = HashMap::new();
+        for row in self.measurement_repository.sum_buckets_by_channel(
+            previous_from,
+            previous_to,
+            previous_bucket_seconds,
+            previous_origin,
+            timezone,
+            channel_ids,
+        )? {
+            previous_by_channel
+                .entry(row.channel_id)
+                .or_default()
+                .push(TimeBucket {
+                    start: row.start,
+                    total: row.total,
+                });
+        }
+
+        // Keep the station's channel order for a stable legend; a channel is only
+        // included when it has data in at least one of the two periods.
+        let per_channel = channels
+            .iter()
+            .filter_map(|channel| {
+                let current = current_by_channel.remove(&channel.id.0).unwrap_or_default();
+                let previous = previous_by_channel
+                    .remove(&channel.id.0)
+                    .unwrap_or_default();
+                if current.is_empty() && previous.is_empty() {
+                    return None;
+                }
+                Some(PerChannelSeries {
+                    channel_id: channel.id.0,
+                    weekday_radar: Self::weekday_totals(&current, tz),
+                    current,
+                    previous,
+                })
+            })
+            .collect();
+
+        Ok(PeriodGraphs {
+            current,
+            previous,
+            weekday_radar,
+            channel_pie,
+            per_channel,
+        })
+    }
 }
 
 impl StationDetailServicePort for StationDetailService {
@@ -136,181 +211,84 @@ impl StationDetailServicePort for StationDetailService {
 
         // Windows (all as UTC instants).
         let (day_from, day_to) = previous_local_days(tz, now, 1)?;
+        let (previous_day_from, previous_day_to) = local_days_window(tz, now, 1, 1)?;
         let week_start = local_week_start(tz, now)?;
-        let current_week_from = week_start;
-        let current_week_to = now;
         let last_week_from = week_start - Duration::days(7);
         let last_week_to = week_start - Duration::microseconds(1);
         let (last_30_from, last_30_to) = previous_local_days(tz, now, 30)?;
+        let (previous_30_from, previous_30_to) = local_days_window(tz, now, 30, 30)?;
         let year_start = local_year_start(tz, now)?;
-        let current_year_from = year_start;
-        let current_year_to = now;
         let (last_year_from, last_year_to) = previous_calendar_year(tz, now)?;
 
-        // Totals per window (only buckets that contain measurements).
-        let last_day = self.measurement_repository.sum_buckets(
+        let day = self.period_graphs(
             day_from,
             day_to,
             SECONDS_PER_5_MINUTES,
             day_from,
+            previous_day_from,
+            previous_day_to,
+            SECONDS_PER_5_MINUTES,
+            previous_day_from,
             &timezone,
+            tz,
             &channel_ids,
+            &channels,
         )?;
-        let current_week = self.measurement_repository.sum_buckets(
-            current_week_from,
-            current_week_to,
-            SECONDS_PER_15_MINUTES,
+        let week = self.period_graphs(
             week_start,
-            &timezone,
-            &channel_ids,
-        )?;
-        let last_week = self.measurement_repository.sum_buckets(
+            now,
+            SECONDS_PER_HOUR,
+            week_start,
             last_week_from,
             last_week_to,
-            SECONDS_PER_15_MINUTES,
-            week_start,
+            SECONDS_PER_HOUR,
+            last_week_from,
             &timezone,
+            tz,
             &channel_ids,
+            &channels,
         )?;
-        let last_30_days = self.measurement_repository.sum_buckets(
+        let last_30_days = self.period_graphs(
             last_30_from,
             last_30_to,
-            SECONDS_PER_30_MINUTES,
+            SECONDS_PER_DAY,
             last_30_from,
+            previous_30_from,
+            previous_30_to,
+            SECONDS_PER_DAY,
+            previous_30_from,
             &timezone,
+            tz,
             &channel_ids,
+            &channels,
         )?;
-        let current_year = self.measurement_repository.sum_buckets(
-            current_year_from,
-            current_year_to,
+        let year = self.period_graphs(
+            year_start,
+            now,
             SECONDS_PER_DAY,
             year_start,
-            &timezone,
-            &channel_ids,
-        )?;
-        let last_year = self.measurement_repository.sum_buckets(
             last_year_from,
             last_year_to,
             SECONDS_PER_DAY,
-            year_start,
+            last_year_from,
             &timezone,
+            tz,
             &channel_ids,
+            &channels,
         )?;
 
-        // Per-channel series.
-        let mut per_channel_map: HashMap<Uuid, SeriesAccum> = HashMap::new();
-        Self::accumulate(
-            &mut per_channel_map,
-            self.measurement_repository.sum_buckets_by_channel(
-                day_from,
-                day_to,
-                SECONDS_PER_5_MINUTES,
-                day_from,
-                &timezone,
-                &channel_ids,
-            )?,
-            Window::LastDay,
-        );
-        Self::accumulate(
-            &mut per_channel_map,
-            self.measurement_repository.sum_buckets_by_channel(
-                current_week_from,
-                current_week_to,
-                SECONDS_PER_15_MINUTES,
-                week_start,
-                &timezone,
-                &channel_ids,
-            )?,
-            Window::CurrentWeek,
-        );
-        Self::accumulate(
-            &mut per_channel_map,
-            self.measurement_repository.sum_buckets_by_channel(
-                last_week_from,
-                last_week_to,
-                SECONDS_PER_15_MINUTES,
-                week_start,
-                &timezone,
-                &channel_ids,
-            )?,
-            Window::LastWeek,
-        );
-        Self::accumulate(
-            &mut per_channel_map,
-            self.measurement_repository.sum_buckets_by_channel(
-                last_30_from,
-                last_30_to,
-                SECONDS_PER_30_MINUTES,
-                last_30_from,
-                &timezone,
-                &channel_ids,
-            )?,
-            Window::Last30Days,
-        );
-        Self::accumulate(
-            &mut per_channel_map,
-            self.measurement_repository.sum_buckets_by_channel(
-                current_year_from,
-                current_year_to,
-                SECONDS_PER_DAY,
-                year_start,
-                &timezone,
-                &channel_ids,
-            )?,
-            Window::CurrentYear,
-        );
-        Self::accumulate(
-            &mut per_channel_map,
-            self.measurement_repository.sum_buckets_by_channel(
-                last_year_from,
-                last_year_to,
-                SECONDS_PER_DAY,
-                year_start,
-                &timezone,
-                &channel_ids,
-            )?,
-            Window::LastYear,
-        );
-
-        // Keep the station's channel order for a stable legend.
-        let mut per_channel: Vec<PerChannelSeries> = Vec::new();
-        for channel in &channels {
-            if let Some(accum) = per_channel_map.remove(&channel.id.0) {
-                per_channel.push(PerChannelSeries {
-                    channel_id: channel.id.0,
-                    weekday_radar: Self::weekday_totals(&accum.last_30_days, tz),
-                    last_day: accum.last_day,
-                    current_week: accum.current_week,
-                    last_week: accum.last_week,
-                    last_30_days: accum.last_30_days,
-                    current_year: accum.current_year,
-                    last_year: accum.last_year,
-                });
-            }
-        }
-
-        let weekday_radar = self.measurement_repository.sum_weekdays(
-            last_30_from,
-            last_30_to,
-            &timezone,
-            &channel_ids,
-        )?;
-        let channel_pie =
-            self.measurement_repository
-                .sum_by_channel(last_30_from, last_30_to, &channel_ids)?;
+        let monthly_totals = self
+            .measurement_repository
+            .sum_by_month(&timezone, &channel_ids)?;
 
         Ok(StationDetail {
             channels,
             graphs: StationDetailGraphs {
-                last_day,
-                weekday_radar,
-                current_week,
-                last_week,
+                day,
+                week,
                 last_30_days,
-                current_year,
-                last_year,
-                per_channel,
-                channel_pie,
+                year,
+                monthly_totals,
             },
         })
     }
@@ -335,7 +313,7 @@ mod tests {
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
     use crate::core::domain::measurements::repository_port::{
-        ChannelBucket, ChannelTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
+        ChannelBucket, ChannelTotal, MeasurementRepository, MonthTotal, TimeBucket, WeekdayTotal,
     };
     use crate::core::domain::station_detail::service_port::StationDetailServicePort;
 
@@ -603,6 +581,33 @@ mod tests {
                 .map(|(channel_id, total)| ChannelTotal { channel_id, total })
                 .collect())
         }
+
+        fn sum_by_month(
+            &self,
+            timezone: &str,
+            channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<Vec<MonthTotal>, DomainError> {
+            let tz: chrono_tz::Tz = timezone.parse().map_err(|_| {
+                DomainError::InvalidQuery(format!("unknown IANA timezone '{timezone}'"))
+            })?;
+            let mut map: BTreeMap<(i32, u32), i64> = BTreeMap::new();
+            for m in self
+                .measurements
+                .iter()
+                .filter(|m| channel_ids.iter().any(|id| id.0 == m.channel_id.0))
+            {
+                let local = m.timestamp.0.with_timezone(&tz);
+                *map.entry((local.year(), local.month())).or_insert(0) += m.value.0;
+            }
+            Ok(map
+                .into_iter()
+                .map(|((year, month), total)| MonthTotal {
+                    year,
+                    month: month as u8,
+                    total,
+                })
+                .collect())
+        }
     }
 
     fn service(measurements: Vec<Measurement>) -> StationDetailService {
@@ -647,16 +652,193 @@ mod tests {
 
         assert_eq!(detail.channels.len(), 2);
         let graphs = detail.graphs;
-        assert_eq!(sum(&graphs.last_day), 100, "only the Jan 10 measurement");
+        assert_eq!(sum(&graphs.day.current), 100, "only the Jan 10 measurement");
+        assert!(graphs.day.previous.is_empty(), "no data for the day before");
         assert_eq!(
-            sum(&graphs.current_week),
+            sum(&graphs.week.current),
             150,
             "Jan 8 (Mon) + Jan 10, both within the current week"
         );
-        assert_eq!(sum(&graphs.last_week), 40, "Jan 4 + Jan 5");
-        assert_eq!(sum(&graphs.last_30_days), 210, "all but the June 2023 one");
-        assert_eq!(sum(&graphs.current_year), 190, "all 2024 measurements");
-        assert_eq!(sum(&graphs.last_year), 25, "Dec 2023 + Jun 2023");
+        assert_eq!(sum(&graphs.week.previous), 40, "Jan 4 + Jan 5");
+        assert_eq!(
+            sum(&graphs.last_30_days.current),
+            210,
+            "all but the June 2023 one"
+        );
+        assert!(
+            graphs.last_30_days.previous.is_empty(),
+            "no data for the 30 days before"
+        );
+        assert_eq!(sum(&graphs.year.current), 190, "all 2024 measurements");
+        assert_eq!(sum(&graphs.year.previous), 25, "Dec 2023 + Jun 2023");
+    }
+
+    #[test]
+    fn detail_computes_previous_periods_for_day_and_last_30_days() {
+        let now = utc(2024, 1, 11, 12, 0, 0);
+        let measurements = vec![
+            // Previous day: 2024-01-09 local = [2024-01-08T23:00Z, 2024-01-09T23:00Z).
+            measurement(CHANNEL_A, 3, utc(2024, 1, 9, 12, 0, 0)),
+            // Previous 30 days: 2023-11-12 .. 2023-12-11 local.
+            measurement(CHANNEL_A, 4, utc(2023, 12, 1, 12, 0, 0)),
+        ];
+        let detail = service(measurements)
+            .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
+            .unwrap();
+
+        let graphs = detail.graphs;
+        assert!(graphs.day.current.is_empty());
+        assert_eq!(sum(&graphs.day.previous), 3);
+        // The previous-day measurement (Jan 9) also lies within the last 30 days,
+        // so the current 30-day series carries it while the previous one only has
+        // the Dec 1 measurement.
+        assert_eq!(sum(&graphs.last_30_days.current), 3);
+        assert_eq!(sum(&graphs.last_30_days.previous), 4);
+
+        // Per-channel: the day period's series for A carries only the previous
+        // period; the 30-day period's series for A both periods.
+        let day_a = graphs
+            .day
+            .per_channel
+            .iter()
+            .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A))
+            .unwrap();
+        assert!(day_a.current.is_empty());
+        assert_eq!(sum(&day_a.previous), 3);
+        let thirty_a = graphs
+            .last_30_days
+            .per_channel
+            .iter()
+            .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A))
+            .unwrap();
+        assert_eq!(sum(&thirty_a.current), 3);
+        assert_eq!(sum(&thirty_a.previous), 4);
+    }
+
+    #[test]
+    fn detail_computes_monthly_totals() {
+        let now = utc(2024, 1, 11, 12, 0, 0);
+        let measurements = vec![
+            measurement(CHANNEL_A, 100, utc(2024, 1, 10, 12, 0, 0)),
+            measurement(CHANNEL_A, 20, utc(2023, 12, 20, 12, 0, 0)),
+            measurement(CHANNEL_B, 5, utc(2023, 12, 21, 12, 0, 0)),
+            measurement(CHANNEL_A, 7, utc(2023, 6, 15, 12, 0, 0)),
+        ];
+        let detail = service(measurements)
+            .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
+            .unwrap();
+
+        assert_eq!(
+            detail.graphs.monthly_totals,
+            vec![
+                MonthTotal {
+                    year: 2023,
+                    month: 6,
+                    total: 7
+                },
+                MonthTotal {
+                    year: 2023,
+                    month: 12,
+                    total: 25
+                },
+                MonthTotal {
+                    year: 2024,
+                    month: 1,
+                    total: 100
+                },
+            ],
+            "local calendar month grouping, ascending by year then month"
+        );
+    }
+
+    #[test]
+    fn detail_resolutions_bucket_by_hour_and_day() {
+        // now = 2024-01-11 12:00 UTC (Berlin). The week window starts Monday
+        // 2024-01-08 00:00 CET = 2024-01-07T23:00Z; the last 30 days start
+        // 2023-12-12 00:00 CET = 2023-12-11T23:00Z; the previous year is 2023
+        // starting 2023-01-01 00:00 CET = 2022-12-31T23:00Z.
+        let now = utc(2024, 1, 11, 12, 0, 0);
+        let measurements = vec![
+            // Current week: three measurements one hour apart (06:00, 07:00, 08:00 CET Mon).
+            measurement(CHANNEL_A, 1, utc(2024, 1, 8, 5, 0, 0)),
+            measurement(CHANNEL_A, 2, utc(2024, 1, 8, 6, 0, 0)),
+            measurement(CHANNEL_A, 4, utc(2024, 1, 8, 7, 0, 0)),
+            // Last 30 days: one measurement per local day (Dec 20 and Dec 21 CET).
+            measurement(CHANNEL_A, 10, utc(2023, 12, 19, 23, 0, 0)),
+            measurement(CHANNEL_A, 20, utc(2023, 12, 20, 23, 0, 0)),
+            // Last year: Jan 1 and Jan 2 of 2023.
+            measurement(CHANNEL_A, 100, utc(2022, 12, 31, 23, 0, 0)),
+            measurement(CHANNEL_A, 200, utc(2023, 1, 1, 23, 0, 0)),
+        ];
+        let detail = service(measurements)
+            .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
+            .unwrap();
+        let graphs = detail.graphs;
+
+        let week_starts: Vec<i64> = graphs
+            .week
+            .current
+            .iter()
+            .map(|b| b.start.timestamp())
+            .collect();
+        assert_eq!(
+            week_starts,
+            vec![
+                utc(2024, 1, 8, 5, 0, 0).timestamp(),
+                utc(2024, 1, 8, 6, 0, 0).timestamp(),
+                utc(2024, 1, 8, 7, 0, 0).timestamp(),
+            ],
+            "current week buckets are one hour apart"
+        );
+
+        let thirty_day_starts: Vec<i64> = graphs
+            .last_30_days
+            .current
+            .iter()
+            .map(|b| b.start.timestamp())
+            .collect();
+        assert_eq!(
+            thirty_day_starts,
+            vec![
+                utc(2023, 12, 19, 23, 0, 0).timestamp(),
+                utc(2023, 12, 20, 23, 0, 0).timestamp(),
+                // The current-week measurements (Jan 8 CET) also fall inside the
+                // last 30 days window and produce their own day bucket.
+                utc(2024, 1, 7, 23, 0, 0).timestamp(),
+            ],
+            "last 30 days buckets are one day apart"
+        );
+        let thirty_day_diffs: Vec<i64> = thirty_day_starts
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .collect();
+        assert!(
+            thirty_day_diffs.iter().all(|diff| diff % 86_400 == 0),
+            "last 30 days buckets are aligned to whole local days (no zero-filling)"
+        );
+
+        let last_year_starts: Vec<i64> = graphs
+            .year
+            .previous
+            .iter()
+            .map(|b| b.start.timestamp())
+            .collect();
+        assert_eq!(
+            &last_year_starts[..2],
+            &[
+                utc(2022, 12, 31, 23, 0, 0).timestamp(),
+                utc(2023, 1, 1, 23, 0, 0).timestamp(),
+            ],
+            "last year buckets align to the previous year's local midnights"
+        );
+        let last_year_diffs: Vec<i64> = last_year_starts
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .collect();
+        assert!(
+            last_year_diffs.iter().all(|diff| diff % 86_400 == 0),
+            "last year buckets are aligned to whole local days"
+        );
     }
 
     #[test]
@@ -667,8 +849,8 @@ mod tests {
         let detail = service(measurements)
             .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
             .unwrap();
-        assert_eq!(detail.graphs.current_week.len(), 1);
-        assert_eq!(sum(&detail.graphs.current_week), 7);
+        assert_eq!(detail.graphs.week.current.len(), 1);
+        assert_eq!(sum(&detail.graphs.week.current), 7);
     }
 
     #[test]
@@ -683,27 +865,22 @@ mod tests {
             .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
             .unwrap();
 
-        assert_eq!(
-            detail.graphs.per_channel.len(),
-            2,
-            "both channels have data"
-        );
-        let a = detail
-            .graphs
+        let thirty = &detail.graphs.last_30_days;
+        assert_eq!(thirty.per_channel.len(), 2, "both channels have data");
+        let a = thirty
             .per_channel
             .iter()
             .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A))
             .unwrap();
-        let b = detail
-            .graphs
+        let b = thirty
             .per_channel
             .iter()
             .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_B))
             .unwrap();
-        assert_eq!(sum(&a.last_day), 100);
-        assert_eq!(sum(&b.current_week), 50);
+        assert_eq!(sum(&a.current), 120, "100 + 20 over 30 days");
+        assert_eq!(sum(&b.current), 50);
 
-        let pie = &detail.graphs.channel_pie;
+        let pie = &thirty.channel_pie;
         assert_eq!(pie.len(), 2);
         let by_id: std::collections::HashMap<_, _> =
             pie.iter().map(|c| (c.channel_id, c.total)).collect();
@@ -730,12 +907,14 @@ mod tests {
 
         let a = detail
             .graphs
+            .last_30_days
             .per_channel
             .iter()
             .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A))
             .unwrap();
         let b = detail
             .graphs
+            .last_30_days
             .per_channel
             .iter()
             .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_B))
@@ -767,7 +946,7 @@ mod tests {
             .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
             .unwrap();
 
-        let radar = &detail.graphs.weekday_radar;
+        let radar = &detail.graphs.last_30_days.weekday_radar;
         let by_weekday: std::collections::HashMap<_, _> =
             radar.iter().map(|w| (w.weekday, w.total)).collect();
         assert_eq!(by_weekday[&1], 50, "Monday");
@@ -800,8 +979,9 @@ mod tests {
             .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
             .unwrap();
         assert!(detail.channels.is_empty());
-        assert!(detail.graphs.last_day.is_empty());
-        assert!(detail.graphs.per_channel.is_empty());
-        assert!(detail.graphs.channel_pie.is_empty());
+        assert!(detail.graphs.day.current.is_empty());
+        assert!(detail.graphs.day.per_channel.is_empty());
+        assert!(detail.graphs.day.channel_pie.is_empty());
+        assert!(detail.graphs.monthly_totals.is_empty());
     }
 }

@@ -30,9 +30,19 @@ export function useStationSearch() {
     )
   }, [allStations, query])
 
-  // The find-on-map action comes from the BFF action map; for now it is always
-  // enabled, but the UI renders it based on the backend contract.
+  // The find-on-map and open-detail actions come from the BFF action map; for
+  // now they are always enabled, but the UI renders them based on the backend
+  // contract.
   const findOnMapEnabled = actions.find_on_map?.enabled ?? false
+  const openDetailEnabled = actions.open_detail?.enabled ?? false
 
-  return { query, setQuery, results, loading: allStations === null, error, findOnMapEnabled }
+  return {
+    query,
+    setQuery,
+    results,
+    loading: allStations === null,
+    error,
+    findOnMapEnabled,
+    openDetailEnabled,
+  }
 }

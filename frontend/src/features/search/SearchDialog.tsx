@@ -18,12 +18,15 @@ export function SearchDialog({
   onClose,
   onSelect,
   onFind,
+  onDetail,
 }: {
   onClose: () => void
   onSelect: (station: StationSummary) => void
   onFind: (station: StationSummary) => void
+  onDetail: (station: StationSummary) => void
 }) {
-  const { query, setQuery, results, loading, error, findOnMapEnabled } = useStationSearch()
+  const { query, setQuery, results, loading, error, findOnMapEnabled, openDetailEnabled } =
+    useStationSearch()
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -81,7 +84,9 @@ export function SearchDialog({
                   station={station}
                   onSelect={onSelect}
                   onFind={onFind}
+                  onDetail={onDetail}
                   showFind={findOnMapEnabled}
+                  showDetail={openDetailEnabled}
                 />
               ))}
           </ul>

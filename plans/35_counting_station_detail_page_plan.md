@@ -351,3 +351,4 @@ flowchart TD
 - [ ] `GET /api/bff/station-detail/{id}` returns the page-shaped payload and is in
       Swagger.
 - [ ] All gates green; plan registered in [`plans/README.md`](../plans/README.md:1).
+

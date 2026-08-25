@@ -12,8 +12,8 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::CountingStationDto;
-use crate::core::domain::measurements::repository_port::TimeBucket;
-use crate::core::domain::station_detail::StationDetailGraphs;
+use crate::core::domain::measurements::repository_port::{ChannelTotal, TimeBucket, WeekdayTotal};
+use crate::core::domain::station_detail::{PeriodGraphs, StationDetailGraphs};
 use crate::core::domain::station_summary::StationSummary;
 
 /// A counting station enriched with its channel count and the number of bikes
@@ -71,8 +71,8 @@ pub struct StationSummarySidebarDto {
     pub total_count: usize,
 }
 
-/// A possible action offered to the frontend. For now only "find on map" exists
-/// and it is always enabled.
+/// A possible action offered to the frontend. The search dialog advertises
+/// "find on map" and "open detail"; both are always enabled for now.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct ActionDto {
     pub enabled: bool,
@@ -232,32 +232,46 @@ pub struct ChannelTotalDto {
     pub total: i64,
 }
 
-/// The per-channel time-series (nerd stats): the five graphs restricted to one
-/// channel.
+/// Total per local calendar month over the whole history (monthly bar chart).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct MonthTotalDto {
+    pub year: i32,
+    pub month: u8,
+    pub total: i64,
+}
+
+/// The per-channel time-series for one timeframe (nerd stats): the current and
+/// previous period restricted to one channel plus its current-period weekday
+/// radar.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct PerChannelSeriesDto {
     pub channel_id: Uuid,
+    pub current: Vec<TimeBucketDto>,
+    pub previous: Vec<TimeBucketDto>,
     pub weekday_radar: Vec<WeekdayTotalDto>,
-    pub last_day: Vec<TimeBucketDto>,
-    pub current_week: Vec<TimeBucketDto>,
-    pub last_week: Vec<TimeBucketDto>,
-    pub last_30_days: Vec<TimeBucketDto>,
-    pub current_year: Vec<TimeBucketDto>,
-    pub last_year: Vec<TimeBucketDto>,
 }
 
-/// All graph data for the detail page.
+/// The graph data for one selectable timeframe: the current and previous period
+/// time-series, the current-period weekday radar + channel pie and the
+/// per-channel series.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct PeriodGraphsDto {
+    pub current: Vec<TimeBucketDto>,
+    pub previous: Vec<TimeBucketDto>,
+    pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub channel_pie: Vec<ChannelTotalDto>,
+    pub per_channel: Vec<PerChannelSeriesDto>,
+}
+
+/// All graph data for the detail page, keyed by the four selectable timeframes,
+/// plus the per-month totals for the standalone monthly bar chart.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct StationDetailGraphsDto {
-    pub last_day: Vec<TimeBucketDto>,
-    pub weekday_radar: Vec<WeekdayTotalDto>,
-    pub current_week: Vec<TimeBucketDto>,
-    pub last_week: Vec<TimeBucketDto>,
-    pub last_30_days: Vec<TimeBucketDto>,
-    pub current_year: Vec<TimeBucketDto>,
-    pub last_year: Vec<TimeBucketDto>,
-    pub per_channel: Vec<PerChannelSeriesDto>,
-    pub channel_pie: Vec<ChannelTotalDto>,
+    pub day: PeriodGraphsDto,
+    pub week: PeriodGraphsDto,
+    pub last_30_days: PeriodGraphsDto,
+    pub year: PeriodGraphsDto,
+    pub monthly_totals: Vec<MonthTotalDto>,
 }
 
 impl From<StationDetailGraphs> for StationDetailGraphsDto {
@@ -272,50 +286,57 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
                 .collect()
         }
 
-        let per_channel = graphs
-            .per_channel
-            .into_iter()
-            .map(|series| PerChannelSeriesDto {
-                channel_id: series.channel_id,
-                weekday_radar: series
-                    .weekday_radar
-                    .into_iter()
-                    .map(|weekday| WeekdayTotalDto {
-                        weekday: weekday.weekday,
-                        total: weekday.total,
-                    })
-                    .collect(),
-                last_day: buckets(series.last_day),
-                current_week: buckets(series.current_week),
-                last_week: buckets(series.last_week),
-                last_30_days: buckets(series.last_30_days),
-                current_year: buckets(series.current_year),
-                last_year: buckets(series.last_year),
-            })
-            .collect();
-
-        Self {
-            last_day: buckets(graphs.last_day),
-            weekday_radar: graphs
-                .weekday_radar
+        fn weekdays(weekdays: Vec<WeekdayTotal>) -> Vec<WeekdayTotalDto> {
+            weekdays
                 .into_iter()
                 .map(|weekday| WeekdayTotalDto {
                     weekday: weekday.weekday,
                     total: weekday.total,
                 })
-                .collect(),
-            current_week: buckets(graphs.current_week),
-            last_week: buckets(graphs.last_week),
-            last_30_days: buckets(graphs.last_30_days),
-            current_year: buckets(graphs.current_year),
-            last_year: buckets(graphs.last_year),
-            per_channel,
-            channel_pie: graphs
-                .channel_pie
+                .collect()
+        }
+
+        fn channels(totals: Vec<ChannelTotal>) -> Vec<ChannelTotalDto> {
+            totals
                 .into_iter()
                 .map(|total| ChannelTotalDto {
                     channel_id: total.channel_id,
                     total: total.total,
+                })
+                .collect()
+        }
+
+        fn period(period: PeriodGraphs) -> PeriodGraphsDto {
+            PeriodGraphsDto {
+                current: buckets(period.current),
+                previous: buckets(period.previous),
+                weekday_radar: weekdays(period.weekday_radar),
+                channel_pie: channels(period.channel_pie),
+                per_channel: period
+                    .per_channel
+                    .into_iter()
+                    .map(|series| PerChannelSeriesDto {
+                        channel_id: series.channel_id,
+                        current: buckets(series.current),
+                        previous: buckets(series.previous),
+                        weekday_radar: weekdays(series.weekday_radar),
+                    })
+                    .collect(),
+            }
+        }
+
+        Self {
+            day: period(graphs.day),
+            week: period(graphs.week),
+            last_30_days: period(graphs.last_30_days),
+            year: period(graphs.year),
+            monthly_totals: graphs
+                .monthly_totals
+                .into_iter()
+                .map(|month| MonthTotalDto {
+                    year: month.year,
+                    month: month.month,
+                    total: month.total,
                 })
                 .collect(),
         }

@@ -225,6 +225,10 @@ async fn bff_search_returns_all_stations_and_the_action_map() {
         body["actions"]["find_on_map"]["enabled"], true,
         "the find-on-map action is enabled all the time for now"
     );
+    assert_eq!(
+        body["actions"]["open_detail"]["enabled"], true,
+        "the open-detail action is enabled all the time for now"
+    );
 }
 
 // ---------------------------------------------------------------------------

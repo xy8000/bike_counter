@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
+    ChannelBucket, ChannelTotal, MeasurementRepository, MonthTotal, TimeBucket, WeekdayTotal,
 };
 
 use super::pool::PgPool;
@@ -383,6 +383,39 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             });
         }
         Ok(totals)
+    }
+
+    fn sum_by_month(
+        &self,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<MonthTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT EXTRACT(YEAR FROM (timestamp AT TIME ZONE $1))::int AS year, \
+                       EXTRACT(MONTH FROM (timestamp AT TIME ZONE $1))::int AS month, \
+                       COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($2::uuid[]) \
+                 GROUP BY year, month \
+                 ORDER BY year, month",
+                &[&timezone, &channel_uuids],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut months = Vec::with_capacity(rows.len());
+        for row in rows {
+            months.push(MonthTotal {
+                year: row.get(0),
+                month: row.get::<_, i32>(1) as u8,
+                total: row.get(2),
+            });
+        }
+        Ok(months)
     }
 }
 
@@ -912,6 +945,126 @@ mod tests {
             .collect();
         assert_eq!(by_id[&channel_a], 35);
         assert_eq!(by_id[&channel_b], 7);
+    }
+
+    #[test]
+    fn sum_by_month_groups_by_local_calendar_month() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let postgres = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .with_tag("16-alpine")
+            .start()
+            .unwrap();
+        let database_url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            postgres.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            database_url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
+
+        let station_id = Uuid::from_u128(800);
+        let data_source_id = Uuid::from_u128(810);
+        let channel_a = Uuid::from_u128(300);
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[&station_id, &"Test station", &"Test station description", &data_source_id],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
+                &[&channel_a, &station_id, &"A", &"channel a"],
+            )
+            .unwrap();
+
+        let at = |y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32| {
+            Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+        };
+        let measurements = vec![
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(10),
+                channel_id: value_objects::ChannelId(channel_a),
+                timestamp: value_objects::Timestamp(at(2024, 1, 10, 12, 0, 0)),
+            },
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(20),
+                channel_id: value_objects::ChannelId(channel_a),
+                timestamp: value_objects::Timestamp(at(2023, 12, 20, 12, 0, 0)),
+            },
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(5),
+                channel_id: value_objects::ChannelId(channel_a),
+                timestamp: value_objects::Timestamp(at(2023, 12, 21, 12, 0, 0)),
+            },
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(7),
+                channel_id: value_objects::ChannelId(channel_a),
+                timestamp: value_objects::Timestamp(at(2023, 6, 15, 12, 0, 0)),
+            },
+            // 2023-12-31 23:30Z is 2024-01-01 00:30 local (Berlin CET), so it
+            // belongs to January 2024, not December 2023.
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(3),
+                channel_id: value_objects::ChannelId(channel_a),
+                timestamp: value_objects::Timestamp(at(2023, 12, 31, 23, 30, 0)),
+            },
+        ];
+        repository.save_batch(measurements).unwrap();
+
+        let months = repository
+            .sum_by_month("Europe/Berlin", &[value_objects::ChannelId(channel_a)])
+            .unwrap();
+        assert_eq!(
+            months,
+            vec![
+                crate::core::domain::measurements::repository_port::MonthTotal {
+                    year: 2023,
+                    month: 6,
+                    total: 7,
+                },
+                crate::core::domain::measurements::repository_port::MonthTotal {
+                    year: 2023,
+                    month: 12,
+                    total: 25,
+                },
+                crate::core::domain::measurements::repository_port::MonthTotal {
+                    year: 2024,
+                    month: 1,
+                    total: 13,
+                },
+            ],
+            "grouped by local calendar month, ascending by year then month"
+        );
     }
 
     fn measurement(id: u128, value: i64) -> Measurement {

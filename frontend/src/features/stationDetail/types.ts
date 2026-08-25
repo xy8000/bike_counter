@@ -18,36 +18,50 @@ export interface WeekdayTotal {
   total: number
 }
 
-/// One channel's share over the last 30 days (pie chart).
+/// One channel's share over the current period (pie chart).
 export interface ChannelTotal {
   channel_id: string
   total: number
 }
 
-/// The per-channel time-series (nerd stats): the time windows restricted to one
-/// channel.
-export interface PerChannelSeries {
-  channel_id: string
-  weekday_radar: WeekdayTotal[]
-  last_day: TimeBucket[]
-  current_week: TimeBucket[]
-  last_week: TimeBucket[]
-  last_30_days: TimeBucket[]
-  current_year: TimeBucket[]
-  last_year: TimeBucket[]
+/// Total per local calendar month (year + ISO month 1..=12) over the whole
+/// history (monthly bar chart).
+export interface MonthTotal {
+  year: number
+  month: number
+  total: number
 }
 
-/// All graph data for the detail page.
-export interface StationDetailGraphs {
-  last_day: TimeBucket[]
+/// The selectable timeframes driven by the shared dropdown.
+export type Timeframe = 'day' | 'week' | 'last_30_days' | 'year'
+
+/// The per-channel time-series for one timeframe (nerd stats).
+export interface PerChannelSeries {
+  channel_id: string
+  current: TimeBucket[]
+  previous: TimeBucket[]
   weekday_radar: WeekdayTotal[]
-  current_week: TimeBucket[]
-  last_week: TimeBucket[]
-  last_30_days: TimeBucket[]
-  current_year: TimeBucket[]
-  last_year: TimeBucket[]
-  per_channel: PerChannelSeries[]
+}
+
+/// All graph data for one timeframe: the current and previous period
+/// time-series, the current period's weekday radar + channel pie, and the
+/// per-channel series.
+export interface PeriodGraphs {
+  current: TimeBucket[]
+  previous: TimeBucket[]
+  weekday_radar: WeekdayTotal[]
   channel_pie: ChannelTotal[]
+  per_channel: PerChannelSeries[]
+}
+
+/// All graph data for the detail page, keyed by the four timeframes, plus the
+/// per-month totals for the standalone monthly bar chart.
+export interface StationDetailGraphs {
+  day: PeriodGraphs
+  week: PeriodGraphs
+  last_30_days: PeriodGraphs
+  year: PeriodGraphs
+  monthly_totals: MonthTotal[]
 }
 
 /// The page-shaped payload for the detail page: station metadata (same fields as

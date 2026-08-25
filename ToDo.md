@@ -307,3 +307,27 @@ Counting-station detail page — layout + stats + graphs (plan 35)
 - [x] Frontend: line charts via shadcn `chart` (last day 5 min, current + last week 15 min with the running week's empty tail, last 30 days 30 min + info note, current + last year 1 day, weekday radar) + Nerd-Stats per channel + channel pie
 - [x] e2e `detail.spec.ts`: renders content, back-to-map → `/` with bbox, preview click → map view at preview bounds, browser back → `/stations/:id`; `url.spec.ts` updated (detail page is no longer blank)
 - [x] Gates green: `make check`, `make test` (326), `make coverage` (overall 83.73%, core 95.34%), `make test-playwright` (9 specs)
+
+Detail page fixes — header/search actions, resolutions, tooltip locale, legends (plan 36)
+
+- [x] Backend: detail bucket resolutions corrected (week = 1 h, last 30 days = 1 day, `last_year` aligned to its own Jan 1) + unit test locking the widths
+- [x] Backend: BFF search action map gains `open_detail` (always enabled) + `bff.rs` test
+- [x] Frontend: central `LOCALE` in `lib/format.ts` + `formatFullDate` / `formatFullDateTime`; existing formatters use it
+- [x] Frontend: `TimeSeriesLineChart` separates tooltip/axis formatters, drops empty series, renders the legend only with >1 non-empty series, empty-state message
+- [x] Frontend: `StationDetail` full-date tooltips, corrected subtitles, empty-series filtering for the channel charts
+- [x] Frontend: "Current + last week" / "Current + last year" (aggregate + per-channel) now overlap — buckets are re-anchored to the current week's Monday / the current year's Jan 1 (`alignSeries` + `weekdayAxis`)
+- [x] Frontend: `ChannelPie` chart container given a real width (`w-full`) so the pie renders
+- [x] Frontend: "Open detail" search action (StationListItem / SearchDialog / useStationSearch) alongside "Find on map"
+- [x] Frontend: shared `SearchableHeader` used by map + detail page; header/search active on `/stations/:id`; find-on-map from the detail page flies via a station bbox (`stationBounds`)
+- [x] e2e `detail.spec.ts`: header active, open-detail from search, share-by-channel pie renders
+- [x] Gates green: `make check`, `make test` (327), `make coverage` (overall 83.74%, core 95.34%), `make test-playwright` (12 specs)
+
+Detail page — shared timeframe selector, previous-period overlay, monthly bar chart (plan 37)
+
+- [x] Backend: DST-aware `local_days_window(tz, now, n, offset_days)` helper + previous windows for the last day and the last 30 days; `MonthTotal` + `MeasurementRepository::sum_by_month` (Postgres GROUP BY year+month + testcontainers test)
+- [x] Backend: `station_detail` restructured into per-timeframe `PeriodGraphs` (`day` / `week` / `last_30_days` / `year`, each with `current` / `previous` / `weekday_radar` / `channel_pie` / `per_channel`) + `monthly_totals`; `StationDetailService` + BFF DTOs updated
+- [x] Frontend: shadcn `select` / `checkbox` / `label` components (`@radix-ui/react-select` / `-checkbox` / `-label`)
+- [x] Frontend: shared timeframe dropdown + "Compare previous period" checkbox driving the full-width main line chart (previous period overlaid via a generalized `alignSeries`), the weekday radar, the channel pie and the nerd stats; the old per-window line-chart cards are dropped
+- [x] Frontend: `MonthlyBarChart` (one bar per calendar month, grand total in the top-right) — standalone, not driven by the dropdown
+- [x] e2e `detail.spec.ts`: timeframe dropdown swaps the main chart + monthly bar chart renders; compare-previous checkbox overlays the previous period
+- [x] Gates green: `make check`, `make test` (332), `make test-rest` (82), `make coverage` (overall 83.81%, core 95.36%), `make test-playwright` (14 tests)

@@ -159,7 +159,7 @@ pub async fn get_bff_stations_sidebar(
     path = "/api/bff/stations/search",
     tag = "BFF API",
     responses(
-        (status = 200, description = "All counting-station summaries plus the possible actions (find on map)", body = StationSearchDto),
+        (status = 200, description = "All counting-station summaries plus the possible actions (find on map, open detail)", body = StationSearchDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
 )]
@@ -175,6 +175,7 @@ pub async fn get_bff_stations_search(
     let items = summaries.into_iter().map(StationSummaryDto::from).collect();
     let mut actions = HashMap::new();
     actions.insert("find_on_map".to_string(), ActionDto { enabled: true });
+    actions.insert("open_detail".to_string(), ActionDto { enabled: true });
 
     Ok(Json(StationSearchDto { items, actions }))
 }

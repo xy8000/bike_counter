@@ -307,6 +307,15 @@ impl MeasurementRepository for MockMeasurementRepository {
     {
         Ok(Vec::new())
     }
+
+    fn sum_by_month(
+        &self,
+        _timezone: &str,
+        _channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<crate::core::domain::measurements::repository_port::MonthTotal>, DomainError>
+    {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Default)]

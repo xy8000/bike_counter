@@ -15,9 +15,11 @@ It is a **monorepo** with two sub-projects:
   the viewport (name, description, channel count, bikes in the last 24 h), a
   Komoot-style header with a search dialog, a live aggregate summary, and a
   per-station detail page (`/stations/:id`) with the overview stat boxes (incl.
-  the YEAR stat) and Recharts line/radar/pie graphs (last day, weekday radar,
-  current + last week, last 30 days, current + last year, and nerd-stats split
-  by channel).
+  the YEAR stat), a shared timeframe selector (24 hours / current + last week /
+  last 30 days / last year) driving a full-width line chart, a weekday radar,
+  the channel pie and the per-channel nerd stats (plus a "compare previous
+  period" checkbox that overlays the previous period), and a standalone monthly
+  bar chart showing the grand total.
 
 Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
@@ -438,13 +440,15 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
 - `GET /api/bff/station-detail/{id}` – the **page-shaped** detail payload for the
   detail page: the station metadata + `metrics` from `station-overview/{id}`
   (incl. `last_year`), a `channels` array (id + name for legends/pie labels) and
-  a `graphs` object with the time-bucketed series — `last_day` (5 min),
-  `current_week` / `last_week` (15 min), `last_30_days` (30 min) and
-  `current_year` / `last_year` (1 day) — plus a `weekday_radar` (last 30 days), a
-  per-channel copy of the series + weekday radar (`per_channel`) and the channel
-  shares `channel_pie`. Buckets are aligned to the station's own timezone via
-  PostgreSQL `date_bin` and are **data-only** (no zero-filling, so a running
-  week/year simply ends at the latest measurement).
+  a `graphs` object keyed by the four selectable timeframes — `day` (last day vs
+  the day before, 5 min), `week` (current vs last week, 1 h), `last_30_days`
+  (last 30 days vs the 30 days before, 1 day) and `year` (current vs last year,
+  1 day). Each timeframe holds its `current` / `previous` series, a
+  `weekday_radar` and `channel_pie` for its current period and a `per_channel`
+  copy for the nerd stats; `monthly_totals` feeds the standalone monthly bar
+  chart. Buckets are aligned to the station's own timezone via PostgreSQL
+  `date_bin` and are **data-only** (no zero-filling, so a running week/year
+  simply ends at the latest measurement).
 - `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
   from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
   (`immutable` for built-in assets, short-lived for provider assets). Only the

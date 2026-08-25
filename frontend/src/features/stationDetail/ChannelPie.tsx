@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import type { ChannelRef, ChannelTotal } from './types'
 import { seriesColor } from './chartUtils'
 
-/// Donut of each channel's share over the last 30 days. Only channels with
+/// Donut of each channel's share over the selected timeframe. Only channels with
 /// traffic get a slice; the tooltip shows the channel name. A small legend lists
 /// every slice with its colour and total.
 export function ChannelPie({
@@ -34,10 +34,13 @@ export function ChannelPie({
   return (
     <div className="flex flex-col items-center gap-3">
       {data.length === 0 ? (
-        <p className="py-16 text-sm text-muted-foreground">No traffic in the last 30 days.</p>
+        <p className="py-16 text-sm text-muted-foreground">No traffic for this period.</p>
       ) : (
         <>
-          <ChartContainer config={config} className={cn('aspect-square max-w-[280px]', className)}>
+          <ChartContainer
+            config={config}
+            className={cn('aspect-square w-full max-w-[280px]', className)}
+          >
             <PieChart>
               <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
               <Pie
