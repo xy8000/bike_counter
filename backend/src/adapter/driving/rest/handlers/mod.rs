@@ -35,9 +35,11 @@ use crate::core::domain::data_source::service_port::DataSourceServicePort;
 use crate::core::domain::data_source::service_port::PersistentStateServicePort;
 use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
 use crate::core::domain::error::DomainError;
+use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -49,6 +51,8 @@ pub struct AppState {
     pub health_service: Arc<dyn HealthServicePort + Send + Sync>,
     pub persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
     pub provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
+    pub station_summary_service: Arc<dyn StationSummaryServicePort + Send + Sync>,
+    pub global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
 }
 
 /// Default `offset`/`limit` for the measurements endpoint. `limit` has no upper
@@ -56,7 +60,7 @@ pub struct AppState {
 const DEFAULT_PAGE_OFFSET: usize = 0;
 const DEFAULT_PAGE_LIMIT: usize = 5000;
 
-fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) {
+pub(crate) fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) {
     match error {
         DomainError::NotFound(id) => (
             StatusCode::NOT_FOUND,
@@ -91,7 +95,7 @@ fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorResponseDto>) 
 /// `block_on`, which panics ("Cannot start a runtime from within a runtime")
 /// when invoked on a tokio worker thread. All blocking service calls must
 /// therefore go through `tokio::task::spawn_blocking`.
-async fn blocking<T, F>(f: F) -> Result<T, DomainError>
+pub(crate) async fn blocking<T, F>(f: F) -> Result<T, DomainError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, DomainError> + Send + 'static,

@@ -18,7 +18,7 @@ server {
 
     # Reverse-proxy the backend (BFF + REST) so the browser only ever talks
     # same-origin. `proxy_pass` without a trailing slash keeps the full URI,
-    # e.g. /api/bff/hello -> http://backend:8080/api/bff/hello.
+    # e.g. /api/bff/stations -> http://backend:8080/api/bff/stations.
     location /api/ {
         set $backend_upstream backend:8080;
         proxy_pass http://$backend_upstream;

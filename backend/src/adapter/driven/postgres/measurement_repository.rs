@@ -194,6 +194,32 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         }
         Ok(measurements)
     }
+
+    fn sum(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        channel_id: Option<value_objects::ChannelId>,
+    ) -> Result<i64, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = match channel_id {
+            Some(channel_id) => client.query_one(
+                "SELECT COALESCE(SUM(value), 0)::bigint FROM measurements \
+                 WHERE timestamp >= $1 AND timestamp <= $2 AND channel_id = $3",
+                &[&from, &to, &channel_id.0],
+            ),
+            None => client.query_one(
+                "SELECT COALESCE(SUM(value), 0)::bigint FROM measurements \
+                 WHERE timestamp >= $1 AND timestamp <= $2",
+                &[&from, &to],
+            ),
+        }
+        .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.get::<_, i64>(0))
+    }
 }
 
 #[cfg(test)]
@@ -472,6 +498,117 @@ mod tests {
         assert_eq!(stored.len(), 1, "the natural key must collapse duplicates");
         assert_eq!(stored[0].id.0, original.id.0, "the first write wins");
         assert_eq!(stored[0].value.0, 10);
+    }
+
+    #[test]
+    fn sum_sums_values_between_from_and_to_for_one_or_all_channels() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let postgres = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .start()
+            .unwrap();
+        let database_url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            postgres.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            database_url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
+
+        let station_id = Uuid::from_u128(500);
+        let data_source_id = Uuid::from_u128(510);
+        let setup_channel_id = channel_id().0;
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                ],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
+                &[
+                    &setup_channel_id,
+                    &station_id,
+                    &"Test channel",
+                    &"Test channel description",
+                ],
+            )
+            .unwrap();
+
+        let now = Utc::now();
+        repository
+            .save(Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(5),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(now - chrono::Duration::hours(2)),
+            })
+            .unwrap();
+        repository
+            .save(Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(100),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(now - chrono::Duration::hours(48)),
+            })
+            .unwrap();
+        repository
+            .save(Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(3),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(now - chrono::Duration::hours(1)),
+            })
+            .unwrap();
+
+        let from = now - chrono::Duration::hours(24);
+        let to = now;
+
+        let per_channel = repository.sum(from, to, Some(channel_id())).unwrap();
+        assert_eq!(
+            per_channel, 8,
+            "only the 2h and 1h measurements count; the 48h one is excluded"
+        );
+
+        let all_channels = repository.sum(from, to, None).unwrap();
+        assert_eq!(all_channels, 8, "the single sample channel is the only one");
+
+        let narrowed = repository
+            .sum(now - chrono::Duration::minutes(90), to, None)
+            .unwrap();
+        assert_eq!(
+            narrowed, 3,
+            "the 2h-ago measurement is outside the narrowed window"
+        );
     }
 
     fn measurement(id: u128, value: i64) -> Measurement {

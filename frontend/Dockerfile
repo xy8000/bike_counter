@@ -14,8 +14,10 @@ RUN npm run build
 
 # ---------- Runtime stage ----------
 FROM nginx:1.31-alpine
-# Serve the built SPA and reverse-proxy /api to the backend service.
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Serve the built SPA and reverse-proxy /api to the backend service. nginx.conf
+# is a template: the official nginx entrypoint substitutes `${...}` env vars
+# from /etc/nginx/templates into conf.d.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=builder /build/dist /usr/share/nginx/html
 
 EXPOSE 80

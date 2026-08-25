@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::LinkDto;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct CountingStationDto {
     pub id: Uuid,
     pub name: String,

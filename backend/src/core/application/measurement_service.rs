@@ -118,6 +118,21 @@ mod tests {
             measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
             Ok(measurements.into_iter().skip(offset).take(limit).collect())
         }
+
+        fn sum(
+            &self,
+            from: chrono::DateTime<chrono::Utc>,
+            to: chrono::DateTime<chrono::Utc>,
+            channel_id: Option<measurement_vo::ChannelId>,
+        ) -> Result<i64, DomainError> {
+            Ok(self
+                .measurements
+                .iter()
+                .filter(|m| m.timestamp.0 >= from && m.timestamp.0 <= to)
+                .filter(|m| channel_id.is_none_or(|id| m.channel_id == id))
+                .map(|m| m.value.0)
+                .sum())
+        }
     }
 
     fn measurement(id: Uuid, channel_id: Uuid, value: i64) -> Measurement {

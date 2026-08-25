@@ -5,6 +5,10 @@
   background-color: #ffffff;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 html,
 body {
   margin: 0;
@@ -21,27 +25,323 @@ body {
   height: 100vh;
 }
 
-.app h1 {
-  margin: 0.5rem 1rem;
-  font-size: 1.5rem;
+/* ---- Top header bar (Komoot-style, over the workspace) ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: #1b4332;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
 }
 
-.map {
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+.brand-mark {
+  font-size: 1.3rem;
+}
+
+.search-trigger {
   flex: 1;
-  width: 100%;
-  /* Give the map its own stacking context so Leaflet's controls never float
-     above the page header. */
-  z-index: 0;
+  max-width: 26rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+  padding: 0.45rem 0.75rem;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 0.95rem;
+  cursor: text;
 }
 
-.error {
-  margin: 0 1rem;
+.search-trigger:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.global-summary {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  color: #e8f0ec;
+}
+
+.global-summary.error {
+  color: #ffd9d9;
+}
+
+.collapse-toggle {
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: transparent;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+
+.collapse-toggle:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ---- Workspace: the sidebar overlays the map (Komoot style) ---- */
+.workspace {
+  display: flex;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Left sidebar (overlay panel over the map) ---- */
+.sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 500;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  background: #f7f8fa;
+  border-right: 1px solid #e3e6ea;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  min-height: 0;
+  transition: width 0.25s ease;
+}
+
+/* Collapsed: a slim vertical edge holding the expand button */
+.sidebar.collapsed {
+  width: 40px;
+  background: #1b4332;
+  border-right: none;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.25);
+}
+
+/* The expand tab shown on the collapsed sidebar's edge */
+.sidebar-edge {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sidebar-edge:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e3e6ea;
+}
+
+.sidebar-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sidebar-header .collapse-toggle {
+  border: 1px solid #d1d5db;
+  background: transparent;
+  color: #4b5563;
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.sidebar-header .collapse-toggle:hover {
+  background: #eef1f4;
+}
+
+.count-badge {
+  background: #1b4332;
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.station-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.station-list .state {
+  padding: 1rem;
+  color: #6b7280;
+}
+
+.station-list .state.error {
   color: #b00020;
   font-weight: 600;
 }
 
-.bff {
-  margin: 0 1rem;
-  color: #2c7a2c;
+/* ---- Shared station list item ---- */
+.station-item {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid #e9ebee;
+}
+
+.station-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.7rem 1rem;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.station-item-main:hover {
+  background: #eef1f4;
+}
+
+.station-name {
   font-weight: 600;
+}
+
+.station-description {
+  color: #6b7280;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-meta {
+  color: #4b5563;
+  font-size: 0.8rem;
+}
+
+.station-find {
+  align-self: center;
+  margin-right: 0.75rem;
+  border: 1px solid #1b4332;
+  background: #ffffff;
+  color: #1b4332;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.station-find:hover {
+  background: #1b4332;
+  color: #ffffff;
+}
+
+/* ---- Map ---- */
+.map-area {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* ---- Search dialog (modal) ---- */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 2000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 5rem;
+}
+
+.dialog {
+  width: min(560px, 90vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.dialog-header {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #e3e6ea;
+}
+
+.dialog-header input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.dialog-clear {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+
+.dialog-clear:hover {
+  color: #1b4332;
+}
+
+.dialog-close {
+  border: none;
+  background: transparent;
+  color: #4b5563;
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+
+.dialog .station-list {
+  max-height: 60vh;
 }

@@ -5,14 +5,14 @@
 #   * GET /api/v1/jobs and GET /api/v1/data-sources return 200
 #   * The scheduler recorded a FINISHED data_source_update job (it runs at
 #     startup because the job has never succeeded) exposing lifetime_until
-#   * GET /api/bff/hello returns the BFF greeting (frontend-facing BFF API)
+#   * GET /api/bff/stations returns the BFF station list (frontend-facing BFF API)
 #   * The frontend page is served
 #   * The database schema is correct:
 #       - jobs.lifetime_until is TIMESTAMPTZ NOT NULL (absolute deadline)
 #       - data_sources.imported_until exists as TIMESTAMPTZ
 #
-# A temporary config.toml is created in backend/ (the backend service mounts
-# ./backend/config.toml). Any pre-existing config.toml is backed up/restored.
+# A temporary config.toml is created at the repo root (the backend service
+# mounts ./config.toml). Any pre-existing config.toml is backed up and restored.
 #
 # Requirements: Docker, Docker Compose v2 (`docker compose`), curl.
 # Override the endpoints with APP_URL (default http://localhost:8080) and
@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
-CONFIG_FILE="${PROJECT_ROOT}/backend/config.toml"
+CONFIG_FILE="${PROJECT_ROOT}/config.toml"
 CONFIG_BACKUP="$(mktemp)"
 
 APP_URL="${APP_URL:-http://localhost:8080}"
@@ -109,15 +109,19 @@ assert_status() {
 assert_status 200 /api/v1/jobs
 assert_status 200 /api/v1/data-sources
 
-# The BFF API is frontend-only; verify it answers with the greeting.
-assert_status 200 /api/bff/hello
-BFF_JSON="$(curl --silent "${APP_URL}/api/bff/hello")"
-if ! echo "${BFF_JSON}" | grep -q "Hello from BFF"; then
-  echo "ERROR: expected the BFF greeting in /api/bff/hello" >&2
+# The BFF API is frontend-only; verify the station list and the summary answer.
+BFF_STATIONS="/api/bff/stations?min_lat=51&min_lng=7&max_lat=52&max_lng=8"
+assert_status 200 "${BFF_STATIONS}"
+BFF_JSON="$(curl --silent "${APP_URL}${BFF_STATIONS}")"
+if ! echo "${BFF_JSON}" | grep -q '"items"'; then
+  echo "ERROR: expected a station list in ${BFF_STATIONS}" >&2
   echo "${BFF_JSON}" >&2
   exit 1
 fi
-echo "Verified /api/bff/hello returns the BFF greeting"
+echo "Verified ${BFF_STATIONS} returns a station list"
+
+assert_status 200 "/api/bff/stations/sidebar?min_lat=51&min_lng=7&max_lat=52&max_lng=8"
+echo "Verified /api/bff/stations/sidebar answers"
 
 # The frontend must serve the SPA shell (React renders "Hello World"
 # client-side, so only the mount point is present in the raw HTML).
@@ -128,12 +132,12 @@ fi
 echo "Verified frontend SPA shell at ${FRONTEND_URL}"
 
 # The nginx reverse proxy must forward /api to the backend: reaching the BFF
-# greeting through the frontend URL proves browser -> nginx -> backend works.
-if ! curl --fail --silent "${FRONTEND_URL}/api/bff/hello" | grep -q "Hello from BFF"; then
-  echo "ERROR: nginx did not proxy /api/bff/hello to the backend" >&2
+# station list through the frontend URL proves browser -> nginx -> backend works.
+if ! curl --fail --silent "${FRONTEND_URL}${BFF_STATIONS}" | grep -q '"items"'; then
+  echo "ERROR: nginx did not proxy /api/bff/stations to the backend" >&2
   exit 1
 fi
-echo "Verified nginx proxies /api/bff/hello to the backend"
+echo "Verified nginx proxies /api/bff/stations to the backend"
 
 # The scheduler runs the data-source update at startup (it has never succeeded),
 # so a data_source_update job with a lifetime_until deadline must exist.

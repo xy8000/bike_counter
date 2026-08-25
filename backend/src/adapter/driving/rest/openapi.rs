@@ -1,6 +1,10 @@
 use utoipa::OpenApi;
 
-use crate::adapter::driving::bff::{__path_get_bff_hello, BffHelloDto};
+use crate::adapter::driving::bff::{
+    __path_get_bff_global_summary, __path_get_bff_stations_search, __path_get_bff_stations_sidebar,
+    __path_list_bff_stations, ActionDto, GlobalSummaryDto, StationMapDto, StationMapListDto,
+    StationSearchDto, StationSummaryDto, StationSummarySidebarDto,
+};
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto,
     CountingStationPatchDto, DataSourceDto, DataSourceListDto, ErrorResponseDto,
@@ -22,7 +26,10 @@ use crate::adapter::driving::rest::handlers::{
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        get_bff_hello,
+        list_bff_stations,
+        get_bff_stations_sidebar,
+        get_bff_stations_search,
+        get_bff_global_summary,
         get_api_root,
         list_counting_stations,
         get_counting_station_by_id,
@@ -47,7 +54,13 @@ use crate::adapter::driving::rest::handlers::{
     ),
     components(
         schemas(
-            BffHelloDto,
+            StationSummaryDto,
+            StationMapDto,
+            StationMapListDto,
+            StationSummarySidebarDto,
+            ActionDto,
+            StationSearchDto,
+            GlobalSummaryDto,
             ApiRootDto,
             CountingStationDto,
             CountingStationListDto,

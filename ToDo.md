@@ -174,3 +174,42 @@ Map view + counting-station GPS coordinates (plans/22_map_view_gps_coordinates_p
 - [x] REST counting-station DTO exposes `latitude`/`longitude`
 - [x] Frontend: Leaflet map view (`react-leaflet`), centered on Münster, one marker per station with coordinates (name popup), loading/error states
 - [x] Gates green: `make check`, `make test` (235), `make test-rest`, `make coverage` (overall 84.67%, core 96.56%), `make frontend-build`
+
+Visible stations BFF + config consolidation + frontend header/list (plans/23_visible_stations_bff_and_config_plan.md)
+
+- [x] Remove the placeholder `GET /api/bff/hello` (handler, DTO, route, Swagger path/schema) while keeping the `BFF API` Swagger tag
+- [x] `GET /api/bff/stations` (optional bounding box -> visible or all stations) + `GET /api/bff/stations/summary` (header aggregate), computed on the fly by a new core `StationSummaryService` (`GeoBounds` + `find_within_bounds` + `sum_since`)
+- [x] Frontend: Komoot-style header + left sidebar of visible stations + modal search dialog with "find on map"; map and list fed by `/api/bff/stations`, header aggregate by `/api/bff/stations/summary`
+- [x] Config consolidated to the root `config.toml` (backend TOMLs removed; docker compose mounts `./config.toml` into backend + frontend; root `config.toml.example` template)
+- [x] `[frontend] log_level` in the TOML wires nginx `error_log` via an entrypoint script + nginx template
+- [x] Tests: BFF endpoint tests, `StationSummaryService` unit tests, Postgres `find_within_bounds`/`sum_since` tests; `docker-compose-test.sh` updated
+- [ ] Gates green: `make check`, `make test`, `make test-rest`, `make coverage`, `make frontend-build`, `make test-e2e`
+
+Visible-stations BFF refactor (plans/24_visible_stations_bff_refactor_plan.md)
+
+- [x] `StationSummary` reuses the `CountingStation` entity; the BFF DTO mapping goes through `CountingStationDto` (same serialized JSON fields)
+- [x] `MeasurementRepository::sum_since(&[ChannelId], since)` -> scalar `sum(from, to, channel_id?)`; Postgres impl + test renamed; every in-memory mock updated; `StationSummaryService` sums per station channel
+- [x] `GeoBounds`/`find_within_bounds` removed from counting stations; new core `station_summary::bounds::GeoBounds` (`is_valid` + `contains`); the service filters stations in memory via `find_filtered(None)`
+- [x] `StationSummaryAggregate` split into its own `station_summary/aggregate.rs` (global summary)
+- [x] Service port + BFF handlers take an explicit `(from, to)` window (`to = Utc::now()`, `from = to - 24h`); `/api/bff/stations` + `/api/bff/stations/summary` paths, `BFF API` tag and validation unchanged
+- [x] Frontend nginx log-level entrypoint renamed `20-log-level.sh` -> `19-log-level.sh` and pre-substitutes the template (fixes the e2e nginx startup failure)
+- [x] Gates green: `make check`, `make test` (246), `make test-rest` (76), `make coverage` (overall 85.44%, core 96.93%), `make frontend-build`, `make test-e2e`
+
+BFF endpoint separation + global summary + frontend polish (plans/25_bff_endpoint_separation_and_global_summary_plan.md)
+
+- [x] Domain: `station_summary` refactored to a single `summarize(bounds: Option<GeoBounds>, from, to)` (optional map filtering, serving search + sidebar); `StationSummaryAggregate` removed
+- [x] Domain: new decoupled `global_summary` module (`GlobalSummary` + `GlobalSummaryServicePort`) + application `GlobalSummaryService` (station/channel counts, last-24h total, most recent data-source-update timestamp)
+- [x] BFF split into widget-named endpoints: `/api/bff/stations` (map markers, minimal), `/api/bff/stations/sidebar` (sidebar + visible/global counter), `/api/bff/stations/search` (all stations + action map), `/api/bff/global-summary` (header, outside `/stations/`)
+- [x] Swagger/OpenAPI updated for the four BFF endpoints (paths, schemas, `BFF API` tag); obsolete `StationSummaryAggregateDto` / `StationSummaryListDto` removed
+- [x] Frontend: map/sidebar/search/header each fetch their own endpoint; sidebar close button moved to the top of the sidebar, sidebar renamed "Visible counting stations", top-right counter shows visible/total, header shows the global summary + last update
+- [x] Frontend: search-dialog clear button clears the filter instead of closing the dialog (separate Close button; Esc closes)
+- [x] Removed the `[frontend] log_level` nginx feature completely (script, Dockerfile, nginx template, `config.toml(.example)`, compose mount)
+- [x] Gates green: `make check`, `make test`, `make test-rest`, `make coverage`, `make frontend-build`, `make test-e2e`
+
+Frontend component refactor + centered search bar (plans/27_frontend_component_refactor_and_centered_search_plan.md)
+
+- [ ] Split `frontend/src/App.tsx` into a feature-based structure under `frontend/src/features/` (header, map, sidebar, search, stations) with co-located components and data-fetching hooks
+- [ ] Add `frontend/src/lib/` (format.ts, geo.ts, leaflet.ts) holding the pure helpers and Leaflet bootstrap moved out of `App.tsx`
+- [ ] Turn `App.tsx` into a thin composition root that only owns bounds/mapRef/searchOpen/sidebarCollapsed, keyboard shortcuts, and focusStation
+- [ ] Center the header search trigger via a three-column grid in `frontend/src/index.css`
+- [ ] `make frontend-build` green (tsc + vite build); manual `make run` check of map/sidebar/search/find-on-map

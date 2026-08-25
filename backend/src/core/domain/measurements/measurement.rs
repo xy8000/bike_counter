@@ -14,7 +14,7 @@ pub mod value_objects {
     pub struct Id(pub Uuid);
     #[derive(Debug, Clone, Copy)]
     pub struct Value(pub i64);
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct ChannelId(pub Uuid);
     #[derive(Debug, Clone, Copy)]
     pub struct Timestamp(pub DateTime<Utc>);

@@ -1,4 +1,4 @@
-# Bike-Counter
+r# Bike-Counter
 
 This Repository can be used to analyse the Bike-Counter-Stations of Münster.
 
@@ -10,8 +10,10 @@ It is a **monorepo** with two sub-projects:
   `/api/bff` that is consumed by the frontend **only** and appears in Swagger
   under its own `BFF API` collection.
 - [`frontend/`](frontend) — React (Vite) single-page application served by nginx
-  in the Docker stack, whose first view is a Leaflet map showing every counting
-  station that has GPS coordinates.
+  in the Docker stack: a Leaflet map with one marker per counting station that
+  has GPS coordinates, a left sidebar listing the stations currently visible in
+  the viewport (name, description, channel count, bikes in the last 24 h), a
+  Komoot-style header with a search dialog, and a live aggregate summary.
 
 Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
@@ -28,19 +30,19 @@ All settings live in [`config.toml`](config.toml) (gitignored). Start from the
 tracked template [`config.toml.example`](config.toml.example):
 
 ```bash
-cp backend/config.toml.example backend/config.toml
+cp config.toml.example config.toml
 ```
 
 ```toml
-database_url="postgres://localhost:5432"
+database_url="postgres://db:5432"
 database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
 
 # CRON expression for the data-source update job (default: every hour).
-data_source_update_cron="0 0 * * * *"
+data_source_update_cron="0 * * * * *"
 # REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
-data_source_update_max_lifetime_seconds=3600
+data_source_update_max_lifetime_seconds=600
 
 [[data_sources]]
 name = "Münster"
@@ -218,13 +220,12 @@ make down   # stop and remove the stack (keeps the database volume)
 make logs   # follow the logs of all services
 ```
 
-This requires a [`backend/config.toml`](backend/config.toml) with `database_url`
-set to the compose service name `db` (see
-[Run with Docker Compose](#run-with-docker-compose)).
+This requires a [`config.toml`](config.toml) with `database_url` set to the
+compose service name `db` (see [Run with Docker Compose](#run-with-docker-compose)).
 
-Alternatively, run the backend binary locally (reads `backend/config.toml`,
-applies migrations, serves the API) — this needs a reachable PostgreSQL, so set
-`database_url="postgres://localhost:5432"`:
+Alternatively, run the backend binary locally (reads `config.toml` from the
+working directory, applies migrations, serves the API) — this needs a reachable
+PostgreSQL, so set `database_url="postgres://localhost:5432"`:
 
 ```bash
 cd backend
@@ -251,7 +252,7 @@ The repository includes Dockerfiles for both sub-projects and a
 
 ```bash
 # Copy the template, adjust database_url to "postgres://db:5432", then start
-cp backend/config.toml.example backend/config.toml
+cp config.toml.example config.toml
 # Either directly, or via the Makefile:
 docker compose up --build        # make run
 docker compose down              # make down
@@ -261,14 +262,13 @@ docker compose logs -f           # make logs
 - The `db` service runs PostgreSQL with the development defaults
   (`postgres` / `postgres` / `bike_counter`) and persists data in a named volume.
 - The `backend` service builds the Rust binary inside a multi-stage Docker build
-  and mounts [`backend/config.toml`](backend/config.toml) into the container.
-  Its [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to
-  start without a `config.toml` and otherwise just runs the REST server (which
-  applies the refinery migrations on startup).
+  and mounts [`config.toml`](config.toml) into the container. Its
+  [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to start
+  without a `config.toml` and otherwise just runs the REST server (which applies
+  the refinery migrations on startup).
 - The `frontend` service builds the React app (Vite) into static assets served by
   nginx, which reverse-proxies `/api` to the `backend` service so the browser
-  only ever talks same-origin (no CORS). It is exposed on
-  <http://localhost:8081>.
+  only ever talks same-origin (no CORS). It is exposed on <http://localhost:8081>.
 - **All configuration is TOML-only.** There are no configuration environment
   variables and no `.env` file – neither for the database nor for data sources.
   When running under docker compose, set `database_url` to the compose service
@@ -343,12 +343,27 @@ In addition to the public `/api/v1` REST API, the backend exposes a
 `/api/bff` and is documented in the **same** Swagger document but grouped under
 its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
 
-- `GET /api/bff/hello` – returns `{"message": "Hello from BFF"}`. It remains the
-  BFF seam/probe; the frontend's map view consumes the public
-  `GET /api/v1/counting-stations` endpoint instead.
+- `GET /api/bff/stations` – map markers for the current viewport. Requires the
+  `min_lat`/`min_lng`/`max_lat`/`max_lng` bounding-box query and returns only the
+  **positioned** stations inside it. Each item carries only what the map needs:
+  `id`, `name`, `latitude`, `longitude`.
+- `GET /api/bff/stations/sidebar` – station summaries for the current viewport
+  (same required bounding box). Each item carries `id`, `name`, `description`,
+  `latitude`, `longitude`, `channel_count` and `bikes_last_24h` (the sum of
+  `measurements.value` across the station's channels in the last 24 hours,
+  computed on the fly), plus `visible_count` / `total_count` (stations visible in
+  the viewport vs. all counting stations).
+- `GET /api/bff/stations/search` – every counting-station summary (no bounds)
+  plus the map of possible actions (for now `find_on_map` is always enabled).
+- `GET /api/bff/global-summary` – whole-system statistics for the header:
+  `station_count`, `channel_count`, `bikes_last_24h_total` and the `last_update`
+  timestamp of the most recent successful data-source update.
 
-The BFF module lives in [`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff)
-and is the seam for future frontend-only endpoints (for example aggregations or
+The aggregations are computed **on the fly** per request by the core
+`StationSummaryService` / `GlobalSummaryService`; a cache (e.g. Redis) may be
+introduced later. The BFF module lives in
+[`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff) and is the
+seam for future frontend-only endpoints (for example aggregations or
 transformations of the `/api/v1` data).
 
 ## Name uniqueness

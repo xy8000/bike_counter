@@ -693,6 +693,15 @@ mod tests {
         ) -> Result<Vec<Measurement>, DomainError> {
             Ok(Vec::new())
         }
+
+        fn sum(
+            &self,
+            _from: chrono::DateTime<chrono::Utc>,
+            _to: chrono::DateTime<chrono::Utc>,
+            _channel_id: Option<measurement_vo::ChannelId>,
+        ) -> Result<i64, DomainError> {
+            Ok(0)
+        }
     }
 
     /// A provider that serves fixed external-id records and a single page queue.

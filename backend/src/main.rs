@@ -18,11 +18,13 @@ use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_import_service::DataImportService;
 use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
+use crate::core::application::global_summary_service::GlobalSummaryService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
+use crate::core::application::station_summary_service::StationSummaryService;
 use crate::core::domain::configuration::repository_port::ConfigurationRepository;
 use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
 use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
@@ -133,6 +135,24 @@ fn main() {
 
     // Thin core application services backing the REST read endpoints. The
     // scheduler/import services keep using the repositories directly.
+    // On-the-fly station-summary aggregation backing the BFF "visible stations"
+    // endpoints (channel counts + bikes in the last 24 h).
+    let station_summary_service = Arc::new(StationSummaryService::new(
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
+    ));
+
+    // Whole-system statistics backing the BFF `global-summary` endpoint (shown
+    // in the frontend header): all stations/channels, the last-24h total, and
+    // the timestamp of the most recent successful data-source update.
+    let global_summary_service = Arc::new(GlobalSummaryService::new(
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
+        job_repo.clone(),
+    ));
+
     let counting_station_service = Arc::new(CountingStationService::new(counting_station_repo));
     let channel_service = Arc::new(ChannelService::new(channel_repo));
     let measurement_service = Arc::new(MeasurementService::new(measurement_repo));
@@ -153,6 +173,8 @@ fn main() {
         health_service,
         persistent_state_service,
         provider_message_service,
+        station_summary_service,
+        global_summary_service,
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));

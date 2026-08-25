@@ -8,15 +8,17 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::tests::fixtures::{
     data_source_a, sample_channel_repository, sample_counting_station_repository,
-    sample_measurement_repository,
+    sample_job_repository, sample_measurement_repository,
 };
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_source_service::DataSourceService;
+use crate::core::application::global_summary_service::GlobalSummaryService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
+use crate::core::application::station_summary_service::StationSummaryService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository_port::ChannelRepository;
@@ -230,6 +232,21 @@ impl MeasurementRepository for MockMeasurementRepository {
         measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
         Ok(measurements.into_iter().skip(offset).take(limit).collect())
     }
+
+    fn sum(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        channel_id: Option<measurement_vo::ChannelId>,
+    ) -> Result<i64, DomainError> {
+        Ok(self
+            .measurements
+            .iter()
+            .filter(|m| m.timestamp.0 >= from && m.timestamp.0 <= to)
+            .filter(|m| channel_id.is_none_or(|id| m.channel_id == id))
+            .map(|m| m.value.0)
+            .sum())
+    }
 }
 
 #[derive(Default)]
@@ -371,8 +388,13 @@ impl JobRepository for MockJobRepository {
         Ok(None)
     }
 
-    fn find_last_finished_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
-        Ok(None)
+    fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+        Ok(self
+            .jobs
+            .iter()
+            .filter(|job| job.job_type == job_type && job.status == JobStatus::Finished)
+            .max_by_key(|job| job.finished_at)
+            .cloned())
     }
 
     fn expire_running_jobs(
@@ -461,6 +483,27 @@ pub fn sample_measurement_service() -> Arc<MeasurementService> {
     Arc::new(MeasurementService::new(Arc::new(
         sample_measurement_repository(),
     )))
+}
+
+/// A [`StationSummaryService`] backed by the sample counting-station, channel
+/// and measurement repositories.
+pub fn sample_station_summary_service() -> Arc<StationSummaryService> {
+    Arc::new(StationSummaryService::new(
+        Arc::new(sample_counting_station_repository()),
+        Arc::new(sample_channel_repository()),
+        Arc::new(sample_measurement_repository()),
+    ))
+}
+
+/// A [`GlobalSummaryService`] backed by the sample counting-station, channel,
+/// measurement and job repositories.
+pub fn sample_global_summary_service() -> Arc<GlobalSummaryService> {
+    Arc::new(GlobalSummaryService::new(
+        Arc::new(sample_counting_station_repository()),
+        Arc::new(sample_channel_repository()),
+        Arc::new(sample_measurement_repository()),
+        Arc::new(sample_job_repository()),
+    ))
 }
 
 /// A [`DataSourceService`] backed by the given data-source repository.

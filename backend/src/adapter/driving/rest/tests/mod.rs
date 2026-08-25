@@ -38,12 +38,14 @@ use uuid::Uuid;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
+use crate::core::application::station_summary_service::StationSummaryService;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::sample_job_repository;
 use mocks::{
     MockDataSourceRepository, MockJobRepository, mock_health_service, sample_channel_service,
-    sample_counting_station_service, sample_data_source_service, sample_job_service,
-    sample_measurement_service, sample_persistent_state_service, sample_provider_message_service,
+    sample_counting_station_service, sample_data_source_service, sample_global_summary_service,
+    sample_job_service, sample_measurement_service, sample_persistent_state_service,
+    sample_provider_message_service, sample_station_summary_service,
 };
 
 /// Wraps the router under test and provides request helpers.
@@ -101,6 +103,8 @@ impl TestApp {
             mock_health_service(HealthStatus::Up),
             persistent_state_service,
             sample_provider_message_service(),
+            sample_station_summary_service(),
+            sample_global_summary_service(),
         )
         .router();
         Self { router }
@@ -120,6 +124,29 @@ impl TestApp {
             mock_health_service(HealthStatus::Up),
             sample_persistent_state_service(),
             provider_message_service,
+            sample_station_summary_service(),
+            sample_global_summary_service(),
+        )
+        .router();
+        Self { router }
+    }
+
+    /// Builds a router with a custom station-summary service (used by the BFF
+    /// station tests that need non-zero bikes-last-24h values).
+    pub fn with_station_summary_service(
+        station_summary_service: Arc<StationSummaryService>,
+    ) -> Self {
+        let router = RestApiAdapter::new(
+            sample_counting_station_service(),
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(MockDataSourceRepository::default()),
+            sample_job_service(sample_job_repository()),
+            mock_health_service(HealthStatus::Up),
+            sample_persistent_state_service(),
+            sample_provider_message_service(),
+            station_summary_service,
+            sample_global_summary_service(),
         )
         .router();
         Self { router }
@@ -140,6 +167,8 @@ impl TestApp {
             health_service,
             sample_persistent_state_service(),
             sample_provider_message_service(),
+            sample_station_summary_service(),
+            sample_global_summary_service(),
         )
         .router();
         Self { router }

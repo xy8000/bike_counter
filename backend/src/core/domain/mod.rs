@@ -3,6 +3,8 @@ pub mod configuration;
 pub mod counting_stations;
 pub mod data_source;
 pub mod error;
+pub mod global_summary;
 pub mod health;
 pub mod jobs;
 pub mod measurements;
+pub mod station_summary;

@@ -13,7 +13,9 @@ use axum::routing::{delete, get, put};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::adapter::driving::bff::get_bff_hello;
+use crate::adapter::driving::bff::{
+    get_bff_global_summary, get_bff_stations_search, get_bff_stations_sidebar, list_bff_stations,
+};
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
     clear_persistent_state, delete_persistent_state_entry, get_api_root, get_channel_by_id,
@@ -29,9 +31,11 @@ use crate::core::domain::counting_stations::service_port::CountingStationService
 use crate::core::domain::data_source::service_port::DataSourceServicePort;
 use crate::core::domain::data_source::service_port::PersistentStateServicePort;
 use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
+use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
 
 pub struct RestApiAdapter {
     app_state: AppState,
@@ -49,6 +53,8 @@ impl RestApiAdapter {
         health_service: Arc<dyn HealthServicePort + Send + Sync>,
         persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
         provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
+        station_summary_service: Arc<dyn StationSummaryServicePort + Send + Sync>,
+        global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -60,6 +66,8 @@ impl RestApiAdapter {
                 health_service,
                 persistent_state_service,
                 provider_message_service,
+                station_summary_service,
+                global_summary_service,
             },
         }
     }
@@ -71,7 +79,10 @@ impl RestApiAdapter {
     pub fn create_router(app_state: AppState) -> Router {
         Router::new()
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-            .route("/api/bff/hello", get(get_bff_hello))
+            .route("/api/bff/stations", get(list_bff_stations))
+            .route("/api/bff/stations/sidebar", get(get_bff_stations_sidebar))
+            .route("/api/bff/stations/search", get(get_bff_stations_search))
+            .route("/api/bff/global-summary", get(get_bff_global_summary))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))
             .route(

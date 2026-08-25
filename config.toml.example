@@ -1,12 +1,12 @@
-database_url="postgres://localhost:5432"
+database_url="postgres://db:5432"
 database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
 
 # CRON expression for the data-source update job (default: every hour).
-data_source_update_cron="0 0 * * * *"
+data_source_update_cron="0 * * * * *"
 # REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
-data_source_update_max_lifetime_seconds=3600
+data_source_update_max_lifetime_seconds=600
 
 [[data_sources]]
 name = "Münster"
@@ -19,4 +19,3 @@ url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.
 max_measurement_batch_size = "500"
 # Import time window per provider call, in hours (default 7 days = 168).
 max_measurement_timeframe_hours = "168"
-cache_duration = "300"
