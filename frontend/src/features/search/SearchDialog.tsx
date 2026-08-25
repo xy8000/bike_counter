@@ -28,14 +28,14 @@ export function SearchDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="top-[5rem] flex max-h-[70vh] flex-col gap-0 p-0 translate-y-0 sm:max-w-[560px]"
+        className="top-[5rem] flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 translate-y-0 sm:max-w-[560px]"
         showCloseButton={false}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Search counting stations</DialogTitle>
           <DialogDescription>Filter counting stations by name or description.</DialogDescription>
         </DialogHeader>
-        <div className="flex items-center gap-2 border-b p-3">
+        <div className="flex shrink-0 items-center gap-2 border-b p-3">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -63,7 +63,7 @@ export function SearchDialog({
             Close
           </Button>
         </div>
-        <ScrollArea className="max-h-[60vh] flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <ul className="list-none">
             {error && (
               <li className="p-4 text-sm font-semibold text-destructive">Could not load stations.</li>
