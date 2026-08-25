@@ -350,11 +350,19 @@ async fn bff_station_overview_returns_the_flat_page_payload() {
         format!("/stations/{}", fixtures::STATION_ID_A)
     );
 
-    // Exactly the three metrics, each with a trend.
+    // Exactly the four metrics (day, 7 days, month, year), each with a trend.
     let metrics = body["metrics"]
         .as_array()
         .expect("metrics should be an array");
-    assert_eq!(metrics.len(), 3);
+    assert_eq!(metrics.len(), 4);
+    let keys: Vec<&str> = metrics
+        .iter()
+        .map(|metric| metric["key"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["last_day", "last_7_days", "last_month", "last_year"]
+    );
     for metric in metrics {
         assert!(metric["current"].is_i64() || metric["current"].is_u64());
         assert!(metric["previous"].is_i64() || metric["previous"].is_u64());

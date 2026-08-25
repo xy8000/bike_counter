@@ -8,5 +8,6 @@ pub mod global_summary;
 pub mod health;
 pub mod jobs;
 pub mod measurements;
+pub mod station_detail;
 pub mod station_overview;
 pub mod station_summary;

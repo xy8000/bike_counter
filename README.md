@@ -13,7 +13,11 @@ It is a **monorepo** with two sub-projects:
   in the Docker stack: a Leaflet map with one marker per counting station that
   has GPS coordinates, a left sidebar listing the stations currently visible in
   the viewport (name, description, channel count, bikes in the last 24 h), a
-  Komoot-style header with a search dialog, and a live aggregate summary.
+  Komoot-style header with a search dialog, a live aggregate summary, and a
+  per-station detail page (`/stations/:id`) with the overview stat boxes (incl.
+  the YEAR stat) and Recharts line/radar/pie graphs (last day, weekday radar,
+  current + last week, last 30 days, current + last year, and nerd-stats split
+  by channel).
 
 Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
@@ -422,14 +426,25 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   recent successful data-source update.
 - `GET /api/bff/station-overview/{id}` – the **page-shaped** overview payload for
   one station: `id`, `name`, `description`, `latitude`, `longitude`,
-  `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`, a
-  future detail page) and a `metrics` array — each with `key`
-  (`last_day` / `last_7_days` / `last_month`), `current`, `previous`, `trend`
+  `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
+  and a `metrics` array — each with `key` (`last_day` / `last_7_days` /
+  `last_month` / `last_year`), `current`, `previous`, `trend`
   (`up`/`down`/`flat`) and `delta_percent`. The metrics use **complete calendar
   periods** in the station's own timezone (previous full local day, previous 7
-  full local days, previous full calendar month), each compared with the
-  immediately preceding equal-length period. The payload is flat — no HATEOAS
-  `_links`, no `data_source_id`, no REST `CountingStationDto` reuse.
+  full local days, previous full calendar month, previous full calendar year),
+  each compared with the immediately preceding equal-length period. The payload
+  is flat — no HATEOAS `_links`, no `data_source_id`, no REST `CountingStationDto`
+  reuse.
+- `GET /api/bff/station-detail/{id}` – the **page-shaped** detail payload for the
+  detail page: the station metadata + `metrics` from `station-overview/{id}`
+  (incl. `last_year`), a `channels` array (id + name for legends/pie labels) and
+  a `graphs` object with the time-bucketed series — `last_day` (5 min),
+  `current_week` / `last_week` (15 min), `last_30_days` (30 min) and
+  `current_year` / `last_year` (1 day) — plus a `weekday_radar` (last 30 days), a
+  per-channel copy of the series + weekday radar (`per_channel`) and the channel
+  shares `channel_pie`. Buckets are aligned to the station's own timezone via
+  PostgreSQL `date_bin` and are **data-only** (no zero-filling, so a running
+  week/year simply ends at the latest measurement).
 - `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
   from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
   (`immutable` for built-in assets, short-lived for provider assets). Only the

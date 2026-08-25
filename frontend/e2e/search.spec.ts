@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { SEARCH_PLACEHOLDER, SEARCH_TRIGGER_TEXT, waitForStations } from './helpers'
 
-test('searching a station and clicking Find on map opens its popup', async ({ page }) => {
+test('searching a station and clicking Find on map opens its overview', async ({ page }) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await waitForStations(page)
 
@@ -16,9 +16,13 @@ test('searching a station and clicking Find on map opens its popup', async ({ pa
 
   await page.getByRole('button', { name: 'Find on map' }).first().click()
 
-  // The dialog closes and the map flies to the station, opening its popup.
+  // The dialog closes and the map flies to the station, opening the same
+  // overview panel as a marker click (unified selection since plan 33).
   await expect(input).toBeHidden()
-  const popup = page.locator('.leaflet-popup-content')
-  await expect(popup).toBeVisible()
-  await expect(popup).toHaveText('Bohlweg')
+  const overview = page.getByRole('complementary')
+  await expect(overview.getByText('Last 24 hours')).toBeVisible()
+  await expect(overview.getByRole('link', { name: 'Bohlweg' })).toHaveAttribute(
+    'href',
+    /^\/stations\//,
+  )
 })

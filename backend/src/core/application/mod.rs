@@ -11,5 +11,6 @@ pub mod measurement_service;
 pub mod persistent_state_service;
 pub mod provider_message_service;
 pub mod startup_service;
+pub mod station_detail_service;
 pub mod station_overview_service;
 pub mod station_summary_service;

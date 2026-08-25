@@ -31,8 +31,8 @@ pub struct MetricWindow {
     pub previous: i64,
 }
 
-/// The three metrics shown on the overview panel, each over a **complete
-/// calendar period** in the station's timezone.
+/// The metrics shown on the overview panel (and reused by the detail page),
+/// each over a **complete calendar period** in the station's timezone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MetricKey {
     /// The previous full local day.
@@ -41,13 +41,16 @@ pub enum MetricKey {
     Last7Days,
     /// The previous full calendar month.
     LastMonth,
+    /// The previous full calendar year.
+    LastYear,
 }
 
 impl MetricKey {
-    pub const ALL: [MetricKey; 3] = [
+    pub const ALL: [MetricKey; 4] = [
         MetricKey::LastDay,
         MetricKey::Last7Days,
         MetricKey::LastMonth,
+        MetricKey::LastYear,
     ];
 
     /// Stable string key used in the BFF payload.
@@ -56,6 +59,7 @@ impl MetricKey {
             MetricKey::LastDay => "last_day",
             MetricKey::Last7Days => "last_7_days",
             MetricKey::LastMonth => "last_month",
+            MetricKey::LastYear => "last_year",
         }
     }
 }

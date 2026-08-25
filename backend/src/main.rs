@@ -28,6 +28,7 @@ use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
+use crate::core::application::station_detail_service::StationDetailService;
 use crate::core::application::station_overview_service::StationOverviewService;
 use crate::core::application::station_summary_service::StationSummaryService;
 use crate::core::domain::assets::asset::BuiltinImage;
@@ -196,12 +197,20 @@ fn main() {
     ));
 
     // Per-station overview page backing the BFF `station-overview/{id}` endpoint
-    // (channel count + last day/7 days/month trends + last update).
+    // (channel count + last day/7 days/month/year trends + last update).
     let station_overview_service = Arc::new(StationOverviewService::new(
         counting_station_repo.clone(),
         channel_repo.clone(),
         measurement_repo.clone(),
         job_repo.clone(),
+    ));
+
+    // Per-station detail graphs backing the BFF `station-detail/{id}` endpoint
+    // (bucketed time series, weekday radar, per-channel series + pie).
+    let station_detail_service = Arc::new(StationDetailService::new(
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
     ));
 
     // Scheduled cleanup of orphaned objects in the asset storage bucket.
@@ -235,6 +244,7 @@ fn main() {
         station_summary_service,
         global_summary_service,
         station_overview_service,
+        station_detail_service,
         asset_service,
         asset_storage,
     );

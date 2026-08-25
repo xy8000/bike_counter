@@ -12,6 +12,8 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::CountingStationDto;
+use crate::core::domain::measurements::repository_port::TimeBucket;
+use crate::core::domain::station_detail::StationDetailGraphs;
 use crate::core::domain::station_summary::StationSummary;
 
 /// A counting station enriched with its channel count and the number of bikes
@@ -119,11 +121,12 @@ pub struct StationOverviewDto {
     pub detail_url: String,
 }
 
-/// One metric on the overview panel: the raw sum for the period plus the
-/// immediately preceding period of equal length, and the derived trend.
+/// One metric on the overview panel (and the detail page): the raw sum for the
+/// period plus the immediately preceding period of equal length, and the
+/// derived trend.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct MetricDto {
-    /// Stable key (`last_day` | `last_7_days` | `last_month`).
+    /// Stable key (`last_day` | `last_7_days` | `last_month` | `last_year`).
     pub key: String,
     pub current: i64,
     pub previous: i64,
@@ -178,4 +181,143 @@ pub struct BffStationQueryParams {
     pub min_lng: Option<f64>,
     pub max_lat: Option<f64>,
     pub max_lng: Option<f64>,
+}
+
+/// The **page-shaped** BFF payload for the counting-station detail page: the
+/// station overview (reused, with the year metric) merged with the channels and
+/// the bucketed graph data.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationDetailDto {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub channel_count: usize,
+    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    pub image_url: String,
+    pub metrics: Vec<MetricDto>,
+    /// Timestamp of the most recent successful data-source update.
+    pub last_update: Option<DateTime<Utc>>,
+    pub channels: Vec<ChannelRefDto>,
+    pub graphs: StationDetailGraphsDto,
+}
+
+/// A counting-station channel reference (id + name), used for the chart legend
+/// and the pie labels.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct ChannelRefDto {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// One fixed-width time-bucket of an aggregate sum.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct TimeBucketDto {
+    pub start: DateTime<Utc>,
+    pub total: i64,
+}
+
+/// One weekday aggregate (ISO 1 = Monday .. 7 = Sunday).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct WeekdayTotalDto {
+    pub weekday: u8,
+    pub total: i64,
+}
+
+/// One channel's share over a window (pie chart).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct ChannelTotalDto {
+    pub channel_id: Uuid,
+    pub total: i64,
+}
+
+/// The per-channel time-series (nerd stats): the five graphs restricted to one
+/// channel.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct PerChannelSeriesDto {
+    pub channel_id: Uuid,
+    pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub last_day: Vec<TimeBucketDto>,
+    pub current_week: Vec<TimeBucketDto>,
+    pub last_week: Vec<TimeBucketDto>,
+    pub last_30_days: Vec<TimeBucketDto>,
+    pub current_year: Vec<TimeBucketDto>,
+    pub last_year: Vec<TimeBucketDto>,
+}
+
+/// All graph data for the detail page.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationDetailGraphsDto {
+    pub last_day: Vec<TimeBucketDto>,
+    pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub current_week: Vec<TimeBucketDto>,
+    pub last_week: Vec<TimeBucketDto>,
+    pub last_30_days: Vec<TimeBucketDto>,
+    pub current_year: Vec<TimeBucketDto>,
+    pub last_year: Vec<TimeBucketDto>,
+    pub per_channel: Vec<PerChannelSeriesDto>,
+    pub channel_pie: Vec<ChannelTotalDto>,
+}
+
+impl From<StationDetailGraphs> for StationDetailGraphsDto {
+    fn from(graphs: StationDetailGraphs) -> Self {
+        fn buckets(series: Vec<TimeBucket>) -> Vec<TimeBucketDto> {
+            series
+                .into_iter()
+                .map(|bucket| TimeBucketDto {
+                    start: bucket.start,
+                    total: bucket.total,
+                })
+                .collect()
+        }
+
+        let per_channel = graphs
+            .per_channel
+            .into_iter()
+            .map(|series| PerChannelSeriesDto {
+                channel_id: series.channel_id,
+                weekday_radar: series
+                    .weekday_radar
+                    .into_iter()
+                    .map(|weekday| WeekdayTotalDto {
+                        weekday: weekday.weekday,
+                        total: weekday.total,
+                    })
+                    .collect(),
+                last_day: buckets(series.last_day),
+                current_week: buckets(series.current_week),
+                last_week: buckets(series.last_week),
+                last_30_days: buckets(series.last_30_days),
+                current_year: buckets(series.current_year),
+                last_year: buckets(series.last_year),
+            })
+            .collect();
+
+        Self {
+            last_day: buckets(graphs.last_day),
+            weekday_radar: graphs
+                .weekday_radar
+                .into_iter()
+                .map(|weekday| WeekdayTotalDto {
+                    weekday: weekday.weekday,
+                    total: weekday.total,
+                })
+                .collect(),
+            current_week: buckets(graphs.current_week),
+            last_week: buckets(graphs.last_week),
+            last_30_days: buckets(graphs.last_30_days),
+            current_year: buckets(graphs.current_year),
+            last_year: buckets(graphs.last_year),
+            per_channel,
+            channel_pie: graphs
+                .channel_pie
+                .into_iter()
+                .map(|total| ChannelTotalDto {
+                    channel_id: total.channel_id,
+                    total: total.total,
+                })
+                .collect(),
+        }
+    }
 }

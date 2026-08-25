@@ -16,7 +16,8 @@ use crate::core::domain::channels::channel::value_objects::CountingStationId;
 use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::counting_stations::counting_station::{
-    calendar_month_window, previous_calendar_month, previous_local_days,
+    calendar_month_window, calendar_year_window, previous_calendar_month, previous_calendar_year,
+    previous_local_days,
 };
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::error::DomainError;
@@ -118,6 +119,19 @@ impl StationOverviewServicePort for StationOverviewService {
             )?,
         };
 
+        // Previous full calendar year, and the year before that.
+        let (year_from, year_to) = previous_calendar_year(tz, now)?;
+        let (before_year_from, _) = calendar_year_window(tz, now, 2)?;
+        let year = MetricWindow {
+            key: MetricKey::LastYear,
+            current: self.sum_window(year_from, year_to, &channel_ids)?,
+            previous: self.sum_window(
+                before_year_from,
+                year_from - Duration::microseconds(1),
+                &channel_ids,
+            )?,
+        };
+
         let last_update = self
             .job_repository
             .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)?
@@ -126,7 +140,7 @@ impl StationOverviewServicePort for StationOverviewService {
         Ok(StationOverview {
             station,
             channel_count,
-            metrics: vec![day, week, month],
+            metrics: vec![day, week, month, year],
             last_update,
         })
     }
@@ -308,6 +322,59 @@ mod tests {
                 .map(|m| m.value.0)
                 .sum())
         }
+
+        fn sum_buckets(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _bucket_seconds: i64,
+            _origin: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<Vec<crate::core::domain::measurements::repository_port::TimeBucket>, DomainError>
+        {
+            Ok(Vec::new())
+        }
+
+        fn sum_buckets_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _bucket_seconds: i64,
+            _origin: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<
+            Vec<crate::core::domain::measurements::repository_port::ChannelBucket>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
+
+        fn sum_weekdays(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<
+            Vec<crate::core::domain::measurements::repository_port::WeekdayTotal>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
+
+        fn sum_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<
+            Vec<crate::core::domain::measurements::repository_port::ChannelTotal>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
     }
 
     struct MemoryJobRepository {
@@ -397,10 +464,11 @@ mod tests {
     }
 
     #[test]
-    fn overview_computes_all_three_metrics_and_channel_count() {
+    fn overview_computes_all_four_metrics_and_channel_count() {
         // now = 2024-01-11 12:00 UTC (Berlin, CET): "yesterday" = 2024-01-10,
         // previous 7 days = Jan 4-10 (previous 7: Dec 28 - Jan 3), previous
-        // month = December 2023 (before: November).
+        // month = December 2023 (before: November), previous year = 2023
+        // (before: 2022).
         let now = utc(2024, 1, 11, 12, 0, 0);
 
         let in_day = utc(2024, 1, 10, 12, 0, 0); // last-day window
@@ -409,6 +477,8 @@ mod tests {
         let in_week_prev = utc(2024, 1, 2, 12, 0, 0); // 7 days before
         let in_month = utc(2023, 12, 15, 12, 0, 0); // December
         let in_month_prev = utc(2023, 11, 15, 12, 0, 0); // November
+        let in_year = utc(2023, 6, 15, 12, 0, 0); // previous full year
+        let in_year_prev = utc(2022, 6, 15, 12, 0, 0); // year before
 
         let measurements = vec![
             measurement(100, in_day),
@@ -417,6 +487,8 @@ mod tests {
             measurement(20, in_week_prev),
             measurement(5, in_month),
             measurement(2, in_month_prev),
+            measurement(50, in_year),
+            measurement(20, in_year_prev),
         ];
         let last_update = utc(2024, 1, 11, 6, 0, 0);
 
@@ -443,6 +515,10 @@ mod tests {
         // LastMonth: December vs November.
         assert_eq!(by_key[&MetricKey::LastMonth].current, 5);
         assert_eq!(by_key[&MetricKey::LastMonth].previous, 2);
+        // LastYear: 2023 (50 + 5 + 2, incl. the December/November month values)
+        // vs 2022 (20).
+        assert_eq!(by_key[&MetricKey::LastYear].current, 57);
+        assert_eq!(by_key[&MetricKey::LastYear].previous, 20);
     }
 
     #[test]
@@ -453,7 +529,7 @@ mod tests {
             .unwrap();
         assert_eq!(overview.last_update, None);
         assert_eq!(overview.channel_count, 1);
-        assert_eq!(overview.metrics.len(), 3);
+        assert_eq!(overview.metrics.len(), 4);
     }
 
     #[test]
@@ -513,5 +589,6 @@ mod tests {
         assert_eq!(MetricKey::LastDay.as_str(), "last_day");
         assert_eq!(MetricKey::Last7Days.as_str(), "last_7_days");
         assert_eq!(MetricKey::LastMonth.as_str(), "last_month");
+        assert_eq!(MetricKey::LastYear.as_str(), "last_year");
     }
 }

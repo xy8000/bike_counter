@@ -24,19 +24,28 @@ test('the sidebar renders only the stations visible in the current viewport', as
   // …and the badge total is the overall station count (>= visible).
   expect(baseline.total).toBeGreaterThanOrEqual(baseline.visible)
 
-  // Focus the map and zoom in twice with the keyboard (the Leaflet zoom control
-  // sits under the sidebar overlay). The viewport no longer shows every station.
-  await page.locator('.leaflet-container').click({ position: { x: 700, y: 300 } })
-  await page.keyboard.press('+')
-  await page.keyboard.press('+')
-
-  // Wait for the debounced bounds change + BFF refetch to settle, then assert
-  // the visible set shrank while staying internally consistent.
+  // Focus the map and zoom in with the keyboard (the Leaflet zoom control sits
+  // under the sidebar overlay). After each moveend the map re-renders and can
+  // drop a keypress, so keep zooming until the visible set actually shrinks.
+  const map = page.locator('.leaflet-container')
+  await map.click({ position: { x: 700, y: 300 } })
+  await map.focus()
   await expect
-    .poll(async () => (await readSidebarCounts(page)).visible)
+    .poll(
+      async () => {
+        const current = (await readSidebarCounts(page)).visible
+        if (current >= baseline.visible) {
+          await page.keyboard.press('+')
+          await page.waitForTimeout(400)
+        }
+        return (await readSidebarCounts(page)).visible
+      },
+      { timeout: 20000 },
+    )
     .toBeLessThan(baseline.visible)
 
+  // After zooming, the visible set shrank and stays internally consistent.
   const after = await readSidebarCounts(page)
-  expect(await sidebarStationItems(page).count()).toBe(after.visible)
-  expect(await mapMarkers(page).count()).toBe(after.visible)
+  await expect(sidebarStationItems(page)).toHaveCount(after.visible)
+  await expect(mapMarkers(page)).toHaveCount(after.visible)
 })

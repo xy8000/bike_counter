@@ -3,7 +3,7 @@
 export type Trend = 'up' | 'down' | 'flat'
 
 export interface StationOverviewMetric {
-  key: 'last_day' | 'last_7_days' | 'last_month'
+  key: 'last_day' | 'last_7_days' | 'last_month' | 'last_year'
   current: number
   previous: number
   trend: Trend

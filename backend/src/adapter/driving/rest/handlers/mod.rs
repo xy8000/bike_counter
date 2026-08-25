@@ -41,6 +41,7 @@ use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::station_detail::service_port::StationDetailServicePort;
 use crate::core::domain::station_overview::service_port::StationOverviewServicePort;
 use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
 
@@ -57,6 +58,7 @@ pub struct AppState {
     pub station_summary_service: Arc<dyn StationSummaryServicePort + Send + Sync>,
     pub global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
     pub station_overview_service: Arc<dyn StationOverviewServicePort + Send + Sync>,
+    pub station_detail_service: Arc<dyn StationDetailServicePort + Send + Sync>,
     pub asset_service: Arc<dyn AssetServicePort>,
     pub asset_storage: Arc<dyn AssetStorage>,
 }

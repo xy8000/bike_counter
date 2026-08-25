@@ -270,3 +270,40 @@ Counting-station overview page + provider images (plans/32_counting_station_over
 - [x] Docs: README (config + asset-storage subsection + docker-compose MinIO + BFF endpoints), ToDo, plans/32 (status + definition of done + implementation notes)
 - [x] Docker build fixes found by the Playwright gate: `rust-s3` forces `openssl` via native-tls, and Alpine's `openssl-dev` has no static `.a`, so `backend/Cargo.toml` enables `openssl`'s `vendored` feature and the Dockerfile adds `perl make` + `COPY assets`; the map-void click moved into a `useMapEvents` child component (react-leaflet context)
 - [x] Gates green: `make check`, `make test` (311), `make test-rest` (82), `make coverage` (overall 84.36%, core 95.20%), `make frontend-build`, `make test-playwright` (4 specs)
+
+Overview detail-link polish + asset findings fixes (plan 33)
+
+- [x] `AssetService::store_provider_image` rejects a provider hash that does not match the bytes (object key == persisted sha256) + unit test
+- [x] `AssetObjectInfo` drops the unused `etag` (carries only `byte_size`); MinIO adapter no longer computes a duplicate hash; all mocks updated; port doc clarifies the BFF derives ETag from the DB sha256
+- [x] `MinioAssetStorage::get_stream` uses a bounded `futures::channel::mpsc` channel; `ChunkWriter` applies Sink-based backpressure so a slow browser never buffers the whole object
+- [x] `DataImportService::sync_counting_stations` resolves `default_asset()` once per import and passes it into `sync_station_image` (no per-station lookup)
+- [x] Frontend: overview panel top bar is the clickable (non-link-styled) station name + `ExternalLink` icon button next to the "x" (in-body "Open detail page" text link removed); map popup uses the same name + icon affordance
+- [x] Frontend: single `selectStation({ id, latitude, longitude })` entry point (map marker / sidebar / search "find on map" all fly + open the same overview panel); duplicate raw `L.popup` removed from `App.tsx`; `MapView.onSelectStation` receives the whole `StationMap`
+- [x] e2e `map.spec.ts` updated to assert the icon link and the clickable heading (both `href` `/stations/{id}`)
+- [x] Docs: `plans/33_..._plan.md` (status + definition of done) + registered in `plans/README.md`
+- [x] Gates run: `make check`, `make test-rest` (82), `cargo test core::` (147), `make frontend-build`
+- [ ] Docker gates pending: `make test`, `make coverage`, `make test-playwright`
+
+Counting-station detail route + URL-encoded map/overview state (plan 34)
+
+- [x] Add `react-router-dom` dependency; wrap the app in `BrowserRouter` in `main.tsx`
+- [x] `App.tsx` becomes a `<Routes>` table: `/` → `MapPage` (extracted from the old composition), `/stations/:stationId` → blank `StationDetail`
+- [x] New `features/map/MapPage.tsx` with the URL-state bridge: initial bbox + `station` read from the URL once, mirrored back with `setSearchParams(..., { replace: true })`
+- [x] `lib/geo.ts` helpers: `parseBoundsQuery` (validate) + `serializeBounds` (round to 6 decimals)
+- [x] `MapView` accepts `initialBounds` and fits it via `MapContainer` `bounds` (react-leaflet gives bounds priority when center/zoom are absent)
+- [x] e2e `url.spec.ts`: bbox params in the URL, `station` appears/disappears with the overview, blank `/stations/:id` renders
+- [x] e2e fixes surfaced by the gate: `search.spec.ts` now asserts the overview panel instead of the removed popup (plan 33 unified selection), and `sidebar.spec.ts` zooms until the visible set shrinks (a `moveend` re-render can drop a `+` keypress)
+- [x] Gates green: `make frontend-build` (tsc + vite build), `make test-playwright` (6 specs), plus `make check` / `make test-rest` (backend untouched)
+
+Counting-station detail page — layout + stats + graphs (plan 35)
+
+- [x] Backend: calendar-year/week-start helpers (`calendar_year_window`, `previous_calendar_year`, `local_year_start`, `local_week_start`) in `counting_station.rs` (DST-aware)
+- [x] Backend: `MetricKey::LastYear` (4th overview metric) + timezone-aware bucketed reads on `MeasurementRepository` (`sum_buckets`, `sum_buckets_by_channel`, `sum_weekdays`, `sum_by_channel` via PostgreSQL `date_bin`)
+- [x] Backend: `station_detail` domain + `StationDetailService` (all windows, per-channel series incl. a timezone-aware per-channel weekday radar, channel pie, no zero-filling)
+- [x] Backend: BFF `GET /api/bff/station-detail/{id}` + DTOs + OpenAPI; wiring in `main.rs` / `AppState` / `RestApiAdapter`
+- [x] Frontend: shadcn `card`/`tooltip`/`chart` components + `recharts` / `@radix-ui/react-tooltip` deps
+- [x] Frontend: shared `MetricCard` extracted from the overview panel + `last_year` label (overview + detail use the same component)
+- [x] Frontend: `StationDetail` page — back-to-map link, half-page image + highlighted clickable map preview (opens the map view at the preview bounds via history push), name/description row, overview stat cards
+- [x] Frontend: line charts via shadcn `chart` (last day 5 min, current + last week 15 min with the running week's empty tail, last 30 days 30 min + info note, current + last year 1 day, weekday radar) + Nerd-Stats per channel + channel pie
+- [x] e2e `detail.spec.ts`: renders content, back-to-map → `/` with bbox, preview click → map view at preview bounds, browser back → `/stations/:id`; `url.spec.ts` updated (detail page is no longer blank)
+- [x] Gates green: `make check`, `make test` (326), `make coverage` (overall 83.73%, core 95.34%), `make test-playwright` (9 specs)

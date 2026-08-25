@@ -1,10 +1,12 @@
 use utoipa::OpenApi;
 
 use crate::adapter::driving::bff::{
-    __path_get_bff_asset_content, __path_get_bff_global_summary, __path_get_bff_station_overview,
-    __path_get_bff_stations_search, __path_get_bff_stations_sidebar, __path_list_bff_stations,
-    ActionDto, GlobalSummaryDto, MetricDto, StationMapDto, StationMapListDto, StationOverviewDto,
-    StationSearchDto, StationSummaryDto, StationSummarySidebarDto, Trend,
+    __path_get_bff_asset_content, __path_get_bff_global_summary, __path_get_bff_station_detail,
+    __path_get_bff_station_overview, __path_get_bff_stations_search,
+    __path_get_bff_stations_sidebar, __path_list_bff_stations, ActionDto, ChannelRefDto,
+    ChannelTotalDto, GlobalSummaryDto, MetricDto, PerChannelSeriesDto, StationDetailDto,
+    StationDetailGraphsDto, StationMapDto, StationMapListDto, StationOverviewDto, StationSearchDto,
+    StationSummaryDto, StationSummarySidebarDto, TimeBucketDto, Trend, WeekdayTotalDto,
 };
 use crate::adapter::driving::rest::dto::{
     ApiRootDto, ChannelDto, ChannelListDto, CountingStationDto, CountingStationListDto,
@@ -32,6 +34,7 @@ use crate::adapter::driving::rest::handlers::{
         get_bff_stations_search,
         get_bff_global_summary,
         get_bff_station_overview,
+        get_bff_station_detail,
         get_bff_asset_content,
         get_api_root,
         list_counting_stations,
@@ -65,6 +68,13 @@ use crate::adapter::driving::rest::handlers::{
             StationSearchDto,
             GlobalSummaryDto,
             StationOverviewDto,
+            StationDetailDto,
+            ChannelRefDto,
+            TimeBucketDto,
+            WeekdayTotalDto,
+            ChannelTotalDto,
+            PerChannelSeriesDto,
+            StationDetailGraphsDto,
             MetricDto,
             Trend,
             ApiRootDto,

@@ -188,13 +188,83 @@ fn local_midnight_utc(
         })
 }
 
+/// The complete calendar year that is `years_back` years before the year
+/// containing `now`, as a closed UTC interval. `years_back = 1` is the previous
+/// calendar year, `years_back = 2` the one before it (comparison period).
+pub fn calendar_year_window(
+    tz: Tz,
+    now: DateTime<Utc>,
+    years_back: u32,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    if years_back == 0 {
+        return Err(crate::core::domain::error::DomainError::InvalidQuery(
+            "calendar_year_window requires years_back >= 1".to_string(),
+        ));
+    }
+    let now_local = now.with_timezone(&tz);
+    let current_year = now_local.year();
+    let from_date =
+        NaiveDate::from_ymd_opt(current_year - years_back as i32, 1, 1).ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery("invalid target year".to_string())
+        })?;
+    let to_date =
+        NaiveDate::from_ymd_opt(current_year - years_back as i32 + 1, 1, 1).ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery("invalid target year".to_string())
+        })?;
+    let from = local_midnight_utc(tz, from_date)?;
+    let to = local_midnight_utc(tz, to_date)? - chrono::Duration::microseconds(1);
+    Ok((from, to))
+}
+
+/// The previous complete calendar year in `tz` as a closed UTC interval
+/// (`years_back = 1`), matching the year metric's trend period.
+pub fn previous_calendar_year(
+    tz: Tz,
+    now: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    calendar_year_window(tz, now, 1)
+}
+
+/// The UTC instant of local midnight on Jan 1 of the year containing `now` in
+/// `tz` (the alignment origin for 1-day bucketing over a year).
+pub fn local_year_start(
+    tz: Tz,
+    now: DateTime<Utc>,
+) -> Result<DateTime<Utc>, crate::core::domain::error::DomainError> {
+    let now_local = now.with_timezone(&tz);
+    let jan_first = NaiveDate::from_ymd_opt(now_local.year(), 1, 1).ok_or_else(|| {
+        crate::core::domain::error::DomainError::InvalidQuery("invalid year".to_string())
+    })?;
+    local_midnight_utc(tz, jan_first)
+}
+
+/// The UTC instant of local midnight on the Monday of the ISO week containing
+/// `now` in `tz` (the alignment origin for 15-minute bucketing over a week).
+pub fn local_week_start(
+    tz: Tz,
+    now: DateTime<Utc>,
+) -> Result<DateTime<Utc>, crate::core::domain::error::DomainError> {
+    let now_local = now.with_timezone(&tz);
+    let days_since_monday = now_local.weekday().num_days_from_monday() as i64;
+    let monday = now_local
+        .date_naive()
+        .checked_sub_signed(chrono::Duration::days(days_since_monday))
+        .ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery(
+                "cannot compute the week start (date out of range)".to_string(),
+            )
+        })?;
+    local_midnight_utc(tz, monday)
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use chrono_tz::{Europe::Berlin, Tz};
 
     use super::{
-        calendar_month_window, local_midnight_utc, previous_calendar_month, previous_local_day,
+        calendar_month_window, calendar_year_window, local_midnight_utc, local_week_start,
+        local_year_start, previous_calendar_month, previous_calendar_year, previous_local_day,
         previous_local_days,
     };
     use crate::core::domain::error::DomainError;
@@ -349,6 +419,68 @@ mod tests {
     fn calendar_month_window_rejects_zero() {
         assert!(matches!(
             calendar_month_window(Berlin, utc(2024, 4, 15, 12, 0, 0), 0),
+            Err(DomainError::InvalidQuery(_))
+        ));
+    }
+
+    #[test]
+    fn local_week_start_returns_the_monday_of_the_current_local_week() {
+        // 2024-01-04 is a Thursday in Berlin (CET, UTC+1); the ISO week starts
+        // on Monday 2024-01-01 00:00 CET = 2023-12-31 23:00 UTC.
+        let monday = local_week_start(Berlin, utc(2024, 1, 4, 12, 0, 0)).unwrap();
+        assert_eq!(monday, utc(2023, 12, 31, 23, 0, 0));
+
+        // A Monday at noon is the start of that same week (zero days back).
+        let on_monday = local_week_start(Berlin, utc(2024, 1, 1, 12, 0, 0)).unwrap();
+        assert_eq!(on_monday, utc(2023, 12, 31, 23, 0, 0));
+
+        // A Sunday is 6 days after the Monday of its week.
+        let sunday = local_week_start(Berlin, utc(2024, 1, 7, 12, 0, 0)).unwrap();
+        assert_eq!(sunday, utc(2023, 12, 31, 23, 0, 0));
+    }
+
+    #[test]
+    fn local_year_start_returns_jan_first_local_midnight() {
+        // Berlin 2024 (CET) Jan 1 00:00 = 2023-12-31 23:00 UTC.
+        assert_eq!(
+            local_year_start(Berlin, utc(2024, 4, 15, 12, 0, 0)).unwrap(),
+            utc(2023, 12, 31, 23, 0, 0)
+        );
+        assert_eq!(
+            local_year_start(Berlin, utc(2023, 1, 1, 1, 0, 0)).unwrap(),
+            utc(2022, 12, 31, 23, 0, 0)
+        );
+    }
+
+    #[test]
+    fn previous_calendar_year_spans_the_previous_full_year() {
+        // Previous full year for 2024-04-15 (CET) is 2023: Berlin year 2023
+        // spans UTC [2022-12-31T23:00:00Z, 2023-12-31T23:00:00Z).
+        let (from, to) = previous_calendar_year(Berlin, utc(2024, 4, 15, 12, 0, 0)).unwrap();
+        assert_eq!(from, utc(2022, 12, 31, 23, 0, 0));
+        assert_eq!(to, utc(2023, 12, 31, 23, 0, 0) - Duration::microseconds(1));
+    }
+
+    #[test]
+    fn calendar_year_window_two_back_is_the_year_before_the_previous_one() {
+        // years_back=2 for April 2024 is 2022: [2021-12-31T23:00:00Z, 2022-12-31T23:00:00Z).
+        let (from, to) = calendar_year_window(Berlin, utc(2024, 4, 15, 12, 0, 0), 2).unwrap();
+        assert_eq!(from, utc(2021, 12, 31, 23, 0, 0));
+        assert_eq!(to, utc(2022, 12, 31, 23, 0, 0) - Duration::microseconds(1));
+    }
+
+    #[test]
+    fn calendar_year_window_handles_january_wrap() {
+        // For 2024-01-15, years_back=1 is 2023: [2022-12-31T23:00:00Z, 2023-12-31T23:00:00Z).
+        let (from, to) = calendar_year_window(Berlin, utc(2024, 1, 15, 12, 0, 0), 1).unwrap();
+        assert_eq!(from, utc(2022, 12, 31, 23, 0, 0));
+        assert_eq!(to, utc(2023, 12, 31, 23, 0, 0) - Duration::microseconds(1));
+    }
+
+    #[test]
+    fn calendar_year_window_rejects_zero() {
+        assert!(matches!(
+            calendar_year_window(Berlin, utc(2024, 4, 15, 12, 0, 0), 0),
             Err(DomainError::InvalidQuery(_))
         ));
     }

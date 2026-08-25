@@ -20,7 +20,12 @@ test('clicking a map marker opens a popup with the station name and detail link'
   const popup = page.locator('.leaflet-popup-content')
   await expect(popup).toBeVisible()
   await expect(popup).toContainText(stationName)
-  await expect(popup.getByRole('link', { name: /Open detail page/ })).toHaveAttribute(
+  // The icon button is the explicit detail affordance; the name is also a link.
+  await expect(popup.getByRole('link', { name: 'Open detail page' })).toHaveAttribute(
+    'href',
+    /^\/stations\//
+  )
+  await expect(popup.getByRole('link', { name: stationName })).toHaveAttribute(
     'href',
     /^\/stations\//
   )
@@ -44,7 +49,12 @@ test('clicking a map marker opens the overview panel and a map void click closes
   await expect(overview.getByText('Last 24 hours')).toBeVisible()
   await expect(overview.getByText('Last 7 days')).toBeVisible()
   await expect(overview.getByText('Last month')).toBeVisible()
-  await expect(overview.getByRole('link', { name: /Open detail page/ })).toHaveAttribute(
+  await expect(overview.getByRole('link', { name: 'Open detail page' })).toHaveAttribute(
+    'href',
+    /^\/stations\//
+  )
+  // The heading is clickable (to the same detail page) but not styled as a link.
+  await expect(overview.getByRole('link', { name: stationName })).toHaveAttribute(
     'href',
     /^\/stations\//
   )

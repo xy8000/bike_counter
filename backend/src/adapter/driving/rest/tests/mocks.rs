@@ -21,6 +21,7 @@ use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
+use crate::core::application::station_detail_service::StationDetailService;
 use crate::core::application::station_overview_service::StationOverviewService;
 use crate::core::application::station_summary_service::StationSummaryService;
 use crate::core::domain::assets::asset::value_objects::{
@@ -258,6 +259,53 @@ impl MeasurementRepository for MockMeasurementRepository {
             .filter(|m| channel_id.is_none_or(|id| m.channel_id == id))
             .map(|m| m.value.0)
             .sum())
+    }
+
+    fn sum_buckets(
+        &self,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+        _bucket_seconds: i64,
+        _origin: DateTime<Utc>,
+        _timezone: &str,
+        _channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<crate::core::domain::measurements::repository_port::TimeBucket>, DomainError>
+    {
+        Ok(Vec::new())
+    }
+
+    fn sum_buckets_by_channel(
+        &self,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+        _bucket_seconds: i64,
+        _origin: DateTime<Utc>,
+        _timezone: &str,
+        _channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<crate::core::domain::measurements::repository_port::ChannelBucket>, DomainError>
+    {
+        Ok(Vec::new())
+    }
+
+    fn sum_weekdays(
+        &self,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+        _timezone: &str,
+        _channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<crate::core::domain::measurements::repository_port::WeekdayTotal>, DomainError>
+    {
+        Ok(Vec::new())
+    }
+
+    fn sum_by_channel(
+        &self,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+        _channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<crate::core::domain::measurements::repository_port::ChannelTotal>, DomainError>
+    {
+        Ok(Vec::new())
     }
 }
 
@@ -526,6 +574,16 @@ pub fn sample_station_overview_service() -> Arc<StationOverviewService> {
         Arc::new(sample_channel_repository()),
         Arc::new(sample_measurement_repository()),
         Arc::new(sample_job_repository()),
+    ))
+}
+
+/// A [`StationDetailService`] backed by the sample counting-station, channel and
+/// measurement repositories.
+pub fn sample_station_detail_service() -> Arc<StationDetailService> {
+    Arc::new(StationDetailService::new(
+        Arc::new(sample_counting_station_repository()),
+        Arc::new(sample_channel_repository()),
+        Arc::new(sample_measurement_repository()),
     ))
 }
 
