@@ -2,12 +2,14 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
-    DataSourceConfiguration, DatabaseConfiguration,
+    AssetStorageConfiguration, DataSourceConfiguration, DatabaseConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
 
 /// Default data-source update frequency: once per hour (CRON syntax).
 pub const DEFAULT_DATA_SOURCE_UPDATE_CRON: &str = "0 0 * * * *";
+/// Default asset cleanup frequency: daily at 04:00 (CRON syntax).
+pub const DEFAULT_ASSET_CLEANUP_CRON: &str = "0 0 4 * * *";
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
@@ -17,14 +19,24 @@ pub struct Configuration {
     data_source_update_cron: String,
     /// Required ShedLock-style max lifetime for the update job (no default).
     data_source_update_max_lifetime_seconds: i64,
+    /// CRON expression defining when the asset cleanup job re-triggers.
+    asset_cleanup_cron: String,
+    /// Required ShedLock-style max lifetime for the asset cleanup job (no default).
+    asset_cleanup_max_lifetime_seconds: i64,
+    /// S3-compatible object storage holding the image binaries.
+    asset_storage: AssetStorageConfiguration,
 }
 
 impl Configuration {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         database: DatabaseConfiguration,
         data_sources: Vec<DataSourceConfiguration>,
         data_source_update_cron: String,
         data_source_update_max_lifetime_seconds: i64,
+        asset_storage: AssetStorageConfiguration,
+        asset_cleanup_cron: String,
+        asset_cleanup_max_lifetime_seconds: i64,
     ) -> Result<Self, ConfigError> {
         cron::Schedule::from_str(&data_source_update_cron).map_err(|error| {
             ConfigError::InvalidFormat(format!(
@@ -34,6 +46,16 @@ impl Configuration {
         if data_source_update_max_lifetime_seconds <= 0 {
             return Err(ConfigError::InvalidFormat(
                 "data_source_update_max_lifetime_seconds must be a positive integer".to_string(),
+            ));
+        }
+        cron::Schedule::from_str(&asset_cleanup_cron).map_err(|error| {
+            ConfigError::InvalidFormat(format!(
+                "invalid asset_cleanup_cron '{asset_cleanup_cron}': {error}"
+            ))
+        })?;
+        if asset_cleanup_max_lifetime_seconds <= 0 {
+            return Err(ConfigError::InvalidFormat(
+                "asset_cleanup_max_lifetime_seconds must be a positive integer".to_string(),
             ));
         }
 
@@ -52,6 +74,9 @@ impl Configuration {
             data_sources,
             data_source_update_cron,
             data_source_update_max_lifetime_seconds,
+            asset_cleanup_cron,
+            asset_cleanup_max_lifetime_seconds,
+            asset_storage,
         })
     }
 
@@ -76,6 +101,26 @@ impl Configuration {
     /// The configured max lifetime as a `chrono::Duration` for the domain.
     pub fn data_source_update_max_lifetime(&self) -> chrono::Duration {
         chrono::Duration::seconds(self.data_source_update_max_lifetime_seconds)
+    }
+
+    /// CRON expression defining when the asset cleanup job is re-triggered.
+    pub fn asset_cleanup_cron(&self) -> &str {
+        &self.asset_cleanup_cron
+    }
+
+    /// Required ShedLock-style max lifetime for the asset cleanup job (no default).
+    pub fn asset_cleanup_max_lifetime_seconds(&self) -> i64 {
+        self.asset_cleanup_max_lifetime_seconds
+    }
+
+    /// The configured max lifetime as a `chrono::Duration` for the domain.
+    pub fn asset_cleanup_max_lifetime(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.asset_cleanup_max_lifetime_seconds)
+    }
+
+    /// S3-compatible object storage holding the image binaries.
+    pub fn asset_storage(&self) -> &AssetStorageConfiguration {
+        &self.asset_storage
     }
 }
 
@@ -137,6 +182,72 @@ pub mod value_objects {
 
         pub fn database_name(&self) -> &str {
             &self.database_name
+        }
+    }
+
+    /// S3-compatible object storage (e.g. MinIO) holding image binaries.
+    #[derive(Debug, Clone)]
+    pub struct AssetStorageConfiguration {
+        endpoint: String,
+        access_key: String,
+        secret_key: String,
+        bucket: String,
+        region: String,
+    }
+
+    impl AssetStorageConfiguration {
+        pub fn new(
+            endpoint: String,
+            access_key: String,
+            secret_key: String,
+            bucket: String,
+            region: String,
+        ) -> Result<Self, ConfigError> {
+            let values = [
+                ("asset_storage.endpoint", endpoint),
+                ("asset_storage.access_key", access_key),
+                ("asset_storage.secret_key", secret_key),
+                ("asset_storage.bucket", bucket),
+                ("asset_storage.region", region),
+            ];
+            if let Some((name, _)) = values.iter().find(|(_, value)| value.trim().is_empty()) {
+                return Err(ConfigError::EmptyValue(name));
+            }
+
+            let [
+                (_, endpoint),
+                (_, access_key),
+                (_, secret_key),
+                (_, bucket),
+                (_, region),
+            ] = values;
+            Ok(Self {
+                endpoint,
+                access_key,
+                secret_key,
+                bucket,
+                region,
+            })
+        }
+
+        pub fn endpoint(&self) -> &str {
+            &self.endpoint
+        }
+
+        pub fn access_key(&self) -> &str {
+            &self.access_key
+        }
+
+        pub fn secret_key(&self) -> &str {
+            &self.secret_key
+        }
+
+        pub fn bucket(&self) -> &str {
+            &self.bucket
+        }
+
+        pub fn region(&self) -> &str {
+            &self.region
         }
     }
 
@@ -208,9 +319,11 @@ pub mod value_objects {
 mod tests {
     use std::collections::HashMap;
 
+    use super::DEFAULT_ASSET_CLEANUP_CRON;
     use super::DEFAULT_DATA_SOURCE_UPDATE_CRON;
     use super::value_objects::{
-        DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+        AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
+        DatabaseConfiguration,
     };
     use crate::core::domain::configuration::error::ConfigError;
 
@@ -226,6 +339,36 @@ mod tests {
             "database".to_string(),
         )
         .unwrap()
+    }
+
+    fn asset_storage_config() -> AssetStorageConfiguration {
+        AssetStorageConfiguration::new(
+            "http://minio:9000".to_string(),
+            "minioadmin".to_string(),
+            "minioadmin".to_string(),
+            "bike-counter-images".to_string(),
+            "us-east-1".to_string(),
+        )
+        .unwrap()
+    }
+
+    fn configuration(
+        database: DatabaseConfiguration,
+        data_sources: Vec<DataSourceConfiguration>,
+        data_source_update_cron: String,
+        data_source_update_max_lifetime_seconds: i64,
+        asset_cleanup_cron: String,
+        asset_cleanup_max_lifetime_seconds: i64,
+    ) -> Result<super::Configuration, ConfigError> {
+        super::Configuration::new(
+            database,
+            data_sources,
+            data_source_update_cron,
+            data_source_update_max_lifetime_seconds,
+            asset_storage_config(),
+            asset_cleanup_cron,
+            asset_cleanup_max_lifetime_seconds,
+        )
     }
 
     #[test]
@@ -287,16 +430,87 @@ mod tests {
     }
 
     #[test]
+    fn rejects_empty_asset_storage_values() {
+        let cases = [
+            (
+                "asset_storage.endpoint",
+                "",
+                "key",
+                "secret",
+                "bucket",
+                "region",
+            ),
+            (
+                "asset_storage.access_key",
+                "endpoint",
+                "",
+                "secret",
+                "bucket",
+                "region",
+            ),
+            (
+                "asset_storage.secret_key",
+                "endpoint",
+                "key",
+                "",
+                "bucket",
+                "region",
+            ),
+            (
+                "asset_storage.bucket",
+                "endpoint",
+                "key",
+                "secret",
+                "",
+                "region",
+            ),
+            (
+                "asset_storage.region",
+                "endpoint",
+                "key",
+                "secret",
+                "bucket",
+                "",
+            ),
+        ];
+
+        for (name, endpoint, access_key, secret_key, bucket, region) in cases {
+            assert!(matches!(
+                AssetStorageConfiguration::new(
+                    endpoint.to_string(),
+                    access_key.to_string(),
+                    secret_key.to_string(),
+                    bucket.to_string(),
+                    region.to_string(),
+                ),
+                Err(ConfigError::EmptyValue(actual)) if actual == name
+            ));
+        }
+    }
+
+    #[test]
+    fn exposes_asset_storage_values() {
+        let config = asset_storage_config();
+        assert_eq!(config.endpoint(), "http://minio:9000");
+        assert_eq!(config.access_key(), "minioadmin");
+        assert_eq!(config.secret_key(), "minioadmin");
+        assert_eq!(config.bucket(), "bike-counter-images");
+        assert_eq!(config.region(), "us-east-1");
+    }
+
+    #[test]
     fn rejects_duplicate_data_source_names() {
         let data_sources = vec![
             DataSourceConfiguration::new("Münster".to_string(), provider_config("type")).unwrap(),
             DataSourceConfiguration::new("Münster".to_string(), provider_config("type")).unwrap(),
         ];
         assert!(matches!(
-            super::Configuration::new(
+            configuration(
                 database_config(),
                 data_sources,
                 DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                3600,
+                DEFAULT_ASSET_CLEANUP_CRON.to_string(),
                 3600,
             ),
             Err(ConfigError::InvalidFormat(_))
@@ -305,11 +519,13 @@ mod tests {
 
     #[test]
     fn accepts_valid_cron_and_positive_lifetime() {
-        let configuration = super::Configuration::new(
+        let configuration = configuration(
             database_config(),
             vec![],
             DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
             3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            7200,
         )
         .unwrap();
         assert_eq!(
@@ -324,24 +540,78 @@ mod tests {
             configuration.data_source_update_max_lifetime(),
             chrono::Duration::seconds(3600)
         );
+        assert_eq!(
+            configuration.asset_cleanup_cron(),
+            DEFAULT_ASSET_CLEANUP_CRON
+        );
+        assert_eq!(configuration.asset_cleanup_max_lifetime_seconds(), 7200);
+        assert_eq!(
+            configuration.asset_cleanup_max_lifetime(),
+            chrono::Duration::seconds(7200)
+        );
+        assert_eq!(
+            configuration.asset_storage().bucket(),
+            "bike-counter-images"
+        );
     }
 
     #[test]
-    fn rejects_invalid_cron() {
+    fn rejects_invalid_data_source_update_cron() {
         assert!(matches!(
-            super::Configuration::new(database_config(), vec![], "not a cron".to_string(), 3600,),
+            configuration(
+                database_config(),
+                vec![],
+                "not a cron".to_string(),
+                3600,
+                DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+                3600,
+            ),
             Err(ConfigError::InvalidFormat(_))
         ));
     }
 
     #[test]
-    fn rejects_non_positive_lifetime() {
+    fn rejects_invalid_asset_cleanup_cron() {
+        assert!(matches!(
+            configuration(
+                database_config(),
+                vec![],
+                DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                3600,
+                "not a cron".to_string(),
+                3600,
+            ),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_non_positive_data_source_update_lifetime() {
         for lifetime in [0, -1] {
             assert!(matches!(
-                super::Configuration::new(
+                configuration(
                     database_config(),
                     vec![],
                     DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                    lifetime,
+                    DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+                    3600,
+                ),
+                Err(ConfigError::InvalidFormat(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_non_positive_asset_cleanup_lifetime() {
+        for lifetime in [0, -1] {
+            assert!(matches!(
+                configuration(
+                    database_config(),
+                    vec![],
+                    DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                    3600,
+                    DEFAULT_ASSET_CLEANUP_CRON.to_string(),
                     lifetime,
                 ),
                 Err(ConfigError::InvalidFormat(_))

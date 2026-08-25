@@ -42,10 +42,11 @@ use crate::core::application::station_summary_service::StationSummaryService;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::sample_job_repository;
 use mocks::{
-    MockDataSourceRepository, MockJobRepository, mock_health_service, sample_channel_service,
-    sample_counting_station_service, sample_data_source_service, sample_global_summary_service,
-    sample_job_service, sample_measurement_service, sample_persistent_state_service,
-    sample_provider_message_service, sample_station_summary_service,
+    MockDataSourceRepository, MockJobRepository, mock_health_service, sample_asset_service,
+    sample_asset_storage, sample_channel_service, sample_counting_station_service,
+    sample_data_source_service, sample_global_summary_service, sample_job_service,
+    sample_measurement_service, sample_persistent_state_service, sample_provider_message_service,
+    sample_station_overview_service, sample_station_summary_service,
 };
 
 /// Wraps the router under test and provides request helpers.
@@ -105,6 +106,9 @@ impl TestApp {
             sample_provider_message_service(),
             sample_station_summary_service(),
             sample_global_summary_service(),
+            sample_station_overview_service(),
+            sample_asset_service(),
+            sample_asset_storage(),
         )
         .router();
         Self { router }
@@ -126,6 +130,9 @@ impl TestApp {
             provider_message_service,
             sample_station_summary_service(),
             sample_global_summary_service(),
+            sample_station_overview_service(),
+            sample_asset_service(),
+            sample_asset_storage(),
         )
         .router();
         Self { router }
@@ -147,6 +154,9 @@ impl TestApp {
             sample_provider_message_service(),
             station_summary_service,
             sample_global_summary_service(),
+            sample_station_overview_service(),
+            sample_asset_service(),
+            sample_asset_storage(),
         )
         .router();
         Self { router }
@@ -169,6 +179,9 @@ impl TestApp {
             sample_provider_message_service(),
             sample_station_summary_service(),
             sample_global_summary_service(),
+            sample_station_overview_service(),
+            sample_asset_service(),
+            sample_asset_storage(),
         )
         .router();
         Self { router }

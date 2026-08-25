@@ -97,6 +97,19 @@ pub struct CountingStationRecord {
     /// IANA timezone (e.g. `Europe/Berlin`) the station's measurements are
     /// reported in. A single provider may serve stations from several timezones.
     pub timezone: String,
+    /// Cheap image **hash** reported with every station so the core can detect
+    /// changes without downloading the bytes. `None` = the station has no image
+    /// (it falls back to the built-in default).
+    pub image_sha256: Option<String>,
+}
+
+/// The actual image bytes for one station, requested only when the hash
+/// reported in [`CountingStationRecord`] differs from the persisted one.
+#[derive(Debug, Clone)]
+pub struct StationImage {
+    pub sha256: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
 }
 
 /// An external channel record, linked to its station by external id only.
@@ -147,6 +160,14 @@ pub trait DataProvider: Send + Sync {
 
     /// Measurements of a single channel, bounded by `query.max_batch_size`.
     fn get_measurements(&self, query: MeasurementQuery) -> Result<MeasurementBatch, ProviderError>;
+
+    /// The actual image bytes for one station, requested by the core only when
+    /// the reported hash changed (or the station has no linked asset yet).
+    /// The default returns `Ok(None)`, so providers without images (and all
+    /// existing mocks) are unaffected.
+    fn get_station_image(&self, _external_id: &str) -> Result<Option<StationImage>, ProviderError> {
+        Ok(None)
+    }
 
     /// The configured default batch size, used to fill `MeasurementQuery::max_batch_size`.
     fn max_measurement_batch_size(&self) -> usize;
@@ -255,6 +276,14 @@ mod tests {
         assert_eq!(query.from, Some(from));
         assert_eq!(query.to, Some(to));
         assert_eq!(query.max_batch_size, 10);
+    }
+
+    #[test]
+    fn default_get_station_image_returns_none() {
+        // Providers that do not override `get_station_image` (no images) keep the
+        // no-op default; the core then falls back to the built-in default asset.
+        let provider = NoStateProvider;
+        assert!(provider.get_station_image("any-id").unwrap().is_none());
     }
 
     struct NoStateProvider;

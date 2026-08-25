@@ -20,6 +20,7 @@ use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::Job;
 use crate::core::domain::jobs::repository_port::JobRepository;
+use crate::core::domain::jobs::scheduled_job_port::ScheduledJobPort;
 
 /// The job type owned by this service.
 pub const DATA_SOURCE_UPDATE_JOB_TYPE: &str = "data_source_update";
@@ -252,6 +253,12 @@ impl DataSourceUpdateServicePort for DataSourceUpdateService {
     }
 }
 
+impl ScheduledJobPort for DataSourceUpdateService {
+    fn run_if_due(&self) {
+        self.run_if_due();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, VecDeque};
@@ -264,10 +271,11 @@ mod tests {
     use crate::core::domain::channels::channel::value_objects as channel_vo;
     use crate::core::domain::channels::repository_port::ChannelRepository;
     use crate::core::domain::configuration::configuration::value_objects::{
-        DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+        AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
+        DatabaseConfiguration,
     };
     use crate::core::domain::configuration::configuration::{
-        Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
+        Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
@@ -285,6 +293,17 @@ mod tests {
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
     use crate::core::domain::measurements::repository_port::MeasurementRepository;
 
+    fn asset_storage() -> AssetStorageConfiguration {
+        AssetStorageConfiguration::new(
+            "http://minio:9000".to_string(),
+            "minioadmin".to_string(),
+            "minioadmin".to_string(),
+            "bike-counter-images".to_string(),
+            "us-east-1".to_string(),
+        )
+        .unwrap()
+    }
+
     fn configuration() -> Configuration {
         Configuration::new(
             DatabaseConfiguration::new(
@@ -296,6 +315,9 @@ mod tests {
             .unwrap(),
             Vec::new(),
             DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            asset_storage(),
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
             3600,
         )
         .unwrap()
@@ -317,6 +339,7 @@ mod tests {
             latitude: None,
             longitude: None,
             timezone: "Europe/Berlin".to_string(),
+            image_sha256: None,
         }
     }
 

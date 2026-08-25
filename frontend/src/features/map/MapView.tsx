@@ -1,4 +1,5 @@
-import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet'
+import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from 'react-leaflet'
+import L from 'leaflet'
 import type { Map as LeafletMap } from 'leaflet'
 import type { Bounds } from '../../lib/geo'
 import { MUENSTER_CENTER } from '../../lib/geo'
@@ -8,15 +9,30 @@ import { MapController } from './MapController'
 // exports the emerald stationIcon used by the markers below.
 import { stationIcon } from '../../lib/leaflet'
 
-/// The interactive Leaflet map with one marker per visible station.
+/// Renders inside <MapContainer>: clicking the map "void" (i.e. anywhere except
+/// a marker) closes the open station overview. Marker clicks stop propagation
+/// (see below), so they never reach this handler. `useMapEvents` needs the
+/// Leaflet map context that only <MapContainer>'s children have, so this must be
+/// its own child component (not called from MapView itself).
+function MapVoidClickHandler({ onDeselect }: { onDeselect: () => void }) {
+  useMapEvents({ click: () => onDeselect() })
+  return null
+}
+
+/// The interactive Leaflet map with one marker per visible station. Clicking a
+/// marker opens the station overview panel; clicking the map void closes it.
 export function MapView({
   stations,
   onBounds,
   onReady,
+  onSelectStation,
+  onDeselect,
 }: {
   stations: StationMap[] | null
   onBounds: (bounds: Bounds) => void
   onReady: (map: LeafletMap) => void
+  onSelectStation: (id: string) => void
+  onDeselect: () => void
 }) {
   return (
     <MapContainer center={MUENSTER_CENTER} zoom={13} className="absolute inset-0 z-0">
@@ -38,10 +54,32 @@ export function MapView({
           // accessibility (screen readers + tooltip).
           alt={station.name}
           title={station.name}
+          eventHandlers={{
+            click: (event) => {
+              // Do not let the marker click bubble to the map's void-click
+              // handler (which would close the overview we are about to open).
+              L.DomEvent.stopPropagation(event.originalEvent)
+              onSelectStation(station.id)
+            },
+          }}
         >
-          <Popup>{station.name}</Popup>
+          <Popup>
+            <div className="flex flex-col gap-1">
+              <span className="font-medium">{station.name}</span>
+              {/* Link to the future detail page (rendered as an external link). */}
+              <a
+                href={`/stations/${station.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-semibold text-primary underline-offset-2 hover:underline"
+              >
+                Open detail page →
+              </a>
+            </div>
+          </Popup>
         </Marker>
       ))}
+      <MapVoidClickHandler onDeselect={onDeselect} />
       <MapController onBounds={onBounds} onReady={onReady} />
     </MapContainer>
   )

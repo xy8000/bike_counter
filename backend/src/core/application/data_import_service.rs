@@ -8,6 +8,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::core::domain::assets::asset::value_objects::{ContentType, Sha256};
+use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository_port::ChannelRepository;
@@ -17,7 +19,7 @@ use crate::core::domain::counting_stations::counting_station::value_objects as s
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
 use crate::core::domain::data_source::provider_port::{
-    DataProvider, MeasurementQuery, MeasurementRecord,
+    CountingStationRecord, DataProvider, MeasurementQuery, MeasurementRecord,
 };
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::Measurement;
@@ -59,6 +61,10 @@ pub struct DataImportService {
     channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
     measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
     runtimes: Vec<DataSourceRuntime>,
+    /// Asset service used to sync station images during import. `None` (the
+    /// default, used by unit tests and plain data imports) disables image
+    /// handling entirely.
+    asset_service: Option<Arc<dyn AssetServicePort>>,
 }
 
 impl DataImportService {
@@ -73,7 +79,15 @@ impl DataImportService {
             channel_repository,
             measurement_repository,
             runtimes,
+            asset_service: None,
         }
+    }
+
+    /// Enables hash-based station-image sync during import (used by the real
+    /// backend wiring; tests keep the default `None`).
+    pub fn with_asset_service(mut self, asset_service: Arc<dyn AssetServicePort>) -> Self {
+        self.asset_service = Some(asset_service);
+        self
     }
 
     /// Imports all data sources between `from` and `to` (both optional).
@@ -131,32 +145,52 @@ impl DataImportService {
                 // mutable attributes (name, description, coordinates) from the
                 // adapter on every sync.
                 Some(existing) => {
-                    let updated = CountingStation {
-                        name: station_vo::Name(record.name),
-                        description: station_vo::Description(record.description),
+                    let mut updated = CountingStation {
+                        name: station_vo::Name(record.name.clone()),
+                        description: station_vo::Description(record.description.clone()),
                         coordinates,
                         timezone: station_vo::Timezone(record.timezone.clone()),
                         ..existing.clone()
                     };
+                    if let Some(asset_service) = &self.asset_service {
+                        self.sync_station_image(
+                            asset_service,
+                            &mut updated,
+                            &record,
+                            runtime.provider.as_ref(),
+                        )?;
+                    }
                     let changed = updated.name.0 != existing.name.0
                         || updated.description.0 != existing.description.0
                         || updated.coordinates != existing.coordinates
-                        || updated.timezone != existing.timezone;
+                        || updated.timezone != existing.timezone
+                        || updated.image_asset_id != existing.image_asset_id
+                        || updated.image_sha256 != existing.image_sha256;
                     if changed {
                         self.counting_station_repository.update(updated.clone())?;
                     }
                     updated
                 }
                 None => {
-                    let station = CountingStation {
+                    let mut station = CountingStation {
                         id: station_vo::Id(Uuid::new_v4()),
-                        name: station_vo::Name(record.name),
-                        description: station_vo::Description(record.description),
+                        name: station_vo::Name(record.name.clone()),
+                        description: station_vo::Description(record.description.clone()),
                         external_datasource_id: Some(external_id),
                         data_source_id: Some(station_vo::DataSourceId(runtime.data_source_id.0)),
                         coordinates,
                         timezone: station_vo::Timezone(record.timezone.clone()),
+                        image_asset_id: None,
+                        image_sha256: None,
                     };
+                    if let Some(asset_service) = &self.asset_service {
+                        self.sync_station_image(
+                            asset_service,
+                            &mut station,
+                            &record,
+                            runtime.provider.as_ref(),
+                        )?;
+                    }
                     self.counting_station_repository.save(station.clone())?;
                     summary.counting_stations += 1;
                     station
@@ -166,6 +200,53 @@ impl DataImportService {
         }
 
         Ok(external_to_id)
+    }
+
+    /// Hash-based station-image sync: point the station at the provider's image
+    /// (downloading the bytes only when the reported hash changed) or at the
+    /// built-in default when the provider reports no image.
+    fn sync_station_image(
+        &self,
+        asset_service: &Arc<dyn AssetServicePort>,
+        station: &mut CountingStation,
+        record: &CountingStationRecord,
+        provider: &dyn DataProvider,
+    ) -> Result<(), DomainError> {
+        let Some(provider_hash) = &record.image_sha256 else {
+            // No provider image: fall back to the built-in default (idempotent).
+            let default = asset_service.default_asset()?;
+            station.image_asset_id = Some(default.id);
+            station.image_sha256 = None;
+            return Ok(());
+        };
+
+        // Hash unchanged since the last sync: keep the existing link, do not
+        // download the bytes again.
+        if station.image_sha256.as_deref() == Some(provider_hash.as_str()) {
+            return Ok(());
+        }
+
+        // Hash changed (or the station has no link yet): ask the provider for
+        // the new image bytes and persist them.
+        match provider
+            .get_station_image(&record.external_id)
+            .map_err(DomainError::from)?
+        {
+            Some(image) => {
+                let sha256 = Sha256::parse(&image.sha256)?;
+                let content_type = ContentType::parse(&image.content_type)?;
+                let asset =
+                    asset_service.store_provider_image(sha256, content_type, &image.bytes)?;
+                station.image_asset_id = Some(asset.id);
+                station.image_sha256 = Some(provider_hash.clone());
+            }
+            None => {
+                let default = asset_service.default_asset()?;
+                station.image_asset_id = Some(default.id);
+                station.image_sha256 = None;
+            }
+        }
+        Ok(())
     }
 
     /// Saves new channels and returns every channel (new + existing) so the
@@ -348,12 +429,18 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::core::domain::assets::asset::value_objects::{
+        AssetId, ByteSize, ContentType, ObjectKey, Sha256,
+    };
+    use crate::core::domain::assets::asset::{Asset, AssetOrigin, BuiltinImage};
+    use crate::core::domain::assets::service_port::AssetServicePort;
     use crate::core::domain::channels::channel::value_objects as channel_vo;
     use crate::core::domain::configuration::configuration::value_objects::DataProviderConfiguration;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::provider_port::{
         ChannelRecord, CountingStationRecord, MeasurementBatch, MeasurementRecord, ProviderError,
+        StationImage,
     };
     use crate::core::domain::health::HealthStatus;
     use crate::core::domain::measurements::measurement::Measurement;
@@ -376,6 +463,8 @@ mod tests {
             data_source_id: None,
             coordinates: None,
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
         }
     }
 
@@ -397,6 +486,7 @@ mod tests {
             latitude: None,
             longitude: None,
             timezone: "Europe/Berlin".to_string(),
+            image_sha256: None,
         }
     }
 
@@ -466,6 +556,132 @@ mod tests {
             data_source_id: DataSourceId(DataSource::id_from_name("Münster")),
             provider,
         }
+    }
+
+    fn runtime_for(provider: Arc<dyn DataProvider>) -> DataSourceRuntime {
+        DataSourceRuntime {
+            configuration: data_source_config("Münster", "münster_opendata_github_provider"),
+            data_source_id: DataSourceId(DataSource::id_from_name("Münster")),
+            provider,
+        }
+    }
+
+    /// A provider that serves stations with image hashes and scripted images.
+    struct ImageProvider {
+        stations: Vec<CountingStationRecord>,
+        images: Mutex<HashMap<String, StationImage>>,
+        fetch_calls: Mutex<usize>,
+    }
+
+    impl DataProvider for ImageProvider {
+        fn check_health(&self) -> HealthStatus {
+            HealthStatus::Up
+        }
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
+            Ok(self.stations.clone())
+        }
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
+            Ok(Vec::new())
+        }
+        fn get_measurements(
+            &self,
+            _query: MeasurementQuery,
+        ) -> Result<MeasurementBatch, ProviderError> {
+            Ok(MeasurementBatch {
+                measurements: Vec::new(),
+                last_measurement_datetime: None,
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            })
+        }
+        fn max_measurement_batch_size(&self) -> usize {
+            500
+        }
+        fn get_station_image(
+            &self,
+            external_id: &str,
+        ) -> Result<Option<StationImage>, ProviderError> {
+            *self.fetch_calls.lock().unwrap() += 1;
+            Ok(self.images.lock().unwrap().get(external_id).cloned())
+        }
+    }
+
+    /// An [`AssetServicePort`] mock that resolves a fixed default asset and
+    /// records every provider-image store.
+    struct MockAssetService {
+        default: Asset,
+        stored_provider: Mutex<usize>,
+    }
+
+    impl AssetServicePort for MockAssetService {
+        fn sync_builtin_images(&self, _builtin: &[BuiltinImage]) -> Result<(), DomainError> {
+            Ok(())
+        }
+        fn default_asset(&self) -> Result<Asset, DomainError> {
+            Ok(self.default.clone())
+        }
+        fn store_provider_image(
+            &self,
+            sha256: Sha256,
+            content_type: ContentType,
+            bytes: &[u8],
+        ) -> Result<Asset, DomainError> {
+            *self.stored_provider.lock().unwrap() += 1;
+            let now = Utc::now();
+            Ok(Asset {
+                id: AssetId(Uuid::new_v4()),
+                object_key: ObjectKey(format!("provider/{}", sha256.0)),
+                content_type,
+                byte_size: ByteSize(bytes.len() as i64),
+                sha256,
+                origin: AssetOrigin::Provider,
+                created_at: now,
+                updated_at: now,
+            })
+        }
+        fn find_by_id(&self, _id: AssetId) -> Result<Option<Asset>, DomainError> {
+            Ok(None)
+        }
+    }
+
+    fn default_asset() -> Asset {
+        let now = Utc::now();
+        Asset {
+            id: AssetId(Uuid::from_u128(0xDEAD)),
+            object_key: ObjectKey("builtin/station-placeholder.jpg".to_string()),
+            content_type: ContentType("image/jpeg".to_string()),
+            byte_size: ByteSize(1),
+            sha256: Sha256("a".repeat(64)),
+            origin: AssetOrigin::Builtin,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn image_service() -> Arc<MockAssetService> {
+        Arc::new(MockAssetService {
+            default: default_asset(),
+            stored_provider: Mutex::new(0),
+        })
+    }
+
+    fn import_service(
+        provider: Arc<dyn DataProvider>,
+        assets: Arc<MockAssetService>,
+    ) -> DataImportService {
+        DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime_for(provider)],
+        )
+        .with_asset_service(assets)
     }
 
     struct MockCountingStationRepository {
@@ -893,6 +1109,8 @@ mod tests {
             data_source_id: None,
             coordinates: None,
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
         };
         let station_repo = Arc::new(MockCountingStationRepository {
             stations: Mutex::new(vec![existing]),
@@ -905,6 +1123,7 @@ mod tests {
                 latitude: Some(51.96),
                 longitude: Some(7.63),
                 timezone: "Europe/Berlin".to_string(),
+                image_sha256: None,
             }],
             channels: Vec::new(),
             measurement_pages: Mutex::new(VecDeque::new()),
@@ -1369,6 +1588,123 @@ mod tests {
             provider.recorded_queries.lock().unwrap().len(),
             1,
             "a missing last datetime must stop paging"
+        );
+    }
+
+    #[test]
+    fn import_links_station_to_builtin_default_when_provider_has_no_image() {
+        let provider = Arc::new(ImageProvider {
+            stations: vec![station_record("station-1")], // image_sha256: None
+            images: Mutex::new(HashMap::new()),
+            fetch_calls: Mutex::new(0),
+        });
+        let assets = image_service();
+        let service = import_service(provider, assets.clone());
+
+        let summary = service.import(None, None).expect("import should succeed");
+        assert_eq!(summary.counting_stations, 1);
+
+        let station = service
+            .counting_station_repository
+            .find_by_external_datasource_id(station_vo::ExternalDatasourceId(
+                "station-1".to_string(),
+            ))
+            .unwrap()
+            .expect("station must be persisted");
+        assert_eq!(station.image_asset_id, Some(default_asset().id));
+        assert_eq!(station.image_sha256, None);
+        assert_eq!(*assets.stored_provider.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn import_stores_provider_image_when_hash_changes() {
+        let hash = "a".repeat(64);
+        let provider = Arc::new(ImageProvider {
+            stations: vec![CountingStationRecord {
+                external_id: "station-1".to_string(),
+                name: "Station 1".to_string(),
+                description: "desc".to_string(),
+                latitude: Some(51.96),
+                longitude: Some(7.63),
+                timezone: "Europe/Berlin".to_string(),
+                image_sha256: Some(hash.clone()),
+            }],
+            images: Mutex::new(HashMap::from([(
+                "station-1".to_string(),
+                StationImage {
+                    sha256: hash.clone(),
+                    content_type: "image/jpeg".to_string(),
+                    bytes: vec![1, 2, 3],
+                },
+            )])),
+            fetch_calls: Mutex::new(0),
+        });
+        let assets = image_service();
+        let service = import_service(provider, assets.clone());
+
+        service.import(None, None).expect("import should succeed");
+
+        let station = service
+            .counting_station_repository
+            .find_by_external_datasource_id(station_vo::ExternalDatasourceId(
+                "station-1".to_string(),
+            ))
+            .unwrap()
+            .expect("station must be persisted");
+        assert_eq!(station.image_sha256, Some(hash));
+        assert!(
+            station.image_asset_id.is_some(),
+            "a provider asset must be linked"
+        );
+        assert_eq!(*assets.stored_provider.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn import_skips_image_fetch_when_hash_is_unchanged() {
+        // The existing station already has the provider's hash persisted.
+        let mut existing = station("station-1");
+        existing.image_sha256 = Some("hash1".to_string());
+        existing.image_asset_id = Some(default_asset().id);
+        let provider = Arc::new(ImageProvider {
+            stations: vec![CountingStationRecord {
+                external_id: "station-1".to_string(),
+                name: "Station 1".to_string(),
+                description: "desc".to_string(),
+                latitude: None,
+                longitude: None,
+                timezone: "Europe/Berlin".to_string(),
+                image_sha256: Some("hash1".to_string()),
+            }],
+            images: Mutex::new(HashMap::new()),
+            fetch_calls: Mutex::new(0),
+        });
+        let assets = image_service();
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing]),
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime_for(provider.clone())],
+        )
+        .with_asset_service(assets.clone());
+
+        service.import(None, None).expect("import should succeed");
+
+        assert_eq!(
+            *provider.fetch_calls.lock().unwrap(),
+            0,
+            "unchanged hash must not fetch the image bytes"
+        );
+        assert_eq!(*assets.stored_provider.lock().unwrap(), 0);
+        assert_eq!(
+            station_repo.stations.lock().unwrap()[0].image_sha256,
+            Some("hash1".to_string())
         );
     }
 }

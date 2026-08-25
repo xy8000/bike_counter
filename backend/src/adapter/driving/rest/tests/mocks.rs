@@ -1,9 +1,12 @@
 //! In-memory repositories that back the router in tests (no database required).
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
+use futures::Stream;
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::tests::fixtures::{
@@ -18,7 +21,16 @@ use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
+use crate::core::application::station_overview_service::StationOverviewService;
 use crate::core::application::station_summary_service::StationSummaryService;
+use crate::core::domain::assets::asset::value_objects::{
+    AssetId, ByteSize, ContentType, ObjectKey, Sha256,
+};
+use crate::core::domain::assets::asset::{Asset, AssetOrigin, BuiltinImage};
+use crate::core::domain::assets::asset_storage_port::{
+    AssetObjectInfo, AssetObjectStream, AssetStorage,
+};
+use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository_port::ChannelRepository;
@@ -504,6 +516,112 @@ pub fn sample_global_summary_service() -> Arc<GlobalSummaryService> {
         Arc::new(sample_measurement_repository()),
         Arc::new(sample_job_repository()),
     ))
+}
+
+/// A [`StationOverviewService`] backed by the sample counting-station, channel,
+/// measurement and job repositories.
+pub fn sample_station_overview_service() -> Arc<StationOverviewService> {
+    Arc::new(StationOverviewService::new(
+        Arc::new(sample_counting_station_repository()),
+        Arc::new(sample_channel_repository()),
+        Arc::new(sample_measurement_repository()),
+        Arc::new(sample_job_repository()),
+    ))
+}
+
+/// A fixed built-in asset the asset mock services resolve.
+fn mock_asset() -> Asset {
+    Asset {
+        id: AssetId(Uuid::from_u128(0xAAA)),
+        object_key: ObjectKey("builtin/station-placeholder.jpg".to_string()),
+        content_type: ContentType("image/jpeg".to_string()),
+        byte_size: ByteSize(3),
+        sha256: Sha256("a".repeat(64)),
+        origin: AssetOrigin::Builtin,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }
+}
+
+/// An [`AssetServicePort`] mock: always the built-in default asset.
+pub struct MockAssetService {
+    asset: Asset,
+}
+
+impl Default for MockAssetService {
+    fn default() -> Self {
+        Self {
+            asset: mock_asset(),
+        }
+    }
+}
+
+impl AssetServicePort for MockAssetService {
+    fn sync_builtin_images(&self, _builtin: &[BuiltinImage]) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn default_asset(&self) -> Result<Asset, DomainError> {
+        Ok(self.asset.clone())
+    }
+    fn store_provider_image(
+        &self,
+        _sha256: Sha256,
+        _content_type: ContentType,
+        _bytes: &[u8],
+    ) -> Result<Asset, DomainError> {
+        Ok(self.asset.clone())
+    }
+    fn find_by_id(&self, id: AssetId) -> Result<Option<Asset>, DomainError> {
+        Ok((id == self.asset.id).then(|| self.asset.clone()))
+    }
+}
+
+/// An [`AssetServicePort`] mock that always resolves the built-in default asset.
+pub fn sample_asset_service() -> Arc<dyn AssetServicePort> {
+    Arc::new(MockAssetService::default())
+}
+
+/// An [`AssetStorage`] mock that streams a fixed chunk of bytes.
+pub struct MockAssetStorage;
+
+impl AssetStorage for MockAssetStorage {
+    fn ensure_bucket(&self) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn put(
+        &self,
+        _object_key: &ObjectKey,
+        _content_type: &ContentType,
+        bytes: &[u8],
+    ) -> Result<AssetObjectInfo, DomainError> {
+        Ok(AssetObjectInfo {
+            etag: "etag".to_string(),
+            byte_size: bytes.len() as i64,
+        })
+    }
+    fn list_object_keys(&self) -> Result<Vec<ObjectKey>, DomainError> {
+        Ok(Vec::new())
+    }
+    fn delete(&self, _object_key: &ObjectKey) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn get_stream(
+        &self,
+        _object_key: &ObjectKey,
+    ) -> Pin<Box<dyn Future<Output = Result<AssetObjectStream, DomainError>> + Send + '_>> {
+        Box::pin(async {
+            let body: Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin> =
+                Box::new(futures::stream::iter(vec![Ok(bytes::Bytes::from_static(
+                    b"img",
+                ))]));
+            Ok(AssetObjectStream { body })
+        })
+    }
+}
+
+/// An [`AssetStorage`] mock standing in for MinIO in REST tests.
+pub fn sample_asset_storage() -> Arc<dyn AssetStorage> {
+    Arc::new(MockAssetStorage)
 }
 
 /// A [`DataSourceService`] backed by the given data-source repository.

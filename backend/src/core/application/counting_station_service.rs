@@ -126,6 +126,8 @@ mod tests {
             data_source_id: None,
             coordinates: None,
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
         }
     }
 

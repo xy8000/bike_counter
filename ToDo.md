@@ -250,3 +250,23 @@ Quiet make output + local last-day summary (plan 30)
 - [x] BFF handlers drop `last_24h_window()` and pass `now`; frontend text `bikes / 24 h` -> `bikes / last day`
 - [x] Docs: `agents.md` (quiet convention), `README.md` (BFF field names + local-day semantics), `plans/30_..._plan.md` registered in `plans/README.md`
 - [ ] Gates green: `make check`, `make test` / `make test-rest`, `make coverage`, `make test-playwright`
+
+Counting-station overview page + provider images (plans/32_counting_station_overview_and_images_plan.md)
+
+- [x] docker-compose: `minio` (minio/minio:latest, private `asset_network` with `internal: true`, no host port, `minio_data` volume, healthcheck) + one-shot `minio-init` bucket provisioning via the MinIO client `mc`; backend joins `default` + `asset_network` and depends on `minio` healthy + `minio-init` completed
+- [x] Config: `[asset_storage]` (endpoint/access_key/secret_key/bucket/region) + `asset_cleanup_cron` (default `"0 0 4 * * *"`) + `asset_cleanup_max_lifetime_seconds` (required) + `AssetStorageConfiguration` value object + `Configuration` getters + TOML adapter parsing/tests + config.toml(.example) + scripts
+- [x] Migration V12: `assets` table + `counting_stations.image_asset_id` FK (`ON DELETE SET NULL`) + `image_sha256` column
+- [x] `CountingStation` gains `image_asset_id` + `image_sha256`; Postgres repo save/update/find + all in-memory mocks updated (REST `CountingStationDto` unchanged)
+- [x] Assets domain: `Asset`/`AssetOrigin`/plain `BuiltinImage` + value objects, station-agnostic `AssetRepository` (incl. `all_object_keys`), `AssetStorage` (ensure/put/list/delete + async `get_stream`), `AssetServicePort`
+- [x] Station-overview domain: `StationOverview`/`MetricWindow`/`MetricKey` + service port + DST-aware period helpers (`previous_local_days`, `previous_calendar_month`, `calendar_month_window`) with tests
+- [x] Application services: `AssetService` (sync_builtin_images / default_asset / store_provider_image / find_by_id, sha2 hashing), `StationOverviewService` (day/7d/month windows + preceding periods + last_update), `AssetCleanupService` (asset_cleanup job type, orphan detection via list_object_keys - all_object_keys, job metadata)
+- [x] Generic `ScheduledJobPort` driving port; `job_scheduler::run_scheduler(Arc<dyn ScheduledJobPort>, cron)` generalized and spawned twice in main.rs (data_source_update + asset_cleanup)
+- [x] Built-in sample image `backend/assets/station-placeholder.jpg` (embedded via `include_bytes!`) + startup sync (ensure bucket + builtin images)
+- [x] Driven adapters: `PostgresAssetRepository` + `MinioAssetStorage` (pinned `rust-s3 = "0.32"` with-tokio; blocking put/list/delete + streaming `get_stream` via ChunkWriter/mpsc)
+- [x] Provider port: `image_sha256` on `CountingStationRecord` + default `get_station_image` returning `None`; hash-based image sync in `DataImportService.sync_counting_stations` (fetch only when hash changed, fallback to builtin default)
+- [x] BFF `GET /api/bff/station-overview/{id}` (flat page payload — no HATEOAS `_links` / `data_source_id` / `CountingStationDto` reuse; trend up/down/flat + `delta_percent`) + `GET /api/bff/assets/{id}/content` (streaming with Content-Type/ETag/Content-Length/Cache-Control); AppState/router/OpenAPI wired
+- [x] Frontend `features/stationOverview/` (types/api/useStationOverview/StationOverview/TrendIcon); `App` `selectedStationId` state (overview replaces sidebar, void-click closes); `MapView` marker-click select + popup detail link
+- [x] Tests: core (period helpers, overview service, asset cleanup error paths, image sync), rest BFF (overview + asset content), Postgres asset repository, frontend e2e (popup link + overview open/void-click-close)
+- [x] Docs: README (config + asset-storage subsection + docker-compose MinIO + BFF endpoints), ToDo, plans/32 (status + definition of done + implementation notes)
+- [x] Docker build fixes found by the Playwright gate: `rust-s3` forces `openssl` via native-tls, and Alpine's `openssl-dev` has no static `.a`, so `backend/Cargo.toml` enables `openssl`'s `vendored` feature and the Dockerfile adds `perl make` + `COPY assets`; the map-void click moved into a `useMapEvents` child component (react-leaflet context)
+- [x] Gates green: `make check`, `make test` (311), `make test-rest` (82), `make coverage` (overall 84.36%, core 95.20%), `make frontend-build`, `make test-playwright` (4 specs)

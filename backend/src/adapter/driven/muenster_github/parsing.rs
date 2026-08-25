@@ -74,6 +74,9 @@ pub fn parse_site_index(
             latitude: None,
             longitude: None,
             timezone: TIMEZONE.name().to_string(),
+            // The Münster archive has no images; stations fall back to the
+            // built-in default image.
+            image_sha256: None,
         });
     }
     Ok((stations, channels))

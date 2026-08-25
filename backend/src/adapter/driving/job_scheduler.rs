@@ -1,4 +1,5 @@
-//! Async cron scheduler that periodically triggers the data-source update job.
+//! Async cron scheduler that periodically triggers a scheduled job
+//! ([`ScheduledJobPort`], e.g. the data-source update or the asset cleanup job).
 //!
 //! The blocking repository calls inside `run_if_due` must not run on a tokio
 //! worker thread (the synchronous `postgres` crate panics on nested runtimes),
@@ -10,25 +11,20 @@ use std::time::Duration as StdDuration;
 
 use chrono::Utc;
 
-use crate::core::domain::configuration::configuration::Configuration;
-use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
+use crate::core::domain::jobs::scheduled_job_port::ScheduledJobPort;
 
-/// Runs the data-source update job immediately at startup and then on the
-/// configured CRON schedule, forever. The job service decides whether to run
-/// (never succeeded or overdue).
-pub async fn run_scheduler(
-    service: Arc<dyn DataSourceUpdateServicePort + Send + Sync>,
-    configuration: Arc<Configuration>,
-) {
-    // Run now: the job service starts the job only when it has never succeeded
-    // or the last successful run is overdue (missed cron triggers).
+/// Runs `service` immediately at startup and then on the given CRON schedule,
+/// forever. The service decides whether to run (never succeeded or overdue).
+pub async fn run_scheduler(service: Arc<dyn ScheduledJobPort>, cron_expression: String) {
+    // Run now: the service starts the job only when it has never succeeded or
+    // the last successful run is overdue (missed cron triggers).
     let service_for_startup = service.clone();
     let _ = tokio::task::spawn_blocking(move || service_for_startup.run_if_due()).await;
 
-    let schedule = match cron::Schedule::from_str(configuration.data_source_update_cron()) {
+    let schedule = match cron::Schedule::from_str(&cron_expression) {
         Ok(schedule) => schedule,
         Err(error) => {
-            eprintln!("Invalid data_source_update_cron: {error}");
+            eprintln!("Invalid cron expression '{cron_expression}': {error}");
             return;
         }
     };

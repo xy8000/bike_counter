@@ -8,4 +8,5 @@
 
 pub mod job;
 pub mod repository_port;
+pub mod scheduled_job_port;
 pub mod service_port;

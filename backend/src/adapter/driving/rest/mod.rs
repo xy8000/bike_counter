@@ -14,7 +14,8 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::adapter::driving::bff::{
-    get_bff_global_summary, get_bff_stations_search, get_bff_stations_sidebar, list_bff_stations,
+    get_bff_asset_content, get_bff_global_summary, get_bff_station_overview,
+    get_bff_stations_search, get_bff_stations_sidebar, list_bff_stations,
 };
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
@@ -26,6 +27,8 @@ use crate::adapter::driving::rest::handlers::{
     reset_imported_until,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
+use crate::core::domain::assets::asset_storage_port::AssetStorage;
+use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::service_port::ChannelServicePort;
 use crate::core::domain::counting_stations::service_port::CountingStationServicePort;
 use crate::core::domain::data_source::service_port::DataSourceServicePort;
@@ -35,6 +38,7 @@ use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::station_overview::service_port::StationOverviewServicePort;
 use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
 
 pub struct RestApiAdapter {
@@ -55,6 +59,9 @@ impl RestApiAdapter {
         provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
         station_summary_service: Arc<dyn StationSummaryServicePort + Send + Sync>,
         global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
+        station_overview_service: Arc<dyn StationOverviewServicePort + Send + Sync>,
+        asset_service: Arc<dyn AssetServicePort>,
+        asset_storage: Arc<dyn AssetStorage>,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -68,6 +75,9 @@ impl RestApiAdapter {
                 provider_message_service,
                 station_summary_service,
                 global_summary_service,
+                station_overview_service,
+                asset_service,
+                asset_storage,
             },
         }
     }
@@ -83,6 +93,11 @@ impl RestApiAdapter {
             .route("/api/bff/stations/sidebar", get(get_bff_stations_sidebar))
             .route("/api/bff/stations/search", get(get_bff_stations_search))
             .route("/api/bff/global-summary", get(get_bff_global_summary))
+            .route(
+                "/api/bff/station-overview/:id",
+                get(get_bff_station_overview),
+            )
+            .route("/api/bff/assets/:id/content", get(get_bff_asset_content))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))
             .route(

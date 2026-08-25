@@ -96,6 +96,80 @@ pub struct GlobalSummaryDto {
     pub last_update: Option<DateTime<Utc>>,
 }
 
+/// The **page-shaped** BFF payload for the station overview panel: everything
+/// the panel needs to render that page and only that page.
+///
+/// Deliberately flat JSON — **no HATEOAS `_links`, no `data_source_id`, no
+/// reuse of the REST `CountingStationDto`** (which carries those). The DTO and
+/// its mapping helpers live entirely inside the BFF module.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationOverviewDto {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub channel_count: usize,
+    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    pub image_url: String,
+    pub metrics: Vec<MetricDto>,
+    /// Timestamp of the most recent successful data-source update.
+    pub last_update: Option<DateTime<Utc>>,
+    /// Link to the (future) detail page.
+    pub detail_url: String,
+}
+
+/// One metric on the overview panel: the raw sum for the period plus the
+/// immediately preceding period of equal length, and the derived trend.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct MetricDto {
+    /// Stable key (`last_day` | `last_7_days` | `last_month`).
+    pub key: String,
+    pub current: i64,
+    pub previous: i64,
+    pub trend: Trend,
+    /// Percentage change `(current - previous) / previous * 100`; `None` when a
+    /// percentage is not meaningful (previous period is zero or both are zero).
+    pub delta_percent: Option<f64>,
+}
+
+impl From<crate::core::domain::station_overview::MetricWindow> for MetricDto {
+    fn from(window: crate::core::domain::station_overview::MetricWindow) -> Self {
+        Self {
+            key: window.key.as_str().to_string(),
+            current: window.current,
+            previous: window.previous,
+            trend: trend_of(window.current, window.previous),
+            delta_percent: delta_percent(window.current, window.previous),
+        }
+    }
+}
+
+/// Up/down/flat trend of the current period vs the preceding period.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Trend {
+    Up,
+    Down,
+    Flat,
+}
+
+fn trend_of(current: i64, previous: i64) -> Trend {
+    match current.cmp(&previous) {
+        std::cmp::Ordering::Greater => Trend::Up,
+        std::cmp::Ordering::Less => Trend::Down,
+        std::cmp::Ordering::Equal => Trend::Flat,
+    }
+}
+
+fn delta_percent(current: i64, previous: i64) -> Option<f64> {
+    if previous == 0 {
+        return None;
+    }
+    let delta = (current - previous) as f64 / previous as f64 * 100.0;
+    Some((delta * 100.0).round() / 100.0)
+}
+
 /// Query parameters shared by the BFF station endpoints. Both the map and the
 /// sidebar endpoints require all four bounds.
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]

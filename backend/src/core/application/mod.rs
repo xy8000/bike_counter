@@ -1,3 +1,5 @@
+pub mod asset_cleanup_service;
+pub mod asset_service;
 pub mod channel_service;
 pub mod counting_station_service;
 pub mod data_import_service;
@@ -9,4 +11,5 @@ pub mod measurement_service;
 pub mod persistent_state_service;
 pub mod provider_message_service;
 pub mod startup_service;
+pub mod station_overview_service;
 pub mod station_summary_service;

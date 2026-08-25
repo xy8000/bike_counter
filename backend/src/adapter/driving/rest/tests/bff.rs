@@ -159,6 +159,8 @@ async fn bff_sidebar_counts_bikes_on_the_last_day() {
         }),
         // UTC keeps the window deterministic: "yesterday" is the previous UTC day.
         timezone: station_vo::Timezone("UTC".to_string()),
+        image_asset_id: None,
+        image_sha256: None,
     };
     let channel = Channel {
         id: channel_vo::Id(fixtures::CHANNEL_ID_A),
@@ -296,4 +298,130 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         tags.iter().any(|tag| tag["name"] == "BFF API"),
         "OpenAPI document should contain a 'BFF API' tag"
     );
+    // The new page-shaped endpoints are registered too.
+    for path in [
+        "/api/bff/station-overview/{id}",
+        "/api/bff/assets/{id}/content",
+    ] {
+        assert!(
+            paths.contains_key(path),
+            "OpenAPI document should contain {path}"
+        );
+    }
+    for schema in ["StationOverviewDto", "MetricDto", "Trend"] {
+        assert!(
+            schemas.contains_key(schema),
+            "OpenAPI document should contain schema {schema}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Station overview page: GET /api/bff/station-overview/{id}
+// ---------------------------------------------------------------------------
+
+/// The mock asset id returned by `sample_asset_service()` (the default image).
+const MOCK_ASSET_ID: u128 = 0xAAA;
+
+#[tokio::test]
+async fn bff_station_overview_returns_the_flat_page_payload() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-overview/{}",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], fixtures::STATION_ID_A.to_string());
+    assert_eq!(body["name"], "Station A");
+    assert_eq!(body["description"], "First station");
+    assert_eq!(body["channel_count"], 2);
+
+    // The image URL resolves to the built-in default asset (station A has no
+    // linked provider image).
+    assert_eq!(
+        body["image_url"],
+        format!("/api/bff/assets/{}/content", Uuid::from_u128(MOCK_ASSET_ID))
+    );
+    assert_eq!(
+        body["detail_url"],
+        format!("/stations/{}", fixtures::STATION_ID_A)
+    );
+
+    // Exactly the three metrics, each with a trend.
+    let metrics = body["metrics"]
+        .as_array()
+        .expect("metrics should be an array");
+    assert_eq!(metrics.len(), 3);
+    for metric in metrics {
+        assert!(metric["current"].is_i64() || metric["current"].is_u64());
+        assert!(metric["previous"].is_i64() || metric["previous"].is_u64());
+        assert!(
+            ["up", "down", "flat"].contains(&metric["trend"].as_str().unwrap_or_default()),
+            "unexpected trend: {}",
+            metric["trend"]
+        );
+    }
+
+    // Page-shaped: no HATEOAS `_links`, no `data_source_id` (no REST DTO reuse).
+    assert!(body.get("_links").is_none());
+    assert!(body.get("data_source_id").is_none());
+}
+
+#[tokio::test]
+async fn bff_station_overview_unknown_station_returns_404() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!("/api/bff/station-overview/{}", Uuid::new_v4()))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"].as_str().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// Asset content stream: GET /api/bff/assets/{id}/content
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bff_asset_content_streams_bytes_with_correct_headers() {
+    let app = TestApp::new();
+    let response = app
+        .send(
+            axum::http::Method::GET,
+            &format!("/api/bff/assets/{}/content", Uuid::from_u128(MOCK_ASSET_ID)),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "image/jpeg"
+    );
+    assert_eq!(response.headers().get("content-length").unwrap(), "3");
+    assert_eq!(
+        response.headers().get("etag").unwrap(),
+        &format!("\"{}\"", "a".repeat(64))
+    );
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .expect("body should be collectable")
+        .to_bytes();
+    assert_eq!(&bytes[..], b"img");
+}
+
+#[tokio::test]
+async fn bff_asset_content_unknown_asset_returns_404() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!("/api/bff/assets/{}/content", Uuid::new_v4()))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"].as_str().is_some());
 }

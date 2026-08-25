@@ -8,6 +8,20 @@ data_source_update_cron="0 * * * * *"
 # REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
 data_source_update_max_lifetime_seconds=600
 
+# CRON expression for the asset cleanup job (default: daily at 04:00).
+asset_cleanup_cron="0 0 4 * * *"
+# REQUIRED ShedLock-style max lifetime for the asset cleanup job in seconds (no default).
+asset_cleanup_max_lifetime_seconds=3600
+
+# S3-compatible object storage (MinIO) holding counting-station image binaries.
+# PostgreSQL stores only the metadata; the BFF streams the content to browsers.
+[asset_storage]
+endpoint = "http://minio:9000"
+access_key = "minioadmin"
+secret_key = "minioadmin"
+bucket = "bike-counter-images"
+region = "us-east-1"
+
 [[data_sources]]
 name = "Münster"
 

@@ -29,6 +29,8 @@ use axum::http::StatusCode;
 use axum::response::Json;
 
 use crate::adapter::driving::rest::dto::ErrorResponseDto;
+use crate::core::domain::assets::asset_storage_port::AssetStorage;
+use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::service_port::ChannelServicePort;
 use crate::core::domain::counting_stations::service_port::CountingStationServicePort;
 use crate::core::domain::data_source::service_port::DataSourceServicePort;
@@ -39,6 +41,7 @@ use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::station_overview::service_port::StationOverviewServicePort;
 use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
 
 #[derive(Clone)]
@@ -53,6 +56,9 @@ pub struct AppState {
     pub provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
     pub station_summary_service: Arc<dyn StationSummaryServicePort + Send + Sync>,
     pub global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
+    pub station_overview_service: Arc<dyn StationOverviewServicePort + Send + Sync>,
+    pub asset_service: Arc<dyn AssetServicePort>,
+    pub asset_storage: Arc<dyn AssetStorage>,
 }
 
 /// Default `offset`/`limit` for the measurements endpoint. `limit` has no upper

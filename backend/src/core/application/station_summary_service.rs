@@ -283,6 +283,8 @@ mod tests {
                 longitude,
             }),
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
         }
     }
 
@@ -412,6 +414,8 @@ mod tests {
                 longitude: 7.6,
             }),
             timezone: station_vo::Timezone("America/New_York".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
         };
         let service = StationSummaryService::new(
             Arc::new(MemoryCountingStationRepository {

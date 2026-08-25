@@ -73,6 +73,17 @@ database_name="bike_counter"
 data_source_update_cron="0 0 * * * *"
 data_source_update_max_lifetime_seconds=3600
 
+# Asset cleanup job settings (cron default is daily at 04:00).
+asset_cleanup_cron="0 0 4 * * *"
+asset_cleanup_max_lifetime_seconds=3600
+
+[asset_storage]
+endpoint = "http://minio:9000"
+access_key = "minioadmin"
+secret_key = "minioadmin"
+bucket = "bike-counter-images"
+region = "us-east-1"
+
 [[data_sources]]
 name = "Münster"
 

@@ -44,6 +44,20 @@ data_source_update_cron="0 * * * * *"
 # REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
 data_source_update_max_lifetime_seconds=600
 
+# CRON expression for the asset cleanup job (default: daily at 04:00).
+asset_cleanup_cron="0 0 4 * * *"
+# REQUIRED ShedLock-style max lifetime for the asset cleanup job in seconds (no default).
+asset_cleanup_max_lifetime_seconds=3600
+
+# S3-compatible object storage (MinIO) holding counting-station image binaries.
+# PostgreSQL stores only the metadata; the BFF streams the content to browsers.
+[asset_storage]
+endpoint = "http://minio:9000"
+access_key = "minioadmin"
+secret_key = "minioadmin"
+bucket = "bike-counter-images"
+region = "us-east-1"
+
 [[data_sources]]
 name = "Münster"
 
@@ -138,6 +152,37 @@ are written idempotently on the natural key `(channel_id, timestamp)`
 be resumed without duplicating data.
 
 Every job is exposed through the read-only jobs API (see below).
+
+### Asset storage (counting-station images)
+
+Counting-station images live in an **S3-compatible object store** (MinIO in the
+docker-compose stack). PostgreSQL stores only the asset **metadata** and the
+station↔asset link; the binary bytes never touch the database.
+
+- `[asset_storage]` – the S3 connection settings: `endpoint`, `access_key`,
+  `secret_key`, `bucket`, `region`. Under docker compose the bucket is created
+  automatically by a one-shot `mc` container (`minio-init`) that runs before the
+  backend starts.
+- Images come from two places:
+  - **data-source providers**, with hash-based change detection
+    (`CountingStation.image_sha256`): the provider reports a hash with each
+    station record and the core only fetches the image bytes when the hash
+    changed or the station has no linked asset yet;
+  - a **built-in** sample image embedded in the backend binary
+    (`backend/assets/station-placeholder.jpg`), idempotently synced to the
+    bucket at startup and used as the fallback for stations without a provider
+    image.
+- The **BFF streams** image bytes to the browser
+  (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend
+  (private `asset_network`) and never exposed to the browser.
+- A dedicated **asset cleanup** scheduled job (`asset_cleanup`, default daily at
+  04:00) deletes **orphaned objects** — object keys in the bucket that have no
+  row in the `assets` table (left behind when a provider image hash changes or
+  after a crash between `put` and `save`):
+  - `asset_cleanup_cron` – validated CRON expression, defaults to
+    `"0 0 4 * * *"`.
+  - `asset_cleanup_max_lifetime_seconds` – **required** (no default), same
+    ShedLock-style deadline semantics as the data-source update job.
 
 ### Persistent provider state
 
@@ -261,6 +306,11 @@ docker compose logs -f           # make logs
 
 - The `db` service runs PostgreSQL with the development defaults
   (`postgres` / `postgres` / `bike_counter`) and persists data in a named volume.
+- The `minio` service runs a private S3-compatible object store for counting-
+  station images on an **internal-only** `asset_network` (no host port) with its
+  own named volume; the one-shot `minio-init` service (MinIO client `mc`) creates
+  the image bucket before the backend starts. Only the backend is attached to
+  `asset_network`, so MinIO is never reachable from `db`, `frontend` or outside.
 - The `backend` service builds the Rust binary inside a multi-stage Docker build
   and mounts [`config.toml`](config.toml) into the container. Its
   [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to start
@@ -282,6 +332,16 @@ docker compose logs -f           # make logs
 
   data_source_update_cron="0 0 * * * *"
   data_source_update_max_lifetime_seconds=3600
+
+  asset_cleanup_cron="0 0 4 * * *"
+  asset_cleanup_max_lifetime_seconds=3600
+
+  [asset_storage]
+  endpoint = "http://minio:9000"
+  access_key = "minioadmin"
+  secret_key = "minioadmin"
+  bucket = "bike-counter-images"
+  region = "us-east-1"
 
   [[data_sources]]
   name = "Münster"
@@ -360,6 +420,20 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   `station_count`, `channel_count`, `bikes_last_day_total` (sum of every
   station's previous local-day total) and the `last_update` timestamp of the most
   recent successful data-source update.
+- `GET /api/bff/station-overview/{id}` – the **page-shaped** overview payload for
+  one station: `id`, `name`, `description`, `latitude`, `longitude`,
+  `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`, a
+  future detail page) and a `metrics` array — each with `key`
+  (`last_day` / `last_7_days` / `last_month`), `current`, `previous`, `trend`
+  (`up`/`down`/`flat`) and `delta_percent`. The metrics use **complete calendar
+  periods** in the station's own timezone (previous full local day, previous 7
+  full local days, previous full calendar month), each compared with the
+  immediately preceding equal-length period. The payload is flat — no HATEOAS
+  `_links`, no `data_source_id`, no REST `CountingStationDto` reuse.
+- `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
+  from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
+  (`immutable` for built-in assets, short-lived for provider assets). Only the
+  BFF exposes MinIO; there are no upload/delete artifact endpoints.
 
 The aggregations are computed **on the fly** per request by the core
 `StationSummaryService` / `GlobalSummaryService`; a cache (e.g. Redis) may be

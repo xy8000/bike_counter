@@ -146,10 +146,11 @@ mod tests {
 
     use super::*;
     use crate::core::domain::configuration::configuration::value_objects::{
-        DataProviderConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+        AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
+        DatabaseConfiguration,
     };
     use crate::core::domain::configuration::configuration::{
-        Configuration, DEFAULT_DATA_SOURCE_UPDATE_CRON,
+        Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
     use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
     use crate::core::domain::data_source::persistent_state_port::{
@@ -181,6 +182,17 @@ mod tests {
         .unwrap()
     }
 
+    fn asset_storage() -> AssetStorageConfiguration {
+        AssetStorageConfiguration::new(
+            "http://minio:9000".to_string(),
+            "minioadmin".to_string(),
+            "minioadmin".to_string(),
+            "bike-counter-images".to_string(),
+            "us-east-1".to_string(),
+        )
+        .unwrap()
+    }
+
     fn configuration(names: &[&str]) -> Configuration {
         Configuration::new(
             database(),
@@ -189,6 +201,9 @@ mod tests {
                 .map(|name| data_source_config(name, "münster_opendata_github_provider"))
                 .collect(),
             DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            asset_storage(),
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
             3600,
         )
         .unwrap()

@@ -1,5 +1,7 @@
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
+
+use crate::core::domain::assets::asset::value_objects::AssetId;
 
 #[derive(Debug, Clone)]
 pub struct CountingStation {
@@ -17,6 +19,13 @@ pub struct CountingStation {
     /// `Europe/Berlin`). The "last day" summary is computed in this timezone,
     /// DST-aware, so a provider may serve stations from several timezones.
     pub timezone: value_objects::Timezone,
+    /// Optional link to the asset holding the station's image. The station
+    /// **owns** the link (the asset repository is station-agnostic); it is set
+    /// by the import (provider image or the built-in default).
+    pub image_asset_id: Option<AssetId>,
+    /// Persisted provider image hash used for hash-based change detection during
+    /// import. `None` when the provider reports no image (built-in default).
+    pub image_sha256: Option<String>,
 }
 
 pub mod value_objects {
@@ -69,16 +78,95 @@ pub fn previous_local_day(
     tz: Tz,
     now: DateTime<Utc>,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    previous_local_days(tz, now, 1)
+}
+
+/// The `n` complete local days immediately before today in `tz` as a closed UTC
+/// interval `(from, to)` (inclusive upper bound, consistent with
+/// [`previous_local_day`] and [`MeasurementRepository::sum`](crate::core::domain::measurements::repository_port::MeasurementRepository)).
+///
+/// `from` is the local midnight `n` days before today, `to` is one microsecond
+/// *before* today's local midnight. DST-aware: each day is 23 h or 25 h long on
+/// the days the clocks change.
+pub fn previous_local_days(
+    tz: Tz,
+    now: DateTime<Utc>,
+    n: u32,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    if n == 0 {
+        return Err(crate::core::domain::error::DomainError::InvalidQuery(
+            "previous_local_days requires n >= 1".to_string(),
+        ));
+    }
     let now_local = now.with_timezone(&tz);
     let today = now_local.date_naive();
-    let yesterday = today.pred_opt().ok_or_else(|| {
-        crate::core::domain::error::DomainError::InvalidQuery(
-            "cannot compute the previous day (date out of range)".to_string(),
-        )
-    })?;
-    let from = local_midnight_utc(tz, yesterday)?;
+    let start_date = today
+        .checked_sub_signed(chrono::Duration::days(i64::from(n)))
+        .ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery(
+                "cannot compute the previous days (date out of range)".to_string(),
+            )
+        })?;
+    let from = local_midnight_utc(tz, start_date)?;
     let to = local_midnight_utc(tz, today)? - chrono::Duration::microseconds(1);
     Ok((from, to))
+}
+
+/// The previous complete calendar month in `tz` as a closed UTC interval
+/// `(from, to)` (inclusive upper bound). `from` is local midnight on the 1st of
+/// the previous month, `to` is one microsecond *before* local midnight on the
+/// 1st of the current month.
+pub fn previous_calendar_month(
+    tz: Tz,
+    now: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    calendar_month_window(tz, now, 1)
+}
+
+/// The complete calendar month that is `months_back` months before the month
+/// containing `now`, as a closed UTC interval. `months_back = 1` is the
+/// previous calendar month, `months_back = 2` the one before it (used as the
+/// comparison period for the month metric's trend).
+pub fn calendar_month_window(
+    tz: Tz,
+    now: DateTime<Utc>,
+    months_back: u32,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), crate::core::domain::error::DomainError> {
+    if months_back == 0 {
+        return Err(crate::core::domain::error::DomainError::InvalidQuery(
+            "calendar_month_window requires months_back >= 1".to_string(),
+        ));
+    }
+    let now_local = now.with_timezone(&tz);
+    let today = now_local.date_naive();
+    let first_of_current = today.with_day(1).ok_or_else(|| {
+        crate::core::domain::error::DomainError::InvalidQuery(
+            "cannot compute the first day of the month".to_string(),
+        )
+    })?;
+    let from = local_midnight_utc(tz, months_before(first_of_current, months_back)?)?;
+    let to = local_midnight_utc(tz, months_before(first_of_current, months_back - 1)?)?
+        - chrono::Duration::microseconds(1);
+    Ok((from, to))
+}
+
+/// The 1st of the month that is `months_back` months before `date`.
+fn months_before(
+    date: NaiveDate,
+    months_back: u32,
+) -> Result<NaiveDate, crate::core::domain::error::DomainError> {
+    let first_of_month = date.with_day(1).ok_or_else(|| {
+        crate::core::domain::error::DomainError::InvalidQuery(
+            "cannot compute the first day of the month".to_string(),
+        )
+    })?;
+    first_of_month
+        .checked_sub_months(chrono::Months::new(months_back))
+        .ok_or_else(|| {
+            crate::core::domain::error::DomainError::InvalidQuery(
+                "cannot compute the target month (date out of range)".to_string(),
+            )
+        })
 }
 
 /// Converts the local midnight of `date` in `tz` to its UTC instant. Errors when
@@ -105,7 +193,10 @@ mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use chrono_tz::{Europe::Berlin, Tz};
 
-    use super::{local_midnight_utc, previous_local_day};
+    use super::{
+        calendar_month_window, local_midnight_utc, previous_calendar_month, previous_local_day,
+        previous_local_days,
+    };
     use crate::core::domain::error::DomainError;
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> chrono::DateTime<Utc> {
@@ -183,5 +274,82 @@ mod tests {
             matches!(result, Err(DomainError::InvalidQuery(_))),
             "a DST gap at midnight must be an error, got {result:?}"
         );
+    }
+
+    #[test]
+    fn previous_local_days_returns_the_last_n_complete_days() {
+        // Berlin 2024-01-11 (CET): the previous 7 complete days (Jan 4..10)
+        // span UTC [2024-01-03T23:00:00Z, 2024-01-10T23:00:00Z).
+        let (from, to) = previous_local_days(Berlin, utc(2024, 1, 11, 12, 0, 0), 7).unwrap();
+        assert_eq!(from, utc(2024, 1, 3, 23, 0, 0));
+        assert_eq!(to, utc(2024, 1, 10, 23, 0, 0) - Duration::microseconds(1));
+        assert_eq!(
+            to - from,
+            Duration::hours(7 * 24) - Duration::microseconds(1)
+        );
+    }
+
+    #[test]
+    fn previous_local_days_matches_previous_local_day_for_one() {
+        let (from, to) = previous_local_days(Berlin, utc(2024, 1, 2, 12, 0, 0), 1).unwrap();
+        assert_eq!(
+            (from, to),
+            previous_local_day(Berlin, utc(2024, 1, 2, 12, 0, 0)).unwrap()
+        );
+    }
+
+    #[test]
+    fn previous_local_days_spans_dst_transition_within_the_window() {
+        // The 7 complete days up to 2024-04-02 include the 2024-03-31 spring
+        // forward, so the window is 7*24h - 1h long (23h day included).
+        let (from, to) = previous_local_days(Berlin, utc(2024, 4, 2, 12, 0, 0), 7).unwrap();
+        assert_eq!(from, utc(2024, 3, 25, 23, 0, 0));
+        assert_eq!(to, utc(2024, 4, 1, 22, 0, 0) - Duration::microseconds(1));
+        assert_eq!(
+            to - from,
+            Duration::hours(7 * 24 - 1) - Duration::microseconds(1)
+        );
+    }
+
+    #[test]
+    fn previous_local_days_rejects_zero() {
+        assert!(matches!(
+            previous_local_days(Berlin, utc(2024, 1, 2, 12, 0, 0), 0),
+            Err(DomainError::InvalidQuery(_))
+        ));
+    }
+
+    #[test]
+    fn previous_calendar_month_spans_the_previous_full_month() {
+        // Previous full month for 2024-04-15 (CEST, UTC+2) is March:
+        // [2024-02-29T23:00:00Z, 2024-03-31T22:00:00Z).
+        let (from, to) = previous_calendar_month(Berlin, utc(2024, 4, 15, 12, 0, 0)).unwrap();
+        assert_eq!(from, utc(2024, 2, 29, 23, 0, 0));
+        assert_eq!(to, utc(2024, 3, 31, 22, 0, 0) - Duration::microseconds(1));
+    }
+
+    #[test]
+    fn calendar_month_window_two_back_is_the_month_before_the_previous_one() {
+        // months_back=2 for April is February: [2024-01-31T23:00:00Z, 2024-02-29T23:00:00Z).
+        let (from, to) = calendar_month_window(Berlin, utc(2024, 4, 15, 12, 0, 0), 2).unwrap();
+        assert_eq!(from, utc(2024, 1, 31, 23, 0, 0));
+        assert_eq!(to, utc(2024, 2, 29, 23, 0, 0) - Duration::microseconds(1));
+    }
+
+    #[test]
+    fn calendar_month_window_handles_january_wrap() {
+        // For 2024-01-15, months_back=1 is December 2023 (CET, UTC+1):
+        // [2023-11-30T23:00:00Z, 2023-12-31T23:00:00Z).
+        let (from, to) = calendar_month_window(Berlin, utc(2024, 1, 15, 12, 0, 0), 1).unwrap();
+        assert_eq!(from, utc(2023, 11, 30, 23, 0, 0));
+        assert_eq!(to, utc(2023, 12, 31, 23, 0, 0) - Duration::microseconds(1));
+    }
+
+    #[test]
+    fn calendar_month_window_rejects_zero() {
+        assert!(matches!(
+            calendar_month_window(Berlin, utc(2024, 4, 15, 12, 0, 0), 0),
+            Err(DomainError::InvalidQuery(_))
+        ));
     }
 }

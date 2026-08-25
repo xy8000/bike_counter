@@ -5,14 +5,18 @@ use std::sync::Arc;
 
 use crate::adapter::driven::configuration_toml_adapter::ConfigurationTomlAdapter;
 use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
+use crate::adapter::driven::minio_asset_storage::MinioAssetStorage;
 use crate::adapter::driven::postgres::{
-    PostgresChannelRepository, PostgresCountingStationRepository, PostgresDataSourceRepository,
-    PostgresHealthCheck, PostgresJobRepository, PostgresMeasurementRepository,
-    PostgresPersistentStateRepository, PostgresProviderMessageRepository, create_pool,
+    PostgresAssetRepository, PostgresChannelRepository, PostgresCountingStationRepository,
+    PostgresDataSourceRepository, PostgresHealthCheck, PostgresJobRepository,
+    PostgresMeasurementRepository, PostgresPersistentStateRepository,
+    PostgresProviderMessageRepository, create_pool,
 };
 use crate::adapter::driven::provider_handles::ProviderHandles;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
+use crate::core::application::asset_cleanup_service::AssetCleanupService;
+use crate::core::application::asset_service::{AssetService, DEFAULT_IMAGE_OBJECT_KEY};
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_import_service::DataImportService;
@@ -24,11 +28,27 @@ use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
+use crate::core::application::station_overview_service::StationOverviewService;
 use crate::core::application::station_summary_service::StationSummaryService;
+use crate::core::domain::assets::asset::BuiltinImage;
+use crate::core::domain::assets::asset::value_objects::{ContentType, ObjectKey};
+use crate::core::domain::assets::asset_storage_port::AssetStorage;
+use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::configuration::repository_port::ConfigurationRepository;
 use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
 use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
+
+/// The built-in images embedded in the binary (idempotently synced to MinIO at
+/// startup). The first is the fallback every station without a provider image
+/// points to.
+fn builtin_images() -> Vec<BuiltinImage> {
+    vec![BuiltinImage {
+        object_key: ObjectKey(DEFAULT_IMAGE_OBJECT_KEY.to_string()),
+        content_type: ContentType("image/jpeg".to_string()),
+        bytes: include_bytes!("../assets/station-placeholder.jpg").to_vec(),
+    }]
+}
 
 mod adapter;
 mod core;
@@ -118,13 +138,35 @@ fn main() {
     indicators.extend(provider_health_indicators);
     let health_service = Arc::new(HealthService::new(indicators));
 
-    // Data import + scheduled data-source update service (share the runtimes).
-    let data_import_service = Arc::new(DataImportService::new(
-        counting_station_repo.clone(),
-        channel_repo.clone(),
-        measurement_repo.clone(),
-        startup.data_source_runtimes.clone(),
+    // Assets: S3-compatible object storage (MinIO) + metadata repository +
+    // service. The bucket is created and the built-in images synced idempotently
+    // at startup, before any station import (which may set image links).
+    let asset_storage = Arc::new(
+        MinioAssetStorage::new(configuration.asset_storage())
+            .unwrap_or_else(|error| panic!("Failed to initialize MinIO asset storage: {error:?}")),
+    );
+    let asset_repository = Arc::new(PostgresAssetRepository::new(&pool));
+    let asset_service = Arc::new(AssetService::new(
+        asset_repository.clone(),
+        asset_storage.clone(),
     ));
+    asset_storage
+        .ensure_bucket()
+        .unwrap_or_else(|error| panic!("Failed to ensure asset storage bucket: {error:?}"));
+    asset_service
+        .sync_builtin_images(&builtin_images())
+        .unwrap_or_else(|error| panic!("Failed to sync built-in images: {error:?}"));
+
+    // Data import + scheduled data-source update service (share the runtimes).
+    let data_import_service = Arc::new(
+        DataImportService::new(
+            counting_station_repo.clone(),
+            channel_repo.clone(),
+            measurement_repo.clone(),
+            startup.data_source_runtimes.clone(),
+        )
+        .with_asset_service(asset_service.clone()),
+    );
     let data_source_update_service = Arc::new(DataSourceUpdateService::new(
         job_repo.clone(),
         data_source_repo.clone(),
@@ -153,6 +195,23 @@ fn main() {
         job_repo.clone(),
     ));
 
+    // Per-station overview page backing the BFF `station-overview/{id}` endpoint
+    // (channel count + last day/7 days/month trends + last update).
+    let station_overview_service = Arc::new(StationOverviewService::new(
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
+        job_repo.clone(),
+    ));
+
+    // Scheduled cleanup of orphaned objects in the asset storage bucket.
+    let asset_cleanup_service = Arc::new(AssetCleanupService::new(
+        job_repo.clone(),
+        asset_repository.clone(),
+        asset_storage.clone(),
+        configuration.clone(),
+    ));
+
     let counting_station_service = Arc::new(CountingStationService::new(counting_station_repo));
     let channel_service = Arc::new(ChannelService::new(channel_repo));
     let measurement_service = Arc::new(MeasurementService::new(measurement_repo));
@@ -175,6 +234,9 @@ fn main() {
         provider_message_service,
         station_summary_service,
         global_summary_service,
+        station_overview_service,
+        asset_service,
+        asset_storage,
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
@@ -183,11 +245,16 @@ fn main() {
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     if let Err(err) = runtime.block_on(async {
-        // Background scheduler: runs the data-source update job at startup (if
-        // it never succeeded) and then on the configured CRON schedule.
+        // Background schedulers: one per scheduled job type, each running at
+        // startup (if the job never succeeded) and then on its own CRON
+        // schedule.
         tokio::spawn(job_scheduler::run_scheduler(
             data_source_update_service,
-            configuration,
+            configuration.data_source_update_cron().to_string(),
+        ));
+        tokio::spawn(job_scheduler::run_scheduler(
+            asset_cleanup_service,
+            configuration.asset_cleanup_cron().to_string(),
         ));
         rest_adapter.run(addr).await
     }) {

@@ -1,21 +1,29 @@
 //! HTTP handlers for the BFF API.
 //!
 //! The BFF composes multiple core services (counting stations for the map,
-//! station summaries for the sidebar/search, the global summary for the header)
-//! but keeps the domain services decoupled and single-purpose.
+//! station summaries for the sidebar/search, the global summary for the header,
+//! the station overview page and the asset stream) but keeps the domain services
+//! decoupled and single-purpose.
 
 use std::collections::HashMap;
 
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
-use axum::response::Json;
+use axum::body::Body;
+use axum::extract::{Path, Query, State};
+use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG};
+use axum::http::{HeaderValue, StatusCode};
+use axum::response::{Json, Response};
+use uuid::Uuid;
 
 use crate::adapter::driving::bff::dto::{
-    ActionDto, BffStationQueryParams, GlobalSummaryDto, StationMapDto, StationMapListDto,
-    StationSearchDto, StationSummaryDto, StationSummarySidebarDto,
+    ActionDto, BffStationQueryParams, GlobalSummaryDto, MetricDto, StationMapDto,
+    StationMapListDto, StationOverviewDto, StationSearchDto, StationSummaryDto,
+    StationSummarySidebarDto,
 };
 use crate::adapter::driving::rest::dto::ErrorResponseDto;
 use crate::adapter::driving::rest::handlers::{AppState, blocking, map_domain_error};
+use crate::core::domain::assets::asset::AssetOrigin;
+use crate::core::domain::assets::asset::value_objects::AssetId;
+use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::station_summary::bounds::GeoBounds;
 
@@ -195,4 +203,120 @@ pub async fn get_bff_global_summary(
         bikes_last_day_total: summary.bikes_last_day_total,
         last_update: summary.last_update,
     }))
+}
+
+/// The **page-shaped** overview payload for one counting station: everything the
+/// overview panel needs to render, and only that page. The image URL is resolved
+/// from the station's linked asset (falling back to the built-in default).
+#[utoipa::path(
+    get,
+    path = "/api/bff/station-overview/{id}",
+    tag = "BFF API",
+    params(
+        ("id" = Uuid, Path, description = "Counting-station id")
+    ),
+    responses(
+        (status = 200, description = "Station overview page payload", body = StationOverviewDto),
+        (status = 404, description = "Station not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_bff_station_overview(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<StationOverviewDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let now = chrono::Utc::now();
+    let overview_service = state.station_overview_service.clone();
+    let overview = blocking(move || overview_service.overview(Id(id), now))
+        .await
+        .map_err(map_domain_error)?;
+
+    // Resolve the image: the station's linked asset, else the built-in default.
+    let asset_service = state.asset_service.clone();
+    let linked = match overview.station.image_asset_id {
+        Some(asset_id) => {
+            let service = asset_service.clone();
+            blocking(move || service.find_by_id(asset_id))
+                .await
+                .map_err(map_domain_error)?
+        }
+        None => None,
+    };
+    let image_asset = match linked {
+        Some(asset) => asset,
+        None => blocking(move || asset_service.default_asset())
+            .await
+            .map_err(map_domain_error)?,
+    };
+
+    let metrics = overview.metrics.into_iter().map(MetricDto::from).collect();
+    Ok(Json(StationOverviewDto {
+        id: overview.station.id.0,
+        name: overview.station.name.0,
+        description: overview.station.description.0,
+        latitude: overview.station.coordinates.map(|c| c.latitude),
+        longitude: overview.station.coordinates.map(|c| c.longitude),
+        channel_count: overview.channel_count,
+        image_url: format!("/api/bff/assets/{}/content", image_asset.id.0),
+        metrics,
+        last_update: overview.last_update,
+        detail_url: format!("/stations/{}", overview.station.id.0),
+    }))
+}
+
+/// Streams an asset's binary content from object storage with the correct
+/// headers. The BFF is the only public interface to MinIO: browsers never reach
+/// the storage directly. `Content-Type`/`Content-Length` come from the asset's
+/// DB metadata, `ETag` from its content hash and `Cache-Control` from its origin
+/// (immutable for built-in assets, short-lived for provider images).
+#[utoipa::path(
+    get,
+    path = "/api/bff/assets/{id}/content",
+    tag = "BFF API",
+    params(
+        ("id" = Uuid, Path, description = "Asset id")
+    ),
+    responses(
+        (status = 200, description = "Image content (streamed)"),
+        (status = 404, description = "Asset not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_bff_asset_content(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
+    let asset_service = state.asset_service.clone();
+    let asset = blocking(move || asset_service.find_by_id(AssetId(id)))
+        .await
+        .map_err(map_domain_error)?
+        .ok_or_else(|| map_domain_error(DomainError::NotFound(id)))?;
+
+    let storage = state.asset_storage.clone();
+    let object_key = asset.object_key.clone();
+    let stream = storage
+        .get_stream(&object_key)
+        .await
+        .map_err(map_domain_error)?;
+
+    let cache_control = match asset.origin {
+        AssetOrigin::Builtin => "public, max-age=31536000, immutable",
+        AssetOrigin::Provider => "public, max-age=3600",
+    };
+    let mut response = Response::new(Body::from_stream(stream.body));
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(&asset.content_type.0)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    if let Ok(length) = HeaderValue::from_str(&asset.byte_size.0.to_string()) {
+        response.headers_mut().insert(CONTENT_LENGTH, length);
+    }
+    if let Ok(etag) = HeaderValue::from_str(&format!("\"{}\"", asset.sha256.0)) {
+        response.headers_mut().insert(ETAG, etag);
+    }
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    Ok(response)
 }

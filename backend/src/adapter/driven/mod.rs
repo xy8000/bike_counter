@@ -1,5 +1,6 @@
 pub mod configuration_toml_adapter;
 pub mod data_provider_factory;
+pub mod minio_asset_storage;
 pub mod muenster_github;
 pub mod postgres;
 pub mod provider_handles;

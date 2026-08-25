@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod channels;
 pub mod configuration;
 pub mod counting_stations;
@@ -7,4 +8,5 @@ pub mod global_summary;
 pub mod health;
 pub mod jobs;
 pub mod measurements;
+pub mod station_overview;
 pub mod station_summary;
