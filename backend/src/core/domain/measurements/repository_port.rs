@@ -81,13 +81,13 @@ pub trait MeasurementRepository {
         limit: usize,
     ) -> Result<Vec<Measurement>, DomainError>;
 
-    /// Sums `value` for every measurement with `from <= timestamp <= to`,
-    /// optionally restricted to one channel. `None` means all channels.
+    /// Sums `value` for every measurement with `from <= timestamp <= to` across
+    /// the given channels. An empty slice sums to 0.
     fn sum(
         &self,
         from: chrono::DateTime<chrono::Utc>,
         to: chrono::DateTime<chrono::Utc>,
-        channel_id: Option<value_objects::ChannelId>,
+        channel_ids: &[value_objects::ChannelId],
     ) -> Result<i64, DomainError>;
 
     /// Sums `value` into fixed-width buckets of `bucket_seconds` aligned to

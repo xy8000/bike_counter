@@ -24,16 +24,12 @@ use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_import_service::DataImportService;
 use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
-use crate::core::application::global_summary_service::GlobalSummaryService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
-use crate::core::application::station_detail_service::StationDetailService;
-use crate::core::application::station_overview_service::StationOverviewService;
-use crate::core::application::station_summary_service::StationSummaryService;
-use crate::core::application::stations_summary_service::StationsSummaryService;
+use crate::core::application::station_analytics_service::StationAnalyticsService;
 use crate::core::domain::assets::asset::BuiltinImage;
 use crate::core::domain::assets::asset::value_objects::{ContentType, ObjectKey};
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
@@ -208,46 +204,10 @@ fn main() {
         startup.data_source_runtimes,
     ));
 
-    // Thin core application services backing the REST read endpoints. The
-    // scheduler/import services keep using the repositories directly.
-    // On-the-fly station-summary aggregation backing the BFF "visible stations"
-    // endpoints (channel counts + bikes in the last 24 h).
-    let station_summary_service = Arc::new(StationSummaryService::new(
-        counting_station_repo.clone(),
-        channel_repo.clone(),
-        measurement_repo.clone(),
-    ));
-
-    // Whole-system statistics backing the BFF `global-summary` endpoint (shown
-    // in the frontend header): all stations/channels, the last-24h total, and
-    // the timestamp of the most recent successful data-source update.
-    let global_summary_service = Arc::new(GlobalSummaryService::new(
-        counting_station_repo.clone(),
-        channel_repo.clone(),
-        measurement_repo.clone(),
-        job_repo.clone(),
-    ));
-
-    // Per-station overview page backing the BFF `station-overview/{id}` endpoint
-    // (channel count + last day/7 days/month/year trends + last update).
-    let station_overview_service = Arc::new(StationOverviewService::new(
-        counting_station_repo.clone(),
-        channel_repo.clone(),
-        measurement_repo.clone(),
-        job_repo.clone(),
-    ));
-
-    // Per-station detail graphs backing the BFF `station-detail/{id}` endpoint
-    // (bucketed time series, weekday radar, per-channel series + pie).
-    let station_detail_service = Arc::new(StationDetailService::new(
-        counting_station_repo.clone(),
-        channel_repo.clone(),
-        measurement_repo.clone(),
-    ));
-
-    // Aggregated summary page backing the BFF `stations/summary` endpoint (the
-    // visible stations' overview metrics + bucketed graphs, per station).
-    let stations_summary_service = Arc::new(StationsSummaryService::new(
+    // All station analytics backing the BFF read endpoints (sidebar/search
+    // summaries, the global summary, the overview page, the detail graphs and
+    // the aggregated station-summary page).
+    let station_analytics_service = Arc::new(StationAnalyticsService::new(
         counting_station_repo.clone(),
         channel_repo.clone(),
         measurement_repo.clone(),
@@ -282,11 +242,7 @@ fn main() {
         health_service,
         persistent_state_service,
         provider_message_service,
-        station_summary_service,
-        global_summary_service,
-        station_overview_service,
-        station_detail_service,
-        stations_summary_service,
+        station_analytics_service,
         asset_service,
         asset_storage,
     );

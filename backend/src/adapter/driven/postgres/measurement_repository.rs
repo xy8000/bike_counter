@@ -203,25 +203,20 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         &self,
         from: chrono::DateTime<chrono::Utc>,
         to: chrono::DateTime<chrono::Utc>,
-        channel_id: Option<value_objects::ChannelId>,
+        channel_ids: &[value_objects::ChannelId],
     ) -> Result<i64, DomainError> {
         let mut client = self
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let row = match channel_id {
-            Some(channel_id) => client.query_one(
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let row = client
+            .query_one(
                 "SELECT COALESCE(SUM(value), 0)::bigint FROM measurements \
-                 WHERE timestamp >= $1 AND timestamp <= $2 AND channel_id = $3",
-                &[&from, &to, &channel_id.0],
-            ),
-            None => client.query_one(
-                "SELECT COALESCE(SUM(value), 0)::bigint FROM measurements \
-                 WHERE timestamp >= $1 AND timestamp <= $2",
-                &[&from, &to],
-            ),
-        }
-        .map_err(|error| DomainError::Database(error.to_string()))?;
+                 WHERE timestamp >= $1 AND timestamp <= $2 AND channel_id = ANY($3::uuid[])",
+                &[&from, &to, &channel_uuids],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(row.get::<_, i64>(0))
     }
 
@@ -860,17 +855,18 @@ mod tests {
         let from = now - chrono::Duration::hours(24);
         let to = now;
 
-        let per_channel = repository.sum(from, to, Some(channel_id())).unwrap();
+        let ids = [channel_id()];
+        let per_channel = repository.sum(from, to, &ids).unwrap();
         assert_eq!(
             per_channel, 8,
             "only the 2h and 1h measurements count; the 48h one is excluded"
         );
 
-        let all_channels = repository.sum(from, to, None).unwrap();
+        let all_channels = repository.sum(from, to, &ids).unwrap();
         assert_eq!(all_channels, 8, "the single sample channel is the only one");
 
         let narrowed = repository
-            .sum(now - chrono::Duration::minutes(90), to, None)
+            .sum(now - chrono::Duration::minutes(90), to, &ids)
             .unwrap();
         assert_eq!(
             narrowed, 3,

@@ -16,15 +16,11 @@ use crate::adapter::driving::rest::tests::fixtures::{
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_source_service::DataSourceService;
-use crate::core::application::global_summary_service::GlobalSummaryService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
-use crate::core::application::station_detail_service::StationDetailService;
-use crate::core::application::station_overview_service::StationOverviewService;
-use crate::core::application::station_summary_service::StationSummaryService;
-use crate::core::application::stations_summary_service::StationsSummaryService;
+use crate::core::application::station_analytics_service::StationAnalyticsService;
 use crate::core::domain::assets::asset::value_objects::{
     AssetId, ByteSize, ContentType, ObjectKey, Sha256,
 };
@@ -251,13 +247,13 @@ impl MeasurementRepository for MockMeasurementRepository {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-        channel_id: Option<measurement_vo::ChannelId>,
+        channel_ids: &[measurement_vo::ChannelId],
     ) -> Result<i64, DomainError> {
         Ok(self
             .measurements
             .iter()
             .filter(|m| m.timestamp.0 >= from && m.timestamp.0 <= to)
-            .filter(|m| channel_id.is_none_or(|id| m.channel_id == id))
+            .filter(|m| channel_ids.contains(&m.channel_id))
             .map(|m| m.value.0)
             .sum())
     }
@@ -599,52 +595,10 @@ pub fn sample_measurement_service() -> Arc<MeasurementService> {
     )))
 }
 
-/// A [`StationSummaryService`] backed by the sample counting-station, channel
-/// and measurement repositories.
-pub fn sample_station_summary_service() -> Arc<StationSummaryService> {
-    Arc::new(StationSummaryService::new(
-        Arc::new(sample_counting_station_repository()),
-        Arc::new(sample_channel_repository()),
-        Arc::new(sample_measurement_repository()),
-    ))
-}
-
-/// A [`GlobalSummaryService`] backed by the sample counting-station, channel,
+/// A [`StationAnalyticsService`] backed by the sample counting-station, channel,
 /// measurement and job repositories.
-pub fn sample_global_summary_service() -> Arc<GlobalSummaryService> {
-    Arc::new(GlobalSummaryService::new(
-        Arc::new(sample_counting_station_repository()),
-        Arc::new(sample_channel_repository()),
-        Arc::new(sample_measurement_repository()),
-        Arc::new(sample_job_repository()),
-    ))
-}
-
-/// A [`StationOverviewService`] backed by the sample counting-station, channel,
-/// measurement and job repositories.
-pub fn sample_station_overview_service() -> Arc<StationOverviewService> {
-    Arc::new(StationOverviewService::new(
-        Arc::new(sample_counting_station_repository()),
-        Arc::new(sample_channel_repository()),
-        Arc::new(sample_measurement_repository()),
-        Arc::new(sample_job_repository()),
-    ))
-}
-
-/// A [`StationDetailService`] backed by the sample counting-station, channel and
-/// measurement repositories.
-pub fn sample_station_detail_service() -> Arc<StationDetailService> {
-    Arc::new(StationDetailService::new(
-        Arc::new(sample_counting_station_repository()),
-        Arc::new(sample_channel_repository()),
-        Arc::new(sample_measurement_repository()),
-    ))
-}
-
-/// A [`StationsSummaryService`] backed by the sample counting-station, channel,
-/// measurement and job repositories.
-pub fn sample_stations_summary_service() -> Arc<StationsSummaryService> {
-    Arc::new(StationsSummaryService::new(
+pub fn sample_station_analytics_service() -> Arc<StationAnalyticsService> {
+    Arc::new(StationAnalyticsService::new(
         Arc::new(sample_counting_station_repository()),
         Arc::new(sample_channel_repository()),
         Arc::new(sample_measurement_repository()),

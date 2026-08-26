@@ -13,12 +13,11 @@ use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::CountingStationDto;
 use crate::core::domain::measurements::repository_port::{
-    ChannelTotal, HourTotal, TimeBucket, WeekdayTotal,
+    HourTotal, MonthTotal, TimeBucket, WeekdayTotal,
 };
-use crate::core::domain::station_detail::{PeriodGraphs, StationDetailGraphs};
-use crate::core::domain::station_summary::StationSummary;
-use crate::core::domain::stations_summary::{
-    StationsSummary, StationsSummaryGraphs, SummaryPeriodGraphs,
+use crate::core::domain::station_analytics::{
+    PeriodGraphs, StationDetailGraphs, StationSummary, StationsSummary, StationsSummaryGraphs,
+    SummaryPeriodGraphs,
 };
 
 /// A counting station enriched with its channel count and the number of bikes
@@ -143,8 +142,8 @@ pub struct MetricDto {
     pub delta_percent: Option<f64>,
 }
 
-impl From<crate::core::domain::station_overview::MetricWindow> for MetricDto {
-    fn from(window: crate::core::domain::station_overview::MetricWindow) -> Self {
+impl From<crate::core::domain::station_analytics::MetricWindow> for MetricDto {
+    fn from(window: crate::core::domain::station_analytics::MetricWindow) -> Self {
         Self {
             key: window.key.as_str().to_string(),
             current: window.current,
@@ -296,48 +295,50 @@ pub struct StationDetailGraphsDto {
     pub monthly_totals: Vec<MonthTotalDto>,
 }
 
+/// Shared conversion helpers for the graph DTOs.
+fn buckets(series: Vec<TimeBucket>) -> Vec<TimeBucketDto> {
+    series
+        .into_iter()
+        .map(|bucket| TimeBucketDto {
+            start: bucket.start,
+            total: bucket.total,
+        })
+        .collect()
+}
+
+fn weekdays(weekdays: Vec<WeekdayTotal>) -> Vec<WeekdayTotalDto> {
+    weekdays
+        .into_iter()
+        .map(|weekday| WeekdayTotalDto {
+            weekday: weekday.weekday,
+            total: weekday.total,
+        })
+        .collect()
+}
+
+fn hours(hours: Vec<HourTotal>) -> Vec<HourTotalDto> {
+    hours
+        .into_iter()
+        .map(|hour| HourTotalDto {
+            hour: hour.hour,
+            total: hour.total,
+        })
+        .collect()
+}
+
+fn months(months: Vec<MonthTotal>) -> Vec<MonthTotalDto> {
+    months
+        .into_iter()
+        .map(|month| MonthTotalDto {
+            year: month.year,
+            month: month.month,
+            total: month.total,
+        })
+        .collect()
+}
+
 impl From<StationDetailGraphs> for StationDetailGraphsDto {
     fn from(graphs: StationDetailGraphs) -> Self {
-        fn buckets(series: Vec<TimeBucket>) -> Vec<TimeBucketDto> {
-            series
-                .into_iter()
-                .map(|bucket| TimeBucketDto {
-                    start: bucket.start,
-                    total: bucket.total,
-                })
-                .collect()
-        }
-
-        fn weekdays(weekdays: Vec<WeekdayTotal>) -> Vec<WeekdayTotalDto> {
-            weekdays
-                .into_iter()
-                .map(|weekday| WeekdayTotalDto {
-                    weekday: weekday.weekday,
-                    total: weekday.total,
-                })
-                .collect()
-        }
-
-        fn hours(hours: Vec<HourTotal>) -> Vec<HourTotalDto> {
-            hours
-                .into_iter()
-                .map(|hour| HourTotalDto {
-                    hour: hour.hour,
-                    total: hour.total,
-                })
-                .collect()
-        }
-
-        fn channels(totals: Vec<ChannelTotal>) -> Vec<ChannelTotalDto> {
-            totals
-                .into_iter()
-                .map(|total| ChannelTotalDto {
-                    channel_id: total.channel_id,
-                    total: total.total,
-                })
-                .collect()
-        }
-
         fn period(period: PeriodGraphs) -> PeriodGraphsDto {
             PeriodGraphsDto {
                 current: buckets(period.current),
@@ -346,7 +347,14 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
                 weekday_radar_previous: weekdays(period.weekday_radar_previous),
                 hourly: hours(period.hourly),
                 hourly_previous: hours(period.hourly_previous),
-                channel_pie: channels(period.channel_pie),
+                channel_pie: period
+                    .channel_pie
+                    .into_iter()
+                    .map(|total| ChannelTotalDto {
+                        channel_id: total.channel_id,
+                        total: total.total,
+                    })
+                    .collect(),
                 per_channel: period
                     .per_channel
                     .into_iter()
@@ -368,15 +376,7 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
             week: period(graphs.week),
             last_30_days: period(graphs.last_30_days),
             year: period(graphs.year),
-            monthly_totals: graphs
-                .monthly_totals
-                .into_iter()
-                .map(|month| MonthTotalDto {
-                    year: month.year,
-                    month: month.month,
-                    total: month.total,
-                })
-                .collect(),
+            monthly_totals: months(graphs.monthly_totals),
         }
     }
 }
@@ -406,8 +406,8 @@ pub struct SummaryStationDto {
     pub channel_count: usize,
 }
 
-impl From<crate::core::domain::stations_summary::SummaryStation> for SummaryStationDto {
-    fn from(station: crate::core::domain::stations_summary::SummaryStation) -> Self {
+impl From<crate::core::domain::station_analytics::SummaryStation> for SummaryStationDto {
+    fn from(station: crate::core::domain::station_analytics::SummaryStation) -> Self {
         Self {
             id: station.id,
             name: station.name,
@@ -465,36 +465,6 @@ pub struct StationsSummaryGraphsDto {
 
 impl From<StationsSummaryGraphs> for StationsSummaryGraphsDto {
     fn from(graphs: StationsSummaryGraphs) -> Self {
-        fn buckets(series: Vec<TimeBucket>) -> Vec<TimeBucketDto> {
-            series
-                .into_iter()
-                .map(|bucket| TimeBucketDto {
-                    start: bucket.start,
-                    total: bucket.total,
-                })
-                .collect()
-        }
-
-        fn weekdays(weekdays: Vec<WeekdayTotal>) -> Vec<WeekdayTotalDto> {
-            weekdays
-                .into_iter()
-                .map(|weekday| WeekdayTotalDto {
-                    weekday: weekday.weekday,
-                    total: weekday.total,
-                })
-                .collect()
-        }
-
-        fn hours(hours: Vec<HourTotal>) -> Vec<HourTotalDto> {
-            hours
-                .into_iter()
-                .map(|hour| HourTotalDto {
-                    hour: hour.hour,
-                    total: hour.total,
-                })
-                .collect()
-        }
-
         fn period(period: SummaryPeriodGraphs) -> SummaryPeriodGraphsDto {
             SummaryPeriodGraphsDto {
                 current: buckets(period.current),
@@ -532,15 +502,7 @@ impl From<StationsSummaryGraphs> for StationsSummaryGraphsDto {
             week: period(graphs.week),
             last_30_days: period(graphs.last_30_days),
             year: period(graphs.year),
-            monthly_totals: graphs
-                .monthly_totals
-                .into_iter()
-                .map(|month| MonthTotalDto {
-                    year: month.year,
-                    month: month.month,
-                    total: month.total,
-                })
-                .collect(),
+            monthly_totals: months(graphs.monthly_totals),
         }
     }
 }

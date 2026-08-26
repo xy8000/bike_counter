@@ -722,7 +722,7 @@ mod tests {
             &self,
             _from: chrono::DateTime<chrono::Utc>,
             _to: chrono::DateTime<chrono::Utc>,
-            _channel_id: Option<measurement_vo::ChannelId>,
+            _channel_ids: &[measurement_vo::ChannelId],
         ) -> Result<i64, DomainError> {
             Ok(0)
         }

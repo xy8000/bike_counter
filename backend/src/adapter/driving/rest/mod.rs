@@ -35,14 +35,10 @@ use crate::core::domain::counting_stations::service_port::CountingStationService
 use crate::core::domain::data_source::service_port::DataSourceServicePort;
 use crate::core::domain::data_source::service_port::PersistentStateServicePort;
 use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
-use crate::core::domain::global_summary::service_port::GlobalSummaryServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
-use crate::core::domain::station_detail::service_port::StationDetailServicePort;
-use crate::core::domain::station_overview::service_port::StationOverviewServicePort;
-use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
-use crate::core::domain::stations_summary::service_port::StationsSummaryServicePort;
+use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 
 pub struct RestApiAdapter {
     app_state: AppState,
@@ -60,11 +56,7 @@ impl RestApiAdapter {
         health_service: Arc<dyn HealthServicePort + Send + Sync>,
         persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
         provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
-        station_summary_service: Arc<dyn StationSummaryServicePort + Send + Sync>,
-        global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
-        station_overview_service: Arc<dyn StationOverviewServicePort + Send + Sync>,
-        station_detail_service: Arc<dyn StationDetailServicePort + Send + Sync>,
-        stations_summary_service: Arc<dyn StationsSummaryServicePort + Send + Sync>,
+        station_analytics_service: Arc<dyn StationAnalyticsServicePort + Send + Sync>,
         asset_service: Arc<dyn AssetServicePort>,
         asset_storage: Arc<dyn AssetStorage>,
     ) -> Self {
@@ -78,11 +70,7 @@ impl RestApiAdapter {
                 health_service,
                 persistent_state_service,
                 provider_message_service,
-                station_summary_service,
-                global_summary_service,
-                station_overview_service,
-                station_detail_service,
-                stations_summary_service,
+                station_analytics_service,
                 asset_service,
                 asset_storage,
             },

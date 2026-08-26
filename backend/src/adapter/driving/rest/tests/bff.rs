@@ -17,8 +17,7 @@ use crate::adapter::driving::rest::tests::fixtures;
 use crate::adapter::driving::rest::tests::mocks::{
     MockChannelRepository, MockCountingStationRepository, MockMeasurementRepository,
 };
-use crate::core::application::station_summary_service::StationSummaryService;
-use crate::core::application::stations_summary_service::StationsSummaryService;
+use crate::core::application::station_analytics_service::StationAnalyticsService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
@@ -185,7 +184,7 @@ async fn bff_sidebar_counts_bikes_on_the_last_day() {
         channel_id: measurement_vo::ChannelId(fixtures::CHANNEL_ID_A),
         timestamp: measurement_vo::Timestamp(yesterday_noon),
     };
-    let service = Arc::new(StationSummaryService::new(
+    let service = Arc::new(StationAnalyticsService::new(
         Arc::new(MockCountingStationRepository::new(vec![station])),
         Arc::new(MockChannelRepository {
             channels: vec![channel],
@@ -193,8 +192,9 @@ async fn bff_sidebar_counts_bikes_on_the_last_day() {
         Arc::new(MockMeasurementRepository {
             measurements: vec![measurement],
         }),
+        Arc::new(crate::adapter::driving::rest::tests::fixtures::sample_job_repository()),
     ));
-    let app = TestApp::with_station_summary_service(service);
+    let app = TestApp::with_station_analytics_service(service);
 
     let (status, body) = app
         .get_json(&format!("/api/bff/stations/sidebar{STATIONS_BBOX}"))
@@ -619,7 +619,7 @@ async fn bff_station_summary_aggregates_per_station_data() {
         channel_id: measurement_vo::ChannelId(fixtures::CHANNEL_ID_A),
         timestamp: measurement_vo::Timestamp(yesterday_noon),
     };
-    let service = Arc::new(StationsSummaryService::new(
+    let service = Arc::new(StationAnalyticsService::new(
         Arc::new(MockCountingStationRepository::new(vec![station])),
         Arc::new(MockChannelRepository {
             channels: vec![channel],
@@ -629,7 +629,7 @@ async fn bff_station_summary_aggregates_per_station_data() {
         }),
         Arc::new(crate::adapter::driving::rest::tests::fixtures::sample_job_repository()),
     ));
-    let app = TestApp::with_stations_summary_service(service);
+    let app = TestApp::with_station_analytics_service(service);
 
     let (status, body) = app
         .get_json(&format!("/api/bff/stations/summary{STATIONS_BBOX}"))

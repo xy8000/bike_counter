@@ -123,13 +123,13 @@ mod tests {
             &self,
             from: chrono::DateTime<chrono::Utc>,
             to: chrono::DateTime<chrono::Utc>,
-            channel_id: Option<measurement_vo::ChannelId>,
+            channel_ids: &[measurement_vo::ChannelId],
         ) -> Result<i64, DomainError> {
             Ok(self
                 .measurements
                 .iter()
                 .filter(|m| m.timestamp.0 >= from && m.timestamp.0 <= to)
-                .filter(|m| channel_id.is_none_or(|id| m.channel_id == id))
+                .filter(|m| channel_ids.contains(&m.channel_id))
                 .map(|m| m.value.0)
                 .sum())
         }

@@ -24,9 +24,10 @@ use crate::adapter::driving::rest::dto::ErrorResponseDto;
 use crate::adapter::driving::rest::handlers::{AppState, blocking, map_domain_error};
 use crate::core::domain::assets::asset::AssetOrigin;
 use crate::core::domain::assets::asset::value_objects::AssetId;
+use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::station_summary::bounds::GeoBounds;
+use crate::core::domain::station_analytics::GeoBounds;
 
 /// Converts the four optional bounds into a validated `GeoBounds`.
 ///
@@ -70,6 +71,30 @@ fn parse_required_bounds(params: &BffStationQueryParams) -> Result<GeoBounds, Do
             "all four bounds (min_lat, min_lng, max_lat, max_lng) are required".to_string(),
         )),
     }
+}
+
+/// Resolves a station's image URL: its linked asset, else the built-in default.
+async fn station_image_url(
+    state: &AppState,
+    station: &CountingStation,
+) -> Result<String, (StatusCode, Json<ErrorResponseDto>)> {
+    let asset_service = state.asset_service.clone();
+    let linked = match station.image_asset_id {
+        Some(asset_id) => {
+            let service = asset_service.clone();
+            blocking(move || service.find_by_id(asset_id))
+                .await
+                .map_err(map_domain_error)?
+        }
+        None => None,
+    };
+    let image_asset = match linked {
+        Some(asset) => asset,
+        None => blocking(move || asset_service.default_asset())
+            .await
+            .map_err(map_domain_error)?,
+    };
+    Ok(format!("/api/bff/assets/{}/content", image_asset.id.0))
 }
 
 #[utoipa::path(
@@ -134,8 +159,8 @@ pub async fn get_bff_stations_sidebar(
     let bounds = parse_required_bounds(&params).map_err(map_domain_error)?;
     let now = chrono::Utc::now();
 
-    let summary_service = state.station_summary_service.clone();
-    let summaries = blocking(move || summary_service.summarize(Some(bounds), now))
+    let analytics_service = state.station_analytics_service.clone();
+    let summaries = blocking(move || analytics_service.summaries(Some(bounds), now))
         .await
         .map_err(map_domain_error)?;
 
@@ -168,8 +193,8 @@ pub async fn get_bff_stations_search(
     State(state): State<AppState>,
 ) -> Result<Json<StationSearchDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
-    let service = state.station_summary_service.clone();
-    let summaries = blocking(move || service.summarize(None, now))
+    let service = state.station_analytics_service.clone();
+    let summaries = blocking(move || service.summaries(None, now))
         .await
         .map_err(map_domain_error)?;
 
@@ -230,8 +255,8 @@ pub async fn get_bff_stations_summary(
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
 
     let now = chrono::Utc::now();
-    let service = state.stations_summary_service.clone();
-    let summary = blocking(move || service.summarize(bounds, &exclude, now))
+    let service = state.station_analytics_service.clone();
+    let summary = blocking(move || service.stations_summary(bounds, &exclude, now))
         .await
         .map_err(map_domain_error)?;
 
@@ -260,8 +285,8 @@ pub async fn get_bff_global_summary(
     State(state): State<AppState>,
 ) -> Result<Json<GlobalSummaryDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
-    let service = state.global_summary_service.clone();
-    let summary = blocking(move || service.summarize(now))
+    let service = state.station_analytics_service.clone();
+    let summary = blocking(move || service.global_summary(now))
         .await
         .map_err(map_domain_error)?;
 
@@ -294,29 +319,12 @@ pub async fn get_bff_station_overview(
     State(state): State<AppState>,
 ) -> Result<Json<StationOverviewDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
-    let overview_service = state.station_overview_service.clone();
-    let overview = blocking(move || overview_service.overview(Id(id), now))
+    let analytics_service = state.station_analytics_service.clone();
+    let overview = blocking(move || analytics_service.overview(Id(id), now))
         .await
         .map_err(map_domain_error)?;
 
-    // Resolve the image: the station's linked asset, else the built-in default.
-    let asset_service = state.asset_service.clone();
-    let linked = match overview.station.image_asset_id {
-        Some(asset_id) => {
-            let service = asset_service.clone();
-            blocking(move || service.find_by_id(asset_id))
-                .await
-                .map_err(map_domain_error)?
-        }
-        None => None,
-    };
-    let image_asset = match linked {
-        Some(asset) => asset,
-        None => blocking(move || asset_service.default_asset())
-            .await
-            .map_err(map_domain_error)?,
-    };
-
+    let image_url = station_image_url(&state, &overview.station).await?;
     let metrics = overview.metrics.into_iter().map(MetricDto::from).collect();
     Ok(Json(StationOverviewDto {
         id: overview.station.id.0,
@@ -326,7 +334,7 @@ pub async fn get_bff_station_overview(
         longitude: overview.station.coordinates.map(|c| c.longitude),
         channel_count: overview.channel_count,
         total_bikes: overview.total_bikes,
-        image_url: format!("/api/bff/assets/{}/content", image_asset.id.0),
+        image_url,
         metrics,
         last_update: overview.last_update,
         detail_url: format!("/stations/{}", overview.station.id.0),
@@ -356,33 +364,17 @@ pub async fn get_bff_station_detail(
 ) -> Result<Json<StationDetailDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
 
-    let overview_service = state.station_overview_service.clone();
-    let overview = blocking(move || overview_service.overview(Id(id), now))
+    let analytics_service = state.station_analytics_service.clone();
+    let overview = blocking(move || analytics_service.overview(Id(id), now))
         .await
         .map_err(map_domain_error)?;
 
-    let detail_service = state.station_detail_service.clone();
-    let detail = blocking(move || detail_service.detail(Id(id), now))
+    let analytics_service = state.station_analytics_service.clone();
+    let detail = blocking(move || analytics_service.detail(Id(id), now))
         .await
         .map_err(map_domain_error)?;
 
-    // Resolve the image: the station's linked asset, else the built-in default.
-    let asset_service = state.asset_service.clone();
-    let linked = match overview.station.image_asset_id {
-        Some(asset_id) => {
-            let service = asset_service.clone();
-            blocking(move || service.find_by_id(asset_id))
-                .await
-                .map_err(map_domain_error)?
-        }
-        None => None,
-    };
-    let image_asset = match linked {
-        Some(asset) => asset,
-        None => blocking(move || asset_service.default_asset())
-            .await
-            .map_err(map_domain_error)?,
-    };
+    let image_url = station_image_url(&state, &overview.station).await?;
 
     let channels = detail
         .channels
@@ -401,7 +393,7 @@ pub async fn get_bff_station_detail(
         longitude: overview.station.coordinates.map(|c| c.longitude),
         channel_count: overview.channel_count,
         total_bikes: overview.total_bikes,
-        image_url: format!("/api/bff/assets/{}/content", image_asset.id.0),
+        image_url,
         metrics: overview.metrics.into_iter().map(MetricDto::from).collect(),
         last_update: overview.last_update,
         channels,

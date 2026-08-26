@@ -405,3 +405,13 @@ Hour-of-day radar + weekday axis label fix + radar compare-previous (plan 48)
 - [x] Frontend: week line-chart X-axis fixed — `weekdayAxis` now appends the local time so hour-level ticks are unique (was `Mo Mo Mo Mo Di …`)
 - [x] e2e: `detail.spec.ts` hour-radar card test + `summary.spec.ts` Hours-card assertion
 - [x] Gates green: `make check`, `make test` (363), `make test-rest` (87), `make coverage` (overall 85.44%, core 96.10%), `make frontend-build`, `make test-playwright` (21)
+
+Station analytics consolidation + measurement sum N+1 fix (plan 49)
+
+- [x] Backend: `MeasurementRepository::sum` now takes `&[ChannelId]` — one `ANY($1)` query replaces the per-channel N+1 loops; Postgres impl + all in-memory mocks updated
+- [x] Backend: the five station modules (`station_summary`, `stations_summary`, `station_overview`, `station_detail`, `global_summary`) consolidated into one `station_analytics` domain module with a single `StationAnalyticsServicePort`
+- [x] Backend: one `StationAnalyticsService` (summaries / global_summary / overview / detail / stations_summary) sharing `sum_window`, `weekday_totals`, `metric_windows`, `period_data`, `graph_windows` and `last_update`
+- [x] Backend: the five per-service test modules merged into one shared in-memory test double; all unit tests ported
+- [x] Backend: BFF handlers use the single service with a shared `station_image_url` helper; `bff/dto.rs` graph conversions deduplicated (`buckets`/`weekdays`/`hours`/`months`)
+- [x] Wiring: `main.rs` / `AppState` / `RestApiAdapter` / `tests/mocks.rs` use `StationAnalyticsService`
+- [x] Gates green: `make check`, `make test` (363), `make test-rest` (87), `make coverage` (overall 86.03%, core 95.85%)
