@@ -76,6 +76,8 @@ name = "Münster"
 
 [data_sources.provider]
 type = "münster_opendata_github_provider"
+# Minimum provider-message severity to persist (default: WARNING).
+log_level = "WARNING"
 
 [data_sources.provider.vars]
 url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
@@ -97,6 +99,10 @@ an array entry under `[[data_sources]]`:
   label the health component). UTF-8 names such as `Münster` are supported.
 - `provider.type` – the provider implementation to build (e.g.
   `münster_opendata_github_provider`).
+- `provider.log_level` – minimum provider-message severity to persist, one of
+  `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default `WARNING`). The core
+  drops provider events below this level, so per-source noise can be tuned
+  without touching the adapter.
 - `provider.vars` – provider-specific key/value settings. The supported keys
   depend on the provider only; the Münster provider understands `url` (required),
   `max_measurement_batch_size` (optional, defaults to `500`),
@@ -253,14 +259,24 @@ import records as it works. These are stored in the
 
 At startup every provider receives a scoped message sink **after** its data
 source is persisted (the same two-phase handover as persistent state):
-`StartupService` calls `attach_provider_messages`, handing the provider a
-`ProviderMessageSink` whose `provider_event_occurred(severity, message)` writes a
-row. Emitting a message is best-effort and never fails the import.
+`StartupService` wraps the scoped sink in a core policy filter
+(`FilteringProviderMessageSink`) and calls `attach_provider_messages`, handing
+the provider a `ProviderMessageSink` whose `provider_event_occurred(severity,
+message)` writes a row. Emitting a message is best-effort and never fails the
+import.
 
-The Münster provider uses this to report non-fatal data quirks instead of
-aborting: when a channel has no column in a monthly CSV file it records a
-`WARNING` (with the channel id and file path) and skips that file, so the update
-continues and finishes. Genuinely fatal conditions still abort.
+The core filter enforces the provider's `log_level` (default `WARNING`) and a
+per-data-source cap: events below the level are dropped, only the first **1000**
+events are persisted, and on overflow a single truncation `WARNING` is recorded
+(and printed to stdout). The database additionally caps at **1001** rows per data
+source (migration `V13`), so the limit holds even if the core is bypassed.
+
+The Münster provider uses provider messages to report non-fatal data quirks
+instead of aborting: when a channel has no column in a monthly CSV file it
+records a `DEBUG` event (with the channel id and file path) and skips that file,
+so the update continues and finishes. Because `DEBUG` is below the default
+`WARNING` log level, these events are dropped unless `log_level` is lowered.
+Genuinely fatal conditions still abort.
 
 Messages are exposed read-only through the core as
 `GET /api/v1/data-sources/{id}/messages` (see [API overview](#api-overview)):
@@ -374,6 +390,7 @@ docker compose logs -f           # make logs
 
   [data_sources.provider]
   type = "münster_opendata_github_provider"
+  log_level = "WARNING"
 
   [data_sources.provider.vars]
   url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"

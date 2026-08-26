@@ -2,6 +2,8 @@
 //!
 //! - Models: [`data_source::DataSource`] (+ `value_objects`),
 //!   [`provider_message::ProviderMessage`] + [`provider_message::ProviderMessageSeverity`].
+//! - Policy: [`provider_message_filter::FilteringProviderMessageSink`] enforces
+//!   the provider `log_level` and the per-data-source message cap.
 //! - Driven ports (implemented by the driven adapter):
 //!   [`repository_port::DataSourceRepository`],
 //!   [`persistent_state_port::PersistentStateStore`] + [`persistent_state_port::PersistentStateHandleFactory`],
@@ -17,6 +19,7 @@ pub mod data_provider_factory_port;
 pub mod data_source;
 pub mod persistent_state_port;
 pub mod provider_message;
+pub mod provider_message_filter;
 pub mod provider_message_port;
 pub mod provider_port;
 pub mod repository_port;

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
     AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
@@ -6,9 +7,11 @@ use crate::core::domain::configuration::configuration::value_objects::{
 };
 use crate::core::domain::configuration::configuration::{
     Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
+    DEFAULT_PROVIDER_LOG_LEVEL,
 };
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::configuration::repository_port::ConfigurationRepository;
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -36,6 +39,21 @@ fn default_asset_cleanup_cron() -> String {
     DEFAULT_ASSET_CLEANUP_CRON.to_string()
 }
 
+fn default_log_level() -> String {
+    DEFAULT_PROVIDER_LOG_LEVEL.to_string()
+}
+
+/// Validates a provider `log_level` string against the known severity values
+/// and returns it unchanged on success (the upper-case wire representation).
+fn parse_log_level(raw: &str) -> Result<String, ConfigError> {
+    ProviderMessageSeverity::from_str(raw).map_err(|_| {
+        ConfigError::InvalidFormat(format!(
+            "data_sources.provider.log_level: unknown severity '{raw}'"
+        ))
+    })?;
+    Ok(raw.to_string())
+}
+
 #[derive(Deserialize)]
 struct AssetStorageDto {
     endpoint: String,
@@ -57,6 +75,8 @@ struct DataProviderDto {
     provider_type: String,
     #[serde(default)]
     vars: HashMap<String, String>,
+    #[serde(default = "default_log_level")]
+    log_level: String,
 }
 
 pub struct ConfigurationTomlAdapter {
@@ -85,10 +105,12 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
 
         let mut data_sources = Vec::with_capacity(dto.data_sources.len());
         for data_source in dto.data_sources {
+            let log_level = parse_log_level(&data_source.provider.log_level)?;
             let provider = DataProviderConfiguration::new(
                 data_source.provider.provider_type,
                 data_source.provider.vars,
-            )?;
+            )?
+            .with_log_level(log_level);
             let data_source = DataSourceConfiguration::new(data_source.name, provider)?;
             data_sources.push(data_source);
         }
@@ -234,6 +256,63 @@ mod tests {
             data_sources[0].provider().var("max_measurement_batch_size"),
             Some("500")
         );
+        // log_level defaults to WARNING when not configured.
+        assert_eq!(
+            data_sources[0].provider().log_level(),
+            super::DEFAULT_PROVIDER_LOG_LEVEL
+        );
+    }
+
+    fn provider_config_with_log_level(log_level: &str) -> String {
+        format!(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
+            \n\
+            [[data_sources]]\n\
+            name = \"Münster\"\n\
+            \n\
+            [data_sources.provider]\n\
+            type = \"münster_opendata_github_provider\"\n\
+            log_level = \"{log_level}\"\n\
+            \n\
+            [data_sources.provider.vars]\n\
+            url = \"https://example.com/data.zip\"\n"
+        )
+    }
+
+    #[test]
+    fn parses_explicit_provider_log_level() {
+        let path = write_config(&with_asset_section(&provider_config_with_log_level(
+            "DEBUG",
+        )));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(
+            configuration.data_sources()[0].provider().log_level(),
+            "DEBUG"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_provider_log_level() {
+        let path = write_config(&with_asset_section(&provider_config_with_log_level(
+            "NOTICE",
+        )));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(
+            result,
+            Err(ConfigError::InvalidFormat(message))
+                if message.contains("log_level")
+        ));
     }
 
     #[test]

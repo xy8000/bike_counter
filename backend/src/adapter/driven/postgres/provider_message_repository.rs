@@ -224,4 +224,25 @@ mod tests {
 
         assert!(db.repository.find_by_data_source(id).unwrap().is_empty());
     }
+
+    #[test]
+    fn database_trigger_caps_messages_at_1001_per_data_source() {
+        let db = TestDb::new();
+        let id = db.create_data_source("Münster");
+
+        // Insert far more than the cap; the migration's AFTER INSERT trigger
+        // must keep only the newest 1001 rows per data source.
+        for i in 0..1005 {
+            db.repository
+                .record(id, ProviderMessageSeverity::Info, &format!("event {i}"))
+                .unwrap();
+        }
+
+        let messages = db.repository.find_by_data_source(id).unwrap();
+        assert_eq!(
+            messages.len(),
+            1001,
+            "the database trigger must cap provider messages at 1001 per data source"
+        );
+    }
 }

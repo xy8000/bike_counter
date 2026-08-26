@@ -796,7 +796,7 @@ impl ProviderMessageSink for RecordingSink {
 }
 
 #[test]
-fn missing_channel_column_emits_warning_and_returns_empty_batch() {
+fn missing_channel_column_emits_debug_and_returns_empty_batch() {
     let dir = std::env::temp_dir().join(format!("csv-warn-{}", Uuid::new_v4()));
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("2023-01.csv");
@@ -816,7 +816,7 @@ fn missing_channel_column_emits_warning_and_returns_empty_batch() {
     );
     let events = sink.events.lock().unwrap();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].0, ProviderMessageSeverity::Warning);
+    assert_eq!(events[0].0, ProviderMessageSeverity::Debug);
     assert!(events[0].1.contains("102031297"));
     assert!(events[0].1.contains("2023-01.csv"));
 

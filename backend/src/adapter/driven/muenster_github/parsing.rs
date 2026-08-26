@@ -121,9 +121,11 @@ pub fn csv_month_range(path: &Path) -> Option<(NaiveDate, NaiveDate)> {
 /// Parses the measurements of one channel from a monthly CSV.
 ///
 /// A channel that is simply absent from a file is a *known, non-fatal data
-/// quirk*: a `WARNING` is emitted (when a sink is available) and an empty batch
-/// is returned so the import continues. Genuine IO/parse failures (unreadable
-/// file, invalid CSV header) still return `ProviderError` and fail the job.
+/// quirk*: a `DEBUG` message is emitted (when a sink is available) and an empty
+/// batch is returned so the import continues. The `DEBUG` severity keeps the
+/// per-file noise below the default `WARNING` provider log level. Genuine
+/// IO/parse failures (unreadable file, invalid CSV header) still return
+/// `ProviderError` and fail the job.
 pub fn parse_measurement_csv(
     path: &Path,
     channel_external_id: &str,
@@ -148,12 +150,12 @@ pub fn parse_measurement_csv(
     {
         Some(column) => column,
         None => {
-            // Known quirk: warn and skip this file instead of aborting the
-            // whole import with a major job failure.
+            // Known quirk: record at DEBUG level and skip this file instead of
+            // aborting the whole import with a major job failure. DEBUG keeps
+            // the per-file noise below the default WARNING provider log level.
             if let Some(messages) = messages {
                 let message = format!("channel {channel_external_id} has no column in {path:?}");
-                let _ =
-                    messages.provider_event_occurred(ProviderMessageSeverity::Warning, &message);
+                let _ = messages.provider_event_occurred(ProviderMessageSeverity::Debug, &message);
             }
             return Ok(Vec::new());
         }

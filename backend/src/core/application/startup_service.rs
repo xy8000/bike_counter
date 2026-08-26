@@ -4,6 +4,7 @@
 //! `main.rs` only wires dependencies and calls [`StartupService::run`].
 
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::core::application::data_import_service::DataSourceRuntime;
@@ -13,6 +14,10 @@ use crate::core::domain::data_source::data_provider_factory_port::DataProviderFa
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
 use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+use crate::core::domain::data_source::provider_message_filter::{
+    FilteringProviderMessageSink, MAX_PROVIDER_MESSAGES,
+};
 use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
 use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
@@ -100,9 +105,20 @@ impl StartupService {
             provider.attach_persistent_state(state);
 
             // Phase 2b: attach the scoped provider-message sink (row now exists),
-            // so the provider can emit read-only events instead of aborting.
-            let messages = self.provider_message_sink_factory.scoped(data_source_id);
-            provider.attach_provider_messages(messages);
+            // wrapped in the core's level/cap filter, so the provider can emit
+            // read-only events instead of aborting and the core drops events
+            // below the provider's log_level and caps the persisted count. The
+            // log_level string is validated when the configuration is parsed, so
+            // the defensive fallback to WARNING is never hit in practice.
+            let scoped = self.provider_message_sink_factory.scoped(data_source_id);
+            let min_level = ProviderMessageSeverity::from_str(data_source.provider().log_level())
+                .unwrap_or(ProviderMessageSeverity::Warning);
+            let filtered = Arc::new(FilteringProviderMessageSink::new(
+                scoped,
+                min_level,
+                MAX_PROVIDER_MESSAGES,
+            ));
+            provider.attach_provider_messages(filtered);
 
             let name = format!(
                 "{}/{}",
@@ -771,8 +787,8 @@ mod tests {
             .expect("message sink attached");
 
         // The data source must have been persisted before the sink was attached,
-        // and the sink must be a working ScopedProviderMessageSink bound to that
-        // data source's id.
+        // and the sink must be a working filter wrapping a scoped sink bound to
+        // that data source's id.
         let source_id = data_source_repo.data_sources.lock().unwrap()[0].id;
         sink.provider_event_occurred(ProviderMessageSeverity::Warning, "missing column")
             .unwrap();
@@ -782,5 +798,49 @@ mod tests {
         assert_eq!(records[0].0, source_id);
         assert_eq!(records[0].1, ProviderMessageSeverity::Warning);
         assert_eq!(records[0].2, "missing column");
+    }
+
+    #[test]
+    fn provider_message_sink_drops_events_below_the_log_level() {
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let (startup_service, factory, _store, messages) = service(
+            MockConfigurationRepository {
+                configuration: configuration(&["Münster"]),
+            },
+            data_source_repo.clone(),
+        );
+
+        startup_service.run().expect("startup should succeed");
+
+        let provider = factory
+            .last_built
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("provider built");
+        let sink = provider
+            .attached_messages
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("message sink attached");
+
+        // The provider log_level defaults to WARNING, so DEBUG/INFO events are
+        // dropped by the core filter while WARNING/ERROR are persisted.
+        sink.provider_event_occurred(ProviderMessageSeverity::Debug, "missing column")
+            .unwrap();
+        sink.provider_event_occurred(ProviderMessageSeverity::Info, "archive downloaded")
+            .unwrap();
+        assert!(
+            messages.records.lock().unwrap().is_empty(),
+            "events below the default WARNING log level must be dropped"
+        );
+
+        sink.provider_event_occurred(ProviderMessageSeverity::Warning, "real problem")
+            .unwrap();
+        let records = messages.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].1, ProviderMessageSeverity::Warning);
+        assert_eq!(records[0].2, "real problem");
     }
 }

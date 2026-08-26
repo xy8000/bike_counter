@@ -16,6 +16,10 @@ use crate::core::domain::error::DomainError;
 
 /// Severity of a provider message. The wire and database representation is the
 /// upper-case string (`INFO`, `WARNING`, `ERROR`, `DEBUG`, `TRACE`).
+///
+/// Ordering is from least to most severe: `TRACE < DEBUG < INFO < WARNING <
+/// ERROR`. A message is persisted when its severity is **at or above** the
+/// configured provider log level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderMessageSeverity {
     Info,
@@ -35,6 +39,23 @@ impl ProviderMessageSeverity {
             ProviderMessageSeverity::Debug => "DEBUG",
             ProviderMessageSeverity::Trace => "TRACE",
         }
+    }
+
+    /// The severity rank from least (0, `TRACE`) to most severe (4, `ERROR`).
+    pub fn rank(&self) -> u8 {
+        match self {
+            ProviderMessageSeverity::Trace => 0,
+            ProviderMessageSeverity::Debug => 1,
+            ProviderMessageSeverity::Info => 2,
+            ProviderMessageSeverity::Warning => 3,
+            ProviderMessageSeverity::Error => 4,
+        }
+    }
+
+    /// Whether this severity is at least as severe as `threshold` (i.e. should
+    /// be kept when `threshold` is the configured log level).
+    pub fn at_or_above(&self, threshold: ProviderMessageSeverity) -> bool {
+        self.rank() >= threshold.rank()
     }
 }
 
@@ -98,5 +119,30 @@ mod tests {
     fn rejects_unknown_severity_strings() {
         assert!(ProviderMessageSeverity::from_str("NOTICE").is_err());
         assert!(ProviderMessageSeverity::from_str("").is_err());
+    }
+
+    #[test]
+    fn at_or_above_orders_severities() {
+        // Least -> most severe: TRACE < DEBUG < INFO < WARNING < ERROR.
+        assert!(ProviderMessageSeverity::Debug.at_or_above(ProviderMessageSeverity::Trace));
+        assert!(!ProviderMessageSeverity::Debug.at_or_above(ProviderMessageSeverity::Info));
+        assert!(!ProviderMessageSeverity::Debug.at_or_above(ProviderMessageSeverity::Warning));
+
+        // The default WARNING level keeps WARNING and ERROR, drops below.
+        assert!(ProviderMessageSeverity::Warning.at_or_above(ProviderMessageSeverity::Warning));
+        assert!(ProviderMessageSeverity::Error.at_or_above(ProviderMessageSeverity::Warning));
+        assert!(!ProviderMessageSeverity::Info.at_or_above(ProviderMessageSeverity::Warning));
+        assert!(!ProviderMessageSeverity::Debug.at_or_above(ProviderMessageSeverity::Warning));
+        assert!(!ProviderMessageSeverity::Trace.at_or_above(ProviderMessageSeverity::Warning));
+
+        // TRACE is the minimum level: everything is at or above it.
+        assert!(ProviderMessageSeverity::Trace.at_or_above(ProviderMessageSeverity::Trace));
+        assert!(ProviderMessageSeverity::Debug.at_or_above(ProviderMessageSeverity::Trace));
+
+        // ERROR is the maximum level: at or above every threshold, and nothing
+        // is above it.
+        assert!(ProviderMessageSeverity::Error.at_or_above(ProviderMessageSeverity::Trace));
+        assert!(ProviderMessageSeverity::Error.at_or_above(ProviderMessageSeverity::Error));
+        assert!(!ProviderMessageSeverity::Warning.at_or_above(ProviderMessageSeverity::Error));
     }
 }

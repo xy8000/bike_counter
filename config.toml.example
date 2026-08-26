@@ -27,6 +27,8 @@ name = "Münster"
 
 [data_sources.provider]
 type = "münster_opendata_github_provider"
+# Minimum provider-message severity to persist (default: WARNING).
+log_level = "WARNING"
 
 [data_sources.provider.vars]
 url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"

@@ -10,6 +10,9 @@ use crate::core::domain::configuration::error::ConfigError;
 pub const DEFAULT_DATA_SOURCE_UPDATE_CRON: &str = "0 0 * * * *";
 /// Default asset cleanup frequency: daily at 04:00 (CRON syntax).
 pub const DEFAULT_ASSET_CLEANUP_CRON: &str = "0 0 4 * * *";
+/// Default provider log level: provider messages below this severity are
+/// dropped by the core before they are persisted.
+pub const DEFAULT_PROVIDER_LOG_LEVEL: &str = "WARNING";
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
@@ -282,6 +285,9 @@ pub mod value_objects {
     pub struct DataProviderConfiguration {
         provider_type: String,
         vars: HashMap<String, String>,
+        /// Minimum provider-message severity to persist, as an upper-case string
+        /// (e.g. `WARNING`). Parsed and validated by the config repository.
+        log_level: String,
     }
 
     impl DataProviderConfiguration {
@@ -295,11 +301,26 @@ pub mod value_objects {
             Ok(Self {
                 provider_type,
                 vars,
+                log_level: super::DEFAULT_PROVIDER_LOG_LEVEL.to_string(),
             })
         }
 
         pub fn provider_type(&self) -> &str {
             &self.provider_type
+        }
+
+        /// Sets the provider log level (upper-case severity string, e.g.
+        /// `WARNING`). The value is validated when the configuration is parsed;
+        /// an invalid value is a configuration error that blocks startup.
+        pub fn with_log_level(mut self, log_level: String) -> Self {
+            self.log_level = log_level;
+            self
+        }
+
+        /// The configured provider log level as an upper-case severity string.
+        /// Defaults to `"WARNING"` when not configured.
+        pub fn log_level(&self) -> &str {
+            &self.log_level
         }
 
         /// Returns the full provider var map. Used by tests and by provider
