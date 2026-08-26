@@ -517,10 +517,15 @@ impl StationsSummaryServicePort for StationsSummaryService {
             .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)?
             .and_then(|job| job.finished_at);
         let graphs = self.graphs(&included, &channels_by_station, now)?;
+        // All-time total over the included stations' channels: the monthly bar
+        // chart already aggregates the whole history, so its totals sum up to
+        // the lifetime counter (no extra repository read).
+        let total_bikes: i64 = graphs.monthly_totals.iter().map(|month| month.total).sum();
 
         Ok(StationsSummary {
             stations,
             channel_count,
+            total_bikes,
             metrics,
             last_update,
             graphs,
@@ -981,6 +986,7 @@ mod tests {
         assert_eq!(by_id.get(&Uuid::from_u128(STATION_B)), Some(&1));
         assert_eq!(summary.channel_count, 3, "all included channels");
         assert_eq!(summary.metrics.len(), 4);
+        assert_eq!(summary.total_bikes, 0, "no measurements, no all-time total");
     }
 
     #[test]
@@ -1121,6 +1127,8 @@ mod tests {
                 },
             ]
         );
+        // The all-time total is the sum of the monthly totals.
+        assert_eq!(summary.total_bikes, 125);
     }
 
     #[test]
@@ -1137,6 +1145,7 @@ mod tests {
 
         assert!(summary.stations.is_empty());
         assert_eq!(summary.channel_count, 0);
+        assert_eq!(summary.total_bikes, 0);
         assert!(summary.graphs.week.current.is_empty());
         assert!(summary.graphs.week.per_station.is_empty());
         assert!(summary.graphs.monthly_totals.is_empty());

@@ -50,9 +50,10 @@ test('clicking a map marker opens the overview panel and a map void click closes
 
   await marker.click()
 
-  // The overview panel replaces the sidebar: it shows the image, the key-fact
-  // metrics with trend labels and the detail-page link.
+  // The overview panel replaces the sidebar: it shows the image, the all-time
+  // counter, the key-fact metrics with trend labels and the detail-page link.
   const overview = page.getByRole('complementary')
+  await expect(overview.getByText('Total bikes (all time)')).toBeVisible()
   await expect(overview.getByText('Last 24 hours')).toBeVisible()
   await expect(overview.getByText('Last 7 days')).toBeVisible()
   await expect(overview.getByText('Last month')).toBeVisible()

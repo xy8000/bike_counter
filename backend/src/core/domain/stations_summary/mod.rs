@@ -32,6 +32,10 @@ pub struct StationsSummary {
     pub stations: Vec<SummaryStation>,
     /// Total number of channels across the **included** stations.
     pub channel_count: usize,
+    /// The all-time total of bikes counted across the **included** stations'
+    /// channels (the whole history, not a window). No trend: there is no
+    /// comparison period.
+    pub total_bikes: i64,
     /// The four overview metrics (day / 7 days / month / year) aggregated over
     /// the included stations, each in its own timezone.
     pub metrics: Vec<MetricWindow>,

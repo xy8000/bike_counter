@@ -53,6 +53,8 @@ export interface StationsSummary {
   image_url: string
   stations: SummaryStation[]
   channel_count: number
+  /// All-time total of bikes counted across the included stations' channels.
+  total_bikes: number
   metrics: StationOverviewMetric[]
   last_update: string | null
   graphs: StationsSummaryGraphs

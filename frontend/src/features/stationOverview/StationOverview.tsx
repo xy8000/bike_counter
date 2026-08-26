@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatNumber, formatTimestamp } from '../../lib/format'
 import { MetricCard } from './MetricCard'
+import { TotalBikesCard } from './TotalBikesCard'
 import { useStationOverview } from './useStationOverview'
 
 /// The counting-station overview panel. Rendered in the same left slot as the
@@ -91,6 +92,7 @@ export function StationOverview({
                 Updated {formatTimestamp(overview.last_update)}
               </span>
             </div>
+            <TotalBikesCard total={overview.total_bikes} />
             <ul className="flex flex-col gap-2">
               {overview.metrics.map((metric) => (
                 <li key={metric.key}>

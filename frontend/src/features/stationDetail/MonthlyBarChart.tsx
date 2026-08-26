@@ -79,7 +79,9 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
 
   // Per-year total plus the year-over-year comparison vs the previous year: the
   // percentage change (p-%, one decimal) and the up/down/flat trend. A year
-  // without a previous year (or a previous year that totals 0) has no p-%.
+  // without a previous year (or a previous year that totals 0) has no p-%, and
+  // neither does the most recent year — it is always incomplete (still being
+  // imported), so a trend vs the previous full year would be misleading.
   const yearlyTotals = useMemo(() => {
     const totalByYear = new Map<number, number>()
     for (const year of years) {
@@ -90,12 +92,13 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
           .reduce((acc, entry) => acc + entry.total, 0),
       )
     }
+    const latestYear = years[years.length - 1]
     return years.map((year) => {
       const total = totalByYear.get(year) ?? 0
       const previous = totalByYear.get(year - 1)
       let deltaPercent: number | null = null
       let trend: Trend | null = null
-      if (previous !== undefined && previous > 0) {
+      if (year !== latestYear && previous !== undefined && previous > 0) {
         deltaPercent = Math.round(((total - previous) / previous) * 1000) / 10
         trend = deltaPercent > 0 ? 'up' : deltaPercent < 0 ? 'down' : 'flat'
       }

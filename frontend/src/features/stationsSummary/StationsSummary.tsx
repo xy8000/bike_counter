@@ -18,6 +18,7 @@ import { ErrorBoundary } from '../../lib/ErrorBoundary'
 import { SearchableHeader } from '../header/SearchableHeader'
 import type { StationSummary } from '../stations/types'
 import { MetricCard } from '../stationOverview/MetricCard'
+import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
 import { ChartCard } from '../stationDetail/ChartCard'
 import { MonthlyBarChart } from '../stationDetail/MonthlyBarChart'
 import { SharePie, type ShareSlice } from '../stationDetail/SharePie'
@@ -258,9 +259,13 @@ function SummaryContent({
         </p>
       </section>
 
-      {/* Overview stats: the same small boxes as the detail page, aggregated. */}
+      {/* Overview stats: the aggregated all-time counter on top, then the same
+          small boxes as the detail page. */}
       <section className="mt-8">
         <h2 className="mb-3 text-lg font-semibold">Overview</h2>
+        <div className="mb-3">
+          <TotalBikesCard total={summary.total_bikes} />
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {summary.metrics.map((metric) => (
             <MetricCard key={metric.key} metric={metric} />

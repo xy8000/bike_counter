@@ -448,7 +448,8 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   recent successful data-source update.
 - `GET /api/bff/station-overview/{id}` – the **page-shaped** overview payload for
   one station: `id`, `name`, `description`, `latitude`, `longitude`,
-  `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
+  `channel_count`, `total_bikes` (all-time total across the station's channels),
+  `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
   and a `metrics` array — each with `key` (`last_day` / `last_7_days` /
   `last_month` / `last_year`), `current`, `previous`, `trend`
   (`up`/`down`/`flat`) and `delta_percent`. The metrics use **complete calendar
@@ -458,7 +459,8 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   is flat — no HATEOAS `_links`, no `data_source_id`, no REST `CountingStationDto`
   reuse.
 - `GET /api/bff/station-detail/{id}` – the **page-shaped** detail payload for the
-  detail page: the station metadata + `metrics` from `station-overview/{id}`
+  detail page: the station metadata (incl. `total_bikes`, the all-time total) +
+  `metrics` from `station-overview/{id}`
   (incl. `last_year`), a `channels` array (id + name for legends/pie labels) and
   a `graphs` object keyed by the four selectable timeframes — `day` (last day vs
   the day before, 5 min), `week` (current vs last week, 1 h), `last_30_days`
@@ -474,7 +476,8 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   `exclude=<comma-separated station ids>` drops stations from the aggregation
   while keeping them in the returned `stations` list so the map can gray them
   out). The payload mirrors the detail page shape: a fallback `image_url`, the
-  `stations` (id/name/lat/lng/channel_count), the aggregated `channel_count`, the
+  `stations` (id/name/lat/lng/channel_count), the aggregated `channel_count` and
+  `total_bikes` (all-time total across the included stations' channels), the
   four aggregated overview `metrics` (each station's DST-aware windows) and the
   `graphs` (same four timeframes + `monthly_totals`) whose nerd stats are keyed by
   **station** (`per_station`, `station_pie`) instead of channel. All bucketed

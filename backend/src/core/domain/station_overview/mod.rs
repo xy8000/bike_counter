@@ -17,6 +17,9 @@ use crate::core::domain::counting_stations::counting_station::CountingStation;
 pub struct StationOverview {
     pub station: CountingStation,
     pub channel_count: usize,
+    /// All-time total of bikes counted across the station's channels (the whole
+    /// history, not a window). No trend: there is no comparison period.
+    pub total_bikes: i64,
     pub metrics: Vec<MetricWindow>,
     pub last_update: Option<DateTime<Utc>>,
 }

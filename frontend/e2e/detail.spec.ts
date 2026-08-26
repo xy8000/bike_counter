@@ -21,12 +21,14 @@ test('the shared detail page renders the station content and a highlighted map p
   await expect(page).toHaveURL(new RegExp(`/stations/${stationId}`))
   // The page content (not blank) and the back navigation.
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
-  // The overview stat boxes reuse the overview component and add the YEAR stat
-  // (scoped to the Overview section: the same text also appears as the
-  // "Current year vs. last year" chart legend in the graphs section).
+  // The overview section shows the all-time counter, and the stat boxes reuse
+  // the overview component and add the YEAR stat (scoped to the Overview
+  // section: the same text also appears as the "Current year vs. last year"
+  // chart legend in the graphs section).
   const overviewSection = page.locator('section').filter({
     has: page.getByRole('heading', { name: 'Overview' }),
   })
+  await expect(overviewSection.getByText('Total bikes (all time)')).toBeVisible()
   await expect(overviewSection.getByText('Last year', { exact: true })).toBeVisible()
   // The graph sections.
   await expect(page.getByRole('heading', { name: 'Detailed statistics' })).toBeVisible()
@@ -154,6 +156,13 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
     monthlyCard.locator('.recharts-yAxis .recharts-cartesian-axis-tick').first(),
   ).toBeVisible()
   await expect(monthlyCard.getByRole('button').first()).toContainText('bikes')
+
+  // The most recent year is always incomplete, so its button shows the "–"
+  // marker instead of a trend vs the previous year (regression: it used to show
+  // a misleading p-%).
+  const latestYearButton = monthlyCard.getByRole('button').last()
+  await expect(latestYearButton).toContainText('–')
+  await expect(latestYearButton).not.toContainText('%')
 })
 
 test('the compare-previous checkbox overlays the previous period', async ({ page }) => {

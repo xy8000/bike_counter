@@ -384,3 +384,13 @@ Known limitations / tech debt recorded once for this plan (genuine findings, not
 - The full-view summary aggregates all visible stations (~23 × 70 channels) on the fly; the payload (~2 MB) and client rendering are heavy, so the page shows a loading state. The planned optimisation is a cache (e.g. Redis) behind the BFF — no new data fields were added so the shapes stay cacheable.
 - The bucketed charts for a group of stations run in the first included station's timezone; the overview metrics remain per-station timezone-correct. A mixed-timezone group would only shift the chart buckets.
 - During implementation an infinite reload loop was found and fixed: `parseBoundsQuery` built a fresh object each render, so the summary data hook re-ran (and reset the loading state) on every render — fixed by memoizing `bounds` on the search params.
+
+All-time bike counter + latest-year trend removal (plan 45)
+
+- [x] Backend: `total_bikes` (all-time) added to the `StationOverview` and `StationsSummary` domain structs
+- [x] Backend: `StationOverviewService` computes it via `sum_by_month`; `StationsSummaryService` derives it from `graphs.monthly_totals`
+- [x] BFF: `total_bikes` exposed on the `station-overview`, `station-detail` and `stations/summary` payloads + endpoint tests
+- [x] Frontend: shared `TotalBikesCard` (`Total bikes (all time)`) rendered on the overview panel, detail page and summary page
+- [x] Frontend: `MonthlyBarChart` no longer shows a trend on the latest (always-incomplete) year button
+- [x] e2e: counter presence asserted in `map.spec.ts` / `detail.spec.ts` / `summary.spec.ts`; latest-year button shows no p-%
+- [x] Gates green: `make check`, `make test` (351), `make test-rest` (87), `make coverage` (overall 85.06%, core 95.80%), `make frontend-build`, `make test-playwright` (20)

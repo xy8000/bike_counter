@@ -115,6 +115,8 @@ pub struct StationOverviewDto {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub channel_count: usize,
+    /// All-time total of bikes counted across the station's channels.
+    pub total_bikes: i64,
     /// URL of the image content (streamed by the BFF, never MinIO directly).
     pub image_url: String,
     pub metrics: Vec<MetricDto>,
@@ -197,6 +199,8 @@ pub struct StationDetailDto {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub channel_count: usize,
+    /// All-time total of bikes counted across the station's channels.
+    pub total_bikes: i64,
     /// URL of the image content (streamed by the BFF, never MinIO directly).
     pub image_url: String,
     pub metrics: Vec<MetricDto>,
@@ -499,6 +503,8 @@ pub struct StationsSummaryPageDto {
     pub stations: Vec<SummaryStationDto>,
     /// Total number of channels across the included stations.
     pub channel_count: usize,
+    /// All-time total of bikes counted across the included stations' channels.
+    pub total_bikes: i64,
     /// The four overview metrics aggregated over the included stations.
     pub metrics: Vec<MetricDto>,
     /// Timestamp of the most recent successful data-source update.
@@ -517,6 +523,7 @@ impl From<StationsSummary> for StationsSummaryPageDto {
                 .map(SummaryStationDto::from)
                 .collect(),
             channel_count: summary.channel_count,
+            total_bikes: summary.total_bikes,
             metrics: summary.metrics.into_iter().map(MetricDto::from).collect(),
             last_update: summary.last_update,
             graphs: StationsSummaryGraphsDto::from(summary.graphs),

@@ -65,8 +65,9 @@ test.describe('station summary', () => {
     await waitForSummaryContent(page)
     await expect(mapMarkers(page).first()).toBeVisible()
 
-    // The aggregated page sections.
+    // The aggregated page sections, including the all-time counter.
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+    await expect(page.getByText('Total bikes (all time)')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Detailed statistics' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Nerd stats' })).toBeVisible()
     const monthlyCard = page.locator('[data-slot="card"]').filter({ hasText: 'Bikes per month' })

@@ -18,6 +18,7 @@ import { ErrorBoundary } from '../../lib/ErrorBoundary'
 import { SearchableHeader } from '../header/SearchableHeader'
 import type { StationSummary } from '../stations/types'
 import { MetricCard } from '../stationOverview/MetricCard'
+import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
 import { useStationDetail } from './useStationDetail'
 import type { ChannelRef, PeriodGraphs, StationDetail, Timeframe } from './types'
 import {
@@ -194,9 +195,13 @@ function DetailContent({ detail }: { detail: StationDetail }) {
         </p>
       </section>
 
-      {/* Overview stats: the same small boxes as the overview panel, + YEAR. */}
+      {/* Overview stats: the all-time counter on top, then the same small boxes
+          as the overview panel, + YEAR. */}
       <section className="mt-8">
         <h2 className="mb-3 text-lg font-semibold">Overview</h2>
+        <div className="mb-3">
+          <TotalBikesCard total={detail.total_bikes} />
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {detail.metrics.map((metric) => (
             <MetricCard key={metric.key} metric={metric} />

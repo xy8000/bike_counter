@@ -74,6 +74,8 @@ export interface StationDetail {
   latitude: number | null
   longitude: number | null
   channel_count: number
+  /// All-time total of bikes counted at this station (the whole history).
+  total_bikes: number
   image_url: string
   metrics: StationOverviewMetric[]
   last_update: string | null

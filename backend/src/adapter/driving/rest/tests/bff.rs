@@ -349,6 +349,9 @@ async fn bff_station_overview_returns_the_flat_page_payload() {
     assert_eq!(body["name"], "Station A");
     assert_eq!(body["description"], "First station");
     assert_eq!(body["channel_count"], 2);
+    // All-time total: both sample measurements (42 + 1337) lie on station A's
+    // two channels, so they are counted regardless of the windows.
+    assert_eq!(body["total_bikes"], 1379);
 
     // The image URL resolves to the built-in default asset (station A has no
     // linked provider image).
@@ -467,6 +470,8 @@ async fn bff_station_summary_returns_the_flat_page_payload() {
     assert_eq!(stations[0]["latitude"], 51.9565);
     assert_eq!(stations[0]["channel_count"], 2);
     assert_eq!(body["channel_count"], 2, "station A's two channels");
+    // All-time total over station A's two channels: both sample measurements.
+    assert_eq!(body["total_bikes"], 1379);
     assert_eq!(body["last_update"], "2024-01-01T12:00:00Z");
 
     // The hero image resolves to the built-in default asset.
@@ -640,4 +645,6 @@ async fn bff_station_summary_aggregates_per_station_data() {
         .expect("last_day metric present");
     assert_eq!(last_day["current"], 17);
     assert_eq!(body["channel_count"], 1, "station A's single channel");
+    // The all-time total reflects the same single measurement.
+    assert_eq!(body["total_bikes"], 17);
 }

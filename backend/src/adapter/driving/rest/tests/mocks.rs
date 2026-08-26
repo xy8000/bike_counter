@@ -1,11 +1,11 @@
 //! In-memory repositories that back the router in tests (no database required).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use futures::Stream;
 use uuid::Uuid;
 
@@ -311,11 +311,32 @@ impl MeasurementRepository for MockMeasurementRepository {
 
     fn sum_by_month(
         &self,
-        _timezone: &str,
-        _channel_ids: &[measurement_vo::ChannelId],
+        timezone: &str,
+        channel_ids: &[measurement_vo::ChannelId],
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::MonthTotal>, DomainError>
     {
-        Ok(Vec::new())
+        let tz: chrono_tz::Tz = timezone.parse().map_err(|_| {
+            DomainError::InvalidQuery(format!("unknown IANA timezone '{timezone}'"))
+        })?;
+        let mut map: BTreeMap<(i32, u32), i64> = BTreeMap::new();
+        for m in self
+            .measurements
+            .iter()
+            .filter(|m| channel_ids.iter().any(|id| id.0 == m.channel_id.0))
+        {
+            let local = m.timestamp.0.with_timezone(&tz);
+            *map.entry((local.year(), local.month())).or_insert(0) += m.value.0;
+        }
+        Ok(map
+            .into_iter()
+            .map(|((year, month), total)| {
+                crate::core::domain::measurements::repository_port::MonthTotal {
+                    year,
+                    month: month as u8,
+                    total,
+                }
+            })
+            .collect())
     }
 }
 
