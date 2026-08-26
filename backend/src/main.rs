@@ -3,6 +3,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use include_dir::{Dir, include_dir};
+
 use crate::adapter::driven::configuration_toml_adapter::ConfigurationTomlAdapter;
 use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
 use crate::adapter::driven::minio_asset_storage::MinioAssetStorage;
@@ -16,7 +18,7 @@ use crate::adapter::driven::provider_handles::ProviderHandles;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::asset_cleanup_service::AssetCleanupService;
-use crate::core::application::asset_service::{AssetService, DEFAULT_IMAGE_OBJECT_KEY};
+use crate::core::application::asset_service::AssetService;
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_import_service::DataImportService;
@@ -41,21 +43,43 @@ use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
 
 /// The built-in images embedded in the binary (idempotently synced to MinIO at
-/// startup). The first is the fallback every station without a provider image
-/// points to; every entry mirrors a file in `backend/assets/`.
+/// startup). Every file in `backend/assets/` becomes a `builtin/{path}` object —
+/// content type inferred from the extension — so the registry can never drift
+/// from the folder: adding or removing a file there is enough, and stale
+/// builtins are removed by [`AssetService::sync_builtin_images`]. The station
+/// fallback resolves by `DEFAULT_IMAGE_OBJECT_KEY` (see [`AssetService`]).
+static ASSET_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets");
+
 fn builtin_images() -> Vec<BuiltinImage> {
-    vec![
-        BuiltinImage {
-            object_key: ObjectKey(DEFAULT_IMAGE_OBJECT_KEY.to_string()),
-            content_type: ContentType("image/svg+xml".to_string()),
-            bytes: include_bytes!("../assets/bike-icon-black-transparent.svg").to_vec(),
-        },
-        BuiltinImage {
-            object_key: ObjectKey("builtin/bike-icon-white-circle.svg".to_string()),
-            content_type: ContentType("image/svg+xml".to_string()),
-            bytes: include_bytes!("../assets/bike-icon-white-circle.svg").to_vec(),
-        },
-    ]
+    let mut images: Vec<BuiltinImage> = ASSET_DIR
+        .files()
+        .filter_map(|file| {
+            let path = file.path();
+            let extension = path.extension()?.to_str()?;
+            let content_type = content_type_for(extension)?;
+            Some(BuiltinImage {
+                object_key: ObjectKey(format!("builtin/{}", path.display())),
+                content_type: ContentType(content_type.to_string()),
+                bytes: file.contents().to_vec(),
+            })
+        })
+        .collect();
+    // Deterministic order so the sync behaves identically across runs.
+    images.sort_by(|a, b| a.object_key.0.cmp(&b.object_key.0));
+    images
+}
+
+/// Content type for the image extensions we ship in `backend/assets/`. Files
+/// with any other extension are skipped by [`builtin_images`].
+fn content_type_for(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "svg" => Some("image/svg+xml"),
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
 }
 
 mod adapter;
@@ -276,5 +300,54 @@ fn main() {
         rest_adapter.run(addr).await
     }) {
         eprintln!("REST API server error: {:?}", err);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::application::asset_service::DEFAULT_IMAGE_OBJECT_KEY;
+
+    #[test]
+    fn content_type_for_known_extensions() {
+        assert_eq!(content_type_for("svg"), Some("image/svg+xml"));
+        assert_eq!(content_type_for("SVG"), Some("image/svg+xml"));
+        assert_eq!(content_type_for("png"), Some("image/png"));
+        assert_eq!(content_type_for("jpg"), Some("image/jpeg"));
+        assert_eq!(content_type_for("jpeg"), Some("image/jpeg"));
+        assert_eq!(content_type_for("gif"), Some("image/gif"));
+        assert_eq!(content_type_for("webp"), Some("image/webp"));
+    }
+
+    #[test]
+    fn content_type_for_unknown_or_missing_extension() {
+        assert_eq!(content_type_for("md"), None);
+        assert_eq!(content_type_for(""), None);
+    }
+
+    #[test]
+    fn builtin_images_mirror_the_assets_folder() {
+        let images = builtin_images();
+
+        // The plain bike icon (station default) is present with the right key.
+        let default = images
+            .iter()
+            .find(|image| image.object_key.0 == DEFAULT_IMAGE_OBJECT_KEY)
+            .expect("the station-default bike icon is a builtin");
+        assert_eq!(default.content_type.0, "image/svg+xml");
+
+        // The white-circle brand icon lives only in the frontend now.
+        assert!(
+            !images
+                .iter()
+                .any(|image| image.object_key.0 == "builtin/bike-icon-white-circle.svg")
+        );
+
+        // Deterministic order (sorted by object key).
+        assert!(
+            images
+                .windows(2)
+                .all(|w| w[0].object_key.0 <= w[1].object_key.0)
+        );
     }
 }

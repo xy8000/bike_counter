@@ -344,3 +344,14 @@ Bike icon branding + builtin asset folder sync (plan 38)
 - [x] e2e: `detail.spec.ts` compare-previous assertion made robust — accepts either the "Day before" legend entry (current day has data) or the single previous-period series (empty current day)
 - [x] Docs: README (built-in asset description), ToDo, `plans/38_..._plan.md` registered in `plans/README.md`
 - [x] Gates green: `make check`, `make test` (334), `make test-rest` (82), `make coverage` (overall 83.78%, core 95.38%), `make frontend-build`, `make test-playwright` (14)
+
+Frontend resilience + builtin asset folder sync (plan 39)
+
+- [x] Frontend: `ErrorBoundary` class component (`getDerivedStateFromError` + `componentDidCatch`, console-logged) wrapping `<DetailContent>` in `StationDetail`, so a chart/render crash degrades to an inline error while the header/search keep working (no more full-page blank)
+- [x] Frontend: shared `ChartEmptyState` component; `TimeSeriesLineChart`, `ChannelPie` and `WeekdayRadar` all use it and guard empty/all-zero data (consistent wording + aspect ratio)
+- [x] Backend: `include_dir` embeds `backend/assets/` at compile time; `builtin_images()` now scans the folder (object_key `builtin/{path}`, content type derived from the extension via a new forward helper) — adding/removing a file in the folder is the only step needed; `map-flag-counting-station.svg` now gets synced too (matches "sync the folder")
+- [x] Backend: unit tests for the extension→content-type mapping (incl. case-insensitivity + unknown) and the folder-scan derivation (default icon present, white-circle gone, deterministic sort)
+- [x] Backend: `backend/assets/bike-icon-white-circle.svg` removed — the brand white-circle icon now lives only in `frontend/public/bike-icon.svg` (favicon + header)
+- [x] e2e volumes stay persistent (no `docker compose down -v`) — the real Münster import is not re-run per gate; data-dependent assertions from plan 38 remain robust
+- [x] Docs: README (asset folder-scan + single brand icon), ToDo, `plans/39_..._plan.md` marked implemented in `plans/README.md`
+- [x] Gates green: `make check`, `make test`, `make test-rest` (82), `make coverage`, `make frontend-build`, `make test-playwright`

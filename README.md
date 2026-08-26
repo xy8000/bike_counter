@@ -174,12 +174,19 @@ station↔asset link; the binary bytes never touch the database.
     (`CountingStation.image_sha256`): the provider reports a hash with each
     station record and the core only fetches the image bytes when the hash
     changed or the station has no linked asset yet;
-  - **built-in** images embedded in the backend binary (`backend/assets/`): the
-    emerald plain bike icon (the fallback every station without a provider image
-    points to) and the white-circle bike icon. The built-in sync is idempotent
-    and reconciles **both directions** — it uploads/updates the bundled images
-    and **removes** stale ones whose files were deleted from the folder, so the
-    bucket and `assets` table mirror the assets folder.
+  - **built-in** images embedded in the backend binary. The list is derived by
+    scanning `backend/assets/` at compile time (`include_dir`): every file in the
+    folder becomes a `builtin/{path}` object with its content type inferred from
+    the extension, so adding or removing a file is the only step needed to change
+    what is synced. The emerald plain bike icon
+    (`builtin/bike-icon-black-transparent.svg`) is the fallback every station
+    without a provider image points to. The built-in sync is idempotent and
+    reconciles **both directions** — it uploads/updates the bundled images and
+    **removes** stale ones whose files were deleted from the folder, so the
+    bucket and `assets` table mirror the assets folder. The frontend brand bike
+    icon (favicon + header) lives separately in `frontend/public/bike-icon.svg`
+    and is never streamed through the BFF; frontend brand assets belong in
+    `frontend/public/`, backend builtin assets in `backend/assets/`.
 - The **BFF streams** image bytes to the browser
   (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend
   (private `asset_network`) and never exposed to the browser.

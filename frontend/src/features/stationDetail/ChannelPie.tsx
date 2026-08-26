@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
 import type { ChannelRef, ChannelTotal } from './types'
+import { ChartEmptyState } from './ChartEmptyState'
 import { seriesColor } from './chartUtils'
 
 /// Donut of each channel's share over the selected timeframe. Only channels with
@@ -34,7 +35,7 @@ export function ChannelPie({
   return (
     <div className="flex flex-col items-center gap-3">
       {data.length === 0 ? (
-        <p className="py-16 text-sm text-muted-foreground">No traffic for this period.</p>
+        <ChartEmptyState message="No traffic for this period." className="py-16" />
       ) : (
         <>
           <ChartContainer

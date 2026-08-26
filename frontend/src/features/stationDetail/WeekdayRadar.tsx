@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
 import type { WeekdayTotal } from './types'
+import { ChartEmptyState } from './ChartEmptyState'
 import { seriesColor } from './chartUtils'
 
 export interface RadarSeries {
@@ -41,11 +42,7 @@ export function WeekdayRadar({
   // empty state the other charts use instead of feeding it empty rows.
   const hasData = series.some((item) => item.data.some((day) => day.total > 0))
   if (!hasData) {
-    return (
-      <div className={cn('flex aspect-square items-center justify-center', className)}>
-        <p className="text-sm text-muted-foreground">No traffic for this period.</p>
-      </div>
-    )
+    return <ChartEmptyState message="No traffic for this period." className={cn('aspect-square', className)} />
   }
 
   const rows = WEEKDAY_LABELS.map((label, i) => {

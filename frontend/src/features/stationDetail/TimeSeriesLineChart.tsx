@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
 import type { TimeBucket } from './types'
+import { ChartEmptyState } from './ChartEmptyState'
 import { seriesColor } from './chartUtils'
 
 export interface LineSeries {
@@ -67,11 +68,7 @@ export function TimeSeriesLineChart({
   const labelFor = tooltipFormatter ?? xFormatter
 
   if (visibleSeries.length === 0) {
-    return (
-      <div className={cn('flex aspect-[16/9] items-center justify-center', className)}>
-        <p className="text-sm text-muted-foreground">No data for this period.</p>
-      </div>
-    )
+    return <ChartEmptyState className={cn('aspect-[16/9]', className)} />
   }
 
   return (

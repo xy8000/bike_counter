@@ -20,6 +20,7 @@ import {
   LOCALE,
 } from '../../lib/format'
 import { serializeBounds, stationBounds } from '../../lib/geo'
+import { ErrorBoundary } from '../../lib/ErrorBoundary'
 import { SearchableHeader } from '../header/SearchableHeader'
 import type { StationSummary } from '../stations/types'
 import { MetricCard } from '../stationOverview/MetricCard'
@@ -303,7 +304,11 @@ export function StationDetail() {
             <p className="text-sm text-muted-foreground">Loading counting station…</p>
           )}
 
-          {!error && detail && <DetailContent detail={detail} />}
+          {!error && detail && (
+            <ErrorBoundary>
+              <DetailContent detail={detail} />
+            </ErrorBoundary>
+          )}
         </div>
       </main>
     </div>

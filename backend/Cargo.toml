@@ -11,6 +11,7 @@ chrono-tz = "0.10"
 cron = "0.12"
 csv = "1.3"
 futures = "0.3"
+include_dir = "0.7"
 # `openssl` is pulled in transitively by rust-s3 (native-tls). The `vendored`
 # feature compiles a static OpenSSL from source, which is required for the
 # fully-static musl Docker build (Alpine's openssl-dev ships only shared libs).
