@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, XAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
 import {
   Card,
@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
 import { formatNumber } from '../../lib/format'
+import { TrendIcon } from '../stationOverview/TrendIcon'
+import type { Trend } from '../stationOverview/types'
 import { seriesColor } from './chartUtils'
 import type { MonthTotal } from './types'
 
@@ -75,16 +77,31 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
     [years],
   )
 
-  const yearlyTotals = useMemo(
-    () =>
-      years.map((year) => ({
+  // Per-year total plus the year-over-year comparison vs the previous year: the
+  // percentage change (p-%, one decimal) and the up/down/flat trend. A year
+  // without a previous year (or a previous year that totals 0) has no p-%.
+  const yearlyTotals = useMemo(() => {
+    const totalByYear = new Map<number, number>()
+    for (const year of years) {
+      totalByYear.set(
         year,
-        total: totals
+        totals
           .filter((entry) => entry.year === year)
           .reduce((acc, entry) => acc + entry.total, 0),
-      })),
-    [totals, years],
-  )
+      )
+    }
+    return years.map((year) => {
+      const total = totalByYear.get(year) ?? 0
+      const previous = totalByYear.get(year - 1)
+      let deltaPercent: number | null = null
+      let trend: Trend | null = null
+      if (previous !== undefined && previous > 0) {
+        deltaPercent = Math.round(((total - previous) / previous) * 1000) / 10
+        trend = deltaPercent > 0 ? 'up' : deltaPercent < 0 ? 'down' : 'flat'
+      }
+      return { year, total, deltaPercent, trend }
+    })
+  }, [totals, years])
 
   const [activeYear, setActiveYear] = useState<string | null>(null)
   // Fall back to the most recent year when none is selected or the selected one
@@ -99,7 +116,7 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
           <CardDescription>All available months, grouped by year</CardDescription>
         </div>
         <div className="flex flex-wrap border-t sm:border-t-0 sm:border-l">
-          {yearlyTotals.map(({ year, total }) => (
+          {yearlyTotals.map(({ year, total, deltaPercent, trend }) => (
             <button
               key={year}
               type="button"
@@ -112,6 +129,23 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
               <span className="text-xs text-muted-foreground">{year}</span>
               <span className="text-lg leading-none font-bold sm:text-2xl">
                 {formatNumber(total)}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">bikes</span>
+              </span>
+              <span className="flex items-center gap-1 text-xs font-semibold">
+                {trend && <TrendIcon trend={trend} />}
+                <span
+                  className={
+                    trend === 'up'
+                      ? 'text-emerald-600'
+                      : trend === 'down'
+                        ? 'text-rose-600'
+                        : 'text-muted-foreground'
+                  }
+                >
+                  {deltaPercent === null
+                    ? '–'
+                    : `${deltaPercent > 0 ? '+' : ''}${formatNumber(deltaPercent)}%`}
+                </span>
               </span>
             </button>
           ))}
@@ -132,6 +166,14 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
                 axisLine={false}
                 tickMargin={8}
                 minTickGap={16}
+              />
+              <YAxis
+                orientation="left"
+                tickLine={false}
+                axisLine={false}
+                width={40}
+                allowDecimals={false}
+                tickFormatter={(value) => formatNumber(Number(value))}
               />
               <ChartTooltip
                 cursor={false}

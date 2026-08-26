@@ -146,6 +146,14 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
   const monthlyCard = page.locator('[data-slot="card"]').filter({ hasText: 'Bikes per month' })
   await expect(monthlyCard).toBeVisible()
   await expect(monthlyCard.getByRole('button').first()).toBeVisible()
+
+  // The bar chart draws its Y axis on the left with tick labels (regression:
+  // the chart used to have no Y-axis at all), and every year button shows its
+  // total with the "bikes" unit.
+  await expect(
+    monthlyCard.locator('.recharts-yAxis .recharts-cartesian-axis-tick').first(),
+  ).toBeVisible()
+  await expect(monthlyCard.getByRole('button').first()).toContainText('bikes')
 })
 
 test('the compare-previous checkbox overlays the previous period', async ({ page }) => {
