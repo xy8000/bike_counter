@@ -15,7 +15,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the backend (debug)
-	cd backend && cargo build --quiet
+	cargo build --manifest-path backend/Cargo.toml --quiet
 
 run: ## Boot the full docker-compose stack (PostgreSQL + backend + frontend) in the foreground
 	docker compose up --build
@@ -27,16 +27,16 @@ logs: ## Follow the logs of all services
 	docker compose logs -f
 
 fmt: ## Apply rustfmt formatting to the backend
-	cd backend && cargo fmt --quiet
+	cargo fmt --manifest-path backend/Cargo.toml --quiet
 
 check: ## CI gate: rustfmt --check + clippy -D warnings (scripts/fmt-test.sh)
 	./scripts/fmt-test.sh
 
 test: ## Run all backend tests (repository tests spin up a Postgres test container via Docker)
-	cd backend && cargo test --quiet
+	cargo test --manifest-path backend/Cargo.toml --quiet
 
 test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker required)
-	cd backend && cargo test --quiet adapter::driving::rest::tests
+	cargo test --manifest-path backend/Cargo.toml --quiet adapter::driving::rest::tests
 
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
 	./scripts/docker-compose-test.sh
@@ -45,7 +45,7 @@ test-playwright: ## Playwright browser e2e tests against the real stack with a r
 	./scripts/e2e-playwright.sh
 
 playwright-install: ## Install the Playwright Chromium browser into the frontend node_modules (once)
-	cd frontend && npx playwright install chromium
+	npm exec --prefix frontend -- playwright install chromium
 
 test-all: check test ## Formatting/lint gate, then the full test suite
 
@@ -58,7 +58,7 @@ coverage-open: coverage ## Open the HTML coverage report in a browser
 	 echo "No browser opener found; open backend/target/coverage/html/index.html manually"
 
 clean: ## Remove backend build artifacts
-	cd backend && cargo clean
+	cargo clean --manifest-path backend/Cargo.toml
 
 frontend-build: ## Build the React frontend (production bundle into frontend/dist)
-	cd frontend && npm run build
+	npm run build --prefix frontend

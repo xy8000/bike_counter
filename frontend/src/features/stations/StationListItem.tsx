@@ -3,9 +3,11 @@ import { Button } from '@/components/ui/button'
 import { formatNumber } from '../../lib/format'
 import type { StationSummary } from './types'
 
-/// A shared list entry used by both the sidebar and the search dialog. When
-/// `showFind` is set, a "find on map" button is rendered next to the entry; when
-/// `showDetail` is set, an "open detail" button opens the station's detail page.
+/// A shared list entry used by both the sidebar and the search dialog. The row
+/// shows the station image thumbnail (the built-in bike icon when the station
+/// has no provider image) next to the identity; when `showFind` is set, a "find
+/// on map" button is rendered next to the entry; when `showDetail` is set, an
+/// "open detail" button opens the station's detail page.
 export function StationListItem({
   station,
   onSelect,
@@ -26,25 +28,34 @@ export function StationListItem({
   // widths instead of overflowing the layout; on sm+ everything stays on one
   // line with the text truncating.
   return (
-    <li className="flex flex-wrap items-stretch border-b sm:flex-nowrap">
+    <li className="flex flex-wrap items-stretch border-b transition-colors hover:bg-accent sm:flex-nowrap">
       <Button
         type="button"
         variant="ghost"
         onClick={() => onSelect(station)}
-        className="flex h-auto min-w-0 w-full flex-col items-start justify-start gap-0.5 rounded-none px-4 py-3 text-left sm:w-auto sm:flex-1"
+        className="flex h-auto min-w-0 w-full items-center gap-3 rounded-none px-4 py-3 text-left hover:bg-transparent sm:flex-1"
       >
-        <span className="w-full truncate text-sm font-semibold text-foreground">
-          {station.name}
-        </span>
-        <span className="w-full truncate text-sm text-muted-foreground">{station.description}</span>
-        <span className="mt-0.5 flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <span>{station.channel_count} channels</span>
-          <span aria-hidden="true">·</span>
-          <span>
-            <span className="font-medium text-foreground">
-              {formatNumber(station.bikes_last_day)}
-            </span>{' '}
-            bikes / last day
+        <img
+          src={station.image_url}
+          alt=""
+          className="h-12 w-12 shrink-0 rounded-md border object-cover"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block w-full truncate text-sm font-semibold text-foreground">
+            {station.name}
+          </span>
+          <span className="block w-full truncate text-sm text-muted-foreground">
+            {station.description}
+          </span>
+          <span className="mt-0.5 flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+            <span>{station.channel_count} channels</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              <span className="font-medium text-foreground">
+                {formatNumber(station.bikes_last_day)}
+              </span>{' '}
+              bikes / last day
+            </span>
           </span>
         </span>
       </Button>

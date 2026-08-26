@@ -18,8 +18,8 @@
 # Override the frontend URL with FRONTEND_URL (default http://localhost:8081).
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 CONFIG_FILE="${PROJECT_ROOT}/config.toml"
@@ -34,6 +34,8 @@ BFF_STATIONS="/api/bff/stations?min_lat=51.8&min_lng=7.4&max_lat=52.1&max_lng=7.
 
 HAD_CONFIG=0
 PASS=0
+# Temporary build log; removed in the cleanup trap so the rm calls stay grouped.
+BUILD_LOG=""
 
 cleanup() {
   echo "--- Tearing down the Docker Compose stack"
@@ -45,7 +47,9 @@ cleanup() {
     rm -f "${CONFIG_FILE}"
     echo "--- Removed temporary ${CONFIG_FILE}"
   fi
+  # Grouped removal of the remaining temporary files (reviewed manually).
   rm -f "${CONFIG_BACKUP}"
+  [ -n "${BUILD_LOG}" ] && rm -f "${BUILD_LOG}"
   if [ "${PASS}" -eq 1 ]; then
     echo "e2e-playwright: OK"
   else
@@ -104,10 +108,9 @@ BUILD_LOG="$(mktemp)"
 if ! docker compose -f "${COMPOSE_FILE}" up -d --build >"${BUILD_LOG}" 2>&1; then
   echo "ERROR: docker compose up --build failed (see log tail)" >&2
   tail -n 60 "${BUILD_LOG}" >&2 || true
-  rm -f "${BUILD_LOG}"
   exit 1
 fi
-rm -f "${BUILD_LOG}"
+echo "--- Stack built."
 
 echo "--- Waiting for ${APP_URL}/health/ready"
 READY=0
@@ -123,7 +126,7 @@ if [ "${READY}" -ne 1 ]; then
   docker compose -f "${COMPOSE_FILE}" logs backend 2>/dev/null | tail -n 40 || true
   exit 1
 fi
-echo "App is ready."
+echo "--- Stack started (app ready)."
 
 echo "--- Waiting for the Münster counting-station import"
 IMPORTED=0
@@ -142,21 +145,21 @@ fi
 echo "Counting stations imported."
 
 echo "--- Ensuring the frontend dependencies and the Playwright Chromium browser are installed"
-cd "${PROJECT_ROOT}/frontend"
-if [ ! -x node_modules/.bin/playwright ]; then
+if [ ! -x "${PROJECT_ROOT}/frontend/node_modules/.bin/playwright" ]; then
   echo "  npm ci (installing frontend dependencies)"
-  if ! npm ci >/dev/null 2>&1; then
+  if ! npm ci --prefix "${PROJECT_ROOT}/frontend" >/dev/null 2>&1; then
     echo "ERROR: npm ci failed (frontend dependencies)" >&2
     exit 1
   fi
 fi
-echo "  npx playwright install chromium"
-if ! npx playwright install chromium >/dev/null 2>&1; then
+echo "  installing the Playwright Chromium browser"
+if ! npm exec --prefix "${PROJECT_ROOT}/frontend" -- playwright install chromium >/dev/null 2>&1; then
   echo "ERROR: Playwright Chromium install failed" >&2
   exit 1
 fi
 
 echo "--- Running Playwright tests against ${FRONTEND_URL}"
-FRONTEND_URL="${FRONTEND_URL}" npx playwright test
+FRONTEND_URL="${FRONTEND_URL}" npm exec --prefix "${PROJECT_ROOT}/frontend" -- playwright test --config "${PROJECT_ROOT}/frontend/playwright.config.ts"
+echo "--- Tests finished."
 
 PASS=1

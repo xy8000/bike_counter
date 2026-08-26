@@ -440,3 +440,12 @@ Align overview loading skeletons with the rendered cards (plan 54)
 - [x] Frontend: `stationDetail/Skeletons.tsx` exports `MetricBoxSkeleton` (right column gap tightened to `gap-0.5`) and adds `TotalBikesSkeleton` mirroring `TotalBikesCard`'s bordered `bg-muted/40 p-4` box
 - [x] Frontend: new `stationOverview/Skeletons.tsx` `OverviewPanelSkeleton` (total-card skeleton + four metric-box skeletons in the same `gap-2` column as the rendered cards); the overview panel uses it for both the shell and stats loading states, and the shell ghost now includes the badge/updated row
 - [x] Gates green: `npm run build` (tsc + vite), `make test-playwright` (21)
+
+Small UI + script fixes (plan 55)
+
+- [x] Makefile: replaced `cd <dir> && <tool>` with `--manifest-path` / `--prefix` for build, fmt, test, test-rest, clean, playwright-install and frontend-build
+- [x] scripts/e2e-playwright.sh: removed `cd` (`readlink -f` for SCRIPT_DIR/PROJECT_ROOT, `npm ci --prefix`, `npm exec --prefix -- playwright …` with `--config`); the temporary-file `rm` calls are grouped in `cleanup()`; three milestones print ("Stack built." / "Stack started (app ready)." / "Tests finished.")
+- [x] Frontend: `TopBar` stays on a single line — brand logo/text links to `/`, the search trigger is widened to `w-[32rem]` (magnifier only, no bike icon), and the global summary truncates with an ellipsis instead of wrapping
+- [x] Backend + frontend: each search result row shows the station image (bike-icon fallback) via `StationSummaryDto.image_url` + `StationSummary.image_url` + a `StationListItem` thumbnail
+- [x] Frontend: the header summary keeps only the "updated …" timestamp when space is tight (stats truncate, timestamp is `shrink-0`), and search-result rows highlight across the full row on hover (`li` hover instead of the button)
+- [x] Gates green: `make check`, `make test-rest` (95), `npm run build` (tsc + vite)

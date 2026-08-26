@@ -244,6 +244,14 @@ async fn bff_search_returns_all_stations_and_the_action_map() {
         body["actions"]["open_detail"]["enabled"], true,
         "the open-detail action is enabled all the time for now"
     );
+    for item in items {
+        assert!(
+            item["image_url"]
+                .as_str()
+                .is_some_and(|url| !url.is_empty()),
+            "every search result resolves an image URL (linked asset or the built-in default)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

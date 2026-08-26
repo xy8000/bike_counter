@@ -19,6 +19,8 @@ export interface StationSummary {
   longitude: number | null
   channel_count: number
   bikes_last_day: number
+  /// URL of the station image (falls back to the built-in bike icon).
+  image_url: string
 }
 
 /// A sidebar list entry (from GET /api/bff/stations/sidebar): the station

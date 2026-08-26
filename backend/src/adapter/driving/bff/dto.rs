@@ -40,6 +40,8 @@ pub struct StationSummaryDto {
     pub station: CountingStationDto,
     pub channel_count: usize,
     pub bikes_last_day: i64,
+    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    pub image_url: String,
 }
 
 impl From<StationSummary> for StationSummaryDto {
@@ -48,6 +50,9 @@ impl From<StationSummary> for StationSummaryDto {
             station: CountingStationDto::from(summary.station),
             channel_count: summary.channel_count,
             bikes_last_day: summary.bikes_last_day,
+            // Populated by the search handler via `station_image_urls` (that
+            // needs the async asset service, so it cannot live in this From).
+            image_url: String::new(),
         }
     }
 }

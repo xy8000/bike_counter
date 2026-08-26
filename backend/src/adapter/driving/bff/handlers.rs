@@ -352,7 +352,19 @@ pub async fn get_bff_stations_search(
         .await
         .map_err(map_domain_error)?;
 
-    let items = summaries.into_iter().map(StationSummaryDto::from).collect();
+    // Resolve each station's image URL (linked asset, else the built-in bike-icon
+    // default) so the search dialog can show a thumbnail per result row.
+    let stations: Vec<CountingStation> = summaries
+        .iter()
+        .map(|summary| summary.station.clone())
+        .collect();
+    let image_urls = station_image_urls(&state, &stations).await?;
+    let mut items: Vec<StationSummaryDto> =
+        summaries.into_iter().map(StationSummaryDto::from).collect();
+    for dto in &mut items {
+        dto.image_url = image_urls.get(&dto.station.id).cloned().unwrap_or_default();
+    }
+
     let mut actions = HashMap::new();
     actions.insert("find_on_map".to_string(), ActionDto { enabled: true });
     actions.insert("open_detail".to_string(), ActionDto { enabled: true });
