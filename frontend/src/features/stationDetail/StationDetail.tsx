@@ -32,6 +32,7 @@ import {
 import { ChartCard } from './ChartCard'
 import { ChannelPie } from './ChannelPie'
 import { DetailMap } from './DetailMap'
+import { HourRadar, type HourRadarSeries } from './HourRadar'
 import { MonthlyBarChart } from './MonthlyBarChart'
 import { TimeSeriesLineChart, type LineSeries } from './TimeSeriesLineChart'
 import { WeekdayRadar, type RadarSeries } from './WeekdayRadar'
@@ -66,17 +67,90 @@ function channelSeries(
   return series
 }
 
-/// Per-channel weekday radar for one timeframe. Channels without any weekday
-/// traffic are dropped.
-function channelRadar(period: PeriodGraphs, channels: ChannelRef[]): RadarSeries[] {
+/// Aggregate weekday radar for one timeframe: the current period's "Bikes" plus,
+/// when the compare checkbox is on, the previous period's "Bikes".
+function aggregateWeekdayRadar(
+  period: PeriodGraphs,
+  cfg: TimeframeConfig,
+  compare: boolean,
+): RadarSeries[] {
+  const series: RadarSeries[] = [{ key: 'current', label: 'Bikes', data: period.weekday_radar }]
+  if (compare && period.weekday_radar_previous.length > 0) {
+    series.push({ key: 'previous', label: cfg.previousLabel, data: period.weekday_radar_previous })
+  }
+  return series
+}
+
+/// Aggregate hour-of-day radar for one timeframe: the current period's "Bikes"
+/// plus, when the compare checkbox is on, the previous period's "Bikes".
+function aggregateHourRadar(
+  period: PeriodGraphs,
+  cfg: TimeframeConfig,
+  compare: boolean,
+): HourRadarSeries[] {
+  const series: HourRadarSeries[] = [{ key: 'current', label: 'Bikes', data: period.hourly }]
+  if (compare && period.hourly_previous.length > 0) {
+    series.push({ key: 'previous', label: cfg.previousLabel, data: period.hourly_previous })
+  }
+  return series
+}
+
+/// Per-channel weekday radar for one timeframe (nerd stats). Each channel with
+/// traffic contributes a current radar and, when compare is on, a previous
+/// period radar.
+function channelRadar(
+  period: PeriodGraphs,
+  channels: ChannelRef[],
+  cfg: TimeframeConfig,
+  compare: boolean,
+): RadarSeries[] {
   const nameOf = (id: string) => channels.find((channel) => channel.id === id)?.name ?? id
-  return period.per_channel
-    .map((channel) => ({
-      key: channel.channel_id,
-      label: nameOf(channel.channel_id),
-      data: channel.weekday_radar,
-    }))
-    .filter((series) => series.data.length > 0)
+  return period.per_channel.flatMap((channel) => {
+    const series: RadarSeries[] = []
+    if (channel.weekday_radar.length > 0) {
+      series.push({
+        key: `${channel.channel_id}_current`,
+        label: nameOf(channel.channel_id),
+        data: channel.weekday_radar,
+      })
+    }
+    if (compare && channel.weekday_radar_previous.length > 0) {
+      series.push({
+        key: `${channel.channel_id}_previous`,
+        label: `${nameOf(channel.channel_id)} (${cfg.previousLabel})`,
+        data: channel.weekday_radar_previous,
+      })
+    }
+    return series
+  })
+}
+
+/// Per-channel hour-of-day radar for one timeframe (nerd stats).
+function channelHourRadar(
+  period: PeriodGraphs,
+  channels: ChannelRef[],
+  cfg: TimeframeConfig,
+  compare: boolean,
+): HourRadarSeries[] {
+  const nameOf = (id: string) => channels.find((channel) => channel.id === id)?.name ?? id
+  return period.per_channel.flatMap((channel) => {
+    const series: HourRadarSeries[] = []
+    if (channel.hourly.length > 0) {
+      series.push({
+        key: `${channel.channel_id}_current`,
+        label: nameOf(channel.channel_id),
+        data: channel.hourly,
+      })
+    }
+    if (compare && channel.hourly_previous.length > 0) {
+      series.push({
+        key: `${channel.channel_id}_previous`,
+        label: `${nameOf(channel.channel_id)} (${cfg.previousLabel})`,
+        data: channel.hourly_previous,
+      })
+    }
+    return series
+  })
 }
 
 /// The counting-station detail page (`/stations/:id`): image + highlighted map
@@ -253,9 +327,14 @@ function DetailContent({ detail }: { detail: StationDetail }) {
               xDomain={domain}
             />
           </ChartCard>
-          <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
-            <WeekdayRadar series={[{ key: 'total', label: 'Bikes', data: period.weekday_radar }]} />
-          </ChartCard>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
+              <WeekdayRadar series={aggregateWeekdayRadar(period, cfg, comparePrevious)} />
+            </ChartCard>
+            <ChartCard title="Hours" subtitle={cfg.radarSubtitle}>
+              <HourRadar series={aggregateHourRadar(period, cfg, comparePrevious)} />
+            </ChartCard>
+          </div>
         </div>
       </section>
 
@@ -282,7 +361,10 @@ function DetailContent({ detail }: { detail: StationDetail }) {
           </ChartCard>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <ChartCard title="Weekdays by channel" subtitle={cfg.radarSubtitle}>
-              <WeekdayRadar series={channelRadar(period, channels)} />
+              <WeekdayRadar series={channelRadar(period, channels, cfg, comparePrevious)} />
+            </ChartCard>
+            <ChartCard title="Hours by channel" subtitle={cfg.radarSubtitle}>
+              <HourRadar series={channelHourRadar(period, channels, cfg, comparePrevious)} />
             </ChartCard>
             <ChartCard title="Share by channel" subtitle={cfg.pieSubtitle}>
               <ChannelPie totals={period.channel_pie} channels={channels} />

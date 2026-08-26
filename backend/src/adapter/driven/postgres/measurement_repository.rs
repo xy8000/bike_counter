@@ -4,7 +4,8 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelTotal, MeasurementRepository, MonthTotal, TimeBucket, WeekdayTotal,
+    ChannelBucket, ChannelHourTotal, ChannelTotal, HourTotal, MeasurementRepository, MonthTotal,
+    TimeBucket, WeekdayTotal,
 };
 
 use super::pool::PgPool;
@@ -352,6 +353,74 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             });
         }
         Ok(weekdays)
+    }
+
+    fn sum_hours(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<HourTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT EXTRACT(HOUR FROM (timestamp AT TIME ZONE $2))::int AS hour, \
+                       COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                 GROUP BY hour \
+                 ORDER BY hour",
+                &[&channel_uuids, &timezone, &from, &to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut hours = Vec::with_capacity(rows.len());
+        for row in rows {
+            hours.push(HourTotal {
+                hour: row.get::<_, i32>(0) as u8,
+                total: row.get(1),
+            });
+        }
+        Ok(hours)
+    }
+
+    fn sum_hours_by_channel(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelHourTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, \
+                       EXTRACT(HOUR FROM (timestamp AT TIME ZONE $2))::int AS hour, \
+                       COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                 GROUP BY channel_id, hour \
+                 ORDER BY channel_id, hour",
+                &[&channel_uuids, &timezone, &from, &to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut hours = Vec::with_capacity(rows.len());
+        for row in rows {
+            hours.push(ChannelHourTotal {
+                channel_id: row.get(0),
+                hour: row.get::<_, i32>(1) as u8,
+                total: row.get(2),
+            });
+        }
+        Ok(hours)
     }
 
     fn sum_by_channel(
@@ -936,6 +1005,27 @@ mod tests {
         assert_eq!(weekdays.len(), 1);
         assert_eq!(weekdays[0].weekday, 3);
         assert_eq!(weekdays[0].total, 42);
+
+        // sum_hours: all four measurements fall into local hour 13 (Berlin is
+        // UTC+1 in January), so one hour-of-day row carries the whole total.
+        let hours = repository
+            .sum_hours(from, to, "Europe/Berlin", &channels)
+            .unwrap();
+        assert_eq!(hours.len(), 1);
+        assert_eq!(hours[0].hour, 13);
+        assert_eq!(hours[0].total, 42);
+
+        // sum_hours_by_channel: each row carries its channel id and local hour.
+        let hours_by_channel = repository
+            .sum_hours_by_channel(from, to, "Europe/Berlin", &channels)
+            .unwrap();
+        assert_eq!(hours_by_channel.len(), 2);
+        let by_channel: std::collections::HashMap<(Uuid, u8), i64> = hours_by_channel
+            .iter()
+            .map(|row| ((row.channel_id, row.hour), row.total))
+            .collect();
+        assert_eq!(by_channel[&(channel_a, 13)], 35);
+        assert_eq!(by_channel[&(channel_b, 13)], 7);
 
         // sum_by_channel over the same window.
         let totals = repository.sum_by_channel(from, to, &channels).unwrap();

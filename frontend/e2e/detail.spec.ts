@@ -85,6 +85,28 @@ test('the share-by-channel pie renders inside its card', async ({ page }) => {
   }
 })
 
+test('the hour-of-day radar renders next to the Weekdays radar', async ({ page }) => {
+  const stationId = await openFirstStation(page)
+  await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
+
+  // Aggregate "Hours" radar (first card; "Hours by channel" also matches the
+  // substring filter) sits in the Detailed statistics section next to Weekdays.
+  const hoursCard = page.locator('[data-slot="card"]').filter({ hasText: 'Hours' }).first()
+  await expect(hoursCard).toBeVisible()
+
+  // The radar draws inside the card when there is traffic; stations without
+  // traffic show the fallback text instead, so only assert when a chart exists.
+  const wrapper = hoursCard.locator('.recharts-wrapper').first()
+  if ((await wrapper.count()) > 0) {
+    await expect(wrapper).toBeVisible()
+  }
+
+  // The nerd-stats variant exists too.
+  await expect(
+    page.locator('[data-slot="card"]').filter({ hasText: 'Hours by channel' }),
+  ).toBeVisible()
+})
+
 test('the back-to-map button re-routes to the map and the browser back event returns', async ({
   page,
 }) => {

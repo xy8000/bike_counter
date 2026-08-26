@@ -16,10 +16,11 @@ It is a **monorepo** with two sub-projects:
   Komoot-style header with a search dialog, a live aggregate summary, a
   per-station detail page (`/stations/:id`) with the overview stat boxes (incl.
   the YEAR stat), a shared timeframe selector (24 hours / current + last week /
-  last 30 days / last year) driving a full-width line chart, a weekday radar,
-  the channel pie and the per-channel nerd stats (plus a "compare previous
-  period" checkbox that overlays the previous period), and a standalone monthly
-  bar chart showing the grand total. A **station summary page** (`/summary`,
+  last 30 days / last year) driving a full-width line chart, a weekday radar and
+  an hour-of-day radar side by side, the channel pie and the per-channel nerd
+  stats (plus a "compare previous period" checkbox that overlays the previous
+  period on the line chart and both radars), and a standalone monthly bar chart
+  showing the grand total. A **station summary page** (`/summary`,
   opened from the sidebar's "Summarize visible stations" button) aggregates the
   stations currently visible in the map view — fallback image, an interactive map
   (click a flag to exclude a station, grayed out), the aggregated overview stats

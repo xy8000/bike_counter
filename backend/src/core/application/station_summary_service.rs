@@ -311,6 +311,29 @@ mod tests {
             Ok(Vec::new())
         }
 
+        fn sum_hours(
+            &self,
+            _from: chrono::DateTime<chrono::Utc>,
+            _to: chrono::DateTime<chrono::Utc>,
+            _timezone: &str,
+            _channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<Vec<crate::core::domain::measurements::repository_port::HourTotal>, DomainError>
+        {
+            Ok(Vec::new())
+        }
+
+        fn sum_hours_by_channel(
+            &self,
+            _from: chrono::DateTime<chrono::Utc>,
+            _to: chrono::DateTime<chrono::Utc>,
+            _timezone: &str,
+            _channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<
+            Vec<crate::core::domain::measurements::repository_port::ChannelHourTotal>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
         fn sum_by_channel(
             &self,
             _from: chrono::DateTime<chrono::Utc>,

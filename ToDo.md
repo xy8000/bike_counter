@@ -394,3 +394,14 @@ All-time bike counter + latest-year trend removal (plan 45)
 - [x] Frontend: `MonthlyBarChart` no longer shows a trend on the latest (always-incomplete) year button
 - [x] e2e: counter presence asserted in `map.spec.ts` / `detail.spec.ts` / `summary.spec.ts`; latest-year button shows no p-%
 - [x] Gates green: `make check`, `make test` (351), `make test-rest` (87), `make coverage` (overall 85.06%, core 95.80%), `make frontend-build`, `make test-playwright` (20)
+
+Hour-of-day radar + weekday axis label fix + radar compare-previous (plan 48)
+
+- [x] Backend: `HourTotal` / `ChannelHourTotal` + `sum_hours` / `sum_hours_by_channel` on the `MeasurementRepository` port; Postgres SQL via `EXTRACT(HOUR …)` with tests; stubs in all 10 test repository mocks
+- [x] Backend: `weekday_radar_previous` / `hourly` / `hourly_previous` on the detail (`PeriodGraphs`, `PerChannelSeries`) and summary (`SummaryPeriodGraphs`, `PerStationSeries`) domain models, computed in both services (aggregate + per channel/station) with unit tests
+- [x] BFF: `HourTotalDto` + the new fields on the detail/summary graph DTOs + OpenAPI schemas + `bff.rs` payload assertions
+- [x] Frontend: `HourTotal` + new fields in the detail/summary types; new `HourRadar` component (fixed 24-hour radar, multi-series, empty state)
+- [x] Frontend: Weekdays + Hours radars split half/half on the detail/summary "Detailed statistics" and nerd-stats sections; both radars honor the compare checkbox (aggregate + per channel/station)
+- [x] Frontend: week line-chart X-axis fixed — `weekdayAxis` now appends the local time so hour-level ticks are unique (was `Mo Mo Mo Mo Di …`)
+- [x] e2e: `detail.spec.ts` hour-radar card test + `summary.spec.ts` Hours-card assertion
+- [x] Gates green: `make check`, `make test` (363), `make test-rest` (87), `make coverage` (overall 85.44%, core 96.10%), `make frontend-build`, `make test-playwright` (21)

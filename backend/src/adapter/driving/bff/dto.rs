@@ -12,7 +12,9 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::dto::CountingStationDto;
-use crate::core::domain::measurements::repository_port::{ChannelTotal, TimeBucket, WeekdayTotal};
+use crate::core::domain::measurements::repository_port::{
+    ChannelTotal, HourTotal, TimeBucket, WeekdayTotal,
+};
 use crate::core::domain::station_detail::{PeriodGraphs, StationDetailGraphs};
 use crate::core::domain::station_summary::StationSummary;
 use crate::core::domain::stations_summary::{
@@ -232,6 +234,13 @@ pub struct WeekdayTotalDto {
     pub total: i64,
 }
 
+/// One hour-of-day aggregate (local 0 = midnight .. 23 = 23:00).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct HourTotalDto {
+    pub hour: u8,
+    pub total: i64,
+}
+
 /// One channel's share over a window (pie chart).
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct ChannelTotalDto {
@@ -248,24 +257,30 @@ pub struct MonthTotalDto {
 }
 
 /// The per-channel time-series for one timeframe (nerd stats): the current and
-/// previous period restricted to one channel plus its current-period weekday
-/// radar.
+/// previous period restricted to one channel plus its current/previous-period
+/// weekday + hour radars.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct PerChannelSeriesDto {
     pub channel_id: Uuid,
     pub current: Vec<TimeBucketDto>,
     pub previous: Vec<TimeBucketDto>,
     pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub weekday_radar_previous: Vec<WeekdayTotalDto>,
+    pub hourly: Vec<HourTotalDto>,
+    pub hourly_previous: Vec<HourTotalDto>,
 }
 
 /// The graph data for one selectable timeframe: the current and previous period
-/// time-series, the current-period weekday radar + channel pie and the
-/// per-channel series.
+/// time-series, the current-period weekday radar + channel pie, the hour-of-day
+/// radars and the per-channel series.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct PeriodGraphsDto {
     pub current: Vec<TimeBucketDto>,
     pub previous: Vec<TimeBucketDto>,
     pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub weekday_radar_previous: Vec<WeekdayTotalDto>,
+    pub hourly: Vec<HourTotalDto>,
+    pub hourly_previous: Vec<HourTotalDto>,
     pub channel_pie: Vec<ChannelTotalDto>,
     pub per_channel: Vec<PerChannelSeriesDto>,
 }
@@ -303,6 +318,16 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
                 .collect()
         }
 
+        fn hours(hours: Vec<HourTotal>) -> Vec<HourTotalDto> {
+            hours
+                .into_iter()
+                .map(|hour| HourTotalDto {
+                    hour: hour.hour,
+                    total: hour.total,
+                })
+                .collect()
+        }
+
         fn channels(totals: Vec<ChannelTotal>) -> Vec<ChannelTotalDto> {
             totals
                 .into_iter()
@@ -318,6 +343,9 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
                 current: buckets(period.current),
                 previous: buckets(period.previous),
                 weekday_radar: weekdays(period.weekday_radar),
+                weekday_radar_previous: weekdays(period.weekday_radar_previous),
+                hourly: hours(period.hourly),
+                hourly_previous: hours(period.hourly_previous),
                 channel_pie: channels(period.channel_pie),
                 per_channel: period
                     .per_channel
@@ -327,6 +355,9 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
                         current: buckets(series.current),
                         previous: buckets(series.previous),
                         weekday_radar: weekdays(series.weekday_radar),
+                        weekday_radar_previous: weekdays(series.weekday_radar_previous),
+                        hourly: hours(series.hourly),
+                        hourly_previous: hours(series.hourly_previous),
                     })
                     .collect(),
             }
@@ -401,16 +432,22 @@ pub struct PerStationSeriesDto {
     pub current: Vec<TimeBucketDto>,
     pub previous: Vec<TimeBucketDto>,
     pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub weekday_radar_previous: Vec<WeekdayTotalDto>,
+    pub hourly: Vec<HourTotalDto>,
+    pub hourly_previous: Vec<HourTotalDto>,
 }
 
 /// The graph data for one timeframe of the summary page: the aggregate current
 /// and previous period time-series, the current-period weekday radar + station
-/// pie and the per-station series.
+/// pie, the hour-of-day radars and the per-station series.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct SummaryPeriodGraphsDto {
     pub current: Vec<TimeBucketDto>,
     pub previous: Vec<TimeBucketDto>,
     pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub weekday_radar_previous: Vec<WeekdayTotalDto>,
+    pub hourly: Vec<HourTotalDto>,
+    pub hourly_previous: Vec<HourTotalDto>,
     pub station_pie: Vec<StationTotalDto>,
     pub per_station: Vec<PerStationSeriesDto>,
 }
@@ -448,11 +485,24 @@ impl From<StationsSummaryGraphs> for StationsSummaryGraphsDto {
                 .collect()
         }
 
+        fn hours(hours: Vec<HourTotal>) -> Vec<HourTotalDto> {
+            hours
+                .into_iter()
+                .map(|hour| HourTotalDto {
+                    hour: hour.hour,
+                    total: hour.total,
+                })
+                .collect()
+        }
+
         fn period(period: SummaryPeriodGraphs) -> SummaryPeriodGraphsDto {
             SummaryPeriodGraphsDto {
                 current: buckets(period.current),
                 previous: buckets(period.previous),
                 weekday_radar: weekdays(period.weekday_radar),
+                weekday_radar_previous: weekdays(period.weekday_radar_previous),
+                hourly: hours(period.hourly),
+                hourly_previous: hours(period.hourly_previous),
                 station_pie: period
                     .station_pie
                     .into_iter()
@@ -469,6 +519,9 @@ impl From<StationsSummaryGraphs> for StationsSummaryGraphsDto {
                         current: buckets(series.current),
                         previous: buckets(series.previous),
                         weekday_radar: weekdays(series.weekday_radar),
+                        weekday_radar_previous: weekdays(series.weekday_radar_previous),
+                        hourly: hours(series.hourly),
+                        hourly_previous: hours(series.hourly_previous),
                     })
                     .collect(),
             }

@@ -26,7 +26,7 @@ use crate::core::domain::counting_stations::repository_port::CountingStationRepo
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::{
-    MeasurementRepository, TimeBucket, WeekdayTotal,
+    HourTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_detail::service_port::StationDetailServicePort;
 use crate::core::domain::station_detail::{
@@ -125,6 +125,24 @@ impl StationDetailService {
             timezone,
             channel_ids,
         )?;
+        let weekday_radar_previous = self.measurement_repository.sum_weekdays(
+            previous_from,
+            previous_to,
+            timezone,
+            channel_ids,
+        )?;
+        let hourly = self.measurement_repository.sum_hours(
+            current_from,
+            current_to,
+            timezone,
+            channel_ids,
+        )?;
+        let hourly_previous = self.measurement_repository.sum_hours(
+            previous_from,
+            previous_to,
+            timezone,
+            channel_ids,
+        )?;
         let channel_pie =
             self.measurement_repository
                 .sum_by_channel(current_from, current_to, channel_ids)?;
@@ -164,6 +182,39 @@ impl StationDetailService {
                 });
         }
 
+        // Per-channel hour-of-day totals for the nerd-stats hour radar, keyed by
+        // channel id.
+        let mut current_hour_by_channel: HashMap<Uuid, Vec<HourTotal>> = HashMap::new();
+        for row in self.measurement_repository.sum_hours_by_channel(
+            current_from,
+            current_to,
+            timezone,
+            channel_ids,
+        )? {
+            current_hour_by_channel
+                .entry(row.channel_id)
+                .or_default()
+                .push(HourTotal {
+                    hour: row.hour,
+                    total: row.total,
+                });
+        }
+        let mut previous_hour_by_channel: HashMap<Uuid, Vec<HourTotal>> = HashMap::new();
+        for row in self.measurement_repository.sum_hours_by_channel(
+            previous_from,
+            previous_to,
+            timezone,
+            channel_ids,
+        )? {
+            previous_hour_by_channel
+                .entry(row.channel_id)
+                .or_default()
+                .push(HourTotal {
+                    hour: row.hour,
+                    total: row.total,
+                });
+        }
+
         // Keep the station's channel order for a stable legend; a channel is only
         // included when it has data in at least one of the two periods.
         let per_channel = channels
@@ -179,6 +230,13 @@ impl StationDetailService {
                 Some(PerChannelSeries {
                     channel_id: channel.id.0,
                     weekday_radar: Self::weekday_totals(&current, tz),
+                    weekday_radar_previous: Self::weekday_totals(&previous, tz),
+                    hourly: current_hour_by_channel
+                        .remove(&channel.id.0)
+                        .unwrap_or_default(),
+                    hourly_previous: previous_hour_by_channel
+                        .remove(&channel.id.0)
+                        .unwrap_or_default(),
                     current,
                     previous,
                 })
@@ -189,6 +247,9 @@ impl StationDetailService {
             current,
             previous,
             weekday_radar,
+            weekday_radar_previous,
+            hourly,
+            hourly_previous,
             channel_pie,
             per_channel,
         })
@@ -299,7 +360,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use chrono::{Datelike, TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Timelike, Utc};
     use uuid::Uuid;
 
     use super::StationDetailService;
@@ -313,7 +374,8 @@ mod tests {
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
     use crate::core::domain::measurements::repository_port::{
-        ChannelBucket, ChannelTotal, MeasurementRepository, MonthTotal, TimeBucket, WeekdayTotal,
+        ChannelBucket, ChannelHourTotal, ChannelTotal, HourTotal, MeasurementRepository,
+        MonthTotal, TimeBucket, WeekdayTotal,
     };
     use crate::core::domain::station_detail::service_port::StationDetailServicePort;
 
@@ -566,6 +628,45 @@ mod tests {
                 .collect())
         }
 
+        fn sum_hours(
+            &self,
+            from: chrono::DateTime<Utc>,
+            to: chrono::DateTime<Utc>,
+            _timezone: &str,
+            channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<Vec<HourTotal>, DomainError> {
+            let mut map: BTreeMap<u8, i64> = BTreeMap::new();
+            for m in self.in_window(from, to, channel_ids) {
+                let hour = m.timestamp.0.hour() as u8;
+                *map.entry(hour).or_insert(0) += m.value.0;
+            }
+            Ok(map
+                .into_iter()
+                .map(|(hour, total)| HourTotal { hour, total })
+                .collect())
+        }
+
+        fn sum_hours_by_channel(
+            &self,
+            from: chrono::DateTime<Utc>,
+            to: chrono::DateTime<Utc>,
+            _timezone: &str,
+            channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<Vec<ChannelHourTotal>, DomainError> {
+            let mut map: BTreeMap<(Uuid, u8), i64> = BTreeMap::new();
+            for m in self.in_window(from, to, channel_ids) {
+                let hour = m.timestamp.0.hour() as u8;
+                *map.entry((m.channel_id.0, hour)).or_insert(0) += m.value.0;
+            }
+            Ok(map
+                .into_iter()
+                .map(|((channel_id, hour), total)| ChannelHourTotal {
+                    channel_id,
+                    hour,
+                    total,
+                })
+                .collect())
+        }
         fn sum_by_channel(
             &self,
             from: chrono::DateTime<Utc>,
@@ -954,6 +1055,72 @@ mod tests {
         assert_eq!(by_weekday[&4], 30, "Thursday");
         assert_eq!(by_weekday[&5], 10, "Friday");
         assert_eq!(radar.len(), 4, "only weekdays with data");
+    }
+
+    #[test]
+    fn detail_previous_and_hour_radars_are_computed() {
+        // Last complete day (Berlin) = 2024-01-10; the day before = 2024-01-09.
+        let now = utc(2024, 1, 11, 12, 0, 0);
+        let measurements = vec![
+            // Current day: Wed 2024-01-10, 09:00 Berlin (08:00 UTC).
+            measurement(CHANNEL_A, 100, utc(2024, 1, 10, 8, 0, 0)),
+            // Previous day: Tue 2024-01-09, 21:00 Berlin (20:00 UTC).
+            measurement(CHANNEL_B, 50, utc(2024, 1, 9, 20, 0, 0)),
+        ];
+        let detail = service(measurements)
+            .detail(station_vo::Id(Uuid::from_u128(STATION_ID)), now)
+            .unwrap();
+
+        let day = &detail.graphs.day;
+        // Aggregate weekday radars: current + previous period.
+        let current_weekdays: std::collections::HashMap<_, _> = day
+            .weekday_radar
+            .iter()
+            .map(|w| (w.weekday, w.total))
+            .collect();
+        assert_eq!(current_weekdays[&3], 100, "Wednesday (current day)");
+        let previous_weekdays: std::collections::HashMap<_, _> = day
+            .weekday_radar_previous
+            .iter()
+            .map(|w| (w.weekday, w.total))
+            .collect();
+        assert_eq!(previous_weekdays[&2], 50, "Tuesday (previous day)");
+
+        // Aggregate hour-of-day radars (the in-memory mock folds by UTC hour).
+        let by_hour: std::collections::HashMap<_, _> =
+            day.hourly.iter().map(|h| (h.hour, h.total)).collect();
+        assert_eq!(by_hour[&8], 100);
+        let by_hour_previous: std::collections::HashMap<_, _> = day
+            .hourly_previous
+            .iter()
+            .map(|h| (h.hour, h.total))
+            .collect();
+        assert_eq!(by_hour_previous[&20], 50);
+
+        // Per-channel radars carry current + previous per channel.
+        let a = detail
+            .graphs
+            .day
+            .per_channel
+            .iter()
+            .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A))
+            .unwrap();
+        assert_eq!(a.weekday_radar[0].weekday, 3);
+        assert!(a.weekday_radar_previous.is_empty());
+        assert_eq!(a.hourly[0].hour, 8);
+        assert!(a.hourly_previous.is_empty());
+
+        let b = detail
+            .graphs
+            .day
+            .per_channel
+            .iter()
+            .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_B))
+            .unwrap();
+        assert!(b.weekday_radar.is_empty());
+        assert_eq!(b.weekday_radar_previous[0].weekday, 2);
+        assert!(b.hourly.is_empty());
+        assert_eq!(b.hourly_previous[0].hour, 20);
     }
 
     #[test]

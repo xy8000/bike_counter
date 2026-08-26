@@ -25,9 +25,14 @@ function timeAxis(unit: TimeUnit): (time: number) => string {
 }
 
 /// Axis label for the overlapped week chart: the aligned domain is anchored on a
-/// Monday, so a short weekday name marks each day.
+/// Monday, so a short weekday name marks each day. The week timeframe uses
+/// 1-hour buckets, so the local time is appended — a bare weekday name would
+/// repeat (e.g. `Mo Mo Mo Mo`) when Recharts emits several ticks per day.
 function weekdayAxis(time: number): string {
-  return new Date(time).toLocaleDateString(LOCALE, { weekday: 'short' })
+  const date = new Date(time)
+  const weekday = date.toLocaleDateString(LOCALE, { weekday: 'short' })
+  const timeOfDay = date.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' })
+  return `${weekday} ${timeOfDay}`
 }
 
 /// Browser-local midnight of the day containing `time` (period start for the day

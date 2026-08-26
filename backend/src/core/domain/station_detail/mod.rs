@@ -7,7 +7,7 @@
 
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::measurements::repository_port::{
-    ChannelTotal, MonthTotal, TimeBucket, WeekdayTotal,
+    ChannelTotal, HourTotal, MonthTotal, TimeBucket, WeekdayTotal,
 };
 
 /// Everything the detail page needs beyond the station overview (which the BFF
@@ -33,6 +33,14 @@ pub struct PeriodGraphs {
     pub previous: Vec<TimeBucket>,
     /// Bikes per ISO weekday (1 = Mon .. 7 = Sun) over the current period.
     pub weekday_radar: Vec<WeekdayTotal>,
+    /// Bikes per ISO weekday over the immediately preceding period (compare).
+    pub weekday_radar_previous: Vec<WeekdayTotal>,
+    /// Bikes per local hour of day (0 = midnight .. 23 = 23:00) over the current
+    /// period.
+    pub hourly: Vec<HourTotal>,
+    /// Bikes per local hour of day over the immediately preceding period
+    /// (compare).
+    pub hourly_previous: Vec<HourTotal>,
     /// Channel shares over the current period (pie chart).
     pub channel_pie: Vec<ChannelTotal>,
     /// One series per channel for the time-series graphs (nerd stats).
@@ -47,6 +55,13 @@ pub struct PerChannelSeries {
     pub previous: Vec<TimeBucket>,
     /// Bikes per ISO weekday (1 = Mon .. 7 = Sun) over the current period.
     pub weekday_radar: Vec<WeekdayTotal>,
+    /// Bikes per ISO weekday over the immediately preceding period (compare).
+    pub weekday_radar_previous: Vec<WeekdayTotal>,
+    /// Bikes per local hour of day over the current period.
+    pub hourly: Vec<HourTotal>,
+    /// Bikes per local hour of day over the immediately preceding period
+    /// (compare).
+    pub hourly_previous: Vec<HourTotal>,
 }
 
 /// All graph data for the detail page, keyed by the four selectable timeframes,

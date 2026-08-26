@@ -20,6 +20,7 @@ import type { StationSummary } from '../stations/types'
 import { MetricCard } from '../stationOverview/MetricCard'
 import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
 import { ChartCard } from '../stationDetail/ChartCard'
+import { HourRadar, type HourRadarSeries } from '../stationDetail/HourRadar'
 import { MonthlyBarChart } from '../stationDetail/MonthlyBarChart'
 import { SharePie, type ShareSlice } from '../stationDetail/SharePie'
 import { TimeSeriesLineChart, type LineSeries } from '../stationDetail/TimeSeriesLineChart'
@@ -67,17 +68,90 @@ function stationSeries(
   return series
 }
 
-/// Per-station weekday radar for one timeframe. Stations without any weekday
-/// traffic are dropped.
-function stationRadar(period: SummaryPeriodGraphs, stations: SummaryStation[]): RadarSeries[] {
+/// Aggregate weekday radar for one timeframe: the current period's "Bikes" plus,
+/// when the compare checkbox is on, the previous period's "Bikes".
+function aggregateWeekdayRadar(
+  period: SummaryPeriodGraphs,
+  cfg: TimeframeConfig,
+  compare: boolean,
+): RadarSeries[] {
+  const series: RadarSeries[] = [{ key: 'current', label: 'Bikes', data: period.weekday_radar }]
+  if (compare && period.weekday_radar_previous.length > 0) {
+    series.push({ key: 'previous', label: cfg.previousLabel, data: period.weekday_radar_previous })
+  }
+  return series
+}
+
+/// Aggregate hour-of-day radar for one timeframe: the current period's "Bikes"
+/// plus, when the compare checkbox is on, the previous period's "Bikes".
+function aggregateHourRadar(
+  period: SummaryPeriodGraphs,
+  cfg: TimeframeConfig,
+  compare: boolean,
+): HourRadarSeries[] {
+  const series: HourRadarSeries[] = [{ key: 'current', label: 'Bikes', data: period.hourly }]
+  if (compare && period.hourly_previous.length > 0) {
+    series.push({ key: 'previous', label: cfg.previousLabel, data: period.hourly_previous })
+  }
+  return series
+}
+
+/// Per-station weekday radar for one timeframe (nerd stats). Each station with
+/// traffic contributes a current radar and, when compare is on, a previous
+/// period radar.
+function stationRadar(
+  period: SummaryPeriodGraphs,
+  stations: SummaryStation[],
+  cfg: TimeframeConfig,
+  compare: boolean,
+): RadarSeries[] {
   const nameOf = (id: string) => stations.find((station) => station.id === id)?.name ?? id
-  return period.per_station
-    .map((station) => ({
-      key: station.station_id,
-      label: nameOf(station.station_id),
-      data: station.weekday_radar,
-    }))
-    .filter((series) => series.data.length > 0)
+  return period.per_station.flatMap((station) => {
+    const series: RadarSeries[] = []
+    if (station.weekday_radar.length > 0) {
+      series.push({
+        key: `${station.station_id}_current`,
+        label: nameOf(station.station_id),
+        data: station.weekday_radar,
+      })
+    }
+    if (compare && station.weekday_radar_previous.length > 0) {
+      series.push({
+        key: `${station.station_id}_previous`,
+        label: `${nameOf(station.station_id)} (${cfg.previousLabel})`,
+        data: station.weekday_radar_previous,
+      })
+    }
+    return series
+  })
+}
+
+/// Per-station hour-of-day radar for one timeframe (nerd stats).
+function stationHourRadar(
+  period: SummaryPeriodGraphs,
+  stations: SummaryStation[],
+  cfg: TimeframeConfig,
+  compare: boolean,
+): HourRadarSeries[] {
+  const nameOf = (id: string) => stations.find((station) => station.id === id)?.name ?? id
+  return period.per_station.flatMap((station) => {
+    const series: HourRadarSeries[] = []
+    if (station.hourly.length > 0) {
+      series.push({
+        key: `${station.station_id}_current`,
+        label: nameOf(station.station_id),
+        data: station.hourly,
+      })
+    }
+    if (compare && station.hourly_previous.length > 0) {
+      series.push({
+        key: `${station.station_id}_previous`,
+        label: `${nameOf(station.station_id)} (${cfg.previousLabel})`,
+        data: station.hourly_previous,
+      })
+    }
+    return series
+  })
 }
 
 /// Per-station shares for the pie, mapped to the shared slice shape.
@@ -317,9 +391,14 @@ function SummaryContent({
               xDomain={domain}
             />
           </ChartCard>
-          <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
-            <WeekdayRadar series={[{ key: 'total', label: 'Bikes', data: period.weekday_radar }]} />
-          </ChartCard>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
+              <WeekdayRadar series={aggregateWeekdayRadar(period, cfg, comparePrevious)} />
+            </ChartCard>
+            <ChartCard title="Hours" subtitle={cfg.radarSubtitle}>
+              <HourRadar series={aggregateHourRadar(period, cfg, comparePrevious)} />
+            </ChartCard>
+          </div>
         </div>
       </section>
 
@@ -345,7 +424,10 @@ function SummaryContent({
           </ChartCard>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <ChartCard title="Weekdays by station" subtitle={cfg.radarSubtitle}>
-              <WeekdayRadar series={stationRadar(period, stations)} />
+              <WeekdayRadar series={stationRadar(period, stations, cfg, comparePrevious)} />
+            </ChartCard>
+            <ChartCard title="Hours by station" subtitle={cfg.radarSubtitle}>
+              <HourRadar series={stationHourRadar(period, stations, cfg, comparePrevious)} />
             </ChartCard>
             <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
               <SharePie slices={stationSlices(period, stations)} />

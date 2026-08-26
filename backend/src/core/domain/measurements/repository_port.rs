@@ -27,6 +27,22 @@ pub struct WeekdayTotal {
     pub total: i64,
 }
 
+/// Total per local hour of day (0 = midnight .. 23 = 23:00) over a window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HourTotal {
+    pub hour: u8,
+    pub total: i64,
+}
+
+/// One hour-of-day total restricted to a single channel (per-channel hour
+/// radar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelHourTotal {
+    pub channel_id: Uuid,
+    pub hour: u8,
+    pub total: i64,
+}
+
 /// Total per channel over a window (pie chart).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelTotal {
@@ -109,6 +125,27 @@ pub trait MeasurementRepository {
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<WeekdayTotal>, DomainError>;
+
+    /// Sums `value` per local hour of day (0 = midnight .. 23 = 23:00) over the
+    /// window (used for the hour-of-day radar chart).
+    fn sum_hours(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<HourTotal>, DomainError>;
+
+    /// Like [`sum_hours`](Self::sum_hours) but grouped per channel, so each
+    /// returned row carries its `channel_id` (used for the per-channel hour
+    /// radar).
+    fn sum_hours_by_channel(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelHourTotal>, DomainError>;
 
     /// Sums `value` per channel over the window (used for the channel pie).
     fn sum_by_channel(

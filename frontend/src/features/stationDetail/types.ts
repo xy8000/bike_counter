@@ -18,6 +18,12 @@ export interface WeekdayTotal {
   total: number
 }
 
+/// One hour-of-day aggregate (local 0 = midnight .. 23 = 23:00).
+export interface HourTotal {
+  hour: number
+  total: number
+}
+
 /// One channel's share over the current period (pie chart).
 export interface ChannelTotal {
   channel_id: string
@@ -41,6 +47,9 @@ export interface PerChannelSeries {
   current: TimeBucket[]
   previous: TimeBucket[]
   weekday_radar: WeekdayTotal[]
+  weekday_radar_previous: WeekdayTotal[]
+  hourly: HourTotal[]
+  hourly_previous: HourTotal[]
 }
 
 /// All graph data for one timeframe: the current and previous period
@@ -50,6 +59,9 @@ export interface PeriodGraphs {
   current: TimeBucket[]
   previous: TimeBucket[]
   weekday_radar: WeekdayTotal[]
+  weekday_radar_previous: WeekdayTotal[]
+  hourly: HourTotal[]
+  hourly_previous: HourTotal[]
   channel_pie: ChannelTotal[]
   per_channel: PerChannelSeries[]
 }

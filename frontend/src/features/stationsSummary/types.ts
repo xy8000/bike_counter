@@ -1,6 +1,6 @@
 /// Types for the station-summary page (BFF `stations/summary`).
 import type { StationOverviewMetric } from '../stationOverview/types'
-import type { MonthTotal, TimeBucket, WeekdayTotal } from '../stationDetail/types'
+import type { HourTotal, MonthTotal, TimeBucket, WeekdayTotal } from '../stationDetail/types'
 
 /// A positioned station inside the requested bounds (disabled ones included so
 /// the map can gray them out).
@@ -24,6 +24,9 @@ export interface PerStationSeries {
   current: TimeBucket[]
   previous: TimeBucket[]
   weekday_radar: WeekdayTotal[]
+  weekday_radar_previous: WeekdayTotal[]
+  hourly: HourTotal[]
+  hourly_previous: HourTotal[]
 }
 
 /// The graph data for one timeframe of the summary page: the aggregate current
@@ -33,6 +36,9 @@ export interface SummaryPeriodGraphs {
   current: TimeBucket[]
   previous: TimeBucket[]
   weekday_radar: WeekdayTotal[]
+  weekday_radar_previous: WeekdayTotal[]
+  hourly: HourTotal[]
+  hourly_previous: HourTotal[]
   station_pie: StationTotal[]
   per_station: PerStationSeries[]
 }

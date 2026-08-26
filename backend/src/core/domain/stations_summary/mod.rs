@@ -18,7 +18,9 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::core::domain::measurements::repository_port::{MonthTotal, TimeBucket, WeekdayTotal};
+use crate::core::domain::measurements::repository_port::{
+    HourTotal, MonthTotal, TimeBucket, WeekdayTotal,
+};
 use crate::core::domain::station_overview::MetricWindow;
 
 /// Everything the station-summary page needs: the station list (for the map and
@@ -85,6 +87,14 @@ pub struct SummaryPeriodGraphs {
     pub previous: Vec<TimeBucket>,
     /// Bikes per ISO weekday (1 = Mon .. 7 = Sun) over the current period.
     pub weekday_radar: Vec<WeekdayTotal>,
+    /// Bikes per ISO weekday over the immediately preceding period (compare).
+    pub weekday_radar_previous: Vec<WeekdayTotal>,
+    /// Bikes per local hour of day (0 = midnight .. 23 = 23:00) over the current
+    /// period.
+    pub hourly: Vec<HourTotal>,
+    /// Bikes per local hour of day over the immediately preceding period
+    /// (compare).
+    pub hourly_previous: Vec<HourTotal>,
     /// Per-station shares over the current period (pie chart).
     pub station_pie: Vec<StationTotal>,
     /// One series per station for the time-series graphs (nerd stats).
@@ -106,6 +116,13 @@ pub struct PerStationSeries {
     pub previous: Vec<TimeBucket>,
     /// Bikes per ISO weekday (1 = Mon .. 7 = Sun) over the current period.
     pub weekday_radar: Vec<WeekdayTotal>,
+    /// Bikes per ISO weekday over the immediately preceding period (compare).
+    pub weekday_radar_previous: Vec<WeekdayTotal>,
+    /// Bikes per local hour of day over the current period.
+    pub hourly: Vec<HourTotal>,
+    /// Bikes per local hour of day over the immediately preceding period
+    /// (compare).
+    pub hourly_previous: Vec<HourTotal>,
 }
 
 pub mod service_port;

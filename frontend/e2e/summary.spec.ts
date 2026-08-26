@@ -70,6 +70,10 @@ test.describe('station summary', () => {
     await expect(page.getByText('Total bikes (all time)')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Detailed statistics' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Nerd stats' })).toBeVisible()
+    // The hour-of-day radar sits next to the Weekdays radar (split half).
+    await expect(
+      page.locator('[data-slot="card"]').filter({ hasText: 'Hours' }).first(),
+    ).toBeVisible()
     const monthlyCard = page.locator('[data-slot="card"]').filter({ hasText: 'Bikes per month' })
     await expect(monthlyCard).toBeVisible()
     // Recharts draws at least one chart.

@@ -501,6 +501,9 @@ async fn bff_station_summary_returns_the_flat_page_payload() {
         assert!(period["current"].is_array());
         assert!(period["previous"].is_array());
         assert!(period["weekday_radar"].is_array());
+        assert!(period["weekday_radar_previous"].is_array());
+        assert!(period["hourly"].is_array());
+        assert!(period["hourly_previous"].is_array());
         assert!(period["station_pie"].is_array());
         assert!(period["per_station"].is_array());
     }
