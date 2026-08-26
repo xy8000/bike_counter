@@ -38,7 +38,7 @@ use uuid::Uuid;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
-use crate::core::application::station_analytics_service::StationAnalyticsService;
+use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::sample_job_repository;
 use mocks::{

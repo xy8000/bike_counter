@@ -20,7 +20,7 @@ use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
-use crate::core::application::station_analytics_service::StationAnalyticsService;
+use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::assets::asset::value_objects::{
     AssetId, ByteSize, ContentType, ObjectKey, Sha256,
 };

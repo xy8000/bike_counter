@@ -17,7 +17,7 @@ use crate::adapter::driving::rest::tests::fixtures;
 use crate::adapter::driving::rest::tests::mocks::{
     MockChannelRepository, MockCountingStationRepository, MockMeasurementRepository,
 };
-use crate::core::application::station_analytics_service::StationAnalyticsService;
+use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
