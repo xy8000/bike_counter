@@ -265,21 +265,24 @@ function DetailContent({ detail }: { detail: StationDetail }) {
       <section className="mt-8">
         <h2 className="mb-1 text-lg font-semibold">Nerd stats</h2>
         <p className="mb-3 text-sm text-muted-foreground">The same graphs, drawn per channel.</p>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
             <TimeSeriesLineChart
               series={perChannelSeries}
               xFormatter={cfg.axis}
               tooltipFormatter={cfg.tooltip}
               xDomain={domain}
+              className="aspect-[21/9]"
             />
           </ChartCard>
-          <ChartCard title="Weekdays by channel" subtitle={cfg.radarSubtitle}>
-            <WeekdayRadar series={channelRadar(period, channels)} />
-          </ChartCard>
-          <ChartCard title="Share by channel" subtitle={cfg.pieSubtitle}>
-            <ChannelPie totals={period.channel_pie} channels={channels} />
-          </ChartCard>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <ChartCard title="Weekdays by channel" subtitle={cfg.radarSubtitle}>
+              <WeekdayRadar series={channelRadar(period, channels)} />
+            </ChartCard>
+            <ChartCard title="Share by channel" subtitle={cfg.pieSubtitle}>
+              <ChannelPie totals={period.channel_pie} channels={channels} />
+            </ChartCard>
+          </div>
         </div>
       </section>
     </>

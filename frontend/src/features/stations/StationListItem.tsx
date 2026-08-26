@@ -49,10 +49,12 @@ export function StationListItem({
           variant="outline"
           size="sm"
           onClick={() => onFind(station)}
+          aria-label="Find on map"
+          title="Find on map"
           className="my-auto mr-2 shrink-0"
         >
           <LocateFixed />
-          Find on map
+          <span className="hidden sm:inline">Find on map</span>
         </Button>
       )}
       {showDetail && onDetail && (
@@ -61,10 +63,12 @@ export function StationListItem({
           variant="outline"
           size="sm"
           onClick={() => onDetail(station)}
+          aria-label="Open detail"
+          title="Open detail"
           className="my-auto mr-3 shrink-0"
         >
           <FileText />
-          Open detail
+          <span className="hidden sm:inline">Open detail</span>
         </Button>
       )}
     </li>

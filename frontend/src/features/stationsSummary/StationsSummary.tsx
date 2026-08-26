@@ -328,21 +328,24 @@ function SummaryContent({
       <section className="mt-8">
         <h2 className="mb-1 text-lg font-semibold">Nerd stats</h2>
         <p className="mb-3 text-sm text-muted-foreground">The same graphs, drawn per station.</p>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
             <TimeSeriesLineChart
               series={perStationSeries}
               xFormatter={cfg.axis}
               tooltipFormatter={cfg.tooltip}
               xDomain={domain}
+              className="aspect-[21/9]"
             />
           </ChartCard>
-          <ChartCard title="Weekdays by station" subtitle={cfg.radarSubtitle}>
-            <WeekdayRadar series={stationRadar(period, stations)} />
-          </ChartCard>
-          <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
-            <SharePie slices={stationSlices(period, stations)} />
-          </ChartCard>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <ChartCard title="Weekdays by station" subtitle={cfg.radarSubtitle}>
+              <WeekdayRadar series={stationRadar(period, stations)} />
+            </ChartCard>
+            <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
+              <SharePie slices={stationSlices(period, stations)} />
+            </ChartCard>
+          </div>
         </div>
       </section>
     </>

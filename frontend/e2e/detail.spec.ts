@@ -141,10 +141,11 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
   await page.getByRole('option', { name: 'Last 30 days' }).click()
   await expect(statsSection.getByText('1-day buckets', { exact: true })).toBeVisible()
 
-  // The standalone monthly bar chart renders with a grand total.
+  // The standalone monthly bar chart renders with a year selector: one clickable
+  // button per year in the header (the grand total is gone — totals are per year).
   const monthlyCard = page.locator('[data-slot="card"]').filter({ hasText: 'Bikes per month' })
   await expect(monthlyCard).toBeVisible()
-  await expect(monthlyCard.getByText('Total', { exact: true })).toBeVisible()
+  await expect(monthlyCard.getByRole('button').first()).toBeVisible()
 })
 
 test('the compare-previous checkbox overlays the previous period', async ({ page }) => {

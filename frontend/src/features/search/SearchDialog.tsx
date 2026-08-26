@@ -8,7 +8,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { StationListItem } from '../stations/StationListItem'
 import type { StationSummary } from '../stations/types'
 import { useStationSearch } from '../stations/useStationSearch'
@@ -66,7 +65,7 @@ export function SearchDialog({
             Close
           </Button>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <ul className="list-none">
             {error && (
               <li className="p-4 text-sm font-semibold text-destructive">Could not load stations.</li>
@@ -90,7 +89,7 @@ export function SearchDialog({
                 />
               ))}
           </ul>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   )
