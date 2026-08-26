@@ -1,4 +1,5 @@
 import { ExternalLink, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -22,16 +23,15 @@ export function StationOverview({
     <aside className="absolute inset-y-0 left-0 z-[500] flex w-[360px] min-h-0 flex-col border-r bg-background shadow-lg">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         {overview ? (
-          // The station name opens the future detail page without looking like
-          // a link (heading styling); the icon button is the explicit affordance.
-          <a
-            href={overview.detail_url}
-            target="_blank"
-            rel="noreferrer"
+          // The station name opens the detail page without looking like a link
+          // (heading styling) and stays in the same tab; the icon button is the
+          // explicit affordance.
+          <Link
+            to={`/stations/${stationId}`}
             className="min-w-0 flex-1 truncate text-base font-semibold text-foreground hover:no-underline"
           >
             {overview.name}
-          </a>
+          </Link>
         ) : (
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
             Counting station
@@ -46,9 +46,9 @@ export function StationOverview({
               title="Open detail page"
               aria-label="Open detail page"
             >
-              <a href={overview.detail_url} target="_blank" rel="noreferrer">
+              <Link to={`/stations/${stationId}`}>
                 <ExternalLink />
-              </a>
+              </Link>
             </Button>
           )}
           <Button

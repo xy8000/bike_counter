@@ -29,6 +29,13 @@ test('clicking a map marker opens a popup with the station name and detail link'
     'href',
     /^\/stations\//
   )
+
+  // The detail link navigates in the same tab: the URL becomes the station
+  // detail page and the browser context still holds exactly one page.
+  await popup.getByRole('link', { name: 'Open detail page' }).click()
+  await expect(page).toHaveURL(/\/stations\/[0-9a-f-]+/)
+  await expect(page.context().pages()).toHaveLength(1)
+  await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
 })
 
 test('clicking a map marker opens the overview panel and a map void click closes it', async ({
@@ -70,4 +77,31 @@ test('clicking a map marker opens the overview panel and a map void click closes
   await map.click({ position: { x: (box?.width ?? 100) - 20, y: (box?.height ?? 100) / 2 } })
 
   await expect(sidebarBadge(page)).toBeVisible()
+})
+
+test('the overview detail link navigates in the same tab', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  const marker = mapMarkers(page).first()
+  const stationName = (await marker.getAttribute('alt')) ?? ''
+  expect(stationName).not.toBe('')
+
+  await marker.click()
+
+  // The overview panel's detail affordance (icon button + name heading) both
+  // point at the detail page.
+  const overview = page.getByRole('complementary')
+  const detailLink = overview.getByRole('link', { name: 'Open detail page' })
+  await expect(detailLink).toHaveAttribute('href', /^\/stations\//)
+  await expect(overview.getByRole('link', { name: stationName })).toHaveAttribute(
+    'href',
+    /^\/stations\//,
+  )
+
+  // Clicking the icon button navigates in the same tab (no new page).
+  await detailLink.click()
+  await expect(page).toHaveURL(/\/stations\/[0-9a-f-]+/)
+  await expect(page.context().pages()).toHaveLength(1)
+  await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
 })

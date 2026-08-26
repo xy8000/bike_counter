@@ -139,8 +139,8 @@ export function StationDetail() {
 
 function DetailContent({ detail }: { detail: StationDetail }) {
   const { graphs, channels } = detail
-  // Default to the week timeframe ("Current + last week"): the 24-hour window is
-  // not always populated (e.g. a still-importing dataset), so a full week is the
+  // Default to the week timeframe ("This week"): the 24-hour window is not
+  // always populated (e.g. a still-importing dataset), so a full week is the
   // safe default view.
   const [timeframe, setTimeframe] = useState<Timeframe>('week')
   const [comparePrevious, setComparePrevious] = useState(false)

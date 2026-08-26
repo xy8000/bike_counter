@@ -9,6 +9,7 @@ import {
 import L from 'leaflet'
 import type { Map as LeafletMap } from 'leaflet'
 import { ExternalLink } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import type { Bounds } from '../../lib/geo'
 import { MUENSTER_CENTER } from '../../lib/geo'
 import type { StationMap } from '../stations/types'
@@ -94,26 +95,23 @@ export function MapView({
         >
           <Popup>
             <div className="flex items-center gap-2">
-              {/* The station name opens the future detail page without looking
-                  like a link; the icon button is the explicit affordance. */}
-              <a
-                href={`/stations/${station.id}`}
-                target="_blank"
-                rel="noreferrer"
+              {/* The station name opens the detail page in the same tab without
+                  looking like a link; the icon button is the explicit
+                  affordance. */}
+              <Link
+                to={`/stations/${station.id}`}
                 className="font-medium text-foreground hover:no-underline"
               >
                 {station.name}
-              </a>
-              <a
-                href={`/stations/${station.id}`}
-                target="_blank"
-                rel="noreferrer"
+              </Link>
+              <Link
+                to={`/stations/${station.id}`}
                 aria-label="Open detail page"
                 title="Open detail page"
                 className="inline-flex items-center text-primary hover:underline"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              </Link>
             </div>
           </Popup>
         </Marker>

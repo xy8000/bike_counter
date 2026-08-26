@@ -22,15 +22,20 @@ export function StationListItem({
   showDetail?: boolean
 }) {
   const findable = station.latitude !== null && station.longitude !== null
+  // The row wraps so the action buttons move below the station text on narrow
+  // widths instead of overflowing the layout; on sm+ everything stays on one
+  // line with the text truncating.
   return (
-    <li className="flex items-stretch border-b">
+    <li className="flex flex-wrap items-stretch border-b sm:flex-nowrap">
       <Button
         type="button"
         variant="ghost"
         onClick={() => onSelect(station)}
-        className="flex h-auto min-w-0 flex-1 flex-col items-start justify-start gap-0.5 rounded-none px-4 py-3 text-left"
+        className="flex h-auto min-w-0 w-full flex-col items-start justify-start gap-0.5 rounded-none px-4 py-3 text-left sm:w-auto sm:flex-1"
       >
-        <span className="text-sm font-semibold text-foreground">{station.name}</span>
+        <span className="w-full truncate text-sm font-semibold text-foreground">
+          {station.name}
+        </span>
         <span className="w-full truncate text-sm text-muted-foreground">{station.description}</span>
         <span className="mt-0.5 flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <span>{station.channel_count} channels</span>
@@ -51,7 +56,7 @@ export function StationListItem({
           onClick={() => onFind(station)}
           aria-label="Find on map"
           title="Find on map"
-          className="my-auto mr-2 shrink-0"
+          className="my-1 ml-auto mr-1 shrink-0 sm:my-auto sm:ml-0 sm:mr-2"
         >
           <LocateFixed />
           <span className="hidden sm:inline">Find on map</span>
@@ -65,7 +70,7 @@ export function StationListItem({
           onClick={() => onDetail(station)}
           aria-label="Open detail"
           title="Open detail"
-          className="my-auto mr-3 shrink-0"
+          className="my-1 mr-3 shrink-0 sm:my-auto"
         >
           <FileText />
           <span className="hidden sm:inline">Open detail</span>

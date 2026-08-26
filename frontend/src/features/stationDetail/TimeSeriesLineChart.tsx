@@ -68,11 +68,11 @@ export function TimeSeriesLineChart({
   const labelFor = tooltipFormatter ?? xFormatter
 
   if (visibleSeries.length === 0) {
-    return <ChartEmptyState className={cn('aspect-[16/9]', className)} />
+    return <ChartEmptyState className={cn('aspect-[20/9]', className)} />
   }
 
   return (
-    <ChartContainer config={config} className={cn('aspect-[16/9]', className)}>
+    <ChartContainer config={config} className={cn('aspect-[20/9]', className)}>
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid vertical={false} />
         <XAxis

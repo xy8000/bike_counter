@@ -130,9 +130,9 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
     has: page.getByRole('heading', { name: 'Detailed statistics' }),
   })
 
-  // The default timeframe is "Current + last week" (1-hour buckets).
+  // The default timeframe is "This week" (1-hour buckets).
   await expect(
-    statsSection.getByText('1-hour buckets — the weeks are overlapped', { exact: true }),
+    statsSection.getByText('1-hour buckets', { exact: true }),
   ).toBeVisible()
 
   // Switch to "Last 30 days"; the main chart changes (1-day buckets). The Radix
