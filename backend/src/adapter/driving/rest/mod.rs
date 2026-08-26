@@ -15,7 +15,8 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::adapter::driving::bff::{
     get_bff_asset_content, get_bff_global_summary, get_bff_station_detail,
-    get_bff_station_overview, get_bff_stations_search, get_bff_stations_sidebar, list_bff_stations,
+    get_bff_station_overview, get_bff_stations_search, get_bff_stations_sidebar,
+    get_bff_stations_summary, list_bff_stations,
 };
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
@@ -41,6 +42,7 @@ use crate::core::domain::measurements::service_port::MeasurementServicePort;
 use crate::core::domain::station_detail::service_port::StationDetailServicePort;
 use crate::core::domain::station_overview::service_port::StationOverviewServicePort;
 use crate::core::domain::station_summary::service_port::StationSummaryServicePort;
+use crate::core::domain::stations_summary::service_port::StationsSummaryServicePort;
 
 pub struct RestApiAdapter {
     app_state: AppState,
@@ -62,6 +64,7 @@ impl RestApiAdapter {
         global_summary_service: Arc<dyn GlobalSummaryServicePort + Send + Sync>,
         station_overview_service: Arc<dyn StationOverviewServicePort + Send + Sync>,
         station_detail_service: Arc<dyn StationDetailServicePort + Send + Sync>,
+        stations_summary_service: Arc<dyn StationsSummaryServicePort + Send + Sync>,
         asset_service: Arc<dyn AssetServicePort>,
         asset_storage: Arc<dyn AssetStorage>,
     ) -> Self {
@@ -79,6 +82,7 @@ impl RestApiAdapter {
                 global_summary_service,
                 station_overview_service,
                 station_detail_service,
+                stations_summary_service,
                 asset_service,
                 asset_storage,
             },
@@ -101,6 +105,7 @@ impl RestApiAdapter {
                 get(get_bff_station_overview),
             )
             .route("/api/bff/station-detail/:id", get(get_bff_station_detail))
+            .route("/api/bff/stations/summary", get(get_bff_stations_summary))
             .route("/api/bff/assets/:id/content", get(get_bff_asset_content))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))

@@ -78,3 +78,15 @@ export function mapBounds(map: LeafletMap): Bounds {
     max_lng: northEast.lng,
   }
 }
+
+/// Parse the `disabled=<csv>` query param into the list of station ids the user
+/// excluded from the summary (empty when absent). Used by the summary page so a
+/// shared URL restores the same selection.
+export function parseDisabled(searchParams: URLSearchParams): string[] {
+  const raw = searchParams.get('disabled')
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+}

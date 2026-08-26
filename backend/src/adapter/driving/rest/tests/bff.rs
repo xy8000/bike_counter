@@ -18,6 +18,7 @@ use crate::adapter::driving::rest::tests::mocks::{
     MockChannelRepository, MockCountingStationRepository, MockMeasurementRepository,
 };
 use crate::core::application::station_summary_service::StationSummaryService;
+use crate::core::application::stations_summary_service::StationsSummaryService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
@@ -271,6 +272,7 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "/api/bff/stations",
         "/api/bff/stations/sidebar",
         "/api/bff/stations/search",
+        "/api/bff/stations/summary",
         "/api/bff/global-summary",
     ] {
         assert!(
@@ -290,6 +292,11 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "StationSearchDto",
         "ActionDto",
         "GlobalSummaryDto",
+        "StationsSummaryPageDto",
+        "SummaryStationDto",
+        "StationsSummaryGraphsDto",
+        "SummaryPeriodGraphsDto",
+        "PerStationSeriesDto",
     ] {
         assert!(
             schemas.contains_key(schema),
@@ -436,4 +443,201 @@ async fn bff_asset_content_unknown_asset_returns_404() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// Station summary page: GET /api/bff/stations/summary
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bff_station_summary_returns_the_flat_page_payload() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!("/api/bff/stations/summary{STATIONS_BBOX}"))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    // Only positioned station A lies inside the bounds.
+    let stations = body["stations"]
+        .as_array()
+        .expect("stations should be an array");
+    assert_eq!(stations.len(), 1);
+    assert_eq!(stations[0]["id"], fixtures::STATION_ID_A.to_string());
+    assert_eq!(stations[0]["name"], "Station A");
+    assert_eq!(stations[0]["latitude"], 51.9565);
+    assert_eq!(stations[0]["channel_count"], 2);
+    assert_eq!(body["channel_count"], 2, "station A's two channels");
+    assert_eq!(body["last_update"], "2024-01-01T12:00:00Z");
+
+    // The hero image resolves to the built-in default asset.
+    assert_eq!(
+        body["image_url"],
+        format!("/api/bff/assets/{}/content", Uuid::from_u128(MOCK_ASSET_ID))
+    );
+
+    // Exactly the four overview metrics.
+    let metrics = body["metrics"]
+        .as_array()
+        .expect("metrics should be an array");
+    assert_eq!(metrics.len(), 4);
+    let keys: Vec<&str> = metrics
+        .iter()
+        .map(|metric| metric["key"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["last_day", "last_7_days", "last_month", "last_year"]
+    );
+
+    // The graph sections are present with the per-station nerd stats. The sample
+    // measurements are not in any current window, so the series are empty.
+    for period_key in ["day", "week", "last_30_days", "year"] {
+        let period = &body["graphs"][period_key];
+        assert!(period["current"].is_array());
+        assert!(period["previous"].is_array());
+        assert!(period["weekday_radar"].is_array());
+        assert!(period["station_pie"].is_array());
+        assert!(period["per_station"].is_array());
+    }
+    assert!(body["graphs"]["monthly_totals"].is_array());
+
+    // Page-shaped: no HATEOAS `_links`, no `data_source_id`.
+    assert!(body.get("_links").is_none());
+    assert!(body.get("data_source_id").is_none());
+}
+
+#[tokio::test]
+async fn bff_station_summary_rejects_inverted_bounds() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json("/api/bff/stations/summary?min_lat=52.0&min_lng=7.5&max_lat=51.9&max_lng=7.8")
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bounds must be ordered"),
+        "inverted bounds should be rejected"
+    );
+}
+
+#[tokio::test]
+async fn bff_station_summary_exclude_keeps_station_but_drops_it_from_aggregation() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary{STATIONS_BBOX}&exclude={}",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    // Station A is still rendered (so the map can gray it out) …
+    let stations = body["stations"]
+        .as_array()
+        .expect("stations should be an array");
+    assert_eq!(stations.len(), 1);
+    assert_eq!(stations[0]["id"], fixtures::STATION_ID_A.to_string());
+    // … but its channels are excluded from the aggregation.
+    assert_eq!(body["channel_count"], 0);
+    assert_eq!(
+        body["graphs"]["day"]["per_station"]
+            .as_array()
+            .expect("per_station should be an array")
+            .len(),
+        0,
+        "no included station has data"
+    );
+}
+
+#[tokio::test]
+async fn bff_station_summary_rejects_invalid_exclude_id() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary{STATIONS_BBOX}&exclude=not-a-uuid"
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("invalid station id"),
+        "a malformed exclude id should be rejected"
+    );
+}
+
+#[tokio::test]
+async fn bff_station_summary_aggregates_per_station_data() {
+    let station = CountingStation {
+        id: station_vo::Id(fixtures::STATION_ID_A),
+        name: station_vo::Name("Station A".to_string()),
+        description: station_vo::Description("First station".to_string()),
+        external_datasource_id: None,
+        data_source_id: Some(station_vo::DataSourceId(fixtures::DATA_SOURCE_ID_A)),
+        coordinates: Some(station_vo::GeoCoordinates {
+            latitude: 51.9565,
+            longitude: 7.6152,
+        }),
+        // UTC keeps the windows deterministic.
+        timezone: station_vo::Timezone("UTC".to_string()),
+        image_asset_id: None,
+        image_sha256: None,
+    };
+    let channel = Channel {
+        id: channel_vo::Id(fixtures::CHANNEL_ID_A),
+        counting_station_id: channel_vo::CountingStationId(fixtures::STATION_ID_A),
+        name: channel_vo::Name("Channel A1".to_string()),
+        description: channel_vo::Description("Northbound lane".to_string()),
+        external_datasource_id: None,
+    };
+    // Yesterday 12:00 UTC is inside the "last day", "current week", "last 30
+    // days" and "current year" windows.
+    let yesterday_noon = {
+        let now = Utc::now();
+        let yesterday = now.date_naive().pred_opt().expect("valid date");
+        yesterday
+            .and_hms_opt(12, 0, 0)
+            .expect("valid time")
+            .and_utc()
+    };
+    let measurement = Measurement {
+        id: measurement_vo::Id(Uuid::new_v4()),
+        value: measurement_vo::Value(17),
+        channel_id: measurement_vo::ChannelId(fixtures::CHANNEL_ID_A),
+        timestamp: measurement_vo::Timestamp(yesterday_noon),
+    };
+    let service = Arc::new(StationsSummaryService::new(
+        Arc::new(MockCountingStationRepository::new(vec![station])),
+        Arc::new(MockChannelRepository {
+            channels: vec![channel],
+        }),
+        Arc::new(MockMeasurementRepository {
+            measurements: vec![measurement],
+        }),
+        Arc::new(crate::adapter::driving::rest::tests::fixtures::sample_job_repository()),
+    ));
+    let app = TestApp::with_stations_summary_service(service);
+
+    let (status, body) = app
+        .get_json(&format!("/api/bff/stations/summary{STATIONS_BBOX}"))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    // The mock measurement repository aggregates scalar sums (used by the
+    // overview metrics) but returns empty buckets, so the last-day metric
+    // reflects yesterday's measurement end-to-end through the BFF.
+    let metrics = body["metrics"]
+        .as_array()
+        .expect("metrics should be an array");
+    let last_day = metrics
+        .iter()
+        .find(|metric| metric["key"] == "last_day")
+        .expect("last_day metric present");
+    assert_eq!(last_day["current"], 17);
+    assert_eq!(body["channel_count"], 1, "station A's single channel");
 }

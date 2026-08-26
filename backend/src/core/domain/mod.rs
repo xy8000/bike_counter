@@ -11,3 +11,4 @@ pub mod measurements;
 pub mod station_detail;
 pub mod station_overview;
 pub mod station_summary;
+pub mod stations_summary;

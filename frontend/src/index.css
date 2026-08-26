@@ -98,4 +98,10 @@
   .leaflet-container img {
     max-width: none !important;
   }
+  /* Disabled stations on the station-summary map: the emerald flag becomes a
+     muted gray silhouette. Leaflet applies the icon's `className` directly on
+     the marker <img>, so the rule targets the element itself, not a child. */
+  .leaflet-disabled-marker {
+    filter: grayscale(1) opacity(0.55);
+  }
 }

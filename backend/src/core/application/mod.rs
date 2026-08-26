@@ -14,3 +14,4 @@ pub mod startup_service;
 pub mod station_detail_service;
 pub mod station_overview_service;
 pub mod station_summary_service;
+pub mod stations_summary_service;

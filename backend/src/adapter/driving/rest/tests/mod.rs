@@ -39,6 +39,7 @@ use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::station_summary_service::StationSummaryService;
+use crate::core::application::stations_summary_service::StationsSummaryService;
 use crate::core::domain::health::{HealthService, HealthStatus};
 use fixtures::sample_job_repository;
 use mocks::{
@@ -47,6 +48,7 @@ use mocks::{
     sample_data_source_service, sample_global_summary_service, sample_job_service,
     sample_measurement_service, sample_persistent_state_service, sample_provider_message_service,
     sample_station_detail_service, sample_station_overview_service, sample_station_summary_service,
+    sample_stations_summary_service,
 };
 
 /// Wraps the router under test and provides request helpers.
@@ -108,6 +110,7 @@ impl TestApp {
             sample_global_summary_service(),
             sample_station_overview_service(),
             sample_station_detail_service(),
+            sample_stations_summary_service(),
             sample_asset_service(),
             sample_asset_storage(),
         )
@@ -133,6 +136,7 @@ impl TestApp {
             sample_global_summary_service(),
             sample_station_overview_service(),
             sample_station_detail_service(),
+            sample_stations_summary_service(),
             sample_asset_service(),
             sample_asset_storage(),
         )
@@ -158,6 +162,33 @@ impl TestApp {
             sample_global_summary_service(),
             sample_station_overview_service(),
             sample_station_detail_service(),
+            sample_stations_summary_service(),
+            sample_asset_service(),
+            sample_asset_storage(),
+        )
+        .router();
+        Self { router }
+    }
+
+    /// Builds a router with a custom station-summary service (used by the BFF
+    /// station summary tests that need real per-station data).
+    pub fn with_stations_summary_service(
+        stations_summary_service: Arc<StationsSummaryService>,
+    ) -> Self {
+        let router = RestApiAdapter::new(
+            sample_counting_station_service(),
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(MockDataSourceRepository::default()),
+            sample_job_service(sample_job_repository()),
+            mock_health_service(HealthStatus::Up),
+            sample_persistent_state_service(),
+            sample_provider_message_service(),
+            sample_station_summary_service(),
+            sample_global_summary_service(),
+            sample_station_overview_service(),
+            sample_station_detail_service(),
+            stations_summary_service,
             sample_asset_service(),
             sample_asset_storage(),
         )
@@ -184,6 +215,7 @@ impl TestApp {
             sample_global_summary_service(),
             sample_station_overview_service(),
             sample_station_detail_service(),
+            sample_stations_summary_service(),
             sample_asset_service(),
             sample_asset_storage(),
         )

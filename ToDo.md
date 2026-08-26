@@ -355,3 +355,32 @@ Frontend resilience + builtin asset folder sync (plan 39)
 - [x] e2e volumes stay persistent (no `docker compose down -v`) — the real Münster import is not re-run per gate; data-dependent assertions from plan 38 remain robust
 - [x] Docs: README (asset folder-scan + single brand icon), ToDo, `plans/39_..._plan.md` marked implemented in `plans/README.md`
 - [x] Gates green: `make check`, `make test`, `make test-rest` (82), `make coverage`, `make frontend-build`, `make test-playwright`
+
+Map-marker flag relocation + detail-page default week (plan 40)
+
+- [x] `map-flag-counting-station.svg` recolored from black to the emerald `#059669` and relocated from `backend/assets/` to `frontend/src/features/map/` (Vite-imported in `frontend/src/lib/leaflet.ts`)
+- [x] Both `stationIcon` (map) and `detailStationIcon` (detail preview) now use the flag; editing the SVG file updates the markers without a code change
+- [x] `backend/assets/map-flag-counting-station.svg` deleted — the compile-time folder scan + add/remove sync stops syncing it to object storage
+- [x] Detail page default timeframe changed from 24 hours to "Current + last week" (the 24-hour window is not always populated)
+- [x] e2e `detail.spec.ts` default-bucket + compare-previous assertions updated for the week default
+- [x] e2e `sidebar.spec.ts` focus-click moved to map void + overview-close guard (the wider 32px marker hit area covered the old click point and opened the overview)
+- [x] Docs: README (marker asset convention), ToDo, `plans/40_..._plan.md` registered in `plans/README.md`
+- [x] Gates green: `make check`, `make test` (337), `make test-rest` (82), `make coverage` (overall 84.08%, core 95.38%), `make frontend-build`, `make test-playwright` (14)
+
+Station summary view — aggregate visible stations (plan 41)
+
+- [x] Backend: `stations_summary` domain module (new DO `StationsSummary` + per-station graph types) + `StationsSummaryServicePort`
+- [x] Backend: `StationsSummaryService` (bounds/exclude filtering, per-station timezone-aware overview metrics, aggregated bucketed graphs + per-station series, derived from one `sum_buckets_by_channel` scan per period per timeframe) + core unit tests
+- [x] BFF `GET /api/bff/stations/summary` (required bounds + optional `exclude`, fallback image, page-shaped DTOs) + OpenAPI path/schemas + AppState/router/main wiring
+- [x] BFF endpoint tests (`rest/tests/bff.rs`: page shape, inverted bounds 400, exclude parsing, metric aggregation)
+- [x] Frontend refactor for reuse: shared `stationDetail/timeframes.ts` extracted from `StationDetail`; `ChannelPie` generalized into `SharePie` (no behaviour change)
+- [x] Frontend: `features/stationsSummary` (types/api/`useStationsSummary` with loading state/`StationsSummary` page/`SummaryMap` with click-to-disable + grayed `disabledStationIcon`); `/summary` route; `disabled` URL param; sidebar pinned "Summarize visible stations" footer (list stays scrollable)
+- [x] e2e `summary.spec.ts` (navigation from sidebar, render, disable toggle + URL param, shared URL restore, back-to-map) — scoped to one station so the browser stays fast
+- [x] Gates green: `make check`, `make test` (351), `make test-rest` (87), `make coverage` (overall 84.98%, core 95.78%), `make frontend-build`
+- [x] Gates green: `make test-playwright` (19 specs pass in 20.1s, incl. the 5 new summary specs)
+
+Known limitations / tech debt recorded once for this plan (genuine findings, not speculative):
+
+- The full-view summary aggregates all visible stations (~23 × 70 channels) on the fly; the payload (~2 MB) and client rendering are heavy, so the page shows a loading state. The planned optimisation is a cache (e.g. Redis) behind the BFF — no new data fields were added so the shapes stay cacheable.
+- The bucketed charts for a group of stations run in the first included station's timezone; the overview metrics remain per-station timezone-correct. A mixed-timezone group would only shift the chart buckets.
+- During implementation an infinite reload loop was found and fixed: `parseBoundsQuery` built a fresh object each render, so the summary data hook re-ran (and reset the loading state) on every render — fixed by memoizing `bounds` on the search params.

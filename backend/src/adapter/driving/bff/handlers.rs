@@ -15,9 +15,10 @@ use axum::response::{Json, Response};
 use uuid::Uuid;
 
 use crate::adapter::driving::bff::dto::{
-    ActionDto, BffStationQueryParams, ChannelRefDto, GlobalSummaryDto, MetricDto, StationDetailDto,
-    StationDetailGraphsDto, StationMapDto, StationMapListDto, StationOverviewDto, StationSearchDto,
-    StationSummaryDto, StationSummarySidebarDto,
+    ActionDto, BffStationQueryParams, BffStationSummaryQueryParams, ChannelRefDto,
+    GlobalSummaryDto, MetricDto, StationDetailDto, StationDetailGraphsDto, StationMapDto,
+    StationMapListDto, StationOverviewDto, StationSearchDto, StationSummaryDto,
+    StationSummarySidebarDto, StationsSummaryPageDto,
 };
 use crate::adapter::driving::rest::dto::ErrorResponseDto;
 use crate::adapter::driving::rest::handlers::{AppState, blocking, map_domain_error};
@@ -178,6 +179,72 @@ pub async fn get_bff_stations_search(
     actions.insert("open_detail".to_string(), ActionDto { enabled: true });
 
     Ok(Json(StationSearchDto { items, actions }))
+}
+
+/// Parses the comma-separated `exclude` station ids into their value objects,
+/// rejecting non-UUID entries.
+fn parse_exclude(raw: &Option<String>) -> Result<Vec<Id>, DomainError> {
+    match raw.as_deref() {
+        None | Some("") => Ok(Vec::new()),
+        Some(raw) => raw
+            .split(',')
+            .map(|part| {
+                Uuid::parse_str(part.trim()).map(Id).map_err(|_| {
+                    DomainError::InvalidQuery(format!("invalid station id '{part}' in exclude"))
+                })
+            })
+            .collect(),
+    }
+}
+
+/// The **page-shaped** payload for the station summary page: the fallback image,
+/// every positioned station inside the bounds (for the interactive map + toggle)
+/// and the stats aggregated over the non-excluded stations. The nerd stats are
+/// keyed by station.
+#[utoipa::path(
+    get,
+    path = "/api/bff/stations/summary",
+    tag = "BFF API",
+    params(BffStationSummaryQueryParams),
+    responses(
+        (status = 200, description = "Aggregated summary page for the stations inside the bounding box", body = StationsSummaryPageDto),
+        (status = 400, description = "Invalid or missing bounds / exclude ids", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_bff_stations_summary(
+    State(state): State<AppState>,
+    Query(params): Query<BffStationSummaryQueryParams>,
+) -> Result<Json<StationsSummaryPageDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let bounds = GeoBounds {
+        min_latitude: params.min_lat,
+        min_longitude: params.min_lng,
+        max_latitude: params.max_lat,
+        max_longitude: params.max_lng,
+    };
+    if !bounds.is_valid() {
+        return Err(map_domain_error(DomainError::InvalidQuery(
+            "bounds must be ordered: min_lat <= max_lat and min_lng <= max_lng".to_string(),
+        )));
+    }
+    let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
+
+    let now = chrono::Utc::now();
+    let service = state.stations_summary_service.clone();
+    let summary = blocking(move || service.summarize(bounds, &exclude, now))
+        .await
+        .map_err(map_domain_error)?;
+
+    // The summary page's hero image is always the built-in fallback (it shows a
+    // group of stations, not one station's image).
+    let asset_service = state.asset_service.clone();
+    let image_asset = blocking(move || asset_service.default_asset())
+        .await
+        .map_err(map_domain_error)?;
+
+    let mut page = StationsSummaryPageDto::from(summary);
+    page.image_url = format!("/api/bff/assets/{}/content", image_asset.id.0);
+    Ok(Json(page))
 }
 
 #[utoipa::path(

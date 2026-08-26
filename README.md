@@ -13,13 +13,20 @@ It is a **monorepo** with two sub-projects:
   in the Docker stack: a Leaflet map with one marker per counting station that
   has GPS coordinates, a left sidebar listing the stations currently visible in
   the viewport (name, description, channel count, bikes in the last 24 h), a
-  Komoot-style header with a search dialog, a live aggregate summary, and a
+  Komoot-style header with a search dialog, a live aggregate summary, a
   per-station detail page (`/stations/:id`) with the overview stat boxes (incl.
   the YEAR stat), a shared timeframe selector (24 hours / current + last week /
   last 30 days / last year) driving a full-width line chart, a weekday radar,
   the channel pie and the per-channel nerd stats (plus a "compare previous
   period" checkbox that overlays the previous period), and a standalone monthly
-  bar chart showing the grand total.
+  bar chart showing the grand total. A **station summary page** (`/summary`,
+  opened from the sidebar's "Summarize visible stations" button) aggregates the
+  stations currently visible in the map view — fallback image, an interactive map
+  (click a flag to exclude a station, grayed out), the aggregated overview stats
+  and the same charts with per-**station** nerd stats. The map view + disabled
+  stations are encoded in the URL (`min_lat`/`min_lng`/`max_lat`/`max_lng` +
+  `disabled`), so a summary can be shared and restored; the page shows a loading
+  state while the backend aggregates (caching is planned later).
 
 Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
@@ -186,7 +193,11 @@ station↔asset link; the binary bytes never touch the database.
     bucket and `assets` table mirror the assets folder. The frontend brand bike
     icon (favicon + header) lives separately in `frontend/public/bike-icon.svg`
     and is never streamed through the BFF; frontend brand assets belong in
-    `frontend/public/`, backend builtin assets in `backend/assets/`.
+    `frontend/public/`, backend builtin assets in `backend/assets/`. The Leaflet
+    map marker (the emerald pin + bike, also never streamed) lives in the map
+    feature as `frontend/src/features/map/map-flag-counting-station.svg` and is
+    imported by `frontend/src/lib/leaflet.ts` via Vite, so editing that SVG file
+    restyles both the map and the detail-preview markers without a code change.
 - The **BFF streams** image bytes to the browser
   (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend
   (private `asset_network`) and never exposed to the browser.
@@ -458,14 +469,25 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   chart. Buckets are aligned to the station's own timezone via PostgreSQL
   `date_bin` and are **data-only** (no zero-filling, so a running week/year
   simply ends at the latest measurement).
+- `GET /api/bff/stations/summary` – the **page-shaped** aggregated summary of the
+  stations visible in the bounding box (all four bounds required; optional
+  `exclude=<comma-separated station ids>` drops stations from the aggregation
+  while keeping them in the returned `stations` list so the map can gray them
+  out). The payload mirrors the detail page shape: a fallback `image_url`, the
+  `stations` (id/name/lat/lng/channel_count), the aggregated `channel_count`, the
+  four aggregated overview `metrics` (each station's DST-aware windows) and the
+  `graphs` (same four timeframes + `monthly_totals`) whose nerd stats are keyed by
+  **station** (`per_station`, `station_pie`) instead of channel. All bucketed
+  reads reuse the existing `MeasurementRepository` primitives over the union of
+  the included stations' channels, so no new data fields are introduced.
 - `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
   from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
   (`immutable` for built-in assets, short-lived for provider assets). Only the
   BFF exposes MinIO; there are no upload/delete artifact endpoints.
 
 The aggregations are computed **on the fly** per request by the core
-`StationSummaryService` / `GlobalSummaryService`; a cache (e.g. Redis) may be
-introduced later. The BFF module lives in
+`StationSummaryService` / `GlobalSummaryService` / `StationsSummaryService`; a
+cache (e.g. Redis) may be introduced later. The BFF module lives in
 [`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff) and is the
 seam for future frontend-only endpoints (for example aggregations or
 transformations of the `/api/v1` data).

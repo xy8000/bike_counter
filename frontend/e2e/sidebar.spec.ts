@@ -25,10 +25,20 @@ test('the sidebar renders only the stations visible in the current viewport', as
   expect(baseline.total).toBeGreaterThanOrEqual(baseline.visible)
 
   // Focus the map and zoom in with the keyboard (the Leaflet zoom control sits
-  // under the sidebar overlay). After each moveend the map re-renders and can
-  // drop a keypress, so keep zooming until the visible set actually shrinks.
+  // at the top-right, clear of the sidebar). After each moveend the map
+  // re-renders and can drop a keypress, so keep zooming until the visible set
+  // actually shrinks.
   const map = page.locator('.leaflet-container')
-  await map.click({ position: { x: 700, y: 300 } })
+  // The focus click must land on map "void", not a marker: a marker hit opens
+  // the station overview, which replaces the sidebar and breaks the count
+  // assertions. Click a far corner, well clear of the central Münster cluster.
+  await map.click({ position: { x: 1200, y: 620 } })
+  // Guard: if the click still opened the overview, close it so the sidebar
+  // badge is readable again before the zoom poll.
+  const closeOverview = page.getByRole('button', { name: 'Close station overview' })
+  if (await closeOverview.isVisible().catch(() => false)) {
+    await closeOverview.click()
+  }
   await map.focus()
   await expect
     .poll(

@@ -33,6 +33,7 @@ use crate::core::application::startup_service::{StartupError, StartupService};
 use crate::core::application::station_detail_service::StationDetailService;
 use crate::core::application::station_overview_service::StationOverviewService;
 use crate::core::application::station_summary_service::StationSummaryService;
+use crate::core::application::stations_summary_service::StationsSummaryService;
 use crate::core::domain::assets::asset::BuiltinImage;
 use crate::core::domain::assets::asset::value_objects::{ContentType, ObjectKey};
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
@@ -244,6 +245,15 @@ fn main() {
         measurement_repo.clone(),
     ));
 
+    // Aggregated summary page backing the BFF `stations/summary` endpoint (the
+    // visible stations' overview metrics + bucketed graphs, per station).
+    let stations_summary_service = Arc::new(StationsSummaryService::new(
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
+        job_repo.clone(),
+    ));
+
     // Scheduled cleanup of orphaned objects in the asset storage bucket.
     let asset_cleanup_service = Arc::new(AssetCleanupService::new(
         job_repo.clone(),
@@ -276,6 +286,7 @@ fn main() {
         global_summary_service,
         station_overview_service,
         station_detail_service,
+        stations_summary_service,
         asset_service,
         asset_storage,
     );

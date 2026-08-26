@@ -130,8 +130,10 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
     has: page.getByRole('heading', { name: 'Detailed statistics' }),
   })
 
-  // The default timeframe is "24 hours" (5-minute buckets).
-  await expect(statsSection.getByText('5-minute buckets', { exact: true })).toBeVisible()
+  // The default timeframe is "Current + last week" (1-hour buckets).
+  await expect(
+    statsSection.getByText('1-hour buckets — the weeks are overlapped', { exact: true }),
+  ).toBeVisible()
 
   // Switch to "Last 30 days"; the main chart changes (1-day buckets). The Radix
   // Select trigger exposes the combobox role.
@@ -155,18 +157,19 @@ test('the compare-previous checkbox overlays the previous period', async ({ page
   const compare = page.getByRole('checkbox', { name: 'Compare previous period' })
   await expect(compare).toBeVisible()
 
-  // Default 24-hours chart is single-series, so no "Day before" legend entry.
-  await expect(statsSection.getByText('Day before', { exact: true })).toHaveCount(0)
+  // Default week chart is single-series, so no "Last week" legend entry.
+  await expect(statsSection.getByText('Last week', { exact: true })).toHaveCount(0)
 
   // Checking the box overlays the previous period. The previous period appears
-  // as a "Day before" legend entry when the current day also has data; a
-  // still-importing/older dataset can leave today empty, in which case the
-  // previous period draws as the single series (and the legend is intentionally
-  // hidden for a single series), so the chart must not stay empty.
+  // as a "Last week" legend entry when the current week also has data; a
+  // still-importing/older dataset can leave the current week empty, in which
+  // case the previous period draws as the single series (and the legend is
+  // intentionally hidden for a single series), so the chart must not stay
+  // empty.
   await compare.check()
-  const dayBefore = statsSection.getByText('Day before', { exact: true }).first()
-  if ((await dayBefore.count()) > 0) {
-    await expect(dayBefore).toBeVisible()
+  const lastWeek = statsSection.getByText('Last week', { exact: true }).first()
+  if ((await lastWeek.count()) > 0) {
+    await expect(lastWeek).toBeVisible()
   } else {
     await expect(
       statsSection.getByText('No data for this period.', { exact: true }),

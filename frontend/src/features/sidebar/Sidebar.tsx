@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -6,19 +6,23 @@ import { StationListItem } from '../stations/StationListItem'
 import type { StationSummary, StationSummarySidebar } from '../stations/types'
 
 /// Left overlay panel listing the counting stations visible in the current map
-/// bounds. Collapses to a slim vertical edge (Komoot style).
+/// bounds. Collapses to a slim vertical edge (Komoot style). The station list
+/// scrolls in its own area; the "Summarize visible stations" action sits in a
+/// pinned footer below it so the list stays scrollable.
 export function Sidebar({
   collapsed,
   onToggle,
   sidebar,
   error,
   onSelectStation,
+  onSummarize,
 }: {
   collapsed: boolean
   onToggle: () => void
   sidebar: StationSummarySidebar | null
   error: boolean
   onSelectStation: (station: StationSummary) => void
+  onSummarize: () => void
 }) {
   if (collapsed) {
     return (
@@ -83,6 +87,18 @@ export function Sidebar({
             ))}
         </ul>
       </ScrollArea>
+      <div className="shrink-0 border-t p-3">
+        <Button
+          type="button"
+          className="w-full"
+          onClick={onSummarize}
+          disabled={!sidebar || sidebar.items.length === 0}
+          title="Open the aggregated summary of the visible stations"
+        >
+          <BarChart3 />
+          Summarize visible stations
+        </Button>
+      </div>
     </aside>
   )
 }

@@ -24,6 +24,7 @@ use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::station_detail_service::StationDetailService;
 use crate::core::application::station_overview_service::StationOverviewService;
 use crate::core::application::station_summary_service::StationSummaryService;
+use crate::core::application::stations_summary_service::StationsSummaryService;
 use crate::core::domain::assets::asset::value_objects::{
     AssetId, ByteSize, ContentType, ObjectKey, Sha256,
 };
@@ -593,6 +594,17 @@ pub fn sample_station_detail_service() -> Arc<StationDetailService> {
         Arc::new(sample_counting_station_repository()),
         Arc::new(sample_channel_repository()),
         Arc::new(sample_measurement_repository()),
+    ))
+}
+
+/// A [`StationsSummaryService`] backed by the sample counting-station, channel,
+/// measurement and job repositories.
+pub fn sample_stations_summary_service() -> Arc<StationsSummaryService> {
+    Arc::new(StationsSummaryService::new(
+        Arc::new(sample_counting_station_repository()),
+        Arc::new(sample_channel_repository()),
+        Arc::new(sample_measurement_repository()),
+        Arc::new(sample_job_repository()),
     ))
 }
 

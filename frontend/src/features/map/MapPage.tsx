@@ -90,6 +90,13 @@ export default function MapPage() {
     navigate(`/stations/${station.id}`)
   }
 
+  // "Summarize visible stations": open the summary page at the current map view
+  // (the bounds are encoded so the summary restores the same selection).
+  const summarizeVisible = () => {
+    if (!bounds) return
+    navigate(`/summary?${serializeBounds(bounds).toString()}`)
+  }
+
   return (
     <div className="flex h-screen flex-col">
       <SearchableHeader onSelect={findAndClose} onFind={findAndClose} onDetail={openDetail} />
@@ -102,6 +109,7 @@ export default function MapPage() {
             sidebar={sidebar}
             error={stationsError}
             onSelectStation={selectStation}
+            onSummarize={summarizeVisible}
           />
         ) : (
           <StationOverview

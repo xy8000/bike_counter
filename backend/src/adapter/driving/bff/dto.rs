@@ -15,6 +15,9 @@ use crate::adapter::driving::rest::dto::CountingStationDto;
 use crate::core::domain::measurements::repository_port::{ChannelTotal, TimeBucket, WeekdayTotal};
 use crate::core::domain::station_detail::{PeriodGraphs, StationDetailGraphs};
 use crate::core::domain::station_summary::StationSummary;
+use crate::core::domain::stations_summary::{
+    StationsSummary, StationsSummaryGraphs, SummaryPeriodGraphs,
+};
 
 /// A counting station enriched with its channel count and the number of bikes
 /// measured on the previous complete local day (in the station's own timezone);
@@ -339,6 +342,184 @@ impl From<StationDetailGraphs> for StationDetailGraphsDto {
                     total: month.total,
                 })
                 .collect(),
+        }
+    }
+}
+
+/// Query parameters of the BFF station-summary endpoint. All four bounds are
+/// required; `exclude` is a comma-separated list of station ids to leave out of
+/// the aggregation (they are still returned in `stations` so the frontend can
+/// gray them out).
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+pub struct BffStationSummaryQueryParams {
+    pub min_lat: f64,
+    pub min_lng: f64,
+    pub max_lat: f64,
+    pub max_lng: f64,
+    #[serde(default)]
+    pub exclude: Option<String>,
+}
+
+/// A minimal station reference returned by the summary page: id, name,
+/// coordinates (for the map) and its channel count.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct SummaryStationDto {
+    pub id: Uuid,
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub channel_count: usize,
+}
+
+impl From<crate::core::domain::stations_summary::SummaryStation> for SummaryStationDto {
+    fn from(station: crate::core::domain::stations_summary::SummaryStation) -> Self {
+        Self {
+            id: station.id,
+            name: station.name,
+            latitude: station.latitude,
+            longitude: station.longitude,
+            channel_count: station.channel_count,
+        }
+    }
+}
+
+/// One station's share over a window (summary pie chart).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationTotalDto {
+    pub station_id: Uuid,
+    pub total: i64,
+}
+
+/// The per-station time-series for one timeframe (summary nerd stats).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct PerStationSeriesDto {
+    pub station_id: Uuid,
+    pub current: Vec<TimeBucketDto>,
+    pub previous: Vec<TimeBucketDto>,
+    pub weekday_radar: Vec<WeekdayTotalDto>,
+}
+
+/// The graph data for one timeframe of the summary page: the aggregate current
+/// and previous period time-series, the current-period weekday radar + station
+/// pie and the per-station series.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct SummaryPeriodGraphsDto {
+    pub current: Vec<TimeBucketDto>,
+    pub previous: Vec<TimeBucketDto>,
+    pub weekday_radar: Vec<WeekdayTotalDto>,
+    pub station_pie: Vec<StationTotalDto>,
+    pub per_station: Vec<PerStationSeriesDto>,
+}
+
+/// All graph data for the summary page, keyed by the four timeframes, plus the
+/// per-month totals for the standalone monthly bar chart.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationsSummaryGraphsDto {
+    pub day: SummaryPeriodGraphsDto,
+    pub week: SummaryPeriodGraphsDto,
+    pub last_30_days: SummaryPeriodGraphsDto,
+    pub year: SummaryPeriodGraphsDto,
+    pub monthly_totals: Vec<MonthTotalDto>,
+}
+
+impl From<StationsSummaryGraphs> for StationsSummaryGraphsDto {
+    fn from(graphs: StationsSummaryGraphs) -> Self {
+        fn buckets(series: Vec<TimeBucket>) -> Vec<TimeBucketDto> {
+            series
+                .into_iter()
+                .map(|bucket| TimeBucketDto {
+                    start: bucket.start,
+                    total: bucket.total,
+                })
+                .collect()
+        }
+
+        fn weekdays(weekdays: Vec<WeekdayTotal>) -> Vec<WeekdayTotalDto> {
+            weekdays
+                .into_iter()
+                .map(|weekday| WeekdayTotalDto {
+                    weekday: weekday.weekday,
+                    total: weekday.total,
+                })
+                .collect()
+        }
+
+        fn period(period: SummaryPeriodGraphs) -> SummaryPeriodGraphsDto {
+            SummaryPeriodGraphsDto {
+                current: buckets(period.current),
+                previous: buckets(period.previous),
+                weekday_radar: weekdays(period.weekday_radar),
+                station_pie: period
+                    .station_pie
+                    .into_iter()
+                    .map(|total| StationTotalDto {
+                        station_id: total.station_id,
+                        total: total.total,
+                    })
+                    .collect(),
+                per_station: period
+                    .per_station
+                    .into_iter()
+                    .map(|series| PerStationSeriesDto {
+                        station_id: series.station_id,
+                        current: buckets(series.current),
+                        previous: buckets(series.previous),
+                        weekday_radar: weekdays(series.weekday_radar),
+                    })
+                    .collect(),
+            }
+        }
+
+        Self {
+            day: period(graphs.day),
+            week: period(graphs.week),
+            last_30_days: period(graphs.last_30_days),
+            year: period(graphs.year),
+            monthly_totals: graphs
+                .monthly_totals
+                .into_iter()
+                .map(|month| MonthTotalDto {
+                    year: month.year,
+                    month: month.month,
+                    total: month.total,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The **page-shaped** BFF payload for the station summary page: the fallback
+/// image, the station list (with coordinates for the map), the aggregated
+/// overview metrics and the bucketed graphs (nerd stats per station).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationsSummaryPageDto {
+    /// URL of the fallback image content (streamed by the BFF).
+    pub image_url: String,
+    /// Every positioned station inside the bounds (disabled ones included).
+    pub stations: Vec<SummaryStationDto>,
+    /// Total number of channels across the included stations.
+    pub channel_count: usize,
+    /// The four overview metrics aggregated over the included stations.
+    pub metrics: Vec<MetricDto>,
+    /// Timestamp of the most recent successful data-source update.
+    pub last_update: Option<DateTime<Utc>>,
+    /// The bucketed graphs over the included stations' channels.
+    pub graphs: StationsSummaryGraphsDto,
+}
+
+impl From<StationsSummary> for StationsSummaryPageDto {
+    fn from(summary: StationsSummary) -> Self {
+        Self {
+            image_url: String::new(),
+            stations: summary
+                .stations
+                .into_iter()
+                .map(SummaryStationDto::from)
+                .collect(),
+            channel_count: summary.channel_count,
+            metrics: summary.metrics.into_iter().map(MetricDto::from).collect(),
+            last_update: summary.last_update,
+            graphs: StationsSummaryGraphsDto::from(summary.graphs),
         }
     }
 }
