@@ -66,31 +66,44 @@ export interface PeriodGraphs {
   per_channel: PerChannelSeries[]
 }
 
-/// All graph data for the detail page, keyed by the four timeframes, plus the
-/// per-month totals for the standalone monthly bar chart.
-export interface StationDetailGraphs {
-  day: PeriodGraphs
-  week: PeriodGraphs
-  last_30_days: PeriodGraphs
-  year: PeriodGraphs
-  monthly_totals: MonthTotal[]
+/// The HATEOAS links of the detail page shell: one URL per stats card. The
+/// windowed links (`overview`, `graphs_*`) carry the `as_of` reference.
+export interface DetailLinks {
+  self: string
+  overview: string
+  graphs_day: string
+  graphs_week: string
+  graphs_last_30_days: string
+  graphs_year: string
+  monthly: string
 }
 
-/// The page-shaped payload for the detail page: station metadata (same fields as
-/// the overview, plus the YEAR stat in `metrics`), channel references and all
-/// graph data.
-export interface StationDetail {
+/// The page-shell payload of the detail page: the station metadata + channels
+/// the layout needs, plus the `_links` to each stats card. Each card is fetched
+/// on its own.
+export interface StationDetailPage {
   id: string
   name: string
   description: string
   latitude: number | null
   longitude: number | null
   channel_count: number
-  /// All-time total of bikes counted at this station (the whole history).
-  total_bikes: number
   image_url: string
-  metrics: StationOverviewMetric[]
   last_update: string | null
   channels: ChannelRef[]
-  graphs: StationDetailGraphs
+  _links: DetailLinks
+}
+
+/// Maps a `Timeframe` to its HATEOAS link key on the detail shell.
+export const GRAPH_LINK_KEYS: Record<Timeframe, keyof DetailLinks> = {
+  day: 'graphs_day',
+  week: 'graphs_week',
+  last_30_days: 'graphs_last_30_days',
+  year: 'graphs_year',
+}
+
+/// The overview card: the all-time total and the four trend metrics.
+export interface StationOverviewStats {
+  total_bikes: number
+  metrics: StationOverviewMetric[]
 }

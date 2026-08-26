@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import {
   mapMarkers,
   readSidebarCounts,
+  sidebar,
   sidebarStationItems,
   waitForStations,
 } from './helpers'
@@ -23,6 +24,12 @@ test('the sidebar renders only the stations visible in the current viewport', as
   expect(baselineMarkers).toBe(baselineItems)
   // …and the badge total is the overall station count (>= visible).
   expect(baseline.total).toBeGreaterThanOrEqual(baseline.visible)
+
+  // The shell renders an image thumbnail per row directly; the stats line
+  // populates once the parallel stats sub-resource arrives (auto-waited).
+  const firstRow = sidebar(page).locator('li:has(button)').first()
+  await expect(firstRow.locator('img')).toBeVisible()
+  await expect(firstRow.getByText('bikes / last day')).toBeVisible()
 
   // Focus the map and zoom in with the keyboard (the Leaflet zoom control sits
   // at the top-right, clear of the sidebar). After each moveend the map

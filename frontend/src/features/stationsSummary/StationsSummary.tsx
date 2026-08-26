@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -35,8 +35,18 @@ import {
 } from '../stationDetail/timeframes'
 import { WeekdayRadar, type RadarSeries } from '../stationDetail/WeekdayRadar'
 import { SummaryMap } from './SummaryMap'
-import { useStationsSummary } from './useStationsSummary'
-import type { StationsSummary, SummaryPeriodGraphs, SummaryStation } from './types'
+import { GRAPH_LINK_KEYS } from './types'
+import type { StationsSummaryPage, SummaryPeriodGraphs, SummaryStation } from './types'
+import { useStationsSummaryGraphs } from './useStationsSummaryGraphs'
+import { useStationsSummaryMonthly } from './useStationsSummaryMonthly'
+import { useStationsSummaryOverview } from './useStationsSummaryOverview'
+import { useStationsSummaryPage } from './useStationsSummaryPage'
+import {
+  ChartsSkeleton,
+  MonthlyBarSkeleton,
+  OverviewSkeleton,
+  PageShellSkeleton,
+} from '../stationDetail/Skeletons'
 
 /// Per-station series for one timeframe: one line per station, plus the previous
 /// period per station when the compare checkbox is on (the summary's "Nerd
@@ -164,21 +174,28 @@ function stationSlices(period: SummaryPeriodGraphs, stations: SummaryStation[]):
   }))
 }
 
-/// The station-summary page (`/summary`): the fallback image, an interactive map
-/// of the selected view (click a flag to disable a station), the aggregated
-/// overview stats and the per-station graphs. The map view + disabled stations
-/// live in the URL so the page can be shared and restored.
+/// The station-summary page (`/summary`): the shell (fallback image, interactive
+/// map of the selected view, title) renders immediately, then each stats card
+/// loads its own sub-resource via the shell's HATEOAS links. Toggling a map flag
+/// re-fetches only the exclude-dependent cards (overview / graphs / monthly),
+/// not the shell.
 export function StationsSummary() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  // `parseBoundsQuery` builds a fresh object each call; memoize on the search
-  // params so the data hook does not re-run (and reset the loading state) on
-  // every render.
-  const bounds = useMemo(() => parseBoundsQuery(searchParams), [searchParams])
+  // `parseBoundsQuery` builds a fresh object each call; memoize on the bound
+  // values (not the whole search params) so toggling the `disabled`/`station`
+  // params never re-fetches the shell.
+  const boundsKey = [
+    searchParams.get('min_lat'),
+    searchParams.get('min_lng'),
+    searchParams.get('max_lat'),
+    searchParams.get('max_lng'),
+  ].join(',')
+  const bounds = useMemo(() => parseBoundsQuery(searchParams), [boundsKey]) // eslint-disable-line react-hooks/exhaustive-deps
   // Seeded from the URL once so a shared link restores the same selection;
   // toggling updates both the state and the `disabled` query param.
   const [disabled, setDisabled] = useState<string[]>(() => parseDisabled(searchParams))
-  const { summary, loading, error } = useStationsSummary(bounds, disabled)
+  const { page, loading, error } = useStationsSummaryPage(bounds)
 
   // Mirror the disabled set into the URL (replace, so toggling does not spam the
   // history). The bounds are already in the URL from the map.
@@ -245,16 +262,15 @@ export function StationsSummary() {
           )}
 
           {bounds && !error && loading && (
-            <div className="flex flex-col items-center gap-3 py-20" aria-busy="true">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">Summarizing visible stations…</p>
+            <div aria-busy="true">
+              <PageShellSkeleton />
             </div>
           )}
 
-          {bounds && !error && !loading && summary && (
+          {bounds && !error && !loading && page && (
             <ErrorBoundary>
               <SummaryContent
-                summary={summary}
+                page={page}
                 disabled={new Set(disabled)}
                 onToggle={toggleStation}
                 bounds={bounds}
@@ -268,44 +284,56 @@ export function StationsSummary() {
 }
 
 function SummaryContent({
-  summary,
+  page,
   disabled,
   onToggle,
   bounds,
 }: {
-  summary: StationsSummary
+  page: StationsSummaryPage
   disabled: Set<string>
   onToggle: (stationId: string) => void
   bounds: NonNullable<ReturnType<typeof parseBoundsQuery>>
 }) {
-  const { graphs, stations } = summary
+  const { stations } = page
+  // The exclude set is passed to the card hooks; toggling re-fetches only the
+  // exclude-dependent cards, never the shell.
+  const disabledList = Array.from(disabled)
   // Default to the week timeframe, like the detail page.
   const [timeframe, setTimeframe] = useState<Timeframe>('week')
   const [comparePrevious, setComparePrevious] = useState(false)
   const cfg = TIMEFRAMES[timeframe]
-  const period = graphs[timeframe]
 
-  const firstBucket = period.current[0] ?? period.previous[0]
+  const { overview, error: overviewError } = useStationsSummaryOverview(
+    page._links.overview,
+    disabledList,
+  )
+  const { graphs, error: graphsError } = useStationsSummaryGraphs(
+    page._links[GRAPH_LINK_KEYS[timeframe]],
+    disabledList,
+  )
+  const { monthly, error: monthlyError } = useStationsSummaryMonthly(
+    page._links.monthly,
+    disabledList,
+  )
+
+  const period = graphs
+  const firstBucket = period?.current[0] ?? period?.previous[0]
   const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : NaN
   const domain = timeframeDomain(cfg, anchor)
 
-  const mainSeries = alignSeries(
-    timeframeSeries(period, cfg, comparePrevious),
-    anchor,
-    cfg.periodStart,
-  )
-  const perStationSeries = alignSeries(
-    stationSeries(period, cfg, stations, comparePrevious),
-    anchor,
-    cfg.periodStart,
-  )
+  const mainSeries = period
+    ? alignSeries(timeframeSeries(period, cfg, comparePrevious), anchor, cfg.periodStart)
+    : []
+  const perStationSeries = period
+    ? alignSeries(stationSeries(period, cfg, stations, comparePrevious), anchor, cfg.periodStart)
+    : []
 
   return (
     <>
       {/* Row 1: fallback image (half the page) + the interactive summary map. */}
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <img
-          src={summary.image_url}
+          src={page.image_url}
           alt="Station summary image"
           className="h-64 w-full rounded-lg border object-cover md:h-80"
         />
@@ -320,12 +348,14 @@ function SummaryContent({
             {formatNumber(stations.length)} station
             {stations.length === 1 ? '' : 's'}
           </Badge>
-          <Badge variant="secondary">
-            {formatNumber(summary.channel_count)} channel
-            {summary.channel_count === 1 ? '' : 's'}
-          </Badge>
+          {overview && (
+            <Badge variant="secondary">
+              {formatNumber(overview.channel_count)} channel
+              {overview.channel_count === 1 ? '' : 's'}
+            </Badge>
+          )}
           <span className="text-xs text-muted-foreground">
-            Updated {formatTimestamp(summary.last_update)}
+            Updated {formatTimestamp(page.last_update)}
           </span>
         </div>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -333,18 +363,26 @@ function SummaryContent({
         </p>
       </section>
 
-      {/* Overview stats: the aggregated all-time counter on top, then the same
-          small boxes as the detail page. */}
+      {/* Overview stats card: the aggregated all-time counter on top, then the
+          same small boxes as the detail page. */}
       <section className="mt-8">
         <h2 className="mb-3 text-lg font-semibold">Overview</h2>
-        <div className="mb-3">
-          <TotalBikesCard total={summary.total_bikes} />
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {summary.metrics.map((metric) => (
-            <MetricCard key={metric.key} metric={metric} />
-          ))}
-        </div>
+        {overview ? (
+          <>
+            <div className="mb-3">
+              <TotalBikesCard total={overview.total_bikes} />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {overview.metrics.map((metric) => (
+                <MetricCard key={metric.key} metric={metric} />
+              ))}
+            </div>
+          </>
+        ) : overviewError ? (
+          <p className="text-sm font-semibold text-destructive">Could not load the overview.</p>
+        ) : (
+          <OverviewSkeleton />
+        )}
       </section>
 
       {/* Detailed statistics: shared timeframe selector driving the aggregate
@@ -382,58 +420,80 @@ function SummaryContent({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          <ChartCard title={cfg.title} subtitle={cfg.subtitle}>
-            <TimeSeriesLineChart
-              series={mainSeries}
-              xFormatter={cfg.axis}
-              tooltipFormatter={cfg.tooltip}
-              xDomain={domain}
-            />
-          </ChartCard>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
-              <WeekdayRadar series={aggregateWeekdayRadar(period, cfg, comparePrevious)} />
+        {period ? (
+          <div className="grid grid-cols-1 gap-4">
+            <ChartCard title={cfg.title} subtitle={cfg.subtitle}>
+              <TimeSeriesLineChart
+                series={mainSeries}
+                xFormatter={cfg.axis}
+                tooltipFormatter={cfg.tooltip}
+                xDomain={domain}
+              />
             </ChartCard>
-            <ChartCard title="Hours" subtitle={cfg.radarSubtitle}>
-              <HourRadar series={aggregateHourRadar(period, cfg, comparePrevious)} />
-            </ChartCard>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
+                <WeekdayRadar series={aggregateWeekdayRadar(period, cfg, comparePrevious)} />
+              </ChartCard>
+              <ChartCard title="Hours" subtitle={cfg.radarSubtitle}>
+                <HourRadar series={aggregateHourRadar(period, cfg, comparePrevious)} />
+              </ChartCard>
+            </div>
           </div>
-        </div>
+        ) : graphsError ? (
+          <p className="text-sm font-semibold text-destructive">Could not load the statistics.</p>
+        ) : (
+          <ChartsSkeleton />
+        )}
       </section>
 
-      {/* Monthly bar chart: all available months, standalone. */}
+      {/* Monthly bar chart card: all available months, standalone. */}
       <section className="mt-8">
-        <MonthlyBarChart totals={graphs.monthly_totals} />
+        {monthly ? (
+          <MonthlyBarChart totals={monthly.monthly_totals} />
+        ) : monthlyError ? (
+          <p className="text-sm font-semibold text-destructive">
+            Could not load the monthly totals.
+          </p>
+        ) : (
+          <MonthlyBarSkeleton />
+        )}
       </section>
 
-      {/* Nerd stats: the same graphs per station, driven by the shared timeframe
-          selector + compare checkbox. */}
+      {/* Nerd stats card: the same graphs per station, driven by the shared
+          timeframe selector + compare checkbox. */}
       <section className="mt-8">
         <h2 className="mb-1 text-lg font-semibold">Nerd stats</h2>
         <p className="mb-3 text-sm text-muted-foreground">The same graphs, drawn per station.</p>
-        <div className="grid grid-cols-1 gap-4">
-          <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
-            <TimeSeriesLineChart
-              series={perStationSeries}
-              xFormatter={cfg.axis}
-              tooltipFormatter={cfg.tooltip}
-              xDomain={domain}
-              className="aspect-[21/9]"
-            />
-          </ChartCard>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <ChartCard title="Weekdays by station" subtitle={cfg.radarSubtitle}>
-              <WeekdayRadar series={stationRadar(period, stations, cfg, comparePrevious)} />
+        {period ? (
+          <div className="grid grid-cols-1 gap-4">
+            <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
+              <TimeSeriesLineChart
+                series={perStationSeries}
+                xFormatter={cfg.axis}
+                tooltipFormatter={cfg.tooltip}
+                xDomain={domain}
+                className="aspect-[21/9]"
+              />
             </ChartCard>
-            <ChartCard title="Hours by station" subtitle={cfg.radarSubtitle}>
-              <HourRadar series={stationHourRadar(period, stations, cfg, comparePrevious)} />
-            </ChartCard>
-            <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
-              <SharePie slices={stationSlices(period, stations)} />
-            </ChartCard>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <ChartCard title="Weekdays by station" subtitle={cfg.radarSubtitle}>
+                <WeekdayRadar series={stationRadar(period, stations, cfg, comparePrevious)} />
+              </ChartCard>
+              <ChartCard title="Hours by station" subtitle={cfg.radarSubtitle}>
+                <HourRadar series={stationHourRadar(period, stations, cfg, comparePrevious)} />
+              </ChartCard>
+              <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
+                <SharePie slices={stationSlices(period, stations)} />
+              </ChartCard>
+            </div>
           </div>
-        </div>
+        ) : graphsError ? (
+          <p className="text-sm font-semibold text-destructive">
+            Could not load the nerd stats.
+          </p>
+        ) : (
+          <ChartsSkeleton />
+        )}
       </section>
     </>
   )

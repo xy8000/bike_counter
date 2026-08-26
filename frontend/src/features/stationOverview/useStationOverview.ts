@@ -1,24 +1,41 @@
 import { useEffect, useState } from 'react'
-import type { StationOverview } from './types'
-import { fetchStationOverview } from './api'
+import type { StationOverviewPage, StationOverviewStats } from './types'
+import { fetchStationOverview, fetchStationOverviewStats } from './api'
 
-/// Loads the overview payload for a station whenever its id changes.
+/// Loads the overview shell (identity — the panel renders the name immediately)
+/// and then the stats card from its HATEOAS link, so the two load and fail
+/// independently.
 export function useStationOverview(stationId: string | null) {
-  const [overview, setOverview] = useState<StationOverview | null>(null)
+  const [page, setPage] = useState<StationOverviewPage | null>(null)
+  const [stats, setStats] = useState<StationOverviewStats | null>(null)
   const [error, setError] = useState(false)
+  const [statsError, setStatsError] = useState(false)
 
   useEffect(() => {
     if (!stationId) {
-      setOverview(null)
+      setPage(null)
+      setStats(null)
       setError(false)
+      setStatsError(false)
       return
     }
     let cancelled = false
-    setOverview(null)
+    setPage(null)
+    setStats(null)
     setError(false)
+    setStatsError(false)
     fetchStationOverview(stationId)
       .then((data) => {
-        if (!cancelled) setOverview(data)
+        if (cancelled) return
+        setPage(data)
+        // The stats sub-resource runs in parallel with the shell's rendering.
+        fetchStationOverviewStats(data._links.stats)
+          .then((statsData) => {
+            if (!cancelled) setStats(statsData)
+          })
+          .catch(() => {
+            if (!cancelled) setStatsError(true)
+          })
       })
       .catch(() => {
         if (!cancelled) setError(true)
@@ -28,5 +45,5 @@ export function useStationOverview(stationId: string | null) {
     }
   }, [stationId])
 
-  return { overview, error }
+  return { page, stats, error, statsError }
 }

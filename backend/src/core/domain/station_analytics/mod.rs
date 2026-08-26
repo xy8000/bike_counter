@@ -1,15 +1,17 @@
 //! Business domain module for all station analytics aggregations behind the BFF
 //! endpoints: the per-station summaries (sidebar/search), the whole-system global
-//! summary (header), the station overview page, the station detail graphs and
-//! the aggregated station-summary page.
+//! summary (header), the station overview page, the station detail page and the
+//! aggregated station-summary page.
 //!
-//! This consolidates what used to be five separate modules (`station_summary`,
-//! `stations_summary`, `station_overview`, `station_detail`, `global_summary`)
-//! into one, because they share the same repositories, the same
-//! window/metric/graph helpers and are all consumed by the BFF handlers.
+//! The detail and summary pages are served as a light **page shell** (the
+//! metadata/channels/stations the layout needs) plus a set of **per-card
+//! aggregates** (overview metrics, one timeframe of graph data, monthly totals).
+//! Each card is requested and cached independently and takes an `as_of`
+//! reference time, so a windowed card is a pure function of its URL.
 //!
 //! - Models: [`StationSummary`], [`GlobalSummary`], [`StationOverview`],
-//!   [`StationDetail`], [`StationsSummary`], [`GeoBounds`].
+//!   [`StationDetailPage`], [`StationsSummaryPage`], [`GraphTimeframe`],
+//!   [`GeoBounds`].
 //! - Driving port: [`service_port::StationAnalyticsServicePort`] (implemented by
 //!   `StationAnalyticsService`).
 
@@ -19,7 +21,7 @@ use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects::GeoCoordinates;
 use crate::core::domain::measurements::repository_port::{
-    ChannelTotal, HourTotal, MonthTotal, TimeBucket, WeekdayTotal,
+    ChannelTotal, HourTotal, TimeBucket, WeekdayTotal,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,6 +34,17 @@ use crate::core::domain::measurements::repository_port::{
 #[derive(Debug, Clone)]
 pub struct StationSummary {
     pub station: CountingStation,
+    pub channel_count: usize,
+    pub bikes_last_day: i64,
+}
+
+/// The per-station stats returned by the sidebar's stats sub-resource: the
+/// channel count and the bikes measured on the previous complete local day (in
+/// the station's own timezone). The sidebar shell carries the identity
+/// (image + name + description) and this carries the expensive aggregate.
+#[derive(Debug, Clone)]
+pub struct SidebarStationStats {
+    pub station_id: uuid::Uuid,
     pub channel_count: usize,
     pub bikes_last_day: i64,
 }
@@ -61,18 +74,15 @@ pub struct GlobalSummary {
 // Station overview page
 // ---------------------------------------------------------------------------
 
-/// Everything the overview panel needs to render one counting station: the
-/// station itself (the BFF resolves the image URL from
-/// `station.image_asset_id`), its channel count, one trend window per metric
-/// and the timestamp of the most recent successful data-source update.
+/// The **shell** of the station overview panel: the station itself (the BFF
+/// resolves the image URL from `station.image_asset_id`), its channel count and
+/// the timestamp of the most recent successful data-source update. No
+/// aggregation — the stats card (`total_bikes` + the four metrics) is served by
+/// the same `detail_overview_stats` used by the detail page.
 #[derive(Debug, Clone)]
-pub struct StationOverview {
+pub struct StationOverviewShell {
     pub station: CountingStation,
     pub channel_count: usize,
-    /// All-time total of bikes counted across the station's channels (the whole
-    /// history, not a window). No trend: there is no comparison period.
-    pub total_bikes: i64,
-    pub metrics: Vec<MetricWindow>,
     pub last_update: Option<DateTime<Utc>>,
 }
 
@@ -124,13 +134,24 @@ impl MetricKey {
 // Station detail page
 // ---------------------------------------------------------------------------
 
-/// Everything the detail page needs beyond the station overview (which the BFF
-/// merges from the overview aggregation): the station's channels (legend/pie
-/// labels) and the bucketed time-series graphs.
+/// Everything the detail page **shell** needs to render its layout: the station
+/// metadata (the BFF resolves the image URL from `station.image_asset_id`), its
+/// channels (chart legend / pie labels) and the last successful update. No graph
+/// aggregation — each stats card fetches its own data via the HATEOAS links.
 #[derive(Debug, Clone)]
-pub struct StationDetail {
+pub struct StationDetailPage {
+    pub station: CountingStation,
     pub channels: Vec<Channel>,
-    pub graphs: StationDetailGraphs,
+    pub last_update: Option<DateTime<Utc>>,
+}
+
+/// The overview card of the detail page: the all-time total and the four trend
+/// metrics. This is the subset of [`StationOverview`] the detail page renders.
+#[derive(Debug, Clone)]
+pub struct StationOverviewStats {
+    /// All-time total of bikes counted across the station's channels.
+    pub total_bikes: i64,
+    pub metrics: Vec<MetricWindow>,
 }
 
 /// The graph data for one selectable timeframe: the current and previous period
@@ -178,49 +199,77 @@ pub struct PerChannelSeries {
     pub hourly_previous: Vec<HourTotal>,
 }
 
-/// All graph data for the detail page, keyed by the four selectable timeframes,
-/// plus the per-month totals for the standalone monthly bar chart.
-#[derive(Debug, Clone)]
-pub struct StationDetailGraphs {
+/// One selectable timeframe of the detail/summary graphs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GraphTimeframe {
     /// 24 hours: the last complete local day (5-minute buckets) vs the day
     /// before.
-    pub day: PeriodGraphs,
+    Day,
     /// Current + last week (1-hour buckets, Monday-aligned).
-    pub week: PeriodGraphs,
+    Week,
     /// Last 30 days (1-day buckets) vs the 30 days before.
-    pub last_30_days: PeriodGraphs,
+    Last30Days,
     /// Current year (1-day buckets) vs the previous calendar year.
-    pub year: PeriodGraphs,
-    /// Total per local calendar month over the whole history (bar chart).
-    pub monthly_totals: Vec<MonthTotal>,
+    Year,
+}
+
+impl GraphTimeframe {
+    pub const ALL: [GraphTimeframe; 4] = [
+        GraphTimeframe::Day,
+        GraphTimeframe::Week,
+        GraphTimeframe::Last30Days,
+        GraphTimeframe::Year,
+    ];
+
+    /// Stable string key used in the BFF payload and the sub-resource path.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GraphTimeframe::Day => "day",
+            GraphTimeframe::Week => "week",
+            GraphTimeframe::Last30Days => "last_30_days",
+            GraphTimeframe::Year => "year",
+        }
+    }
+
+    /// Parses the string key used by the BFF sub-resource path; `None` for an
+    /// unknown key.
+    pub fn from_key(key: &str) -> Option<GraphTimeframe> {
+        GraphTimeframe::ALL
+            .into_iter()
+            .find(|tf| tf.as_str() == key)
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Station-summary page (aggregated over the visible stations)
 // ---------------------------------------------------------------------------
 
-/// Everything the station-summary page needs: the station list (for the map and
-/// the toggle), the aggregated channel count, the four overview metrics, the
-/// last successful update timestamp and the bucketed graphs.
+/// Everything the station-summary page **shell** needs to render its layout: the
+/// station list (for the map and the toggle) and the last successful update. The
+/// aggregated channel count / metrics / graphs are exclude-dependent, so they
+/// live in the per-card sub-resources instead.
 #[derive(Debug, Clone)]
-pub struct StationsSummary {
+pub struct StationsSummaryPage {
     /// Every positioned station inside the requested bounds (including any the
     /// caller has disabled — the frontend grays those out and they are excluded
-    /// from the aggregation below).
+    /// from the aggregation).
     pub stations: Vec<SummaryStation>,
-    /// Total number of channels across the **included** stations.
+    /// Timestamp of the most recent successful data-source update.
+    pub last_update: Option<DateTime<Utc>>,
+}
+
+/// The overview card of the summary page: the aggregated channel count, the
+/// all-time total and the four trend metrics over the **included** stations.
+#[derive(Debug, Clone)]
+pub struct StationsSummaryOverview {
+    /// Total number of channels across the included stations.
     pub channel_count: usize,
-    /// The all-time total of bikes counted across the **included** stations'
-    /// channels (the whole history, not a window). No trend: there is no
-    /// comparison period.
+    /// The all-time total of bikes counted across the included stations'
+    /// channels (the whole history, not a window).
     pub total_bikes: i64,
     /// The four overview metrics (day / 7 days / month / year) aggregated over
     /// the included stations, each in its own timezone.
     pub metrics: Vec<MetricWindow>,
-    /// Timestamp of the most recent successful data-source update.
-    pub last_update: Option<DateTime<Utc>>,
-    /// The bucketed graphs over the included stations' channels.
-    pub graphs: StationsSummaryGraphs,
 }
 
 /// A minimal station reference for the summary page's map + legend. Coordinates
@@ -233,23 +282,6 @@ pub struct SummaryStation {
     pub latitude: f64,
     pub longitude: f64,
     pub channel_count: usize,
-}
-
-/// All graph data for the summary page, keyed by the four selectable timeframes,
-/// plus the per-month totals for the standalone monthly bar chart.
-#[derive(Debug, Clone)]
-pub struct StationsSummaryGraphs {
-    /// 24 hours: the last complete local day (5-minute buckets) vs the day
-    /// before.
-    pub day: SummaryPeriodGraphs,
-    /// Current + last week (1-hour buckets, Monday-aligned).
-    pub week: SummaryPeriodGraphs,
-    /// Last 30 days (1-day buckets) vs the 30 days before.
-    pub last_30_days: SummaryPeriodGraphs,
-    /// Current year (1-day buckets) vs the previous calendar year.
-    pub year: SummaryPeriodGraphs,
-    /// Total per local calendar month over the whole history (bar chart).
-    pub monthly_totals: Vec<MonthTotal>,
 }
 
 /// The graph data for one timeframe of the summary page: the aggregate current

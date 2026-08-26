@@ -34,7 +34,14 @@ export default function MapPage() {
   )
 
   const mapRef = useRef<LeafletMap | null>(null)
-  const { mapStations, sidebar, error: stationsError } = useVisibleStations(bounds)
+  const {
+    mapStations,
+    shell,
+    stats,
+    loading,
+    error: stationsError,
+    statsError,
+  } = useVisibleStations(bounds)
 
   // Keyboard shortcut: H collapses/expands the sidebar (Esc is handled by the
   // searchable header, which owns the search dialog).
@@ -106,8 +113,11 @@ export default function MapPage() {
           <Sidebar
             collapsed={sidebarCollapsed}
             onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
-            sidebar={sidebar}
+            shell={shell}
+            stats={stats}
+            loading={loading}
             error={stationsError}
+            statsError={statsError}
             onSelectStation={selectStation}
             onSummarize={summarizeVisible}
           />

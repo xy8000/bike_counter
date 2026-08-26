@@ -451,66 +451,86 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   `min_lat`/`min_lng`/`max_lat`/`max_lng` bounding-box query and returns only the
   **positioned** stations inside it. Each item carries only what the map needs:
   `id`, `name`, `latitude`, `longitude`.
-- `GET /api/bff/stations/sidebar` – station summaries for the current viewport
-  (same required bounding box). Each item carries `id`, `name`, `description`,
-  `latitude`, `longitude`, `channel_count` and `bikes_last_day` (the sum of
+- `GET /api/bff/stations/sidebar` – the **sidebar shell** for the current
+  viewport (same required bounding box): the station **identity** — `id`, `name`,
+  `description`, `latitude`, `longitude`, `image_url` (the station's image or the
+  built-in fallback) — plus `visible_count` / `total_count` (stations visible in
+  the viewport vs. all counting stations) and a HATEOAS `_links.stats` link to
+  the stats sub-resource below. Cheap, so the sidebar renders the identity
+  immediately.
+- `GET /api/bff/stations/sidebar/stats` – the per-station stats for the current
+  viewport: `station_id`, `channel_count` and `bikes_last_day` (the sum of
   `measurements.value` across the station's channels on the **previous complete
   local day**, computed on the fly in the station's own timezone, DST-aware),
-  plus `visible_count` / `total_count` (stations visible in the viewport vs. all
-  counting stations).
+  fetched in parallel with the shell's rendering.
 - `GET /api/bff/stations/search` – every counting-station summary (no bounds)
   plus the map of possible actions (for now `find_on_map` is always enabled).
 - `GET /api/bff/global-summary` – whole-system statistics for the header:
   `station_count`, `channel_count`, `bikes_last_day_total` (sum of every
   station's previous local-day total) and the `last_update` timestamp of the most
   recent successful data-source update.
-- `GET /api/bff/station-overview/{id}` – the **page-shaped** overview payload for
-  one station: `id`, `name`, `description`, `latitude`, `longitude`,
-  `channel_count`, `total_bikes` (all-time total across the station's channels),
-  `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
-  and a `metrics` array — each with `key` (`last_day` / `last_7_days` /
-  `last_month` / `last_year`), `current`, `previous`, `trend`
-  (`up`/`down`/`flat`) and `delta_percent`. The metrics use **complete calendar
-  periods** in the station's own timezone (previous full local day, previous 7
-  full local days, previous full calendar month, previous full calendar year),
-  each compared with the immediately preceding equal-length period. The payload
-  is flat — no HATEOAS `_links`, no `data_source_id`, no REST `CountingStationDto`
-  reuse.
-- `GET /api/bff/station-detail/{id}` – the **page-shaped** detail payload for the
-  detail page: the station metadata (incl. `total_bikes`, the all-time total) +
-  `metrics` from `station-overview/{id}`
-  (incl. `last_year`), a `channels` array (id + name for legends/pie labels) and
-  a `graphs` object keyed by the four selectable timeframes — `day` (last day vs
-  the day before, 5 min), `week` (current vs last week, 1 h), `last_30_days`
-  (last 30 days vs the 30 days before, 1 day) and `year` (current vs last year,
-  1 day). Each timeframe holds its `current` / `previous` series, a
-  `weekday_radar` and `channel_pie` for its current period and a `per_channel`
-  copy for the nerd stats; `monthly_totals` feeds the standalone monthly bar
-  chart. Buckets are aligned to the station's own timezone via PostgreSQL
-  `date_bin` and are **data-only** (no zero-filling, so a running week/year
-  simply ends at the latest measurement).
-- `GET /api/bff/stations/summary` – the **page-shaped** aggregated summary of the
-  stations visible in the bounding box (all four bounds required; optional
-  `exclude=<comma-separated station ids>` drops stations from the aggregation
-  while keeping them in the returned `stations` list so the map can gray them
-  out). The payload mirrors the detail page shape: a fallback `image_url`, the
-  `stations` (id/name/lat/lng/channel_count), the aggregated `channel_count` and
-  `total_bikes` (all-time total across the included stations' channels), the
-  four aggregated overview `metrics` (each station's DST-aware windows) and the
-  `graphs` (same four timeframes + `monthly_totals`) whose nerd stats are keyed by
-  **station** (`per_station`, `station_pie`) instead of channel. All bucketed
-  reads reuse the existing `MeasurementRepository` primitives over the union of
-  the included stations' channels, so no new data fields are introduced.
+- `GET /api/bff/station-overview/{id}` – the overview panel **shell** for one
+  station: `id`, `name`, `description`, `latitude`, `longitude`,
+  `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
+  and a HATEOAS `_links.stats` link to the stats sub-resource below. Cheap, so
+  the overview panel renders the station name/image immediately.
+- `GET /api/bff/station-overview/{id}/stats` – the overview stats card:
+  `total_bikes` (all-time total across the station's channels) and a `metrics`
+  array — each with `key` (`last_day` / `last_7_days` / `last_month` /
+  `last_year`), `current`, `previous`, `trend` (`up`/`down`/`flat`) and
+  `delta_percent`. The metrics use **complete calendar periods** in the station's
+  own timezone (previous full local day, previous 7 full local days, previous
+  full calendar month, previous full calendar year), each compared with the
+  immediately preceding equal-length period. Fetched in parallel with the
+  shell's rendering.
+- `GET /api/bff/station-detail/{id}` – a light **page shell** for the detail
+  page: the station metadata (incl. `total_bikes`, the all-time total), a
+  `channels` array (id + name for legends/pie labels), `last_update` and a
+  HATEOAS `_links` map pointing at the per-card sub-resources below. Each link
+  carries an `as_of` reference-time query param (RFC 3339 `Z`), so a card URL is
+  a pure function of the reference time and therefore cacheable.
+- `GET /api/bff/station-detail/{id}/overview` – the overview card: the four
+  overview metrics (each with `key` = `last_day` / `last_7_days` /
+  `last_month` / `last_year`, `current`, `previous`, `trend` and
+  `delta_percent`) plus `total_bikes`. The metrics use **complete calendar
+  periods** in the station's own timezone, each compared with the immediately
+  preceding equal-length period.
+- `GET /api/bff/station-detail/{id}/graphs/{timeframe}` – one timeframe's graphs
+  for the selected key — `day` (last day vs the day before, 5 min), `week`
+  (current vs last week, 1 h), `last_30_days` (last 30 days vs the 30 days
+  before, 1 day) or `year` (current vs last year, 1 day). Each timeframe holds
+  its `current` / `previous` series, a `weekday_radar` and `channel_pie` for its
+  current period and a `per_channel` copy for the nerd stats. Buckets are
+  aligned to the station's own timezone via PostgreSQL `date_bin` and are
+  **data-only** (no zero-filling, so a running week/year simply ends at the
+  latest measurement).
+- `GET /api/bff/station-detail/{id}/monthly` – `monthly_totals`, feeding the
+  standalone monthly bar chart.
+- `GET /api/bff/stations/summary` – a light **page shell** for the aggregated
+  summary of the stations visible in the bounding box (all four bounds required;
+  optional `exclude=<comma-separated station ids>` drops stations from the
+  aggregation while keeping them in the returned `stations` list so the map can
+  gray them out). The shell holds a fallback `image_url`, the `stations`
+  (id/name/lat/lng/channel_count), `last_update` and a HATEOAS `_links` map
+  (carrying `as_of` and the bounds) pointing at the same per-card sub-resources:
+  `/overview` (aggregated metrics + `total_bikes`), `/graphs/{timeframe}` (same
+  four timeframes, with nerd stats keyed by **station** — `per_station`,
+  `station_pie` — instead of channel) and `/monthly`. All bucketed reads reuse
+  the existing `MeasurementRepository` primitives over the union of the included
+  stations' channels, so no new data fields are introduced.
 - `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
   from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
   (`immutable` for built-in assets, short-lived for provider assets). Only the
   BFF exposes MinIO; there are no upload/delete artifact endpoints.
 
 The aggregations are computed **on the fly** per request by the core
-`StationSummaryService` / `GlobalSummaryService` / `StationsSummaryService`; a
-cache (e.g. Redis) may be introduced later. The BFF module lives in
-[`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff) and is the
-seam for future frontend-only endpoints (for example aggregations or
+[`StationAnalyticsService`](backend/src/core/application/station_analytics/service.rs:38);
+a cache (e.g. Redis/Valkey) may be introduced later — the `as_of` reference-time
+query params make every windowed card URL a stable cache key, and the
+`graph_windows` / `metric_windows` helpers already take the reference time as an
+argument, which is also the seam for a future date/time picker. The BFF module
+lives in [`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff)
+and is the seam for future frontend-only endpoints (for example aggregations or
 transformations of the `/api/v1` data).
 
 ## Name uniqueness

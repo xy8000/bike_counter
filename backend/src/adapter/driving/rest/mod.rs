@@ -14,9 +14,12 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::adapter::driving::bff::{
-    get_bff_asset_content, get_bff_global_summary, get_bff_station_detail,
-    get_bff_station_overview, get_bff_stations_search, get_bff_stations_sidebar,
-    get_bff_stations_summary, list_bff_stations,
+    get_bff_asset_content, get_bff_global_summary, get_bff_station_detail_graphs,
+    get_bff_station_detail_monthly, get_bff_station_detail_overview, get_bff_station_detail_page,
+    get_bff_station_overview, get_bff_station_overview_stats, get_bff_stations_search,
+    get_bff_stations_sidebar, get_bff_stations_sidebar_stats, get_bff_stations_summary_graphs,
+    get_bff_stations_summary_monthly, get_bff_stations_summary_overview,
+    get_bff_stations_summary_page, list_bff_stations,
 };
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
@@ -86,14 +89,52 @@ impl RestApiAdapter {
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
             .route("/api/bff/stations", get(list_bff_stations))
             .route("/api/bff/stations/sidebar", get(get_bff_stations_sidebar))
+            .route(
+                "/api/bff/stations/sidebar/stats",
+                get(get_bff_stations_sidebar_stats),
+            )
             .route("/api/bff/stations/search", get(get_bff_stations_search))
             .route("/api/bff/global-summary", get(get_bff_global_summary))
             .route(
                 "/api/bff/station-overview/:id",
                 get(get_bff_station_overview),
             )
-            .route("/api/bff/station-detail/:id", get(get_bff_station_detail))
-            .route("/api/bff/stations/summary", get(get_bff_stations_summary))
+            .route(
+                "/api/bff/station-overview/:id/stats",
+                get(get_bff_station_overview_stats),
+            )
+            .route(
+                "/api/bff/station-detail/:id",
+                get(get_bff_station_detail_page),
+            )
+            .route(
+                "/api/bff/station-detail/:id/overview",
+                get(get_bff_station_detail_overview),
+            )
+            .route(
+                "/api/bff/station-detail/:id/graphs/:timeframe",
+                get(get_bff_station_detail_graphs),
+            )
+            .route(
+                "/api/bff/station-detail/:id/monthly",
+                get(get_bff_station_detail_monthly),
+            )
+            .route(
+                "/api/bff/stations/summary",
+                get(get_bff_stations_summary_page),
+            )
+            .route(
+                "/api/bff/stations/summary/overview",
+                get(get_bff_stations_summary_overview),
+            )
+            .route(
+                "/api/bff/stations/summary/graphs/:timeframe",
+                get(get_bff_stations_summary_graphs),
+            )
+            .route(
+                "/api/bff/stations/summary/monthly",
+                get(get_bff_stations_summary_monthly),
+            )
             .route("/api/bff/assets/:id/content", get(get_bff_asset_content))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))

@@ -102,7 +102,7 @@ async fn bff_map_rejects_inverted_bounds() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn bff_sidebar_returns_summaries_and_visible_total_counters() {
+async fn bff_sidebar_returns_shell_and_visible_total_counters() {
     let app = TestApp::new();
     let (status, body) = app
         .get_json(&format!("/api/bff/stations/sidebar{STATIONS_BBOX}"))
@@ -119,16 +119,26 @@ async fn bff_sidebar_returns_summaries_and_visible_total_counters() {
     let item = &items[0];
     assert_eq!(item["name"], "Station A");
     assert_eq!(item["latitude"], 51.9565);
-    assert_eq!(
-        item["channel_count"], 2,
-        "station A has two sample channels"
+    // The shell carries the identity + image only; the stats live in the stats
+    // sub-resource so the identity renders immediately.
+    assert!(
+        item["image_url"]
+            .as_str()
+            .is_some_and(|url| !url.is_empty()),
+        "the shell resolves an image URL per station"
     );
-    // The sample fixtures' timestamps are not on the previous local day, so the
-    // sum is zero.
-    assert_eq!(item["bikes_last_day"], 0);
+    assert!(item.get("channel_count").is_none());
+    assert!(item.get("bikes_last_day").is_none());
 
     assert_eq!(body["visible_count"], 1);
     assert_eq!(body["total_count"], 2, "there are two stations in total");
+    assert!(
+        body["_links"]["stats"]["href"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/api/bff/stations/sidebar/stats"),
+        "the shell advertises the stats sub-resource link"
+    );
 }
 
 #[tokio::test]
@@ -146,7 +156,7 @@ async fn bff_sidebar_requires_bounds() {
 }
 
 #[tokio::test]
-async fn bff_sidebar_counts_bikes_on_the_last_day() {
+async fn bff_sidebar_stats_counts_bikes_on_the_last_day() {
     let station = CountingStation {
         id: station_vo::Id(fixtures::STATION_ID_A),
         name: station_vo::Name("Station A".to_string()),
@@ -197,10 +207,14 @@ async fn bff_sidebar_counts_bikes_on_the_last_day() {
     let app = TestApp::with_station_analytics_service(service);
 
     let (status, body) = app
-        .get_json(&format!("/api/bff/stations/sidebar{STATIONS_BBOX}"))
+        .get_json(&format!("/api/bff/stations/sidebar/stats{STATIONS_BBOX}"))
         .await;
 
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["items"][0]["station_id"],
+        fixtures::STATION_ID_A.to_string()
+    );
     assert_eq!(body["items"][0]["channel_count"], 1);
     assert_eq!(body["items"][0]["bikes_last_day"], 17);
 }
@@ -271,9 +285,17 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
     for path in [
         "/api/bff/stations",
         "/api/bff/stations/sidebar",
+        "/api/bff/stations/sidebar/stats",
         "/api/bff/stations/search",
         "/api/bff/stations/summary",
         "/api/bff/global-summary",
+        "/api/bff/station-detail/{id}",
+        "/api/bff/station-detail/{id}/overview",
+        "/api/bff/station-detail/{id}/graphs/{timeframe}",
+        "/api/bff/station-detail/{id}/monthly",
+        "/api/bff/stations/summary/overview",
+        "/api/bff/stations/summary/graphs/{timeframe}",
+        "/api/bff/stations/summary/monthly",
     ] {
         assert!(
             paths.contains_key(path),
@@ -288,15 +310,22 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "StationMapDto",
         "StationMapListDto",
         "StationSummaryDto",
-        "StationSummarySidebarDto",
+        "SidebarStationDto",
+        "SidebarShellDto",
+        "SidebarStationStatsDto",
+        "SidebarStatsDto",
         "StationSearchDto",
         "ActionDto",
         "GlobalSummaryDto",
         "StationsSummaryPageDto",
         "SummaryStationDto",
-        "StationsSummaryGraphsDto",
+        "StationsSummaryOverviewDto",
+        "StationDetailPageDto",
+        "StationOverviewStatsDto",
+        "PeriodGraphsDto",
         "SummaryPeriodGraphsDto",
         "PerStationSeriesDto",
+        "MonthlyTotalsDto",
     ] {
         assert!(
             schemas.contains_key(schema),
@@ -309,9 +338,10 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         tags.iter().any(|tag| tag["name"] == "BFF API"),
         "OpenAPI document should contain a 'BFF API' tag"
     );
-    // The new page-shaped endpoints are registered too.
+    // The overview + asset endpoints are registered too.
     for path in [
         "/api/bff/station-overview/{id}",
+        "/api/bff/station-overview/{id}/stats",
         "/api/bff/assets/{id}/content",
     ] {
         assert!(
@@ -335,7 +365,7 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
 const MOCK_ASSET_ID: u128 = 0xAAA;
 
 #[tokio::test]
-async fn bff_station_overview_returns_the_flat_page_payload() {
+async fn bff_station_overview_returns_the_shell_with_a_stats_link() {
     let app = TestApp::new();
     let (status, body) = app
         .get_json(&format!(
@@ -349,9 +379,6 @@ async fn bff_station_overview_returns_the_flat_page_payload() {
     assert_eq!(body["name"], "Station A");
     assert_eq!(body["description"], "First station");
     assert_eq!(body["channel_count"], 2);
-    // All-time total: both sample measurements (42 + 1337) lie on station A's
-    // two channels, so they are counted regardless of the windows.
-    assert_eq!(body["total_bikes"], 1379);
 
     // The image URL resolves to the built-in default asset (station A has no
     // linked provider image).
@@ -363,6 +390,37 @@ async fn bff_station_overview_returns_the_flat_page_payload() {
         body["detail_url"],
         format!("/stations/{}", fixtures::STATION_ID_A)
     );
+
+    // The shell advertises the stats sub-resource and carries no aggregation
+    // (the name renders as soon as the identity arrives).
+    assert!(
+        body["_links"]["stats"]["href"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&format!(
+                "/api/bff/station-overview/{}/stats",
+                fixtures::STATION_ID_A
+            )),
+        "the shell advertises the stats sub-resource link"
+    );
+    assert!(body.get("total_bikes").is_none());
+    assert!(body.get("metrics").is_none());
+}
+
+#[tokio::test]
+async fn bff_station_overview_stats_returns_total_bikes_and_four_metrics() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-overview/{}/stats",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    // All-time total: both sample measurements (42 + 1337) on station A's two
+    // channels, so they are counted regardless of the windows.
+    assert_eq!(body["total_bikes"], 1379);
 
     // Exactly the four metrics (day, 7 days, month, year), each with a trend.
     let metrics = body["metrics"]
@@ -386,10 +444,6 @@ async fn bff_station_overview_returns_the_flat_page_payload() {
             metric["trend"]
         );
     }
-
-    // Page-shaped: no HATEOAS `_links`, no `data_source_id` (no REST DTO reuse).
-    assert!(body.get("_links").is_none());
-    assert!(body.get("data_source_id").is_none());
 }
 
 #[tokio::test]
@@ -400,6 +454,167 @@ async fn bff_station_overview_unknown_station_returns_404() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn bff_station_overview_stats_unknown_station_returns_404() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-overview/{}/stats",
+            Uuid::new_v4()
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"].as_str().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// Station detail page (shell + per-card sub-resources)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bff_station_detail_returns_shell_with_links_and_channels() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], fixtures::STATION_ID_A.to_string());
+    assert_eq!(body["name"], "Station A");
+    assert_eq!(body["description"], "First station");
+    assert_eq!(body["channel_count"], 2);
+    assert_eq!(body["last_update"], "2024-01-01T12:00:00Z");
+    let channels = body["channels"]
+        .as_array()
+        .expect("channels should be an array");
+    assert_eq!(channels.len(), 2);
+    // The shell carries HATEOAS links and no aggregated stats.
+    for rel in [
+        "self",
+        "overview",
+        "graphs_day",
+        "graphs_week",
+        "graphs_last_30_days",
+        "graphs_year",
+        "monthly",
+    ] {
+        assert!(
+            body["_links"][rel]["href"].is_string(),
+            "shell should carry a '{rel}' link"
+        );
+    }
+    assert!(body.get("metrics").is_none());
+    assert!(body.get("graphs").is_none());
+    // The windowed links embed an as_of reference so they are cacheable.
+    let overview_href = body["_links"]["overview"]["href"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        overview_href.contains("as_of="),
+        "overview link should pin as_of, got: {overview_href}"
+    );
+}
+
+#[tokio::test]
+async fn bff_station_detail_unknown_station_returns_404() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!("/api/bff/station-detail/{}", Uuid::new_v4()))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn bff_station_detail_overview_returns_total_and_metrics() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/overview?as_of=2024-01-11T12:00:00Z",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total_bikes"], 1379);
+    let metrics = body["metrics"]
+        .as_array()
+        .expect("metrics should be an array");
+    assert_eq!(metrics.len(), 4);
+    let keys: Vec<&str> = metrics
+        .iter()
+        .map(|metric| metric["key"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["last_day", "last_7_days", "last_month", "last_year"]
+    );
+}
+
+#[tokio::test]
+async fn bff_station_detail_graphs_returns_one_timeframe() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/graphs/week?as_of=2024-01-11T12:00:00Z",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    for field in [
+        "current",
+        "previous",
+        "weekday_radar",
+        "weekday_radar_previous",
+        "hourly",
+        "hourly_previous",
+        "channel_pie",
+        "per_channel",
+    ] {
+        assert!(
+            body[field].is_array(),
+            "graphs/week should contain '{field}'"
+        );
+    }
+}
+
+#[tokio::test]
+async fn bff_station_detail_graphs_rejects_unknown_timeframe() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/graphs/fortnight",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown timeframe"),
+        "an unknown timeframe should be rejected"
+    );
+}
+
+#[tokio::test]
+async fn bff_station_detail_monthly_returns_totals() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/monthly",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["monthly_totals"].is_array());
 }
 
 // ---------------------------------------------------------------------------
@@ -453,34 +668,55 @@ async fn bff_asset_content_unknown_asset_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn bff_station_summary_returns_the_flat_page_payload() {
+async fn bff_station_summary_returns_shell_and_card_sub_resources() {
     let app = TestApp::new();
+
+    // The shell: image, station list, last update + HATEOAS links. No stats.
     let (status, body) = app
         .get_json(&format!("/api/bff/stations/summary{STATIONS_BBOX}"))
         .await;
-
     assert_eq!(status, StatusCode::OK);
-    // Only positioned station A lies inside the bounds.
     let stations = body["stations"]
         .as_array()
         .expect("stations should be an array");
-    assert_eq!(stations.len(), 1);
+    assert_eq!(stations.len(), 1, "only positioned station A lies inside");
     assert_eq!(stations[0]["id"], fixtures::STATION_ID_A.to_string());
     assert_eq!(stations[0]["name"], "Station A");
     assert_eq!(stations[0]["latitude"], 51.9565);
     assert_eq!(stations[0]["channel_count"], 2);
-    assert_eq!(body["channel_count"], 2, "station A's two channels");
-    // All-time total over station A's two channels: both sample measurements.
-    assert_eq!(body["total_bikes"], 1379);
     assert_eq!(body["last_update"], "2024-01-01T12:00:00Z");
-
-    // The hero image resolves to the built-in default asset.
     assert_eq!(
         body["image_url"],
         format!("/api/bff/assets/{}/content", Uuid::from_u128(MOCK_ASSET_ID))
     );
+    for rel in [
+        "self",
+        "overview",
+        "graphs_day",
+        "graphs_week",
+        "graphs_last_30_days",
+        "graphs_year",
+        "monthly",
+    ] {
+        assert!(
+            body["_links"][rel]["href"].is_string(),
+            "summary shell should carry a '{rel}' link"
+        );
+    }
+    assert!(body.get("metrics").is_none());
+    assert!(body.get("graphs").is_none());
+    assert!(body.get("channel_count").is_none());
 
-    // Exactly the four overview metrics.
+    // The overview card: aggregated channel count, all-time total and metrics.
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary/overview{STATIONS_BBOX}"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["channel_count"], 2, "station A's two channels");
+    // All-time total over station A's two channels: both sample measurements.
+    assert_eq!(body["total_bikes"], 1379);
     let metrics = body["metrics"]
         .as_array()
         .expect("metrics should be an array");
@@ -494,24 +730,36 @@ async fn bff_station_summary_returns_the_flat_page_payload() {
         vec!["last_day", "last_7_days", "last_month", "last_year"]
     );
 
-    // The graph sections are present with the per-station nerd stats. The sample
+    // One timeframe of graphs: aggregate + per-station nerd stats. The sample
     // measurements are not in any current window, so the series are empty.
-    for period_key in ["day", "week", "last_30_days", "year"] {
-        let period = &body["graphs"][period_key];
-        assert!(period["current"].is_array());
-        assert!(period["previous"].is_array());
-        assert!(period["weekday_radar"].is_array());
-        assert!(period["weekday_radar_previous"].is_array());
-        assert!(period["hourly"].is_array());
-        assert!(period["hourly_previous"].is_array());
-        assert!(period["station_pie"].is_array());
-        assert!(period["per_station"].is_array());
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary/graphs/week{STATIONS_BBOX}"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    for field in [
+        "current",
+        "previous",
+        "weekday_radar",
+        "weekday_radar_previous",
+        "hourly",
+        "hourly_previous",
+        "station_pie",
+        "per_station",
+    ] {
+        assert!(
+            body[field].is_array(),
+            "graphs/week should contain '{field}'"
+        );
     }
-    assert!(body["graphs"]["monthly_totals"].is_array());
 
-    // Page-shaped: no HATEOAS `_links`, no `data_source_id`.
-    assert!(body.get("_links").is_none());
-    assert!(body.get("data_source_id").is_none());
+    // The monthly totals card.
+    let (status, body) = app
+        .get_json(&format!("/api/bff/stations/summary/monthly{STATIONS_BBOX}"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["monthly_totals"].is_array());
 }
 
 #[tokio::test]
@@ -534,24 +782,38 @@ async fn bff_station_summary_rejects_inverted_bounds() {
 #[tokio::test]
 async fn bff_station_summary_exclude_keeps_station_but_drops_it_from_aggregation() {
     let app = TestApp::new();
-    let (status, body) = app
-        .get_json(&format!(
-            "/api/bff/stations/summary{STATIONS_BBOX}&exclude={}",
-            fixtures::STATION_ID_A
-        ))
-        .await;
 
+    // The shell still lists station A (so the map can gray it out) …
+    let (status, body) = app
+        .get_json(&format!("/api/bff/stations/summary{STATIONS_BBOX}"))
+        .await;
     assert_eq!(status, StatusCode::OK);
-    // Station A is still rendered (so the map can gray it out) …
     let stations = body["stations"]
         .as_array()
         .expect("stations should be an array");
     assert_eq!(stations.len(), 1);
     assert_eq!(stations[0]["id"], fixtures::STATION_ID_A.to_string());
-    // … but its channels are excluded from the aggregation.
+
+    // … but the overview card excludes its channels from the aggregation.
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary/overview{STATIONS_BBOX}&exclude={}",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(body["channel_count"], 0);
+
+    // The graphs card excludes the disabled station's per-station series too.
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary/graphs/day{STATIONS_BBOX}&exclude={}",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        body["graphs"]["day"]["per_station"]
+        body["per_station"]
             .as_array()
             .expect("per_station should be an array")
             .len(),
@@ -565,7 +827,7 @@ async fn bff_station_summary_rejects_invalid_exclude_id() {
     let app = TestApp::new();
     let (status, body) = app
         .get_json(&format!(
-            "/api/bff/stations/summary{STATIONS_BBOX}&exclude=not-a-uuid"
+            "/api/bff/stations/summary/overview{STATIONS_BBOX}&exclude=not-a-uuid"
         ))
         .await;
 
@@ -632,7 +894,9 @@ async fn bff_station_summary_aggregates_per_station_data() {
     let app = TestApp::with_station_analytics_service(service);
 
     let (status, body) = app
-        .get_json(&format!("/api/bff/stations/summary{STATIONS_BBOX}"))
+        .get_json(&format!(
+            "/api/bff/stations/summary/overview{STATIONS_BBOX}"
+        ))
         .await;
 
     assert_eq!(status, StatusCode::OK);

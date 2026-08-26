@@ -22,7 +22,9 @@ use crate::core::domain::measurements::repository_port::{
     TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
-use crate::core::domain::station_analytics::{GeoBounds, MetricKey, MetricWindow, StationsSummary};
+use crate::core::domain::station_analytics::{
+    GeoBounds, GraphTimeframe, MetricKey, MetricWindow, StationsSummaryOverview,
+};
 
 const STATION_1: u128 = 0x1;
 const STATION_B: u128 = 0x2;
@@ -586,6 +588,60 @@ fn summaries_per_station_timezone_uses_each_station_local_day() {
     assert_eq!(by_name.get("C"), Some(&99));
 }
 
+#[test]
+fn sidebar_shell_returns_only_in_bounds_stations_sorted_by_name() {
+    let service = service(
+        vec![
+            station(STATION_1, "B", Some((51.96, 7.63))),
+            station(STATION_B, "A", Some((51.98, 7.6))),
+            station(STATION_C, "NoCoords", None),
+        ],
+        vec![],
+        vec![],
+        vec![],
+    );
+
+    let shell = service.sidebar_shell(bounds()).unwrap();
+    assert_eq!(
+        shell.iter().map(|s| s.name.0.as_str()).collect::<Vec<_>>(),
+        vec!["A", "B"],
+        "only positioned in-bounds stations, sorted by name"
+    );
+    assert!(
+        shell.iter().all(|s| s.coordinates.is_some()),
+        "stations without coordinates are not in the shell"
+    );
+}
+
+#[test]
+fn sidebar_stats_returns_channel_counts_and_bikes_last_day_per_station() {
+    let service = service(
+        vec![
+            station(STATION_1, "A", Some((51.96, 7.63))),
+            station(STATION_B, "B", None),
+        ],
+        vec![
+            channel(CHANNEL_A1, STATION_1, "a1"),
+            channel(CHANNEL_A2, STATION_1, "a2"),
+            channel(CHANNEL_B1, STATION_B, "b1"),
+        ],
+        vec![
+            measurement(CHANNEL_A1, 10, utc(2024, 1, 1, 11, 0, 0)),
+            measurement(CHANNEL_A1, 5, utc(2024, 1, 1, 7, 0, 0)),
+            measurement(CHANNEL_A2, 3, utc(2024, 1, 2, 9, 0, 0)),
+        ],
+        vec![],
+    );
+
+    let stats = service
+        .sidebar_stats(bounds(), utc(2024, 1, 2, 12, 0, 0))
+        .unwrap();
+    assert_eq!(stats.len(), 1, "only station A lies inside the bounds");
+    assert_eq!(stats[0].station_id, Uuid::from_u128(STATION_1));
+    assert_eq!(stats[0].channel_count, 2);
+    assert_eq!(stats[0].bikes_last_day, 15);
+}
+
 // -----------------------------------------------------------------------
 // global summary
 // -----------------------------------------------------------------------
@@ -629,69 +685,44 @@ fn global_summary_has_no_last_update_without_finished_jobs() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn overview_computes_all_four_metrics_and_channel_count() {
-    let now = utc(2024, 1, 11, 12, 0, 0);
-    let measurements = vec![
-        measurement(CHANNEL_A1, 100, utc(2024, 1, 10, 12, 0, 0)), // last day
-        measurement(CHANNEL_A1, 50, utc(2024, 1, 9, 12, 0, 0)),   // day before
-        measurement(CHANNEL_A1, 30, utc(2024, 1, 4, 12, 0, 0)),   // last 7 days
-        measurement(CHANNEL_A1, 20, utc(2024, 1, 2, 12, 0, 0)),   // 7 days before
-        measurement(CHANNEL_A1, 5, utc(2023, 12, 15, 12, 0, 0)),  // December
-        measurement(CHANNEL_A1, 2, utc(2023, 11, 15, 12, 0, 0)),  // November
-        measurement(CHANNEL_A1, 50, utc(2023, 6, 15, 12, 0, 0)),  // previous year
-        measurement(CHANNEL_A1, 20, utc(2022, 6, 15, 12, 0, 0)),  // year before
-    ];
+fn overview_shell_returns_channel_count_and_last_update() {
     let last_update = utc(2024, 1, 11, 6, 0, 0);
     let service = service(
         vec![station(STATION_1, "Promenade", None)],
-        vec![channel(CHANNEL_A1, STATION_1, "Northbound")],
-        measurements,
+        vec![
+            channel(CHANNEL_A1, STATION_1, "Northbound"),
+            channel(CHANNEL_A2, STATION_1, "Southbound"),
+        ],
+        vec![],
         vec![finished_job(0x51, last_update)],
     );
 
-    let overview = service
-        .overview(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let shell = service
+        .overview_shell(station_vo::Id(Uuid::from_u128(STATION_1)))
         .unwrap();
-    assert_eq!(overview.channel_count, 1);
-    assert_eq!(overview.station.id.0, Uuid::from_u128(STATION_1));
-    assert_eq!(overview.last_update, Some(last_update));
-    assert_eq!(overview.total_bikes, 277);
-
-    let by_key: HashMap<_, _> = overview
-        .metrics
-        .iter()
-        .map(|window| (window.key, window))
-        .collect();
-    assert_eq!(by_key[&MetricKey::LastDay].current, 100);
-    assert_eq!(by_key[&MetricKey::LastDay].previous, 50);
-    assert_eq!(by_key[&MetricKey::Last7Days].current, 180);
-    assert_eq!(by_key[&MetricKey::Last7Days].previous, 20);
-    assert_eq!(by_key[&MetricKey::LastMonth].current, 5);
-    assert_eq!(by_key[&MetricKey::LastMonth].previous, 2);
-    assert_eq!(by_key[&MetricKey::LastYear].current, 57);
-    assert_eq!(by_key[&MetricKey::LastYear].previous, 20);
+    assert_eq!(shell.station.id.0, Uuid::from_u128(STATION_1));
+    assert_eq!(shell.channel_count, 2);
+    assert_eq!(shell.last_update, Some(last_update));
 }
 
 #[test]
-fn overview_has_no_last_update_without_finished_jobs() {
-    let overview = promenade_service(Vec::new())
-        .overview(station_vo::Id(Uuid::from_u128(STATION_1)), detail_now())
+fn overview_shell_has_no_last_update_without_finished_jobs() {
+    let shell = promenade_service(Vec::new())
+        .overview_shell(station_vo::Id(Uuid::from_u128(STATION_1)))
         .unwrap();
-    assert_eq!(overview.last_update, None);
-    assert_eq!(overview.channel_count, 2);
-    assert_eq!(overview.metrics.len(), 4);
-    assert_eq!(overview.total_bikes, 0);
+    assert_eq!(shell.last_update, None);
+    assert_eq!(shell.channel_count, 2);
 }
 
 #[test]
-fn overview_unknown_station_is_an_error() {
-    let result = promenade_service(Vec::new())
-        .overview(station_vo::Id(Uuid::from_u128(0x999)), detail_now());
+fn overview_shell_unknown_station_is_an_error() {
+    let result =
+        promenade_service(Vec::new()).overview_shell(station_vo::Id(Uuid::from_u128(0x999)));
     assert!(matches!(result, Err(DomainError::NotFound(_))));
 }
 
 #[test]
-fn overview_metrics_follow_the_station_timezone() {
+fn overview_stats_metrics_follow_the_station_timezone() {
     let mut ny_station = station(STATION_1, "NY", None);
     ny_station.timezone = station_vo::Timezone("America/New_York".to_string());
     let service = service(
@@ -704,13 +735,13 @@ fn overview_metrics_follow_the_station_timezone() {
         vec![],
     );
     // now = 2024-01-02 12:00 UTC = 07:00 EST -> yesterday is 2024-01-01.
-    let overview = service
-        .overview(
+    let stats = service
+        .detail_overview_stats(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             utc(2024, 1, 2, 12, 0, 0),
         )
         .unwrap();
-    let day = overview
+    let day = stats
         .metrics
         .iter()
         .find(|window| window.key == MetricKey::LastDay)
@@ -742,43 +773,46 @@ fn detail_computes_all_windows() {
         measurement(CHANNEL_A1, 10, utc(2024, 1, 5, 12, 0, 0)),   // current year + last week
         measurement(CHANNEL_A1, 5, utc(2023, 6, 15, 12, 0, 0)),   // last year only
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
-        .unwrap();
+    let service = promenade_service(measurements);
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
 
-    assert_eq!(detail.channels.len(), 2);
-    let graphs = detail.graphs;
+    let page = service.detail_page(id, now).unwrap();
+    assert_eq!(page.channels.len(), 2);
+
+    let day = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, now)
+        .unwrap();
     assert_eq!(
-        sum_buckets(&graphs.day.current),
+        sum_buckets(&day.current),
         100,
         "only the Jan 10 measurement"
     );
-    assert!(graphs.day.previous.is_empty(), "no data for the day before");
+    assert!(day.previous.is_empty(), "no data for the day before");
+
+    let week = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Week, now)
+        .unwrap();
+    assert_eq!(sum_buckets(&week.current), 150, "Jan 8 (Mon) + Jan 10");
+    assert_eq!(sum_buckets(&week.previous), 40, "Jan 4 + Jan 5");
+
+    let last_30_days = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now)
+        .unwrap();
     assert_eq!(
-        sum_buckets(&graphs.week.current),
-        150,
-        "Jan 8 (Mon) + Jan 10"
-    );
-    assert_eq!(sum_buckets(&graphs.week.previous), 40, "Jan 4 + Jan 5");
-    assert_eq!(
-        sum_buckets(&graphs.last_30_days.current),
+        sum_buckets(&last_30_days.current),
         210,
         "all but the June 2023 one"
     );
     assert!(
-        graphs.last_30_days.previous.is_empty(),
+        last_30_days.previous.is_empty(),
         "no data for the 30 days before"
     );
-    assert_eq!(
-        sum_buckets(&graphs.year.current),
-        190,
-        "all 2024 measurements"
-    );
-    assert_eq!(
-        sum_buckets(&graphs.year.previous),
-        25,
-        "Dec 2023 + Jun 2023"
-    );
+
+    let year = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Year, now)
+        .unwrap();
+    assert_eq!(sum_buckets(&year.current), 190, "all 2024 measurements");
+    assert_eq!(sum_buckets(&year.previous), 25, "Dec 2023 + Jun 2023");
 }
 
 #[test]
@@ -790,26 +824,28 @@ fn detail_computes_previous_periods_for_day_and_last_30_days() {
         // Previous 30 days: 2023-11-12 .. 2023-12-11 local.
         measurement(CHANNEL_A1, 4, utc(2023, 12, 1, 12, 0, 0)),
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let service = promenade_service(measurements);
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let day = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, now)
+        .unwrap();
+    let last_30_days = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now)
         .unwrap();
 
-    let graphs = detail.graphs;
-    assert!(graphs.day.current.is_empty());
-    assert_eq!(sum_buckets(&graphs.day.previous), 3);
-    assert_eq!(sum_buckets(&graphs.last_30_days.current), 3);
-    assert_eq!(sum_buckets(&graphs.last_30_days.previous), 4);
+    assert!(day.current.is_empty());
+    assert_eq!(sum_buckets(&day.previous), 3);
+    assert_eq!(sum_buckets(&last_30_days.current), 3);
+    assert_eq!(sum_buckets(&last_30_days.previous), 4);
 
-    let day_a = graphs
-        .day
+    let day_a = day
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A1))
         .unwrap();
     assert!(day_a.current.is_empty());
     assert_eq!(sum_buckets(&day_a.previous), 3);
-    let thirty_a = graphs
-        .last_30_days
+    let thirty_a = last_30_days
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A1))
@@ -827,11 +863,11 @@ fn detail_computes_monthly_totals() {
         measurement(CHANNEL_A2, 5, utc(2023, 12, 21, 12, 0, 0)),
         measurement(CHANNEL_A1, 7, utc(2023, 6, 15, 12, 0, 0)),
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let monthly = promenade_service(measurements)
+        .detail_monthly(station_vo::Id(Uuid::from_u128(STATION_1)), now)
         .unwrap();
     assert_eq!(
-        detail.graphs.monthly_totals,
+        monthly,
         vec![
             MonthTotal {
                 year: 2023,
@@ -865,17 +901,19 @@ fn detail_resolutions_bucket_by_hour_and_day() {
         measurement(CHANNEL_A1, 100, utc(2022, 12, 31, 23, 0, 0)),
         measurement(CHANNEL_A1, 200, utc(2023, 1, 1, 23, 0, 0)),
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let service = promenade_service(measurements);
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let week = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Week, now)
         .unwrap();
-    let graphs = detail.graphs;
+    let last_30_days = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now)
+        .unwrap();
+    let year = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Year, now)
+        .unwrap();
 
-    let week_starts: Vec<i64> = graphs
-        .week
-        .current
-        .iter()
-        .map(|b| b.start.timestamp())
-        .collect();
+    let week_starts: Vec<i64> = week.current.iter().map(|b| b.start.timestamp()).collect();
     assert_eq!(
         week_starts,
         vec![
@@ -886,8 +924,7 @@ fn detail_resolutions_bucket_by_hour_and_day() {
         "current week buckets are one hour apart"
     );
 
-    let thirty_day_starts: Vec<i64> = graphs
-        .last_30_days
+    let thirty_day_starts: Vec<i64> = last_30_days
         .current
         .iter()
         .map(|b| b.start.timestamp())
@@ -910,12 +947,7 @@ fn detail_resolutions_bucket_by_hour_and_day() {
         "last 30 days buckets are aligned to whole local days (no zero-filling)"
     );
 
-    let last_year_starts: Vec<i64> = graphs
-        .year
-        .previous
-        .iter()
-        .map(|b| b.start.timestamp())
-        .collect();
+    let last_year_starts: Vec<i64> = year.previous.iter().map(|b| b.start.timestamp()).collect();
     assert_eq!(
         &last_year_starts[..2],
         &[
@@ -938,11 +970,15 @@ fn detail_resolutions_bucket_by_hour_and_day() {
 fn detail_current_week_has_no_future_buckets() {
     let now = detail_now();
     let measurements = vec![measurement(CHANNEL_A1, 7, utc(2024, 1, 8, 6, 0, 0))];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let week = promenade_service(measurements)
+        .detail_graphs_timeframe(
+            station_vo::Id(Uuid::from_u128(STATION_1)),
+            GraphTimeframe::Week,
+            now,
+        )
         .unwrap();
-    assert_eq!(detail.graphs.week.current.len(), 1);
-    assert_eq!(sum_buckets(&detail.graphs.week.current), 7);
+    assert_eq!(week.current.len(), 1);
+    assert_eq!(sum_buckets(&week.current), 7);
 }
 
 #[test]
@@ -953,18 +989,21 @@ fn detail_per_channel_series_and_pie() {
         measurement(CHANNEL_A2, 50, utc(2024, 1, 8, 12, 0, 0)),   // current week
         measurement(CHANNEL_A1, 20, utc(2023, 12, 20, 12, 0, 0)), // last 30 days
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let last_30_days = promenade_service(measurements)
+        .detail_graphs_timeframe(
+            station_vo::Id(Uuid::from_u128(STATION_1)),
+            GraphTimeframe::Last30Days,
+            now,
+        )
         .unwrap();
 
-    let thirty = &detail.graphs.last_30_days;
-    assert_eq!(thirty.per_channel.len(), 2, "both channels have data");
-    let a = thirty
+    assert_eq!(last_30_days.per_channel.len(), 2, "both channels have data");
+    let a = last_30_days
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A1))
         .unwrap();
-    let b = thirty
+    let b = last_30_days
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A2))
@@ -972,7 +1011,7 @@ fn detail_per_channel_series_and_pie() {
     assert_eq!(sum_buckets(&a.current), 120, "100 + 20 over 30 days");
     assert_eq!(sum_buckets(&b.current), 50);
 
-    let pie = &thirty.channel_pie;
+    let pie = &last_30_days.channel_pie;
     assert_eq!(pie.len(), 2);
     let by_id: HashMap<_, _> = pie.iter().map(|c| (c.channel_id, c.total)).collect();
     assert_eq!(by_id[&Uuid::from_u128(CHANNEL_A1)], 120);
@@ -988,20 +1027,20 @@ fn detail_per_channel_weekday_radar_follows_the_station_timezone() {
         measurement(CHANNEL_A1, 20, utc(2023, 12, 20, 12, 0, 0)),
         measurement(CHANNEL_A2, 50, utc(2024, 1, 8, 12, 0, 0)), // Monday
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let last_30_days = promenade_service(measurements)
+        .detail_graphs_timeframe(
+            station_vo::Id(Uuid::from_u128(STATION_1)),
+            GraphTimeframe::Last30Days,
+            now,
+        )
         .unwrap();
 
-    let a = detail
-        .graphs
-        .last_30_days
+    let a = last_30_days
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A1))
         .unwrap();
-    let b = detail
-        .graphs
-        .last_30_days
+    let b = last_30_days
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A2))
@@ -1029,11 +1068,15 @@ fn detail_weekday_radar_aggregates_over_last_30_days() {
         measurement(CHANNEL_A2, 50, utc(2024, 1, 8, 12, 0, 0)),   // Mon (1)
         measurement(CHANNEL_A1, 10, utc(2024, 1, 5, 12, 0, 0)),   // Fri (5)
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let last_30_days = promenade_service(measurements)
+        .detail_graphs_timeframe(
+            station_vo::Id(Uuid::from_u128(STATION_1)),
+            GraphTimeframe::Last30Days,
+            now,
+        )
         .unwrap();
 
-    let radar = &detail.graphs.last_30_days.weekday_radar;
+    let radar = &last_30_days.weekday_radar;
     let by_weekday: HashMap<_, _> = radar.iter().map(|w| (w.weekday, w.total)).collect();
     assert_eq!(by_weekday[&1], 50, "Monday");
     assert_eq!(by_weekday[&3], 120, "Wednesday");
@@ -1052,11 +1095,14 @@ fn detail_previous_and_hour_radars_are_computed() {
         // Previous day: Tue 2024-01-09, 21:00 Berlin (20:00 UTC).
         measurement(CHANNEL_A2, 50, utc(2024, 1, 9, 20, 0, 0)),
     ];
-    let detail = promenade_service(measurements)
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+    let day = promenade_service(measurements)
+        .detail_graphs_timeframe(
+            station_vo::Id(Uuid::from_u128(STATION_1)),
+            GraphTimeframe::Day,
+            now,
+        )
         .unwrap();
 
-    let day = &detail.graphs.day;
     let current_weekdays: HashMap<_, _> = day
         .weekday_radar
         .iter()
@@ -1080,9 +1126,7 @@ fn detail_previous_and_hour_radars_are_computed() {
         .collect();
     assert_eq!(by_hour_previous[&20], 50);
 
-    let a = detail
-        .graphs
-        .day
+    let a = day
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A1))
@@ -1092,9 +1136,7 @@ fn detail_previous_and_hour_radars_are_computed() {
     assert_eq!(a.hourly[0].hour, 8);
     assert!(a.hourly_previous.is_empty());
 
-    let b = detail
-        .graphs
-        .day
+    let b = day
         .per_channel
         .iter()
         .find(|s| s.channel_id == Uuid::from_u128(CHANNEL_A2))
@@ -1107,8 +1149,8 @@ fn detail_previous_and_hour_radars_are_computed() {
 
 #[test]
 fn detail_unknown_station_is_an_error() {
-    let result =
-        promenade_service(Vec::new()).detail(station_vo::Id(Uuid::from_u128(0x999)), detail_now());
+    let result = promenade_service(Vec::new())
+        .detail_page(station_vo::Id(Uuid::from_u128(0x999)), detail_now());
     assert!(matches!(result, Err(DomainError::NotFound(_))));
 }
 
@@ -1120,14 +1162,53 @@ fn detail_station_without_channels_returns_empty_graphs() {
         vec![],
         vec![],
     );
-    let detail = service
-        .detail(station_vo::Id(Uuid::from_u128(STATION_1)), detail_now())
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let page = service.detail_page(id, detail_now()).unwrap();
+    assert!(page.channels.is_empty());
+    let day = service
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, detail_now())
         .unwrap();
-    assert!(detail.channels.is_empty());
-    assert!(detail.graphs.day.current.is_empty());
-    assert!(detail.graphs.day.per_channel.is_empty());
-    assert!(detail.graphs.day.channel_pie.is_empty());
-    assert!(detail.graphs.monthly_totals.is_empty());
+    assert!(day.current.is_empty());
+    assert!(day.per_channel.is_empty());
+    assert!(day.channel_pie.is_empty());
+    let monthly = service.detail_monthly(id, detail_now()).unwrap();
+    assert!(monthly.is_empty());
+}
+
+#[test]
+fn detail_overview_stats_returns_all_time_total_and_metrics() {
+    let now = detail_now();
+    let measurements = vec![
+        measurement(CHANNEL_A1, 100, utc(2024, 1, 10, 12, 0, 0)), // last day
+        measurement(CHANNEL_A1, 20, utc(2023, 12, 20, 12, 0, 0)), // previous month
+        measurement(CHANNEL_A1, 7, utc(2023, 6, 15, 12, 0, 0)),   // previous year
+    ];
+    let stats = promenade_service(measurements)
+        .detail_overview_stats(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+        .unwrap();
+    assert_eq!(stats.total_bikes, 127, "sum over the whole history");
+    assert_eq!(stats.metrics.len(), 4);
+    let day = stats
+        .metrics
+        .iter()
+        .find(|window| window.key == MetricKey::LastDay)
+        .unwrap();
+    assert_eq!(day.current, 100);
+}
+
+#[test]
+fn graph_timeframe_keys_roundtrip() {
+    for timeframe in GraphTimeframe::ALL {
+        assert_eq!(
+            GraphTimeframe::from_key(timeframe.as_str()),
+            Some(timeframe)
+        );
+    }
+    assert_eq!(GraphTimeframe::Day.as_str(), "day");
+    assert_eq!(GraphTimeframe::Week.as_str(), "week");
+    assert_eq!(GraphTimeframe::Last30Days.as_str(), "last_30_days");
+    assert_eq!(GraphTimeframe::Year.as_str(), "year");
+    assert_eq!(GraphTimeframe::from_key("nope"), None);
 }
 
 // -----------------------------------------------------------------------
@@ -1158,7 +1239,7 @@ fn default_summary_service(measurements: Vec<Measurement>) -> StationAnalyticsSe
     )
 }
 
-fn metric_of(summary: &StationsSummary, key: MetricKey) -> &MetricWindow {
+fn metric_of(summary: &StationsSummaryOverview, key: MetricKey) -> &MetricWindow {
     summary
         .metrics
         .iter()
@@ -1168,43 +1249,52 @@ fn metric_of(summary: &StationsSummary, key: MetricKey) -> &MetricWindow {
 
 #[test]
 fn stations_summary_filters_by_bounds_and_counts_channels() {
-    let summary = default_summary_service(Vec::new())
-        .stations_summary(bounds(), &[], summary_now())
+    let service = default_summary_service(Vec::new());
+    let page = service
+        .stations_summary_page(bounds(), summary_now())
         .unwrap();
 
-    assert_eq!(summary.stations.len(), 2, "A and B are inside the bounds");
-    let by_id: HashMap<_, _> = summary
+    assert_eq!(page.stations.len(), 2, "A and B are inside the bounds");
+    let by_id: HashMap<_, _> = page
         .stations
         .iter()
         .map(|s| (s.id, s.channel_count))
         .collect();
     assert_eq!(by_id.get(&Uuid::from_u128(STATION_1)), Some(&2));
     assert_eq!(by_id.get(&Uuid::from_u128(STATION_B)), Some(&1));
-    assert_eq!(summary.channel_count, 3, "all included channels");
-    assert_eq!(summary.metrics.len(), 4);
-    assert_eq!(summary.total_bikes, 0, "no measurements, no all-time total");
+
+    let overview = service
+        .stations_summary_overview(bounds(), &[], summary_now())
+        .unwrap();
+    assert_eq!(overview.channel_count, 3, "all included channels");
+    assert_eq!(overview.metrics.len(), 4);
+    assert_eq!(
+        overview.total_bikes, 0,
+        "no measurements, no all-time total"
+    );
 }
 
 #[test]
 fn stations_summary_keeps_disabled_stations_in_the_list_but_excludes_them_from_aggregation() {
-    let summary = default_summary_service(Vec::new())
-        .stations_summary(
-            bounds(),
-            &[station_vo::Id(Uuid::from_u128(STATION_1))],
-            summary_now(),
-        )
-        .unwrap();
+    let service = default_summary_service(Vec::new());
+    let exclude = [station_vo::Id(Uuid::from_u128(STATION_1))];
 
+    let page = service
+        .stations_summary_page(bounds(), summary_now())
+        .unwrap();
     // A is still rendered (so the map can gray it out) …
-    assert_eq!(summary.stations.len(), 2);
+    assert_eq!(page.stations.len(), 2);
     assert!(
-        summary
-            .stations
+        page.stations
             .iter()
             .any(|s| s.id == Uuid::from_u128(STATION_1))
     );
+
     // … but its channels are excluded from the aggregation.
-    assert_eq!(summary.channel_count, 1, "only station B's channel");
+    let overview = service
+        .stations_summary_overview(bounds(), &exclude, summary_now())
+        .unwrap();
+    assert_eq!(overview.channel_count, 1, "only station B's channel");
 }
 
 #[test]
@@ -1217,14 +1307,14 @@ fn stations_summary_aggregates_all_four_metrics_across_stations() {
         measurement(CHANNEL_A1, 50, utc(2023, 6, 15, 12, 0, 0)),
         measurement(CHANNEL_A2, 100, utc(2022, 6, 15, 12, 0, 0)),
     ];
-    let summary = default_summary_service(measurements)
-        .stations_summary(bounds(), &[], summary_now())
+    let overview = default_summary_service(measurements)
+        .stations_summary_overview(bounds(), &[], summary_now())
         .unwrap();
 
-    assert_eq!(metric_of(&summary, MetricKey::LastDay).current, 15);
-    assert_eq!(metric_of(&summary, MetricKey::Last7Days).current, 18);
-    assert_eq!(metric_of(&summary, MetricKey::LastMonth).current, 2);
-    assert_eq!(metric_of(&summary, MetricKey::LastYear).current, 52);
+    assert_eq!(metric_of(&overview, MetricKey::LastDay).current, 15);
+    assert_eq!(metric_of(&overview, MetricKey::Last7Days).current, 18);
+    assert_eq!(metric_of(&overview, MetricKey::LastMonth).current, 2);
+    assert_eq!(metric_of(&overview, MetricKey::LastYear).current, 52);
 }
 
 #[test]
@@ -1234,11 +1324,10 @@ fn stations_summary_aggregates_per_station_graphs_and_station_pie() {
         measurement(CHANNEL_A2, 20, utc(2024, 1, 9, 12, 0, 0)),
         measurement(CHANNEL_B1, 50, utc(2024, 1, 8, 13, 0, 0)),
     ];
-    let summary = default_summary_service(measurements)
-        .stations_summary(bounds(), &[], summary_now())
+    let week = default_summary_service(measurements)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, summary_now())
         .unwrap();
 
-    let week = &summary.graphs.week;
     assert_eq!(sum_buckets(&week.current), 170, "aggregate current week");
     let pie: HashMap<_, _> = week
         .station_pie
@@ -1263,11 +1352,11 @@ fn stations_summary_per_station_weekday_radar_folds_each_station_buckets() {
         measurement(CHANNEL_A1, 30, utc(2024, 1, 10, 12, 0, 0)), // Wed
         measurement(CHANNEL_B1, 7, utc(2024, 1, 8, 12, 0, 0)),  // Mon
     ];
-    let summary = default_summary_service(measurements)
-        .stations_summary(bounds(), &[], summary_now())
+    let week = default_summary_service(measurements)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, summary_now())
         .unwrap();
 
-    let a_radar = &summary.graphs.week.per_station[0].weekday_radar;
+    let a_radar = &week.per_station[0].weekday_radar;
     let by_weekday: HashMap<_, _> = a_radar.iter().map(|w| (w.weekday, w.total)).collect();
     assert_eq!(by_weekday.get(&1), Some(&10), "Monday");
     assert_eq!(by_weekday.get(&3), Some(&30), "Wednesday");
@@ -1279,11 +1368,10 @@ fn stations_summary_computes_previous_and_hour_radars() {
         measurement(CHANNEL_A1, 100, utc(2024, 1, 10, 8, 0, 0)), // current week
         measurement(CHANNEL_B1, 50, utc(2024, 1, 2, 20, 0, 0)),  // previous week
     ];
-    let summary = default_summary_service(measurements)
-        .stations_summary(bounds(), &[], summary_now())
+    let week = default_summary_service(measurements)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, summary_now())
         .unwrap();
 
-    let week = &summary.graphs.week;
     let current_weekdays: HashMap<_, _> = week
         .weekday_radar
         .iter()
@@ -1333,12 +1421,12 @@ fn stations_summary_computes_monthly_totals_over_the_union() {
         measurement(CHANNEL_A1, 100, utc(2024, 1, 10, 12, 0, 0)),
         measurement(CHANNEL_B1, 25, utc(2023, 12, 15, 12, 0, 0)),
     ];
-    let summary = default_summary_service(measurements)
-        .stations_summary(bounds(), &[], summary_now())
+    let service = default_summary_service(measurements);
+    let monthly = service
+        .stations_summary_monthly(bounds(), &[], summary_now())
         .unwrap();
-
     assert_eq!(
-        summary.graphs.monthly_totals,
+        monthly,
         vec![
             MonthTotal {
                 year: 2023,
@@ -1352,7 +1440,10 @@ fn stations_summary_computes_monthly_totals_over_the_union() {
             },
         ]
     );
-    assert_eq!(summary.total_bikes, 125);
+    let overview = service
+        .stations_summary_overview(bounds(), &[], summary_now())
+        .unwrap();
+    assert_eq!(overview.total_bikes, 125);
 }
 
 #[test]
@@ -1363,22 +1454,35 @@ fn stations_summary_empty_bounds_returns_empty_stations_and_graphs() {
         max_latitude: 56.0,
         max_longitude: 11.0,
     };
-    let summary = default_summary_service(Vec::new())
-        .stations_summary(empty_bounds, &[], summary_now())
-        .unwrap();
+    let service = default_summary_service(Vec::new());
 
-    assert!(summary.stations.is_empty());
-    assert_eq!(summary.channel_count, 0);
-    assert_eq!(summary.total_bikes, 0);
-    assert!(summary.graphs.week.current.is_empty());
-    assert!(summary.graphs.week.per_station.is_empty());
-    assert!(summary.graphs.monthly_totals.is_empty());
+    let page = service
+        .stations_summary_page(empty_bounds, summary_now())
+        .unwrap();
+    assert!(page.stations.is_empty());
+
+    let overview = service
+        .stations_summary_overview(empty_bounds, &[], summary_now())
+        .unwrap();
+    assert_eq!(overview.channel_count, 0);
+    assert_eq!(overview.total_bikes, 0);
     assert!(
-        summary
+        overview
             .metrics
             .iter()
             .all(|m| m.current == 0 && m.previous == 0)
     );
+
+    let week = service
+        .stations_summary_graphs_timeframe(empty_bounds, &[], GraphTimeframe::Week, summary_now())
+        .unwrap();
+    assert!(week.current.is_empty());
+    assert!(week.per_station.is_empty());
+
+    let monthly = service
+        .stations_summary_monthly(empty_bounds, &[], summary_now())
+        .unwrap();
+    assert!(monthly.is_empty());
 }
 
 #[test]
@@ -1391,10 +1495,10 @@ fn stations_summary_last_update_comes_from_the_newest_finished_job() {
         vec![],
         vec![older, newer],
     );
-    let summary = service
-        .stations_summary(bounds(), &[], summary_now())
+    let page = service
+        .stations_summary_page(bounds(), summary_now())
         .unwrap();
-    assert_eq!(summary.last_update, Some(utc(2024, 1, 11, 8, 0, 0)));
+    assert_eq!(page.last_update, Some(utc(2024, 1, 11, 8, 0, 0)));
 }
 
 #[test]
@@ -1407,7 +1511,7 @@ fn stations_summary_propagates_invalid_timezone() {
         vec![],
         vec![],
     );
-    let result = service.stations_summary(bounds(), &[], summary_now());
+    let result = service.stations_summary_overview(bounds(), &[], summary_now());
     assert!(matches!(result, Err(DomainError::InvalidQuery(_))));
 }
 
@@ -1425,6 +1529,10 @@ fn graph_windows_rejects_invalid_timezone_via_detail() {
         vec![],
         vec![],
     );
-    let result = service.detail(station_vo::Id(Uuid::from_u128(STATION_1)), detail_now());
+    let result = service.detail_graphs_timeframe(
+        station_vo::Id(Uuid::from_u128(STATION_1)),
+        GraphTimeframe::Week,
+        detail_now(),
+    );
     assert!(matches!(result, Err(DomainError::InvalidQuery(_))));
 }

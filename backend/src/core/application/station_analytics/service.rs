@@ -1,7 +1,8 @@
 //! Application service computing all station analytics aggregations for the BFF
 //! endpoints: the per-station summaries (sidebar/search), the whole-system
-//! global summary (header), the per-station overview page, the per-station
-//! detail graphs and the aggregated station-summary page.
+//! global summary (header), the per-station overview page, and the per-card
+//! sub-resources of the station detail and station-summary pages (page shell,
+//! overview card, per-timeframe graphs, monthly totals).
 //!
 //! This file only orchestrates: it fetches stations/channels, builds the id
 //! maps and assembles the payloads. The heavy aggregation lives in
@@ -24,11 +25,12 @@ use crate::core::domain::counting_stations::repository_port::CountingStationRepo
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
-use crate::core::domain::measurements::repository_port::MeasurementRepository;
+use crate::core::domain::measurements::repository_port::{MeasurementRepository, MonthTotal};
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
-    GeoBounds, GlobalSummary, StationDetail, StationDetailGraphs, StationOverview, StationSummary,
-    StationsSummary, SummaryStation,
+    GeoBounds, GlobalSummary, GraphTimeframe, PeriodGraphs, SidebarStationStats, StationDetailPage,
+    StationOverviewShell, StationOverviewStats, StationSummary, StationsSummaryOverview,
+    StationsSummaryPage, SummaryPeriodGraphs, SummaryStation,
 };
 
 use super::{graphs, metrics};
@@ -39,6 +41,13 @@ pub struct StationAnalyticsService {
     measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
     job_repository: Arc<dyn JobRepository + Send + Sync>,
 }
+
+/// Per-station channel counts and the channel→station id map, over every
+/// channel in the system (the two maps `channel_maps` builds together).
+type ChannelMaps = (
+    HashMap<uuid::Uuid, usize>,
+    HashMap<uuid::Uuid, Vec<ChannelId>>,
+);
 
 impl StationAnalyticsService {
     pub fn new(
@@ -66,15 +75,116 @@ impl StationAnalyticsService {
         }
         Ok(map)
     }
-}
 
-impl StationAnalyticsServicePort for StationAnalyticsService {
-    fn summaries(
+    /// The positioned stations inside `bounds`, excluding the given ids (the
+    /// disabled stations the frontend grays out and keeps out of the
+    /// aggregation).
+    fn included_stations(
+        &self,
+        bounds: GeoBounds,
+        exclude: &[Id],
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        let all = self.counting_station_repository.find_filtered(None)?;
+        Ok(all
+            .into_iter()
+            .filter(|station| {
+                station
+                    .coordinates
+                    .is_some_and(|coords| bounds.contains(coords))
+                    && !exclude.contains(&station.id)
+            })
+            .collect())
+    }
+
+    /// The summary shell's rendering list: every positioned station inside
+    /// `bounds` (disabled ones stay — the frontend grays them out) with its
+    /// channel count.
+    fn summary_stations_in_bounds(
+        &self,
+        bounds: GeoBounds,
+    ) -> Result<Vec<SummaryStation>, DomainError> {
+        let all = self.counting_station_repository.find_filtered(None)?;
+        let channels_by_station = self.channels_by_station()?;
+        Ok(all
+            .into_iter()
+            .filter(|station| {
+                station
+                    .coordinates
+                    .is_some_and(|coords| bounds.contains(coords))
+            })
+            .map(|station| {
+                let coordinates = station
+                    .coordinates
+                    .expect("filtered to positioned stations");
+                SummaryStation {
+                    id: station.id.0,
+                    name: station.name.0.clone(),
+                    latitude: coordinates.latitude,
+                    longitude: coordinates.longitude,
+                    channel_count: channels_by_station
+                        .get(&station.id.0)
+                        .map_or(0, |channels| channels.len()),
+                }
+            })
+            .collect())
+    }
+
+    /// All channels of the given stations flattened to ids, plus the
+    /// channel→station map and the stable station-id order (for the per-station
+    /// nerd stats).
+    fn summary_group_ids(
+        stations: &[CountingStation],
+        channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
+    ) -> (
+        Vec<uuid::Uuid>,
+        Vec<ChannelId>,
+        HashMap<uuid::Uuid, uuid::Uuid>,
+    ) {
+        let station_ids: Vec<uuid::Uuid> = stations.iter().map(|s| s.id.0).collect();
+        let mut channel_ids: Vec<ChannelId> = Vec::new();
+        let mut station_of_channel: HashMap<uuid::Uuid, uuid::Uuid> = HashMap::new();
+        for station in stations {
+            if let Some(channels) = channels_by_station.get(&station.id.0) {
+                for channel in channels {
+                    channel_ids.push(ChannelId(channel.id.0));
+                    station_of_channel.insert(channel.id.0, station.id.0);
+                }
+            }
+        }
+        (station_ids, channel_ids, station_of_channel)
+    }
+
+    /// The per-month totals over all channels of the given stations, in the
+    /// first station's timezone (empty when there are no stations).
+    fn summary_monthly_totals(
+        &self,
+        included: &[CountingStation],
+        channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
+    ) -> Result<Vec<MonthTotal>, DomainError> {
+        let Some(first) = included.first() else {
+            return Ok(Vec::new());
+        };
+        let timezone = first.timezone.0.clone();
+        let mut channel_ids: Vec<ChannelId> = Vec::new();
+        for station in included {
+            if let Some(channels) = channels_by_station.get(&station.id.0) {
+                for channel in channels {
+                    channel_ids.push(ChannelId(channel.id.0));
+                }
+            }
+        }
+        self.measurement_repository
+            .sum_by_month(&timezone, &channel_ids)
+    }
+
+    /// The stations whose coordinates lie inside `bounds` (all when `None`),
+    /// sorted by name. Shared by `summaries`, `sidebar_shell` and
+    /// `sidebar_stats`.
+    fn stations_for_bounds(
         &self,
         bounds: Option<GeoBounds>,
-        now: DateTime<Utc>,
-    ) -> Result<Vec<StationSummary>, DomainError> {
-        let stations: Vec<CountingStation> = self
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        let mut stations: Vec<CountingStation> = self
             .counting_station_repository
             .find_filtered(None)?
             .into_iter()
@@ -86,7 +196,13 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                 })
             })
             .collect();
+        stations.sort_by(|a, b| a.name.0.cmp(&b.name.0));
+        Ok(stations)
+    }
 
+    /// Per-station channel counts and the channel→station id map, over every
+    /// channel in the system.
+    fn channel_maps(&self) -> Result<ChannelMaps, DomainError> {
         let channels = self.channel_repository.find_filtered(None, None)?;
         let mut channel_count_by_station: HashMap<uuid::Uuid, usize> = HashMap::new();
         let mut channels_by_station: HashMap<uuid::Uuid, Vec<ChannelId>> = HashMap::new();
@@ -98,11 +214,19 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                 .or_default()
                 .push(ChannelId(channel.id.0));
         }
+        Ok((channel_count_by_station, channels_by_station))
+    }
 
-        // Sum each station's channels individually over its own local-day
-        // window (one multi-channel query per station).
+    /// Sum of each station's channels over its own previous local-day window
+    /// (one multi-channel query per station).
+    fn bikes_by_station(
+        &self,
+        stations: &[CountingStation],
+        channels_by_station: &HashMap<uuid::Uuid, Vec<ChannelId>>,
+        now: DateTime<Utc>,
+    ) -> Result<HashMap<uuid::Uuid, i64>, DomainError> {
         let mut bikes_by_station: HashMap<uuid::Uuid, i64> = HashMap::new();
-        for station in &stations {
+        for station in stations {
             let tz = station.timezone.parse()?;
             let (from, to) = previous_local_day(tz, now)?;
             let bikes = match channels_by_station.get(&station.id.0) {
@@ -116,8 +240,20 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             };
             bikes_by_station.insert(station.id.0, bikes);
         }
+        Ok(bikes_by_station)
+    }
+}
 
-        let mut summaries: Vec<StationSummary> = stations
+impl StationAnalyticsServicePort for StationAnalyticsService {
+    fn summaries(
+        &self,
+        bounds: Option<GeoBounds>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<StationSummary>, DomainError> {
+        let stations = self.stations_for_bounds(bounds)?;
+        let (channel_count_by_station, channels_by_station) = self.channel_maps()?;
+        let bikes_by_station = self.bikes_by_station(&stations, &channels_by_station, now)?;
+        Ok(stations
             .into_iter()
             .map(|station| {
                 let station_id = station.id.0;
@@ -130,9 +266,32 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                     bikes_last_day: bikes_by_station.get(&station_id).copied().unwrap_or(0),
                 }
             })
-            .collect();
-        summaries.sort_by(|a, b| a.station.name.0.cmp(&b.station.name.0));
-        Ok(summaries)
+            .collect())
+    }
+
+    fn sidebar_shell(&self, bounds: GeoBounds) -> Result<Vec<CountingStation>, DomainError> {
+        self.stations_for_bounds(Some(bounds))
+    }
+
+    fn sidebar_stats(
+        &self,
+        bounds: GeoBounds,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<SidebarStationStats>, DomainError> {
+        let stations = self.stations_for_bounds(Some(bounds))?;
+        let (channel_count_by_station, channels_by_station) = self.channel_maps()?;
+        let bikes_by_station = self.bikes_by_station(&stations, &channels_by_station, now)?;
+        Ok(stations
+            .into_iter()
+            .map(|station| SidebarStationStats {
+                station_id: station.id.0,
+                channel_count: channel_count_by_station
+                    .get(&station.id.0)
+                    .copied()
+                    .unwrap_or(0),
+                bikes_last_day: bikes_by_station.get(&station.id.0).copied().unwrap_or(0),
+            })
+            .collect())
     }
 
     fn global_summary(&self, now: DateTime<Utc>) -> Result<GlobalSummary, DomainError> {
@@ -169,7 +328,40 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         })
     }
 
-    fn overview(&self, station_id: Id, now: DateTime<Utc>) -> Result<StationOverview, DomainError> {
+    fn overview_shell(&self, station_id: Id) -> Result<StationOverviewShell, DomainError> {
+        let station = self.counting_station_repository.find_by_id(station_id)?;
+        let channels = self
+            .channel_repository
+            .find_by_counting_station_id(CountingStationId(station.id.0))?;
+        let channel_count = channels.len();
+        Ok(StationOverviewShell {
+            station,
+            channel_count,
+            last_update: metrics::last_update(self.job_repository.as_ref())?,
+        })
+    }
+
+    fn detail_page(
+        &self,
+        station_id: Id,
+        _now: DateTime<Utc>,
+    ) -> Result<StationDetailPage, DomainError> {
+        let station = self.counting_station_repository.find_by_id(station_id)?;
+        let channels = self
+            .channel_repository
+            .find_by_counting_station_id(CountingStationId(station.id.0))?;
+        Ok(StationDetailPage {
+            station,
+            channels,
+            last_update: metrics::last_update(self.job_repository.as_ref())?,
+        })
+    }
+
+    fn detail_overview_stats(
+        &self,
+        station_id: Id,
+        now: DateTime<Utc>,
+    ) -> Result<StationOverviewStats, DomainError> {
         let station = self.counting_station_repository.find_by_id(station_id)?;
 
         let channels = self
@@ -179,7 +371,6 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             .iter()
             .map(|channel| ChannelId(channel.id.0))
             .collect();
-        let channel_count = channels.len();
 
         let mut channels_by_station = HashMap::new();
         channels_by_station.insert(station.id.0, channels);
@@ -199,20 +390,21 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             .map(|month| month.total)
             .sum();
 
-        Ok(StationOverview {
-            station,
-            channel_count,
+        Ok(StationOverviewStats {
             total_bikes,
             metrics,
-            last_update: metrics::last_update(self.job_repository.as_ref())?,
         })
     }
 
-    fn detail(&self, station_id: Id, now: DateTime<Utc>) -> Result<StationDetail, DomainError> {
+    fn detail_graphs_timeframe(
+        &self,
+        station_id: Id,
+        timeframe: GraphTimeframe,
+        now: DateTime<Utc>,
+    ) -> Result<PeriodGraphs, DomainError> {
         let station = self.counting_station_repository.find_by_id(station_id)?;
         let tz: Tz = station.timezone.parse()?;
         let timezone = station.timezone.0.clone();
-
         let channels = self
             .channel_repository
             .find_by_counting_station_id(CountingStationId(station.id.0))?;
@@ -220,105 +412,61 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             .iter()
             .map(|channel| ChannelId(channel.id.0))
             .collect();
-
         let windows = graphs::graph_windows(tz, now)?;
+        let pair = match timeframe {
+            GraphTimeframe::Day => &windows.day,
+            GraphTimeframe::Week => &windows.week,
+            GraphTimeframe::Last30Days => &windows.last_30_days,
+            GraphTimeframe::Year => &windows.year,
+        };
+        graphs::period_graphs_per_channel(
+            self.measurement_repository.as_ref(),
+            &pair.current,
+            &pair.previous,
+            &timezone,
+            tz,
+            &channel_ids,
+            &channels,
+        )
+    }
 
-        let day = graphs::period_graphs_per_channel(
-            self.measurement_repository.as_ref(),
-            &windows.day.current,
-            &windows.day.previous,
-            &timezone,
-            tz,
-            &channel_ids,
-            &channels,
-        )?;
-        let week = graphs::period_graphs_per_channel(
-            self.measurement_repository.as_ref(),
-            &windows.week.current,
-            &windows.week.previous,
-            &timezone,
-            tz,
-            &channel_ids,
-            &channels,
-        )?;
-        let last_30_days = graphs::period_graphs_per_channel(
-            self.measurement_repository.as_ref(),
-            &windows.last_30_days.current,
-            &windows.last_30_days.previous,
-            &timezone,
-            tz,
-            &channel_ids,
-            &channels,
-        )?;
-        let year = graphs::period_graphs_per_channel(
-            self.measurement_repository.as_ref(),
-            &windows.year.current,
-            &windows.year.previous,
-            &timezone,
-            tz,
-            &channel_ids,
-            &channels,
-        )?;
+    fn detail_monthly(
+        &self,
+        station_id: Id,
+        _now: DateTime<Utc>,
+    ) -> Result<Vec<MonthTotal>, DomainError> {
+        let station = self.counting_station_repository.find_by_id(station_id)?;
+        let timezone = station.timezone.0.clone();
+        let channels = self
+            .channel_repository
+            .find_by_counting_station_id(CountingStationId(station.id.0))?;
+        let channel_ids: Vec<ChannelId> = channels
+            .iter()
+            .map(|channel| ChannelId(channel.id.0))
+            .collect();
+        self.measurement_repository
+            .sum_by_month(&timezone, &channel_ids)
+    }
 
-        let monthly_totals = self
-            .measurement_repository
-            .sum_by_month(&timezone, &channel_ids)?;
-
-        Ok(StationDetail {
-            channels,
-            graphs: StationDetailGraphs {
-                day,
-                week,
-                last_30_days,
-                year,
-                monthly_totals,
-            },
+    fn stations_summary_page(
+        &self,
+        bounds: GeoBounds,
+        _now: DateTime<Utc>,
+    ) -> Result<StationsSummaryPage, DomainError> {
+        Ok(StationsSummaryPage {
+            stations: self.summary_stations_in_bounds(bounds)?,
+            last_update: metrics::last_update(self.job_repository.as_ref())?,
         })
     }
 
-    fn stations_summary(
+    fn stations_summary_overview(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         now: DateTime<Utc>,
-    ) -> Result<StationsSummary, DomainError> {
-        let all = self.counting_station_repository.find_filtered(None)?;
-        let in_bounds: Vec<CountingStation> = all
-            .into_iter()
-            .filter(|station| {
-                station
-                    .coordinates
-                    .is_some_and(|coords| bounds.contains(coords))
-            })
-            .collect();
-        let included: Vec<CountingStation> = in_bounds
-            .iter()
-            .filter(|station| !exclude.contains(&station.id))
-            .cloned()
-            .collect();
-
+    ) -> Result<StationsSummaryOverview, DomainError> {
+        let included = self.included_stations(bounds, exclude)?;
         let channels_by_station = self.channels_by_station()?;
-
-        // Rendering list: every positioned station in bounds (disabled ones are
-        // kept so the frontend can gray them out on the map).
-        let stations: Vec<SummaryStation> = in_bounds
-            .iter()
-            .map(|station| {
-                let coordinates = station
-                    .coordinates
-                    .expect("filtered to positioned stations");
-                SummaryStation {
-                    id: station.id.0,
-                    name: station.name.0.clone(),
-                    latitude: coordinates.latitude,
-                    longitude: coordinates.longitude,
-                    channel_count: channels_by_station
-                        .get(&station.id.0)
-                        .map_or(0, |channels| channels.len()),
-                }
-            })
-            .collect();
-
         let metrics = metrics::metric_windows(
             self.measurement_repository.as_ref(),
             &included,
@@ -333,25 +481,70 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                     .map_or(0, |channels| channels.len())
             })
             .sum();
-        let last_update = metrics::last_update(self.job_repository.as_ref())?;
-        let graphs = graphs::stations_summary_graphs(
-            self.measurement_repository.as_ref(),
-            &included,
-            &channels_by_station,
-            now,
-        )?;
-        // All-time total over the included stations' channels: the monthly bar
-        // chart already aggregates the whole history, so its totals sum up to
-        // the lifetime counter (no extra repository read).
-        let total_bikes: i64 = graphs.monthly_totals.iter().map(|month| month.total).sum();
-
-        Ok(StationsSummary {
-            stations,
+        let total_bikes: i64 = self
+            .summary_monthly_totals(&included, &channels_by_station)?
+            .iter()
+            .map(|month| month.total)
+            .sum();
+        Ok(StationsSummaryOverview {
             channel_count,
             total_bikes,
             metrics,
-            last_update,
-            graphs,
         })
+    }
+
+    fn stations_summary_graphs_timeframe(
+        &self,
+        bounds: GeoBounds,
+        exclude: &[Id],
+        timeframe: GraphTimeframe,
+        now: DateTime<Utc>,
+    ) -> Result<SummaryPeriodGraphs, DomainError> {
+        let included = self.included_stations(bounds, exclude)?;
+        let Some(first) = included.first() else {
+            return Ok(SummaryPeriodGraphs {
+                current: Vec::new(),
+                previous: Vec::new(),
+                weekday_radar: Vec::new(),
+                weekday_radar_previous: Vec::new(),
+                hourly: Vec::new(),
+                hourly_previous: Vec::new(),
+                station_pie: Vec::new(),
+                per_station: Vec::new(),
+            });
+        };
+        let channels_by_station = self.channels_by_station()?;
+        let (station_ids, channel_ids, station_of_channel) =
+            Self::summary_group_ids(&included, &channels_by_station);
+        let tz: Tz = first.timezone.parse()?;
+        let timezone = first.timezone.0.clone();
+        let windows = graphs::graph_windows(tz, now)?;
+        let pair = match timeframe {
+            GraphTimeframe::Day => &windows.day,
+            GraphTimeframe::Week => &windows.week,
+            GraphTimeframe::Last30Days => &windows.last_30_days,
+            GraphTimeframe::Year => &windows.year,
+        };
+        graphs::period_graphs_per_station(
+            self.measurement_repository.as_ref(),
+            &pair.current,
+            &pair.previous,
+            &timezone,
+            tz,
+            &channel_ids,
+            &station_ids,
+            &station_of_channel,
+        )
+    }
+
+    fn stations_summary_monthly(
+        &self,
+        bounds: GeoBounds,
+        exclude: &[Id],
+        _now: DateTime<Utc>,
+    ) -> Result<Vec<MonthTotal>, DomainError> {
+        let included = self.included_stations(bounds, exclude)?;
+        let channels_by_station = self.channels_by_station()?;
+        self.summary_monthly_totals(&included, &channels_by_station)
     }
 }

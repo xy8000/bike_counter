@@ -13,7 +13,6 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
 
 use crate::core::domain::channels::channel::Channel;
-use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::{
     local_days_window, local_week_start, local_year_start, previous_calendar_year,
     previous_local_days,
@@ -24,8 +23,7 @@ use crate::core::domain::measurements::repository_port::{
     ChannelTotal, HourTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::{
-    PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal, StationsSummaryGraphs,
-    SummaryPeriodGraphs,
+    PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal, SummaryPeriodGraphs,
 };
 
 /// Fixed bucket widths (seconds) used by the detail/summary graphs.
@@ -447,105 +445,4 @@ pub(super) fn period_graphs_per_station(
         station_pie,
         per_station,
     })
-}
-
-/// The bucketed graphs for the summary page over the included stations'
-/// channels. All bucketed reads run in the first included station's
-/// timezone (all Münster stations share `Europe/Berlin`; mixed timezones
-/// would only shift the chart buckets, not the metrics).
-pub(super) fn stations_summary_graphs(
-    repository: &dyn MeasurementRepository,
-    included: &[CountingStation],
-    channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
-    now: DateTime<Utc>,
-) -> Result<StationsSummaryGraphs, DomainError> {
-    let station_ids: Vec<uuid::Uuid> = included.iter().map(|s| s.id.0).collect();
-    let mut channel_ids: Vec<ChannelId> = Vec::new();
-    let mut station_of_channel: HashMap<uuid::Uuid, uuid::Uuid> = HashMap::new();
-    for station in included {
-        if let Some(channels) = channels_by_station.get(&station.id.0) {
-            for channel in channels {
-                channel_ids.push(ChannelId(channel.id.0));
-                station_of_channel.insert(channel.id.0, station.id.0);
-            }
-        }
-    }
-
-    let Some(first) = included.first() else {
-        return Ok(empty_graphs());
-    };
-    let tz: Tz = first.timezone.parse()?;
-    let timezone = first.timezone.0.clone();
-    let windows = graph_windows(tz, now)?;
-
-    let day = period_graphs_per_station(
-        repository,
-        &windows.day.current,
-        &windows.day.previous,
-        &timezone,
-        tz,
-        &channel_ids,
-        &station_ids,
-        &station_of_channel,
-    )?;
-    let week = period_graphs_per_station(
-        repository,
-        &windows.week.current,
-        &windows.week.previous,
-        &timezone,
-        tz,
-        &channel_ids,
-        &station_ids,
-        &station_of_channel,
-    )?;
-    let last_30_days = period_graphs_per_station(
-        repository,
-        &windows.last_30_days.current,
-        &windows.last_30_days.previous,
-        &timezone,
-        tz,
-        &channel_ids,
-        &station_ids,
-        &station_of_channel,
-    )?;
-    let year = period_graphs_per_station(
-        repository,
-        &windows.year.current,
-        &windows.year.previous,
-        &timezone,
-        tz,
-        &channel_ids,
-        &station_ids,
-        &station_of_channel,
-    )?;
-    let monthly_totals = repository.sum_by_month(&timezone, &channel_ids)?;
-
-    Ok(StationsSummaryGraphs {
-        day,
-        week,
-        last_30_days,
-        year,
-        monthly_totals,
-    })
-}
-
-/// The empty graph set for a summary page over no included stations.
-pub(super) fn empty_graphs() -> StationsSummaryGraphs {
-    let empty_period = || SummaryPeriodGraphs {
-        current: Vec::new(),
-        previous: Vec::new(),
-        weekday_radar: Vec::new(),
-        weekday_radar_previous: Vec::new(),
-        hourly: Vec::new(),
-        hourly_previous: Vec::new(),
-        station_pie: Vec::new(),
-        per_station: Vec::new(),
-    };
-    StationsSummaryGraphs {
-        day: empty_period(),
-        week: empty_period(),
-        last_30_days: empty_period(),
-        year: empty_period(),
-        monthly_totals: Vec::new(),
-    }
 }

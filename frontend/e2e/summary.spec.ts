@@ -25,8 +25,9 @@ async function smallSummaryUrl(page: Page): Promise<string> {
   return `/summary?${params.toString()}`
 }
 
-/// Wait for the page content to replace the spinner (the aggregation is
-/// computed in the backend, so it can take a few seconds).
+/// Wait for the page shell to render (the station list + title arrive first;
+/// the aggregated stats cards then load their own sub-resources, which
+/// Playwright auto-waits on in the assertions below).
 async function waitForSummaryContent(page: Page) {
   await expect(page.getByRole('heading', { name: 'Station summary' })).toBeVisible({
     timeout: 240_000,

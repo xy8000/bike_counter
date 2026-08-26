@@ -10,18 +10,27 @@ export interface StationOverviewMetric {
   delta_percent: number | null
 }
 
-/// The page-shaped payload everything the overview panel needs to render.
-export interface StationOverview {
+/// The overview **shell** (from GET /api/bff/station-overview/{id}): the
+/// station identity the panel needs to render the name/image immediately, plus
+/// a HATEOAS `stats` link to the stats sub-resource.
+export interface StationOverviewPage {
   id: string
   name: string
   description: string
   latitude: number | null
   longitude: number | null
   channel_count: number
-  /// All-time total of bikes counted at this station (the whole history).
-  total_bikes: number
   image_url: string
-  metrics: StationOverviewMetric[]
   last_update: string | null
   detail_url: string
+  _links: {
+    stats: string
+  }
+}
+
+/// The overview stats card (from GET /api/bff/station-overview/{id}/stats): the
+/// all-time total and the four trend metrics.
+export interface StationOverviewStats {
+  total_bikes: number
+  metrics: StationOverviewMetric[]
 }

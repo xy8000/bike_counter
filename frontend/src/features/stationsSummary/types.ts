@@ -1,6 +1,6 @@
 /// Types for the station-summary page (BFF `stations/summary`).
 import type { StationOverviewMetric } from '../stationOverview/types'
-import type { HourTotal, MonthTotal, TimeBucket, WeekdayTotal } from '../stationDetail/types'
+import type { HourTotal, MonthTotal, TimeBucket, Timeframe, WeekdayTotal } from '../stationDetail/types'
 
 /// A positioned station inside the requested bounds (disabled ones included so
 /// the map can gray them out).
@@ -43,25 +43,47 @@ export interface SummaryPeriodGraphs {
   per_station: PerStationSeries[]
 }
 
-/// All graph data for the summary page, keyed by the four timeframes, plus the
-/// per-month totals for the standalone monthly bar chart.
-export interface StationsSummaryGraphs {
-  day: SummaryPeriodGraphs
-  week: SummaryPeriodGraphs
-  last_30_days: SummaryPeriodGraphs
-  year: SummaryPeriodGraphs
-  monthly_totals: MonthTotal[]
+/// The HATEOAS links of the summary page shell: one URL per stats card. The
+/// windowed links (`overview`, `graphs_*`) carry the bounds + `as_of`; the
+/// frontend appends `&exclude=...` from its local disabled state.
+export interface StationsSummaryLinks {
+  self: string
+  overview: string
+  graphs_day: string
+  graphs_week: string
+  graphs_last_30_days: string
+  graphs_year: string
+  monthly: string
 }
 
-/// The page-shaped payload for the station-summary page: the fallback image,
-/// the station list, the aggregated overview metrics and the bucketed graphs.
-export interface StationsSummary {
+/// Maps a `Timeframe` to its HATEOAS link key on the summary shell.
+export const GRAPH_LINK_KEYS: Record<Timeframe, keyof StationsSummaryLinks> = {
+  day: 'graphs_day',
+  week: 'graphs_week',
+  last_30_days: 'graphs_last_30_days',
+  year: 'graphs_year',
+}
+
+/// The page-shell payload of the summary page: the fallback image, the station
+/// list (for the map + toggle) and the last update, plus the `_links` to each
+/// stats card. The aggregated stats live in the cards because they depend on the
+/// `exclude` set.
+export interface StationsSummaryPage {
   image_url: string
   stations: SummaryStation[]
+  last_update: string | null
+  _links: StationsSummaryLinks
+}
+
+/// The overview card of the summary page: the aggregated channel count, all-time
+/// total and four trend metrics over the included stations.
+export interface StationsSummaryOverview {
   channel_count: number
-  /// All-time total of bikes counted across the included stations' channels.
   total_bikes: number
   metrics: StationOverviewMetric[]
-  last_update: string | null
-  graphs: StationsSummaryGraphs
+}
+
+/// The monthly totals card of the summary page.
+export interface MonthlyTotals {
+  monthly_totals: MonthTotal[]
 }

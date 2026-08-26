@@ -3,6 +3,11 @@
 //! Every type here is frontend-only ("sidebar", "search", "action map" naming
 //! lives only in this BFF module). The domain underneath stays decoupled and
 //! only knows about stations, station summaries and the global summary.
+//!
+//! The station detail and station-summary pages are split into a light **page
+//! shell** (metadata + channels/stations + HATEOAS `_links`) and **per-card
+//! sub-resource DTOs** (overview stats, one timeframe of graphs, monthly
+//! totals).
 
 use std::collections::HashMap;
 
@@ -11,13 +16,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::adapter::driving::rest::dto::CountingStationDto;
+use crate::adapter::driving::rest::dto::{CountingStationDto, LinkDto};
 use crate::core::domain::measurements::repository_port::{
     HourTotal, MonthTotal, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::{
-    PeriodGraphs, StationDetailGraphs, StationSummary, StationsSummary, StationsSummaryGraphs,
-    SummaryPeriodGraphs,
+    PeriodGraphs, SidebarStationStats, StationOverviewStats, StationSummary,
+    StationsSummaryOverview, SummaryPeriodGraphs,
 };
 
 /// A counting station enriched with its channel count and the number of bikes
@@ -64,15 +69,56 @@ pub struct StationMapListDto {
     pub items: Vec<StationMapDto>,
 }
 
-/// The station summaries plus the visible-vs-global counter returned by
-/// `GET /api/bff/stations/sidebar`. `visible_count` is the number of stations in
-/// the current map view; `total_count` is the number of counting stations in the
-/// whole system.
+/// A sidebar list entry: the station **identity** only (image + name +
+/// description + coordinates), returned by the sidebar shell. The per-station
+/// stats (channel count, bikes last day) live in the separate stats
+/// sub-resource so the identity renders immediately.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+pub struct SidebarStationDto {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    pub image_url: String,
+}
+
+/// The sidebar **shell** returned by `GET /api/bff/stations/sidebar`: the
+/// station identities inside the current map view, the visible-vs-global
+/// counter and a HATEOAS `stats` link to the per-station stats sub-resource.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct StationSummarySidebarDto {
-    pub items: Vec<StationSummaryDto>,
+pub struct SidebarShellDto {
+    pub items: Vec<SidebarStationDto>,
     pub visible_count: usize,
     pub total_count: usize,
+    #[serde(rename = "_links")]
+    pub links: HashMap<String, LinkDto>,
+}
+
+/// The per-station stats of one sidebar entry, returned by
+/// `GET /api/bff/stations/sidebar/stats`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+pub struct SidebarStationStatsDto {
+    pub station_id: Uuid,
+    pub channel_count: usize,
+    pub bikes_last_day: i64,
+}
+
+impl From<SidebarStationStats> for SidebarStationStatsDto {
+    fn from(stats: SidebarStationStats) -> Self {
+        Self {
+            station_id: stats.station_id,
+            channel_count: stats.channel_count,
+            bikes_last_day: stats.bikes_last_day,
+        }
+    }
+}
+
+/// The stats payload for every station inside the current map view.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SidebarStatsDto {
+    pub items: Vec<SidebarStationStatsDto>,
 }
 
 /// A possible action offered to the frontend. The search dialog advertises
@@ -102,12 +148,11 @@ pub struct GlobalSummaryDto {
     pub last_update: Option<DateTime<Utc>>,
 }
 
-/// The **page-shaped** BFF payload for the station overview panel: everything
-/// the panel needs to render that page and only that page.
-///
-/// Deliberately flat JSON — **no HATEOAS `_links`, no `data_source_id`, no
-/// reuse of the REST `CountingStationDto`** (which carries those). The DTO and
-/// its mapping helpers live entirely inside the BFF module.
+/// The **shell** BFF payload for the station overview panel: the station
+/// identity (image + name + description), its channel count, the last update
+/// and a HATEOAS `_links.stats` link to the stats sub-resource. The
+/// `total_bikes` + `metrics` aggregation lives in `GET /api/bff/station-overview/{id}/stats`
+/// so the name renders as soon as the identity arrives.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct StationOverviewDto {
     pub id: Uuid,
@@ -116,15 +161,14 @@ pub struct StationOverviewDto {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub channel_count: usize,
-    /// All-time total of bikes counted across the station's channels.
-    pub total_bikes: i64,
     /// URL of the image content (streamed by the BFF, never MinIO directly).
     pub image_url: String,
-    pub metrics: Vec<MetricDto>,
     /// Timestamp of the most recent successful data-source update.
     pub last_update: Option<DateTime<Utc>>,
-    /// Link to the (future) detail page.
+    /// Link to the detail page.
     pub detail_url: String,
+    #[serde(rename = "_links")]
+    pub links: HashMap<String, LinkDto>,
 }
 
 /// One metric on the overview panel (and the detail page): the raw sum for the
@@ -189,26 +233,64 @@ pub struct BffStationQueryParams {
     pub max_lng: Option<f64>,
 }
 
-/// The **page-shaped** BFF payload for the counting-station detail page: the
-/// station overview (reused, with the year metric) merged with the channels and
-/// the bucketed graph data.
+/// Optional query parameters of the windowed stats-card sub-resources: the
+/// `as_of` reference time (ISO-8601 UTC) that pins the windows, making the
+/// response a pure function of the URL (and therefore cacheable).
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+pub struct AsOfQueryParams {
+    #[serde(default)]
+    pub as_of: Option<DateTime<Utc>>,
+}
+
+/// The **page-shell** BFF payload for the counting-station detail page: the
+/// station metadata + channels the layout needs, plus the HATEOAS `_links` to
+/// each stats-card sub-resource (overview / graphs per timeframe / monthly).
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
-pub struct StationDetailDto {
+pub struct StationDetailPageDto {
     pub id: Uuid,
     pub name: String,
     pub description: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub channel_count: usize,
-    /// All-time total of bikes counted across the station's channels.
-    pub total_bikes: i64,
     /// URL of the image content (streamed by the BFF, never MinIO directly).
     pub image_url: String,
-    pub metrics: Vec<MetricDto>,
     /// Timestamp of the most recent successful data-source update.
     pub last_update: Option<DateTime<Utc>>,
     pub channels: Vec<ChannelRefDto>,
-    pub graphs: StationDetailGraphsDto,
+    #[serde(rename = "_links")]
+    pub links: HashMap<String, LinkDto>,
+}
+
+/// The overview card of the detail page: the all-time total and the four trend
+/// metrics, returned by `GET /api/bff/station-detail/{id}/overview`.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationOverviewStatsDto {
+    pub total_bikes: i64,
+    pub metrics: Vec<MetricDto>,
+}
+
+impl From<StationOverviewStats> for StationOverviewStatsDto {
+    fn from(stats: StationOverviewStats) -> Self {
+        Self {
+            total_bikes: stats.total_bikes,
+            metrics: stats.metrics.into_iter().map(MetricDto::from).collect(),
+        }
+    }
+}
+
+/// The monthly totals of a page, returned by the `/monthly` sub-resources.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct MonthlyTotalsDto {
+    pub monthly_totals: Vec<MonthTotalDto>,
+}
+
+impl From<Vec<MonthTotal>> for MonthlyTotalsDto {
+    fn from(monthly_totals: Vec<MonthTotal>) -> Self {
+        Self {
+            monthly_totals: months(monthly_totals),
+        }
+    }
 }
 
 /// A counting-station channel reference (id + name), used for the chart legend
@@ -269,9 +351,9 @@ pub struct PerChannelSeriesDto {
     pub hourly_previous: Vec<HourTotalDto>,
 }
 
-/// The graph data for one selectable timeframe: the current and previous period
-/// time-series, the current-period weekday radar + channel pie, the hour-of-day
-/// radars and the per-channel series.
+/// The graph data for one selectable timeframe of the detail page: the current
+/// and previous period time-series, the current-period weekday radar + channel
+/// pie, the hour-of-day radars and the per-channel series.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct PeriodGraphsDto {
     pub current: Vec<TimeBucketDto>,
@@ -284,15 +366,38 @@ pub struct PeriodGraphsDto {
     pub per_channel: Vec<PerChannelSeriesDto>,
 }
 
-/// All graph data for the detail page, keyed by the four selectable timeframes,
-/// plus the per-month totals for the standalone monthly bar chart.
-#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
-pub struct StationDetailGraphsDto {
-    pub day: PeriodGraphsDto,
-    pub week: PeriodGraphsDto,
-    pub last_30_days: PeriodGraphsDto,
-    pub year: PeriodGraphsDto,
-    pub monthly_totals: Vec<MonthTotalDto>,
+impl From<PeriodGraphs> for PeriodGraphsDto {
+    fn from(graphs: PeriodGraphs) -> Self {
+        Self {
+            current: buckets(graphs.current),
+            previous: buckets(graphs.previous),
+            weekday_radar: weekdays(graphs.weekday_radar),
+            weekday_radar_previous: weekdays(graphs.weekday_radar_previous),
+            hourly: hours(graphs.hourly),
+            hourly_previous: hours(graphs.hourly_previous),
+            channel_pie: graphs
+                .channel_pie
+                .into_iter()
+                .map(|total| ChannelTotalDto {
+                    channel_id: total.channel_id,
+                    total: total.total,
+                })
+                .collect(),
+            per_channel: graphs
+                .per_channel
+                .into_iter()
+                .map(|series| PerChannelSeriesDto {
+                    channel_id: series.channel_id,
+                    current: buckets(series.current),
+                    previous: buckets(series.previous),
+                    weekday_radar: weekdays(series.weekday_radar),
+                    weekday_radar_previous: weekdays(series.weekday_radar_previous),
+                    hourly: hours(series.hourly),
+                    hourly_previous: hours(series.hourly_previous),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Shared conversion helpers for the graph DTOs.
@@ -337,51 +442,7 @@ fn months(months: Vec<MonthTotal>) -> Vec<MonthTotalDto> {
         .collect()
 }
 
-impl From<StationDetailGraphs> for StationDetailGraphsDto {
-    fn from(graphs: StationDetailGraphs) -> Self {
-        fn period(period: PeriodGraphs) -> PeriodGraphsDto {
-            PeriodGraphsDto {
-                current: buckets(period.current),
-                previous: buckets(period.previous),
-                weekday_radar: weekdays(period.weekday_radar),
-                weekday_radar_previous: weekdays(period.weekday_radar_previous),
-                hourly: hours(period.hourly),
-                hourly_previous: hours(period.hourly_previous),
-                channel_pie: period
-                    .channel_pie
-                    .into_iter()
-                    .map(|total| ChannelTotalDto {
-                        channel_id: total.channel_id,
-                        total: total.total,
-                    })
-                    .collect(),
-                per_channel: period
-                    .per_channel
-                    .into_iter()
-                    .map(|series| PerChannelSeriesDto {
-                        channel_id: series.channel_id,
-                        current: buckets(series.current),
-                        previous: buckets(series.previous),
-                        weekday_radar: weekdays(series.weekday_radar),
-                        weekday_radar_previous: weekdays(series.weekday_radar_previous),
-                        hourly: hours(series.hourly),
-                        hourly_previous: hours(series.hourly_previous),
-                    })
-                    .collect(),
-            }
-        }
-
-        Self {
-            day: period(graphs.day),
-            week: period(graphs.week),
-            last_30_days: period(graphs.last_30_days),
-            year: period(graphs.year),
-            monthly_totals: months(graphs.monthly_totals),
-        }
-    }
-}
-
-/// Query parameters of the BFF station-summary endpoint. All four bounds are
+/// Query parameters of the BFF station-summary endpoints. All four bounds are
 /// required; `exclude` is a comma-separated list of station ids to leave out of
 /// the aggregation (they are still returned in `stations` so the frontend can
 /// gray them out).
@@ -393,6 +454,9 @@ pub struct BffStationSummaryQueryParams {
     pub max_lng: f64,
     #[serde(default)]
     pub exclude: Option<String>,
+    /// Optional reference time that pins the windows of the summary sub-resources.
+    #[serde(default)]
+    pub as_of: Option<DateTime<Utc>>,
 }
 
 /// A minimal station reference returned by the summary page: id, name,
@@ -452,96 +516,71 @@ pub struct SummaryPeriodGraphsDto {
     pub per_station: Vec<PerStationSeriesDto>,
 }
 
-/// All graph data for the summary page, keyed by the four timeframes, plus the
-/// per-month totals for the standalone monthly bar chart.
-#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
-pub struct StationsSummaryGraphsDto {
-    pub day: SummaryPeriodGraphsDto,
-    pub week: SummaryPeriodGraphsDto,
-    pub last_30_days: SummaryPeriodGraphsDto,
-    pub year: SummaryPeriodGraphsDto,
-    pub monthly_totals: Vec<MonthTotalDto>,
-}
-
-impl From<StationsSummaryGraphs> for StationsSummaryGraphsDto {
-    fn from(graphs: StationsSummaryGraphs) -> Self {
-        fn period(period: SummaryPeriodGraphs) -> SummaryPeriodGraphsDto {
-            SummaryPeriodGraphsDto {
-                current: buckets(period.current),
-                previous: buckets(period.previous),
-                weekday_radar: weekdays(period.weekday_radar),
-                weekday_radar_previous: weekdays(period.weekday_radar_previous),
-                hourly: hours(period.hourly),
-                hourly_previous: hours(period.hourly_previous),
-                station_pie: period
-                    .station_pie
-                    .into_iter()
-                    .map(|total| StationTotalDto {
-                        station_id: total.station_id,
-                        total: total.total,
-                    })
-                    .collect(),
-                per_station: period
-                    .per_station
-                    .into_iter()
-                    .map(|series| PerStationSeriesDto {
-                        station_id: series.station_id,
-                        current: buckets(series.current),
-                        previous: buckets(series.previous),
-                        weekday_radar: weekdays(series.weekday_radar),
-                        weekday_radar_previous: weekdays(series.weekday_radar_previous),
-                        hourly: hours(series.hourly),
-                        hourly_previous: hours(series.hourly_previous),
-                    })
-                    .collect(),
-            }
-        }
-
+impl From<SummaryPeriodGraphs> for SummaryPeriodGraphsDto {
+    fn from(graphs: SummaryPeriodGraphs) -> Self {
         Self {
-            day: period(graphs.day),
-            week: period(graphs.week),
-            last_30_days: period(graphs.last_30_days),
-            year: period(graphs.year),
-            monthly_totals: months(graphs.monthly_totals),
+            current: buckets(graphs.current),
+            previous: buckets(graphs.previous),
+            weekday_radar: weekdays(graphs.weekday_radar),
+            weekday_radar_previous: weekdays(graphs.weekday_radar_previous),
+            hourly: hours(graphs.hourly),
+            hourly_previous: hours(graphs.hourly_previous),
+            station_pie: graphs
+                .station_pie
+                .into_iter()
+                .map(|total| StationTotalDto {
+                    station_id: total.station_id,
+                    total: total.total,
+                })
+                .collect(),
+            per_station: graphs
+                .per_station
+                .into_iter()
+                .map(|series| PerStationSeriesDto {
+                    station_id: series.station_id,
+                    current: buckets(series.current),
+                    previous: buckets(series.previous),
+                    weekday_radar: weekdays(series.weekday_radar),
+                    weekday_radar_previous: weekdays(series.weekday_radar_previous),
+                    hourly: hours(series.hourly),
+                    hourly_previous: hours(series.hourly_previous),
+                })
+                .collect(),
         }
     }
 }
 
-/// The **page-shaped** BFF payload for the station summary page: the fallback
-/// image, the station list (with coordinates for the map), the aggregated
-/// overview metrics and the bucketed graphs (nerd stats per station).
+/// The **page-shell** BFF payload for the station-summary page: the fallback
+/// image, the station list (for the map + toggle) and the last update, plus the
+/// HATEOAS `_links` to each stats-card sub-resource. The aggregated stats live
+/// in the sub-resources because they depend on the `exclude` set.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct StationsSummaryPageDto {
     /// URL of the fallback image content (streamed by the BFF).
     pub image_url: String,
     /// Every positioned station inside the bounds (disabled ones included).
     pub stations: Vec<SummaryStationDto>,
-    /// Total number of channels across the included stations.
-    pub channel_count: usize,
-    /// All-time total of bikes counted across the included stations' channels.
-    pub total_bikes: i64,
-    /// The four overview metrics aggregated over the included stations.
-    pub metrics: Vec<MetricDto>,
     /// Timestamp of the most recent successful data-source update.
     pub last_update: Option<DateTime<Utc>>,
-    /// The bucketed graphs over the included stations' channels.
-    pub graphs: StationsSummaryGraphsDto,
+    #[serde(rename = "_links")]
+    pub links: HashMap<String, LinkDto>,
 }
 
-impl From<StationsSummary> for StationsSummaryPageDto {
-    fn from(summary: StationsSummary) -> Self {
+/// The overview card of the summary page: the aggregated channel count, all-time
+/// total and four trend metrics over the **included** stations.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct StationsSummaryOverviewDto {
+    pub channel_count: usize,
+    pub total_bikes: i64,
+    pub metrics: Vec<MetricDto>,
+}
+
+impl From<StationsSummaryOverview> for StationsSummaryOverviewDto {
+    fn from(stats: StationsSummaryOverview) -> Self {
         Self {
-            image_url: String::new(),
-            stations: summary
-                .stations
-                .into_iter()
-                .map(SummaryStationDto::from)
-                .collect(),
-            channel_count: summary.channel_count,
-            total_bikes: summary.total_bikes,
-            metrics: summary.metrics.into_iter().map(MetricDto::from).collect(),
-            last_update: summary.last_update,
-            graphs: StationsSummaryGraphsDto::from(summary.graphs),
+            channel_count: stats.channel_count,
+            total_bikes: stats.total_bikes,
+            metrics: stats.metrics.into_iter().map(MetricDto::from).collect(),
         }
     }
 }

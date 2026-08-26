@@ -415,3 +415,28 @@ Station analytics consolidation + measurement sum N+1 fix (plan 49)
 - [x] Backend: BFF handlers use the single service with a shared `station_image_url` helper; `bff/dto.rs` graph conversions deduplicated (`buckets`/`weekdays`/`hours`/`months`)
 - [x] Wiring: `main.rs` / `AppState` / `RestApiAdapter` / `tests/mocks.rs` use `StationAnalyticsService`
 - [x] Gates green: `make check`, `make test` (363), `make test-rest` (87), `make coverage` (overall 86.03%, core 95.85%)
+
+Sidebar shell + stats sub-resource + Skeleton loading states (plan 52)
+
+- [x] Backend: `sidebar_shell` / `sidebar_stats` on `StationAnalyticsServicePort` + `StationAnalyticsService` (extracted `stations_for_bounds` / `channel_maps` / `bikes_by_station` helpers) + `SidebarStationStats` domain model
+- [x] Backend: `GET /api/bff/stations/sidebar` now returns the shell (identity + `image_url` + counters + `_links.stats`); new `GET /api/bff/stations/sidebar/stats` returns `channel_count` + `bikes_last_day` per station; `SidebarShellDto` / `SidebarStationDto` / `SidebarStatsDto` / `SidebarStationStatsDto` replace `StationSummarySidebarDto`; `station_image_urls` batch helper; router + OpenAPI updated
+- [x] Backend: bff.rs + core `station_analytics` tests updated/added; search endpoint + `StationListItem` unchanged; measurement domain/repositories untouched
+- [x] Frontend: shadcn `Skeleton` primitive + shared `stationDetail/Skeletons.tsx` (`PageShellSkeleton` / `OverviewSkeleton` / `ChartsSkeleton` / `MonthlyBarSkeleton`)
+- [x] Frontend: sidebar shell/stats split in `stations/types.ts` + `api.ts` + `useVisibleStations.ts`; new `SidebarListItem` (image + name render directly, skeleton stats line); `Sidebar` shows a skeleton list while the shell loads
+- [x] Frontend: detail/summary pages (and the overview panel) render skeleton cards while loading and fill on arrival, with per-card error states
+- [x] e2e `sidebar.spec.ts` asserts the image thumbnail + stats line; `summary.spec.ts` comment updated
+- [x] Gates green: `make check`, `make test` (373), `make test-rest` (93), `make coverage` (overall 87.53%, core 95.98%), `make frontend-build`, `make test-playwright` (21)
+
+Station-overview shell + stats sub-resource (plan 53)
+
+- [x] Backend: `overview()` / `StationOverview` replaced by `overview_shell()` / `StationOverviewShell` (station + channel count + last update, no aggregation) on the port + service; `detail_overview_stats` now computes `metric_windows` + `sum_by_month` itself (was delegating to `overview`)
+- [x] Backend: `GET /api/bff/station-overview/{id}` now returns the shell (identity + `image_url` + `_links.stats`); new `GET /api/bff/station-overview/{id}/stats` returns `total_bikes` + `metrics` via `StationOverviewStatsDto`; router + OpenAPI updated
+- [x] Backend: bff.rs + core `station_analytics` tests updated (shell shape, stats endpoint, 404s, timezone metrics via `detail_overview_stats`)
+- [x] Frontend: `stationOverview` types/api/hook split into `StationOverviewPage` (shell) + `StationOverviewStats`; the panel renders the name/image/description immediately and shows a stats `Skeleton` until the parallel stats sub-resource arrives
+- [x] Gates green: `make check`, `make test` (375), `make test-rest` (95), `make coverage` (overall 87.57%, core 95.98%), `make frontend-build`, `make test-playwright` (21)
+
+Align overview loading skeletons with the rendered cards (plan 54)
+
+- [x] Frontend: `stationDetail/Skeletons.tsx` exports `MetricBoxSkeleton` (right column gap tightened to `gap-0.5`) and adds `TotalBikesSkeleton` mirroring `TotalBikesCard`'s bordered `bg-muted/40 p-4` box
+- [x] Frontend: new `stationOverview/Skeletons.tsx` `OverviewPanelSkeleton` (total-card skeleton + four metric-box skeletons in the same `gap-2` column as the rendered cards); the overview panel uses it for both the shell and stats loading states, and the shell ghost now includes the badge/updated row
+- [x] Gates green: `npm run build` (tsc + vite), `make test-playwright` (21)

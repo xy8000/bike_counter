@@ -19,7 +19,8 @@ test('the shared detail page renders the station content and a highlighted map p
   await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
 
   await expect(page).toHaveURL(new RegExp(`/stations/${stationId}`))
-  // The page content (not blank) and the back navigation.
+  // The page shell renders first (back link + highlighted map preview); the
+  // per-card stats sub-resources load afterwards (Playwright auto-waits).
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
   // The overview section shows the all-time counter, and the stat boxes reuse
   // the overview component and add the YEAR stat (scoped to the Overview
