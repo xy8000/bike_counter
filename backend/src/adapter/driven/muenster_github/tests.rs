@@ -652,6 +652,83 @@ fn get_measurements_windows_by_timeframe_and_advances_past_gaps() {
 }
 
 #[test]
+fn get_measurements_does_not_advance_past_the_last_data() {
+    // Regression: when the incremental watermark already sits on the last real
+    // sample and no new data (and no later file) exists, the cursor must NOT
+    // jump to `from + timeframe`. Previously the empty window reported the
+    // window end, so `imported_until` advanced into the future and silently
+    // skipped data that arrives later.
+    let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+    let root = fixture.join(ARCHIVE_ROOT);
+    fs::create_dir_all(root.join("100031297")).unwrap();
+    fs::write(root.join(SITE_INDEX_FILE), fixture_site_json()).unwrap();
+    fs::write(
+        root.join("100031297/2023-01.csv"),
+        concat!(
+            "Datetime,100031297 (Promenade),101031297 (Radfahrer),102031297 (Radfahrer),100031297-status,101031297-status,102031297-status\n",
+            "2023-01-01 00:00,3,5,1,0,0,0\n",
+            "2023-01-05 00:00,3,5,9,0,0,0\n",
+        ),
+    )
+    .unwrap();
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+        .unwrap();
+    state
+        .store(KEY_EXTRACTED_AT, &chrono::Utc::now().to_rfc3339())
+        .unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert(
+        "max_measurement_timeframe_hours".to_string(),
+        "48".to_string(),
+    );
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: Vec::new(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state);
+
+    let channel = Channel {
+        id: crate::core::domain::channels::channel::value_objects::Id(Uuid::new_v4()),
+        counting_station_id:
+            crate::core::domain::channels::channel::value_objects::CountingStationId(Uuid::new_v4()),
+        name: crate::core::domain::channels::channel::value_objects::Name("Radfahrer".to_string()),
+        description: crate::core::domain::channels::channel::value_objects::Description(
+            String::new(),
+        ),
+        external_datasource_id: Some(
+            crate::core::domain::channels::channel::value_objects::ExternalDatasourceId(
+                "102031297".to_string(),
+            ),
+        ),
+    };
+
+    // The watermark sits on the last real sample (2023-01-05 00:00 Berlin =
+    // 2023-01-04 23:00 UTC). Nothing follows it, so no cursor advance.
+    let last_sample = chrono::DateTime::parse_from_rfc3339("2023-01-04T23:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let batch = adapter
+        .get_measurements(
+            MeasurementQuery::for_channel(channel.clone(), 500).with_start(last_sample),
+        )
+        .unwrap();
+    assert!(batch.measurements.is_empty());
+    assert_eq!(batch.last_measurement_datetime, None);
+    assert!(!batch.batch_size_limit_reached);
+    assert!(!batch.timeframe_limit_reached);
+
+    fs::remove_dir_all(&fixture).unwrap();
+}
+
+#[test]
 fn windowed_series_only_reads_overlapping_month_files() {
     let dir = std::env::temp_dir().join(format!("window-{}", Uuid::new_v4()));
     fs::create_dir_all(dir.join("100031297")).unwrap();

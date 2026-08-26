@@ -392,6 +392,13 @@ impl DataImportService {
                     .get_measurements(query)
                     .map_err(DomainError::from)?;
 
+                // Only a batch that actually contained measurements may advance
+                // the persisted watermark: its `last_measurement_datetime` is a
+                // real timestamp. When a batch is empty that cursor is a
+                // synthetic gap-skip (or a "no more data" marker), so it must
+                // never become `imported_until` — otherwise the watermark jumps
+                // into the future and newly arriving data is silently skipped.
+                let batch_had_measurements = !batch.measurements.is_empty();
                 processed += batch.measurements.len();
                 let measurements = to_measurements(batch.measurements, channel.id.0);
                 added += self.measurement_repository.save_batch(measurements)?;
@@ -402,11 +409,18 @@ impl DataImportService {
                     batch.batch_size_limit_reached || batch.timeframe_limit_reached,
                 ) {
                     (Some(last), true) => {
+                        // In-run paging may skip gaps (the cursor becomes the
+                        // window end), but the watermark advances only on real
+                        // measurements.
                         current_from = Some(last);
-                        last_measurement_timestamp = Some(last);
+                        if batch_had_measurements {
+                            last_measurement_timestamp = Some(last);
+                        }
                     }
                     (Some(last), false) => {
-                        last_measurement_timestamp = Some(last);
+                        if batch_had_measurements {
+                            last_measurement_timestamp = Some(last);
+                        }
                         break;
                     }
                     (None, _) => break,
@@ -1726,6 +1740,52 @@ mod tests {
             1,
             "a missing last datetime must stop paging"
         );
+    }
+
+    #[test]
+    fn update_data_source_does_not_advance_watermark_on_empty_batch() {
+        // Regression: a channel with no new data returns an empty batch whose
+        // `last_measurement_datetime` is a synthetic gap-skip cursor (window
+        // end) in the future. It must never become `imported_until`, or the
+        // watermark would jump past data that arrives later.
+        let from = timestamp("2024-01-01T00:00:00Z");
+        let synthetic_cursor = timestamp("2024-01-08T00:00:00Z"); // from + 7 days
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
+                measurements: Vec::new(),
+                last_measurement_datetime: Some(synthetic_cursor),
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            }])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        let update = service
+            .update_data_source(&runtime(provider.clone()), Some(from), |_, _| Ok(()))
+            .expect("update should succeed");
+
+        assert_eq!(update.processed_measurements, 0);
+        assert_eq!(update.added_measurements, 0);
+        assert_eq!(
+            update.last_measurement_timestamp, None,
+            "an empty batch must not advance the watermark"
+        );
+        assert_eq!(provider.recorded_queries.lock().unwrap().len(), 1);
     }
 
     #[test]

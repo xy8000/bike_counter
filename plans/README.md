@@ -12,6 +12,7 @@ order. Statuses:
 
 | Status | Plan | File | Summary |
 |---|---|---|---|
+| [-] | Fix Münster import cursor overshoot | [`47_muenster_import_cursor_overshoot_plan.md`](47_muenster_import_cursor_overshoot_plan.md) | Stops `imported_until` from jumping into the future when a channel has no new data, so the hourly import keeps working; preserves gap-skipping and never fabricates 0 measurements. |
 | [-] | Provider-message log level, filtering and DB cap | [`46_provider_message_log_level_and_caps_plan.md`](46_provider_message_log_level_and_caps_plan.md) | Reclassifies the Münster missing-column quirk to DEBUG, adds a per-provider `log_level` (default WARNING) with core filtering and a 1000+1 message cap, a DB trigger capping 1001 messages per data source, plus a `CONTRIBUTING.md` adapter guide. |
 | [x] | All-time bike counter + drop latest-year trend | [`45_all_time_bike_counter_and_latest_year_trend_plan.md`](45_all_time_bike_counter_and_latest_year_trend_plan.md) | Exposes an all-time `total_bikes` on overview/detail/summary and renders it as a counter; removes the misleading YoY trend on the latest-year monthly bar button. |
 | [-] | Single-tab navigation, responsive search + detail/summary fixes | [`44_single_tab_navigation_and_detail_summary_fixes_plan.md`](44_single_tab_navigation_and_detail_summary_fixes_plan.md) | Keeps detail links in one tab, wraps search actions, renames timeframe dropdown, shrinks the first detail/summary chart. |

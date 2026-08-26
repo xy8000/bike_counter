@@ -563,10 +563,13 @@ impl DataProvider for MuensterGithubAdapter {
         let batch_size_limit_reached = records.len() > query.max_batch_size;
         records.truncate(query.max_batch_size);
 
-        // Advance past gaps: when the window holds no rows, report the window
-        // end as the next cursor so the core can keep moving forward.
+        // Advance past gaps only when data exists beyond the window. When the
+        // window holds no rows and no later data exists, do NOT advance: the
+        // window end is `from + timeframe`, so reporting it as the cursor would
+        // jump the persisted `imported_until` watermark into the future and
+        // silently skip data that arrives later.
         let last_measurement_datetime = if records.is_empty() {
-            Some(window_end)
+            if data_beyond { Some(window_end) } else { None }
         } else {
             records.last().map(|record| record.timestamp)
         };
