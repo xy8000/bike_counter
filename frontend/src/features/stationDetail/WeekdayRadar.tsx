@@ -36,6 +36,18 @@ export function WeekdayRadar({
   series: RadarSeries[]
   className?: string
 }) {
+  // Recharts' RadarChart crashes when a radar's data is empty (or all zero) —
+  // the current window simply has no traffic yet — so fall back to the same
+  // empty state the other charts use instead of feeding it empty rows.
+  const hasData = series.some((item) => item.data.some((day) => day.total > 0))
+  if (!hasData) {
+    return (
+      <div className={cn('flex aspect-square items-center justify-center', className)}>
+        <p className="text-sm text-muted-foreground">No traffic for this period.</p>
+      </div>
+    )
+  }
+
   const rows = WEEKDAY_LABELS.map((label, i) => {
     const row: Record<string, string | number> = { weekday: label }
     for (const { key, data } of series) {

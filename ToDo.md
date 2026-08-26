@@ -331,3 +331,16 @@ Detail page — shared timeframe selector, previous-period overlay, monthly bar 
 - [x] Frontend: `MonthlyBarChart` (one bar per calendar month, grand total in the top-right) — standalone, not driven by the dropdown
 - [x] e2e `detail.spec.ts`: timeframe dropdown swaps the main chart + monthly bar chart renders; compare-previous checkbox overlays the previous period
 - [x] Gates green: `make check`, `make test` (332), `make test-rest` (82), `make coverage` (overall 83.81%, core 95.36%), `make test-playwright` (14 tests)
+
+Bike icon branding + builtin asset folder sync (plan 38)
+
+- [x] Both bike SVGs (`bike-icon-white-circle.svg`, `bike-icon-black-transparent.svg`) recolored from black to the header emerald `#059669`
+- [x] `builtin_images()` registers both SVGs (`image/svg+xml`); `DEFAULT_IMAGE_OBJECT_KEY` repointed to the plain bike icon (`builtin/bike-icon-black-transparent.svg`)
+- [x] `backend/assets/station-placeholder.jpg` removed from the repo
+- [x] `AssetRepository::delete(object_key)` added to the port + `PostgresAssetRepository` (Postgres test included)
+- [x] `AssetService::sync_builtin_images` now reconciles both directions: uploads/updates bundled images **and removes** builtin assets no longer in the folder (DB row first, then object; `ON DELETE SET NULL` unlinks stations, BFF/import fall back to the new default); unit test for stale-builtin removal + provider assets kept
+- [x] Frontend: `public/bike-icon.svg` + favicon link in `index.html`; header brand icon (was the 🚴 emoji) in `TopBar`; Leaflet zoom control moved to the right in `MapView`
+- [x] Frontend (found by the e2e gate): `WeekdayRadar` empty-state guard — recharts `RadarChart` crashed (`Cannot read properties of null (reading 'map')`) on an empty/all-zero window, now shows "No traffic for this period."
+- [x] e2e: `detail.spec.ts` compare-previous assertion made robust — accepts either the "Day before" legend entry (current day has data) or the single previous-period series (empty current day)
+- [x] Docs: README (built-in asset description), ToDo, `plans/38_..._plan.md` registered in `plans/README.md`
+- [x] Gates green: `make check`, `make test` (334), `make test-rest` (82), `make coverage` (overall 83.78%, core 95.38%), `make frontend-build`, `make test-playwright` (14)

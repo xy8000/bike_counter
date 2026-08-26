@@ -409,7 +409,7 @@ async fn bff_asset_content_streams_bytes_with_correct_headers() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
-        "image/jpeg"
+        "image/svg+xml"
     );
     assert_eq!(response.headers().get("content-length").unwrap(), "3");
     assert_eq!(

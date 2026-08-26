@@ -1,4 +1,11 @@
-import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from 'react-leaflet'
+import {
+  MapContainer,
+  Marker,
+  Popup,
+  TileLayer,
+  useMapEvents,
+  ZoomControl,
+} from 'react-leaflet'
 import L from 'leaflet'
 import type { Map as LeafletMap } from 'leaflet'
 import { ExternalLink } from 'lucide-react'
@@ -53,7 +60,11 @@ export function MapView({
           }
         : { center: MUENSTER_CENTER, zoom: 13 })}
       className="absolute inset-0 z-0"
+      // The default zoom control sits top-left, hidden behind the overlay
+      // sidebar; disable it and render an explicit one on the right.
+      zoomControl={false}
     >
+      <ZoomControl position="topright" />
       {/* OpenStreetMap's public tile server (tile.openstreetmap.org) blocks
           client-side requests it can't attribute to a real app and returns
           its usage-policy 403 image instead of tiles. CARTO's free raster

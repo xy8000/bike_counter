@@ -42,13 +42,20 @@ use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
 
 /// The built-in images embedded in the binary (idempotently synced to MinIO at
 /// startup). The first is the fallback every station without a provider image
-/// points to.
+/// points to; every entry mirrors a file in `backend/assets/`.
 fn builtin_images() -> Vec<BuiltinImage> {
-    vec![BuiltinImage {
-        object_key: ObjectKey(DEFAULT_IMAGE_OBJECT_KEY.to_string()),
-        content_type: ContentType("image/jpeg".to_string()),
-        bytes: include_bytes!("../assets/station-placeholder.jpg").to_vec(),
-    }]
+    vec![
+        BuiltinImage {
+            object_key: ObjectKey(DEFAULT_IMAGE_OBJECT_KEY.to_string()),
+            content_type: ContentType("image/svg+xml".to_string()),
+            bytes: include_bytes!("../assets/bike-icon-black-transparent.svg").to_vec(),
+        },
+        BuiltinImage {
+            object_key: ObjectKey("builtin/bike-icon-white-circle.svg".to_string()),
+            content_type: ContentType("image/svg+xml".to_string()),
+            bytes: include_bytes!("../assets/bike-icon-white-circle.svg").to_vec(),
+        },
+    ]
 }
 
 mod adapter;

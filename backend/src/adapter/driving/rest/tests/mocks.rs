@@ -600,8 +600,8 @@ pub fn sample_station_detail_service() -> Arc<StationDetailService> {
 fn mock_asset() -> Asset {
     Asset {
         id: AssetId(Uuid::from_u128(0xAAA)),
-        object_key: ObjectKey("builtin/station-placeholder.jpg".to_string()),
-        content_type: ContentType("image/jpeg".to_string()),
+        object_key: ObjectKey("builtin/bike-icon-black-transparent.svg".to_string()),
+        content_type: ContentType("image/svg+xml".to_string()),
         byte_size: ByteSize(3),
         sha256: Sha256("a".repeat(64)),
         origin: AssetOrigin::Builtin,

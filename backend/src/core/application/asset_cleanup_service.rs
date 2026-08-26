@@ -298,6 +298,10 @@ mod tests {
         fn save(&self, _asset: Asset) -> Result<Asset, DomainError> {
             Err(DomainError::Database("not used".to_string()))
         }
+        fn delete(&self, object_key: &ObjectKey) -> Result<(), DomainError> {
+            self.known.lock().unwrap().remove(&object_key.0);
+            Ok(())
+        }
         fn list(&self) -> Result<Vec<Asset>, DomainError> {
             Ok(Vec::new())
         }
@@ -622,13 +626,13 @@ mod tests {
     fn deletes_only_objects_without_an_assets_row_and_records_metadata() {
         let asset_repo = Arc::new(MemoryAssetRepository {
             known: Mutex::new(HashSet::from([
-                "builtin/station-placeholder.jpg".to_string(),
+                "builtin/bike-icon-black-transparent.svg".to_string(),
                 "provider/abc123.jpg".to_string(),
             ])),
         });
         let storage = Arc::new(MemoryAssetStorage {
             objects: Mutex::new(HashSet::from([
-                "builtin/station-placeholder.jpg".to_string(),
+                "builtin/bike-icon-black-transparent.svg".to_string(),
                 "provider/abc123.jpg".to_string(),
                 "provider/orphan1.jpg".to_string(),
                 "provider/orphan2.jpg".to_string(),
@@ -650,7 +654,7 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "builtin/station-placeholder.jpg".to_string(),
+                "builtin/bike-icon-black-transparent.svg".to_string(),
                 "provider/abc123.jpg".to_string()
             ]
         );

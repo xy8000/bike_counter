@@ -174,10 +174,12 @@ station↔asset link; the binary bytes never touch the database.
     (`CountingStation.image_sha256`): the provider reports a hash with each
     station record and the core only fetches the image bytes when the hash
     changed or the station has no linked asset yet;
-  - a **built-in** sample image embedded in the backend binary
-    (`backend/assets/station-placeholder.jpg`), idempotently synced to the
-    bucket at startup and used as the fallback for stations without a provider
-    image.
+  - **built-in** images embedded in the backend binary (`backend/assets/`): the
+    emerald plain bike icon (the fallback every station without a provider image
+    points to) and the white-circle bike icon. The built-in sync is idempotent
+    and reconciles **both directions** — it uploads/updates the bundled images
+    and **removes** stale ones whose files were deleted from the folder, so the
+    bucket and `assets` table mirror the assets folder.
 - The **BFF streams** image bytes to the browser
   (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend
   (private `asset_network`) and never exposed to the browser.

@@ -444,7 +444,10 @@ mod tests {
         // overflows the checked subtraction. offset_days = 1 fails in `to_date`,
         // offset_days = 0 keeps `to_date` valid but fails in `from_date`, so both
         // error closures are exercised.
-        let min_date_now = Utc.with_ymd_and_hms(-262_143, 1, 1, 0, 0, 0).single().unwrap();
+        let min_date_now = Utc
+            .with_ymd_and_hms(-262_143, 1, 1, 0, 0, 0)
+            .single()
+            .unwrap();
         let result_to = local_days_window(Berlin, min_date_now, 1, 1);
         assert!(matches!(result_to, Err(DomainError::InvalidQuery(_))));
         let result_from = local_days_window(Berlin, min_date_now, 1, 0);

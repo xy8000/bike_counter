@@ -108,6 +108,17 @@ impl AssetRepository for PostgresAssetRepository {
         Self::map_row(&row)
     }
 
+    fn delete(&self, object_key: &ObjectKey) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        client
+            .execute("DELETE FROM assets WHERE object_key = $1", &[&object_key.0])
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(())
+    }
+
     fn list(&self) -> Result<Vec<Asset>, DomainError> {
         let mut client = self
             .pool
@@ -212,6 +223,49 @@ mod tests {
         assert_eq!(
             repository.all_object_keys().unwrap(),
             vec![ObjectKey("builtin/station-placeholder.jpg".to_string())]
+        );
+    }
+
+    #[test]
+    fn delete_removes_the_asset_row() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let container = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .start()
+            .unwrap();
+        let url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            container.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresAssetRepository::new(&pool);
+
+        let asset = repository.save(asset("builtin/bike-icon.svg")).unwrap();
+        assert!(
+            repository
+                .find_by_object_key(&asset.object_key)
+                .unwrap()
+                .is_some()
+        );
+
+        repository.delete(&asset.object_key).unwrap();
+        assert!(
+            repository
+                .find_by_object_key(&asset.object_key)
+                .unwrap()
+                .is_none()
         );
     }
 }

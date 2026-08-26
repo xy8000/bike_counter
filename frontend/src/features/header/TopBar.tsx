@@ -10,9 +10,12 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
   return (
     <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 bg-primary px-4 py-2 text-primary-foreground shadow-md">
       <div className="flex items-center gap-2 font-bold whitespace-nowrap justify-self-start">
-        <span className="text-xl" aria-hidden="true">
-          🚴
-        </span>
+        <img
+          src="/bike-icon.svg"
+          alt=""
+          aria-hidden="true"
+          className="h-8 w-8"
+        />
         <span>Bike Counter</span>
       </div>
 

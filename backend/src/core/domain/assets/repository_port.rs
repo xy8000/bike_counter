@@ -19,6 +19,10 @@ pub trait AssetRepository: Send + Sync {
     /// with the same key is updated). Returns the stored asset.
     fn save(&self, asset: Asset) -> Result<Asset, DomainError>;
 
+    /// Removes the asset row for `object_key` (used when a built-in asset is no
+    /// longer bundled, so the sync can drop the stale row and its object).
+    fn delete(&self, object_key: &value_objects::ObjectKey) -> Result<(), DomainError>;
+
     /// Every asset row, newest first (used by cleanup for the `assets` side of
     /// the orphan comparison).
     fn list(&self) -> Result<Vec<Asset>, DomainError>;

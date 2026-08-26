@@ -5,6 +5,7 @@
 //! The service is **station-agnostic**: the import service (and not this module)
 //! decides which asset a counting station points to.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -22,7 +23,7 @@ use crate::core::domain::error::DomainError;
 
 /// Object key of the built-in fallback image every station without a provider
 /// image points to.
-pub const DEFAULT_IMAGE_OBJECT_KEY: &str = "builtin/station-placeholder.jpg";
+pub const DEFAULT_IMAGE_OBJECT_KEY: &str = "builtin/bike-icon-black-transparent.svg";
 
 pub struct AssetService {
     repository: Arc<dyn AssetRepository>,
@@ -101,6 +102,27 @@ impl AssetServicePort for AssetService {
                 )?;
             }
         }
+
+        // Removal: drop built-in assets that are no longer bundled, so the
+        // bucket and `assets` table mirror the current folder contents. The DB
+        // row is deleted first so a crash leaves only an orphan object (which
+        // the asset-cleanup job removes); the reverse order would leave a
+        // dangling row pointing at missing content. The `ON DELETE SET NULL`
+        // FK on `counting_stations.image_asset_id` unlinks stations, and the
+        // BFF/import fall back to the new default asset.
+        let desired: HashSet<&str> = builtin
+            .iter()
+            .map(|image| image.object_key.0.as_str())
+            .collect();
+        for asset in self.repository.list()? {
+            if asset.origin == AssetOrigin::Builtin
+                && !desired.contains(asset.object_key.0.as_str())
+            {
+                self.repository.delete(&asset.object_key)?;
+                self.storage.delete(&asset.object_key)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -213,6 +235,11 @@ mod tests {
                 .unwrap()
                 .insert(asset.object_key.0.clone(), asset.clone());
             Ok(asset)
+        }
+
+        fn delete(&self, object_key: &ObjectKey) -> Result<(), DomainError> {
+            self.assets.lock().unwrap().remove(&object_key.0);
+            Ok(())
         }
 
         fn list(&self) -> Result<Vec<Asset>, DomainError> {
@@ -342,6 +369,63 @@ mod tests {
 
         assert_eq!(repository.list().unwrap().len(), 1);
         assert_eq!(storage.list_object_keys().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sync_builtin_images_removes_stale_builtins_but_keeps_provider_assets() {
+        let repository = Arc::new(MemoryAssetRepository::new());
+        let storage = Arc::new(MemoryAssetStorage::new());
+        let service = service(repository.clone(), storage.clone());
+
+        // Seed a stale built-in (e.g. the old placeholder) and a provider asset.
+        let stale = ObjectKey("builtin/station-placeholder.jpg".to_string());
+        let provider = ObjectKey("provider/abc123.jpg".to_string());
+        let seed = |object_key: ObjectKey, sha256: &str, origin: AssetOrigin| {
+            repository
+                .save(Asset {
+                    id: AssetId(Uuid::new_v4()),
+                    object_key,
+                    content_type: ContentType("image/jpeg".to_string()),
+                    byte_size: ByteSize(1),
+                    sha256: Sha256(sha256.to_string()),
+                    origin,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                })
+                .unwrap();
+        };
+        seed(stale.clone(), &"a".repeat(64), AssetOrigin::Builtin);
+        seed(provider.clone(), &"b".repeat(64), AssetOrigin::Provider);
+        storage
+            .put(&stale, &ContentType("image/jpeg".to_string()), b"s")
+            .unwrap();
+        storage
+            .put(&provider, &ContentType("image/jpeg".to_string()), b"p")
+            .unwrap();
+
+        // Sync a folder that no longer contains the stale built-in.
+        service
+            .sync_builtin_images(&[builtin(DEFAULT_IMAGE_OBJECT_KEY, b"x")])
+            .unwrap();
+
+        // The stale built-in is gone from both the repo and the bucket; the
+        // provider asset is untouched.
+        assert!(repository.find_by_object_key(&stale).unwrap().is_none());
+        assert!(
+            storage
+                .list_object_keys()
+                .unwrap()
+                .iter()
+                .all(|key| key.0 != stale.0)
+        );
+        assert!(repository.find_by_object_key(&provider).unwrap().is_some());
+        assert!(
+            storage
+                .list_object_keys()
+                .unwrap()
+                .iter()
+                .any(|key| key.0 == provider.0)
+        );
     }
 
     #[test]

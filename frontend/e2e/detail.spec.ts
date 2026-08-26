@@ -158,7 +158,18 @@ test('the compare-previous checkbox overlays the previous period', async ({ page
   // Default 24-hours chart is single-series, so no "Day before" legend entry.
   await expect(statsSection.getByText('Day before', { exact: true })).toHaveCount(0)
 
-  // Checking the box overlays the previous period as a second legend entry.
+  // Checking the box overlays the previous period. The previous period appears
+  // as a "Day before" legend entry when the current day also has data; a
+  // still-importing/older dataset can leave today empty, in which case the
+  // previous period draws as the single series (and the legend is intentionally
+  // hidden for a single series), so the chart must not stay empty.
   await compare.check()
-  await expect(statsSection.getByText('Day before', { exact: true }).first()).toBeVisible()
+  const dayBefore = statsSection.getByText('Day before', { exact: true }).first()
+  if ((await dayBefore.count()) > 0) {
+    await expect(dayBefore).toBeVisible()
+  } else {
+    await expect(
+      statsSection.getByText('No data for this period.', { exact: true }),
+    ).toHaveCount(0)
+  }
 })

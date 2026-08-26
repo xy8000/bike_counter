@@ -6,7 +6,7 @@
   <!-- Transparent background with white circle -->
   <circle cx="38" cy="38" r="36" fill="#fff"/>
 
-  <!-- Centered, enlarged bicycle -->
+  <!-- Centered, enlarged bicycle in the brand emerald -->
   <g transform="translate(-14.2 -14.4) scale(1.4)">
     <path
       fill="#059669"
