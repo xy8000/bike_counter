@@ -193,6 +193,8 @@ async fn bff_sidebar_stats_counts_bikes_on_the_last_day() {
         value: measurement_vo::Value(17),
         channel_id: measurement_vo::ChannelId(fixtures::CHANNEL_ID_A),
         timestamp: measurement_vo::Timestamp(yesterday_noon),
+        resolution_seconds: measurement_vo::ResolutionSeconds(3600),
+        interval_end: None,
     };
     let service = Arc::new(StationAnalyticsService::new(
         Arc::new(MockCountingStationRepository::new(vec![station])),
@@ -888,6 +890,8 @@ async fn bff_station_summary_aggregates_per_station_data() {
         value: measurement_vo::Value(17),
         channel_id: measurement_vo::ChannelId(fixtures::CHANNEL_ID_A),
         timestamp: measurement_vo::Timestamp(yesterday_noon),
+        resolution_seconds: measurement_vo::ResolutionSeconds(3600),
+        interval_end: None,
     };
     let service = Arc::new(StationAnalyticsService::new(
         Arc::new(MockCountingStationRepository::new(vec![station])),

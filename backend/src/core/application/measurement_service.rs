@@ -124,6 +124,7 @@ mod tests {
             from: chrono::DateTime<chrono::Utc>,
             to: chrono::DateTime<chrono::Utc>,
             channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<i64, DomainError> {
             Ok(self
                 .measurements
@@ -142,6 +143,7 @@ mod tests {
             _origin: chrono::DateTime<chrono::Utc>,
             _timezone: &str,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<Vec<crate::core::domain::measurements::repository_port::TimeBucket>, DomainError>
         {
             Ok(Vec::new())
@@ -155,6 +157,7 @@ mod tests {
             _origin: chrono::DateTime<chrono::Utc>,
             _timezone: &str,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<
             Vec<crate::core::domain::measurements::repository_port::ChannelBucket>,
             DomainError,
@@ -168,6 +171,7 @@ mod tests {
             _to: chrono::DateTime<chrono::Utc>,
             _timezone: &str,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<
             Vec<crate::core::domain::measurements::repository_port::WeekdayTotal>,
             DomainError,
@@ -181,6 +185,7 @@ mod tests {
             _to: chrono::DateTime<chrono::Utc>,
             _timezone: &str,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<Vec<crate::core::domain::measurements::repository_port::HourTotal>, DomainError>
         {
             Ok(Vec::new())
@@ -192,6 +197,7 @@ mod tests {
             _to: chrono::DateTime<chrono::Utc>,
             _timezone: &str,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<
             Vec<crate::core::domain::measurements::repository_port::ChannelHourTotal>,
             DomainError,
@@ -203,6 +209,7 @@ mod tests {
             _from: chrono::DateTime<chrono::Utc>,
             _to: chrono::DateTime<chrono::Utc>,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<
             Vec<crate::core::domain::measurements::repository_port::ChannelTotal>,
             DomainError,
@@ -214,6 +221,7 @@ mod tests {
             &self,
             _timezone: &str,
             _channel_ids: &[measurement_vo::ChannelId],
+            _resolution_seconds: Option<i64>,
         ) -> Result<Vec<crate::core::domain::measurements::repository_port::MonthTotal>, DomainError>
         {
             Ok(Vec::new())
@@ -226,6 +234,8 @@ mod tests {
             value: measurement_vo::Value(value),
             channel_id: measurement_vo::ChannelId(channel_id),
             timestamp: measurement_vo::Timestamp(Utc::now()),
+            resolution_seconds: measurement_vo::ResolutionSeconds(3600),
+            interval_end: None,
         }
     }
 

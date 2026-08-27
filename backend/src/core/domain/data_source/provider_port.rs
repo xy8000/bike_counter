@@ -128,6 +128,15 @@ pub struct ChannelRecord {
 pub struct MeasurementRecord {
     pub value: i64,
     pub timestamp: DateTime<Utc>,
+    /// Length of the interval this count covers, in seconds (open value; any
+    /// positive integer, e.g. 300 = 5 min, 3600 = 1 hour, 86400 = 1 day).
+    /// Required: the provider drops any observation whose duration it cannot
+    /// determine (a re-import recovers it).
+    pub resolution_seconds: i64,
+    /// Exact interval end for calendar-anchored resolutions (daily/weekly),
+    /// set DST-aware; `None` for fixed-second resolutions where the end is
+    /// `timestamp + resolution_seconds`.
+    pub interval_end: Option<DateTime<Utc>>,
 }
 
 /// A page of measurements for one channel.

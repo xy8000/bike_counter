@@ -174,7 +174,7 @@ impl StationAnalyticsService {
             }
         }
         self.measurement_repository
-            .sum_by_month(&timezone, &channel_ids)
+            .sum_by_month(&timezone, &channel_ids, None)
     }
 
     /// The stations whose coordinates lie inside `bounds` (all when `None`),
@@ -385,7 +385,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         // channels (reuses the existing monthly aggregate).
         let total_bikes: i64 = self
             .measurement_repository
-            .sum_by_month(&station.timezone.0, &channel_ids)?
+            .sum_by_month(&station.timezone.0, &channel_ids, None)?
             .iter()
             .map(|month| month.total)
             .sum();
@@ -445,7 +445,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             .map(|channel| ChannelId(channel.id.0))
             .collect();
         self.measurement_repository
-            .sum_by_month(&timezone, &channel_ids)
+            .sum_by_month(&timezone, &channel_ids, None)
     }
 
     fn stations_summary_page(

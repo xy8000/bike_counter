@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
+use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
 use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
@@ -21,6 +22,8 @@ impl DataProviderFactory for DataProviderFactoryImpl {
             Ok(Arc::new(MuensterGithubAdapter::new(config)?))
         } else if config.provider().provider_type() == BonnOpendataAdapter::provider_type() {
             Ok(Arc::new(BonnOpendataAdapter::new(config)?))
+        } else if config.provider().provider_type() == HamburgStaAdapter::provider_type() {
+            Ok(Arc::new(HamburgStaAdapter::new(config)?))
         } else {
             Err(ConfigError::InvalidFormat(format!(
                 "unknown data provider type: {}",
@@ -36,6 +39,7 @@ mod tests {
 
     use super::DataProviderFactoryImpl;
     use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
+    use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
     use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration,
@@ -70,6 +74,19 @@ mod tests {
             "https://stadtplan.bonn.de/csv?OD=4285".to_string(),
         );
         let config = data_source(BonnOpendataAdapter::provider_type(), vars);
+
+        let factory = DataProviderFactoryImpl;
+        assert!(factory.build(&config).is_ok());
+    }
+
+    #[test]
+    fn builds_hamburg_provider_type() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "base_url".to_string(),
+            "https://iot.hamburg.de/v1.0/".to_string(),
+        );
+        let config = data_source(HamburgStaAdapter::provider_type(), vars);
 
         let factory = DataProviderFactoryImpl;
         assert!(factory.build(&config).is_ok());

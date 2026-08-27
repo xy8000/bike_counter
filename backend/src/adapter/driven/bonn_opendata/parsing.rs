@@ -27,6 +27,10 @@ use crate::core::domain::data_source::provider_port::{
 /// measurement timestamps are converted to UTC).
 const TIMEZONE: Tz = Berlin;
 
+/// Interval length of every Bonn measurement, in seconds (Bonn publishes hourly
+/// counts).
+pub(crate) const RESOLUTION_SECONDS: i64 = 3600;
+
 /// Marker in station names for Bonn's "computed total" aggregate stations.
 pub const AGGREGATE_MARKER: &str = "(errechnete Gesamtzahl)";
 
@@ -547,6 +551,8 @@ pub fn build_index(
             .push(MeasurementRecord {
                 value: row.value,
                 timestamp: row.timestamp,
+                resolution_seconds: RESOLUTION_SECONDS,
+                interval_end: None,
             });
     }
 
@@ -573,6 +579,8 @@ pub fn build_index(
             .push(MeasurementRecord {
                 value: row.value,
                 timestamp: row.timestamp,
+                resolution_seconds: RESOLUTION_SECONDS,
+                interval_end: None,
             });
     }
 

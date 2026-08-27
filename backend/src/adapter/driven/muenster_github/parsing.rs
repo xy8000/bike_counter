@@ -17,6 +17,10 @@ use crate::core::domain::data_source::provider_port::{
 /// Timezone the raw CSVs are written in.
 const TIMEZONE: Tz = Berlin;
 
+/// Interval length of every Münster measurement, in seconds (the archive
+/// publishes 15-minute counts).
+pub(crate) const RESOLUTION_SECONDS: i64 = 900;
+
 /// Raw shape of `site_min.json`.
 #[derive(serde::Deserialize)]
 struct RawSite {
@@ -187,7 +191,12 @@ pub fn parse_measurement_csv(
         let Ok(value) = value_text.parse::<i64>() else {
             continue;
         };
-        records.push(MeasurementRecord { value, timestamp });
+        records.push(MeasurementRecord {
+            value,
+            timestamp,
+            resolution_seconds: RESOLUTION_SECONDS,
+            interval_end: None,
+        });
     }
     Ok(records)
 }

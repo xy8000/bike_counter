@@ -56,3 +56,21 @@ historical_urls = "https://opendata.bonn.de/sites/default/files/Fahrradzaehlstel
 max_measurement_batch_size = "500"
 # Cache window for the fetched resources, in seconds (default 300).
 cache_duration = "300"
+
+[[data_sources]]
+name = "Hamburg"
+
+[data_sources.provider]
+type = "hamburg_sta_http_provider"
+# Minimum provider-message severity to persist (default: WARNING).
+log_level = "WARNING"
+
+[data_sources.provider.vars]
+# Official Hamburg SensorThings API (dataset HH_STA_Verkehrsdaten_Rad_Infrarotdetektoren).
+# Stations = MQ (knotenName), channels = Zählfeld (directional counting fields).
+base_url = "https://iot.hamburg.de/v1.0/"
+max_measurement_batch_size = "500"
+# Cache window for the discovery index, in seconds (default 300).
+cache_duration = "300"
+# Merge the legacy "(veraltet)" field 5-min series for history (default true).
+include_legacy = "true"

@@ -33,7 +33,7 @@ pub(super) fn sum_window(
     to: DateTime<Utc>,
     channel_ids: &[ChannelId],
 ) -> Result<i64, DomainError> {
-    repository.sum(from, to, channel_ids)
+    repository.sum(from, to, channel_ids, None)
 }
 
 /// Timestamp of the most recent successful data-source update.

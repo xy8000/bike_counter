@@ -1,7 +1,7 @@
 # Bike-Counter
 
-This Repository can be used to analyse the Bike-Counter-Stations of Münster and
-Bonn (both imported from their official Open Data sources; see
+This Repository can be used to analyse the Bike-Counter-Stations of Münster,
+Bonn and Hamburg (all imported from their official Open Data sources; see
 [Data sources](#data-sources)).
 
 It is a **monorepo** with two sub-projects:
@@ -190,13 +190,36 @@ only the current data flowing — that first run may require raising
 published on govdata but their resources resolve to HTML pages, so they are not
 enabled by default.
 
+The **Hamburg** provider (`hamburg_sta_http_provider`) reads the **official
+Hamburg SensorThings API** (`iot.hamburg.de/v1.0/`, dataset
+`HH_STA_Verkehrsdaten_Rad_Infrarotdetektoren`) — no Eco-Counter, no scraping. It
+maps each **MQ** (measurement cross-section, `knotenName`) to a counting station
+and each **`Zählfeld`** (directional infrared field, `assetID`) to a channel
+(`<F> (<richtung>)`), and serves the **5-minute** field series. The legacy
+`(veraltet)` field datastreams are merged into the same channel for history
+(dedup keep-last, the current live value wins on overlaps), while the deprecated
+station-level series is not imported. The SensorThings `phenomenonTime` interval
+drives the per-measurement `resolution_seconds` (300) and the exact `interval_end`.
+Its vars are `base_url` (optional, defaults to the official root),
+`max_measurement_batch_size` / `cache_duration` (optional, defaults `500` / `300`)
+and `include_legacy` (optional, defaults `true`).
+
 The measurements import is bounded by a **time window** so even the first
 multi-year import stays responsive: each provider call only reads the monthly
 files overlapping `(cursor, cursor + max_measurement_timeframe_hours]` (default
 7 days), and the core keeps paging until every channel is fully imported. Rows
-are written idempotently on the natural key `(channel_id, timestamp)`
-(`INSERT ... ON CONFLICT DO NOTHING`), so a partially-completed run can always
-be resumed without duplicating data.
+are written idempotently on the natural key
+`(channel_id, timestamp, resolution_seconds)` (`INSERT ... ON CONFLICT DO
+NOTHING`), so a partially-completed run can always be resumed without
+duplicating data. Every measurement carries its **resolution** — the length in
+seconds of the interval its count covers (`resolution_seconds`, e.g. 300 = 5 min,
+900 = 15 min, 3600 = 1 h) — as an open value, so a channel can hold counts at
+several resolutions at once and the analytics can combine them without double
+counting. A database **overlap guard** (a `BEFORE INSERT/UPDATE` trigger backed
+by a btree index) rejects corrupt rows of the same resolution whose intervals
+overlap in a channel (e.g. a 60-second row followed by one a second later)
+rather than silently accepting them — without the multi-hour GiST index build a
+constraint would need on a large history.
 
 Every job is exposed through the read-only jobs API (see below).
 

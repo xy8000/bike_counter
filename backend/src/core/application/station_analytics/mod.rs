@@ -10,6 +10,7 @@
 
 pub mod graphs;
 pub mod metrics;
+pub mod resolution;
 pub mod service;
 
 #[cfg(test)]

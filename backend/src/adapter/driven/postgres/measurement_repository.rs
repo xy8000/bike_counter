@@ -5,7 +5,7 @@ use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
     ChannelBucket, ChannelHourTotal, ChannelTotal, HourTotal, MeasurementRepository, MonthTotal,
-    TimeBucket, WeekdayTotal,
+    ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 
 use super::pool::PgPool;
@@ -28,9 +28,17 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
-                "INSERT INTO measurements (id, value, channel_id, timestamp) VALUES ($1, $2, $3, $4) \
-                 ON CONFLICT (channel_id, timestamp) DO NOTHING",
-                &[&measurement.id.0, &measurement.value.0, &measurement.channel_id.0, &measurement.timestamp.0],
+                "INSERT INTO measurements (id, value, channel_id, timestamp, resolution_seconds, interval_end) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
+                 ON CONFLICT (channel_id, timestamp, resolution_seconds) DO NOTHING",
+                &[
+                    &measurement.id.0,
+                    &measurement.value.0,
+                    &measurement.channel_id.0,
+                    &measurement.timestamp.0,
+                    &measurement.resolution_seconds.0,
+                    &measurement.interval_end,
+                ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(())
@@ -55,28 +63,32 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .iter()
             .enumerate()
             .map(|(index, _)| {
-                let base = index * 4;
+                let base = index * 6;
                 format!(
-                    "(${}, ${}, ${}, ${})",
+                    "(${}, ${}, ${}, ${}, ${}, ${})",
                     base + 1,
                     base + 2,
                     base + 3,
-                    base + 4
+                    base + 4,
+                    base + 5,
+                    base + 6
                 )
             })
             .collect();
         let query = format!(
-            "INSERT INTO measurements (id, value, channel_id, timestamp) VALUES {} \
-             ON CONFLICT (channel_id, timestamp) DO NOTHING",
+            "INSERT INTO measurements (id, value, channel_id, timestamp, resolution_seconds, interval_end) \
+             VALUES {} ON CONFLICT (channel_id, timestamp, resolution_seconds) DO NOTHING",
             placeholders.join(", ")
         );
 
-        let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(measurements.len() * 4);
+        let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(measurements.len() * 6);
         for measurement in &measurements {
             params.push(&measurement.id.0);
             params.push(&measurement.value.0);
             params.push(&measurement.channel_id.0);
             params.push(&measurement.timestamp.0);
+            params.push(&measurement.resolution_seconds.0);
+            params.push(&measurement.interval_end);
         }
 
         let inserted = transaction
@@ -96,7 +108,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, value, channel_id, timestamp FROM measurements WHERE id = $1",
+                "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
+                 FROM measurements WHERE id = $1",
                 &[&id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?
@@ -107,6 +120,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             value: value_objects::Value(row.get(1)),
             channel_id: value_objects::ChannelId(row.get(2)),
             timestamp: value_objects::Timestamp(row.get(3)),
+            resolution_seconds: value_objects::ResolutionSeconds(row.get(4)),
+            interval_end: row.get(5),
         })
     }
 
@@ -117,7 +132,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, value, channel_id, timestamp FROM measurements ORDER BY timestamp DESC",
+                "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
+                 FROM measurements ORDER BY timestamp DESC",
                 &[],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -128,6 +144,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 value: value_objects::Value(row.get(1)),
                 channel_id: value_objects::ChannelId(row.get(2)),
                 timestamp: value_objects::Timestamp(row.get(3)),
+                resolution_seconds: value_objects::ResolutionSeconds(row.get(4)),
+                interval_end: row.get(5),
             });
         }
         Ok(measurements)
@@ -143,7 +161,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, value, channel_id, timestamp FROM measurements WHERE channel_id = $1 ORDER BY timestamp DESC",
+                "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
+                 FROM measurements WHERE channel_id = $1 ORDER BY timestamp DESC",
                 &[&channel_id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -154,6 +173,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 value: value_objects::Value(row.get(1)),
                 channel_id: value_objects::ChannelId(row.get(2)),
                 timestamp: value_objects::Timestamp(row.get(3)),
+                resolution_seconds: value_objects::ResolutionSeconds(row.get(4)),
+                interval_end: row.get(5),
             });
         }
         Ok(measurements)
@@ -174,15 +195,15 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let rows = match channel_id {
             Some(channel_id) => client
                 .query(
-                    "SELECT id, value, channel_id, timestamp FROM measurements \
-                     WHERE channel_id = $1 ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
+                    "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
+                     FROM measurements WHERE channel_id = $1 ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
                     &[&channel_id.0, &limit, &offset],
                 )
                 .map_err(|error| DomainError::Database(error.to_string()))?,
             None => client
                 .query(
-                    "SELECT id, value, channel_id, timestamp FROM measurements \
-                     ORDER BY timestamp DESC LIMIT $1 OFFSET $2",
+                    "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
+                     FROM measurements ORDER BY timestamp DESC LIMIT $1 OFFSET $2",
                     &[&limit, &offset],
                 )
                 .map_err(|error| DomainError::Database(error.to_string()))?,
@@ -194,6 +215,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 value: value_objects::Value(row.get(1)),
                 channel_id: value_objects::ChannelId(row.get(2)),
                 timestamp: value_objects::Timestamp(row.get(3)),
+                resolution_seconds: value_objects::ResolutionSeconds(row.get(4)),
+                interval_end: row.get(5),
             });
         }
         Ok(measurements)
@@ -204,6 +227,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         from: chrono::DateTime<chrono::Utc>,
         to: chrono::DateTime<chrono::Utc>,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<i64, DomainError> {
         let mut client = self
             .pool
@@ -213,8 +237,9 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let row = client
             .query_one(
                 "SELECT COALESCE(SUM(value), 0)::bigint FROM measurements \
-                 WHERE timestamp >= $1 AND timestamp <= $2 AND channel_id = ANY($3::uuid[])",
-                &[&from, &to, &channel_uuids],
+                 WHERE timestamp >= $1 AND timestamp <= $2 AND channel_id = ANY($3::uuid[]) \
+                   AND ($4::bigint IS NULL OR resolution_seconds = $4::bigint)",
+                &[&from, &to, &channel_uuids, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(row.get::<_, i64>(0))
@@ -228,6 +253,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         origin: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<TimeBucket>, DomainError> {
         let mut client = self
             .pool
@@ -244,6 +270,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                    COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $5 AND timestamp <= $6 \
+                   AND ($7::bigint IS NULL OR resolution_seconds = $7::bigint) \
                  GROUP BY bucket \
                  ORDER BY bucket",
                 &[
@@ -256,6 +283,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                     &origin,
                     &from,
                     &to,
+                    &resolution_seconds,
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -277,6 +305,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         origin: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelBucket>, DomainError> {
         let mut client = self
             .pool
@@ -293,6 +322,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                    COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $5 AND timestamp <= $6 \
+                   AND ($7::bigint IS NULL OR resolution_seconds = $7::bigint) \
                  GROUP BY channel_id, bucket \
                  ORDER BY channel_id, bucket",
                 &[
@@ -303,6 +333,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                     &origin,
                     &from,
                     &to,
+                    &resolution_seconds,
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -323,6 +354,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         to: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<WeekdayTotal>, DomainError> {
         let mut client = self
             .pool
@@ -335,9 +367,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                        COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY weekday \
                  ORDER BY weekday",
-                &[&channel_uuids, &timezone, &from, &to],
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut weekdays = Vec::with_capacity(rows.len());
@@ -356,6 +389,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         to: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<HourTotal>, DomainError> {
         let mut client = self
             .pool
@@ -368,9 +402,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                        COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY hour \
                  ORDER BY hour",
-                &[&channel_uuids, &timezone, &from, &to],
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut hours = Vec::with_capacity(rows.len());
@@ -389,6 +424,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         to: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelHourTotal>, DomainError> {
         let mut client = self
             .pool
@@ -402,9 +438,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                        COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY channel_id, hour \
                  ORDER BY channel_id, hour",
-                &[&channel_uuids, &timezone, &from, &to],
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut hours = Vec::with_capacity(rows.len());
@@ -423,6 +460,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         from: chrono::DateTime<chrono::Utc>,
         to: chrono::DateTime<chrono::Utc>,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelTotal>, DomainError> {
         let mut client = self
             .pool
@@ -434,9 +472,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 "SELECT channel_id, COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $2 AND timestamp <= $3 \
+                   AND ($4::bigint IS NULL OR resolution_seconds = $4::bigint) \
                  GROUP BY channel_id \
                  ORDER BY channel_id",
-                &[&channel_uuids, &from, &to],
+                &[&channel_uuids, &from, &to, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut totals = Vec::with_capacity(rows.len());
@@ -453,6 +492,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         &self,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<MonthTotal>, DomainError> {
         let mut client = self
             .pool
@@ -466,9 +506,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                        COALESCE(SUM(value), 0)::bigint AS total \
                  FROM measurements \
                  WHERE channel_id = ANY($2::uuid[]) \
+                   AND ($3::bigint IS NULL OR resolution_seconds = $3::bigint) \
                  GROUP BY year, month \
                  ORDER BY year, month",
-                &[&timezone, &channel_uuids],
+                &[&timezone, &channel_uuids, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut months = Vec::with_capacity(rows.len());
@@ -481,6 +522,39 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         }
         Ok(months)
     }
+
+    fn resolution_coverage(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ResolutionCoverage>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT resolution_seconds, MIN(timestamp), MAX(timestamp), COUNT(*)::bigint \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $2 AND timestamp <= $3 \
+                 GROUP BY resolution_seconds \
+                 ORDER BY resolution_seconds",
+                &[&channel_uuids, &from, &to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut coverage = Vec::with_capacity(rows.len());
+        for row in rows {
+            coverage.push(ResolutionCoverage {
+                resolution_seconds: row.get(0),
+                first: row.get(1),
+                last: row.get(2),
+                count: row.get(3),
+            });
+        }
+        Ok(coverage)
+    }
 }
 
 #[cfg(test)]
@@ -489,6 +563,7 @@ mod tests {
 
     use chrono::{TimeZone, Utc};
     use postgres::{Config as PostgresConfig, NoTls};
+    use testcontainers::Container;
     use testcontainers::ImageExt;
     use testcontainers::runners::SyncRunner;
     use testcontainers_modules::postgres::Postgres;
@@ -833,6 +908,8 @@ mod tests {
                 value: value_objects::Value(5),
                 channel_id: channel_id(),
                 timestamp: value_objects::Timestamp(now - chrono::Duration::hours(2)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             })
             .unwrap();
         repository
@@ -841,6 +918,8 @@ mod tests {
                 value: value_objects::Value(100),
                 channel_id: channel_id(),
                 timestamp: value_objects::Timestamp(now - chrono::Duration::hours(48)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             })
             .unwrap();
         repository
@@ -849,6 +928,8 @@ mod tests {
                 value: value_objects::Value(3),
                 channel_id: channel_id(),
                 timestamp: value_objects::Timestamp(now - chrono::Duration::hours(1)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             })
             .unwrap();
 
@@ -856,17 +937,17 @@ mod tests {
         let to = now;
 
         let ids = [channel_id()];
-        let per_channel = repository.sum(from, to, &ids).unwrap();
+        let per_channel = repository.sum(from, to, &ids, None).unwrap();
         assert_eq!(
             per_channel, 8,
             "only the 2h and 1h measurements count; the 48h one is excluded"
         );
 
-        let all_channels = repository.sum(from, to, &ids).unwrap();
+        let all_channels = repository.sum(from, to, &ids, None).unwrap();
         assert_eq!(all_channels, 8, "the single sample channel is the only one");
 
         let narrowed = repository
-            .sum(now - chrono::Duration::minutes(90), to, &ids)
+            .sum(now - chrono::Duration::minutes(90), to, &ids, None)
             .unwrap();
         assert_eq!(
             narrowed, 3,
@@ -941,24 +1022,35 @@ mod tests {
                 value: value_objects::Value(10),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2024, 1, 10, 12, 0, 0)),
+                // 1-minute buckets keep these minute-spaced fixtures non-overlapping
+                // (the overlap guard rejects same-resolution rows whose intervals
+                // intersect, so hourly fixtures one minute apart are invalid).
+                resolution_seconds: value_objects::ResolutionSeconds(60),
+                interval_end: None,
             },
             Measurement {
                 id: value_objects::Id(Uuid::new_v4()),
                 value: value_objects::Value(20),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2024, 1, 10, 12, 4, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(60),
+                interval_end: None,
             },
             Measurement {
                 id: value_objects::Id(Uuid::new_v4()),
                 value: value_objects::Value(5),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2024, 1, 10, 12, 5, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(60),
+                interval_end: None,
             },
             Measurement {
                 id: value_objects::Id(Uuid::new_v4()),
                 value: value_objects::Value(7),
                 channel_id: value_objects::ChannelId(channel_b),
                 timestamp: value_objects::Timestamp(at(2024, 1, 10, 12, 2, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(60),
+                interval_end: None,
             },
         ];
         repository.save_batch(measurements).unwrap();
@@ -974,7 +1066,7 @@ mod tests {
         // sum_buckets: 5-minute buckets aligned to local Berlin time (UTC+1 in
         // January), so 12:00Z and 12:02Z fall into the same bucket starting 12:00Z.
         let buckets = repository
-            .sum_buckets(from, to, 300, origin, "Europe/Berlin", &channels)
+            .sum_buckets(from, to, 300, origin, "Europe/Berlin", &channels, None)
             .unwrap();
         assert_eq!(buckets.len(), 2, "two distinct 5-minute buckets have data");
         assert_eq!(buckets[0].start, at(2024, 1, 10, 12, 0, 0));
@@ -984,7 +1076,7 @@ mod tests {
 
         // sum_buckets_by_channel: each row carries its channel id.
         let per_channel = repository
-            .sum_buckets_by_channel(from, to, 300, origin, "Europe/Berlin", &channels)
+            .sum_buckets_by_channel(from, to, 300, origin, "Europe/Berlin", &channels, None)
             .unwrap();
         let by_key: std::collections::HashMap<(Uuid, chrono::DateTime<Utc>), i64> = per_channel
             .iter()
@@ -996,7 +1088,7 @@ mod tests {
 
         // sum_weekdays: 2024-01-10 is a Wednesday (ISO 3).
         let weekdays = repository
-            .sum_weekdays(from, to, "Europe/Berlin", &channels)
+            .sum_weekdays(from, to, "Europe/Berlin", &channels, None)
             .unwrap();
         assert_eq!(weekdays.len(), 1);
         assert_eq!(weekdays[0].weekday, 3);
@@ -1005,7 +1097,7 @@ mod tests {
         // sum_hours: all four measurements fall into local hour 13 (Berlin is
         // UTC+1 in January), so one hour-of-day row carries the whole total.
         let hours = repository
-            .sum_hours(from, to, "Europe/Berlin", &channels)
+            .sum_hours(from, to, "Europe/Berlin", &channels, None)
             .unwrap();
         assert_eq!(hours.len(), 1);
         assert_eq!(hours[0].hour, 13);
@@ -1013,7 +1105,7 @@ mod tests {
 
         // sum_hours_by_channel: each row carries its channel id and local hour.
         let hours_by_channel = repository
-            .sum_hours_by_channel(from, to, "Europe/Berlin", &channels)
+            .sum_hours_by_channel(from, to, "Europe/Berlin", &channels, None)
             .unwrap();
         assert_eq!(hours_by_channel.len(), 2);
         let by_channel: std::collections::HashMap<(Uuid, u8), i64> = hours_by_channel
@@ -1024,7 +1116,9 @@ mod tests {
         assert_eq!(by_channel[&(channel_b, 13)], 7);
 
         // sum_by_channel over the same window.
-        let totals = repository.sum_by_channel(from, to, &channels).unwrap();
+        let totals = repository
+            .sum_by_channel(from, to, &channels, None)
+            .unwrap();
         let by_id: std::collections::HashMap<Uuid, i64> = totals
             .iter()
             .map(|row| (row.channel_id, row.total))
@@ -1097,24 +1191,32 @@ mod tests {
                 value: value_objects::Value(10),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2024, 1, 10, 12, 0, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             },
             Measurement {
                 id: value_objects::Id(Uuid::new_v4()),
                 value: value_objects::Value(20),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2023, 12, 20, 12, 0, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             },
             Measurement {
                 id: value_objects::Id(Uuid::new_v4()),
                 value: value_objects::Value(5),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2023, 12, 21, 12, 0, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             },
             Measurement {
                 id: value_objects::Id(Uuid::new_v4()),
                 value: value_objects::Value(7),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2023, 6, 15, 12, 0, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             },
             // 2023-12-31 23:30Z is 2024-01-01 00:30 local (Berlin CET), so it
             // belongs to January 2024, not December 2023.
@@ -1123,12 +1225,18 @@ mod tests {
                 value: value_objects::Value(3),
                 channel_id: value_objects::ChannelId(channel_a),
                 timestamp: value_objects::Timestamp(at(2023, 12, 31, 23, 30, 0)),
+                resolution_seconds: value_objects::ResolutionSeconds(3600),
+                interval_end: None,
             },
         ];
         repository.save_batch(measurements).unwrap();
 
         let months = repository
-            .sum_by_month("Europe/Berlin", &[value_objects::ChannelId(channel_a)])
+            .sum_by_month(
+                "Europe/Berlin",
+                &[value_objects::ChannelId(channel_a)],
+                None,
+            )
             .unwrap();
         assert_eq!(
             months,
@@ -1153,12 +1261,297 @@ mod tests {
         );
     }
 
+    /// A running Postgres instance plus the repository and channel under test.
+    struct TestRepo {
+        repository: PostgresMeasurementRepository,
+        _container: Container<Postgres>,
+    }
+
+    /// Boots a test container, runs the migrations and inserts the data-source →
+    /// station → channel chain so measurement rows can reference a real channel.
+    fn test_repository() -> TestRepo {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let postgres = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .start()
+            .unwrap();
+        let database_url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            postgres.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            database_url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
+
+        let station_id = Uuid::from_u128(900);
+        let data_source_id = Uuid::from_u128(910);
+        let channel_uuid = channel_id().0;
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                ],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
+                &[
+                    &channel_uuid,
+                    &station_id,
+                    &"Test channel",
+                    &"Test channel description",
+                ],
+            )
+            .unwrap();
+
+        TestRepo {
+            repository,
+            _container: postgres,
+        }
+    }
+
+    #[test]
+    fn natural_key_distinguishes_resolutions_at_the_same_timestamp() {
+        // Binding `_container` explicitly keeps the Postgres container alive for
+        // the whole test (`let TestRepo { repository, .. }` would drop it here).
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let at = timestamp(1_000_000);
+        let five_min = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(5),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(300),
+            interval_end: Some(at + chrono::Duration::seconds(300)),
+        };
+        let one_hour = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(60),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(3600),
+            interval_end: Some(at + chrono::Duration::seconds(3600)),
+        };
+
+        repository.save(five_min.clone()).unwrap();
+        repository.save(one_hour.clone()).unwrap();
+        let stored = repository.find_by_channel_id(channel_id()).unwrap();
+        assert_eq!(
+            stored.len(),
+            2,
+            "same channel+timestamp with different resolutions must both persist"
+        );
+        assert!(
+            stored
+                .iter()
+                .any(|m| m.resolution_seconds.0 == 300 && m.value.0 == 5)
+        );
+        assert!(
+            stored
+                .iter()
+                .any(|m| m.resolution_seconds.0 == 3600 && m.value.0 == 60)
+        );
+
+        // Re-inserting the same (channel, timestamp, resolution) is idempotent.
+        repository.save(one_hour.clone()).unwrap();
+        assert_eq!(
+            repository.find_by_channel_id(channel_id()).unwrap().len(),
+            2,
+            "the 3-column natural key must collapse duplicates"
+        );
+    }
+
+    #[test]
+    fn resolution_coverage_reports_per_resolution_first_last_and_count() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let base = timestamp(2_000_000);
+        let rows = vec![
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(1),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(300)),
+                resolution_seconds: value_objects::ResolutionSeconds(300),
+                interval_end: None,
+            },
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(2),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(600)),
+                resolution_seconds: value_objects::ResolutionSeconds(300),
+                interval_end: None,
+            },
+            Measurement {
+                id: value_objects::Id(Uuid::new_v4()),
+                value: value_objects::Value(10),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(900)),
+                resolution_seconds: value_objects::ResolutionSeconds(900),
+                interval_end: None,
+            },
+        ];
+        repository.save_batch(rows).unwrap();
+
+        let coverage = repository
+            .resolution_coverage(
+                base,
+                base + chrono::Duration::seconds(3600),
+                &[channel_id()],
+            )
+            .unwrap();
+        assert_eq!(coverage.len(), 2, "one entry per distinct resolution");
+        let five_min = coverage
+            .iter()
+            .find(|c| c.resolution_seconds == 300)
+            .unwrap();
+        assert_eq!(five_min.count, 2);
+        assert_eq!(five_min.first, base + chrono::Duration::seconds(300));
+        assert_eq!(five_min.last, base + chrono::Duration::seconds(600));
+        let quarter = coverage
+            .iter()
+            .find(|c| c.resolution_seconds == 900)
+            .unwrap();
+        assert_eq!(quarter.count, 1);
+        assert_eq!(quarter.first, base + chrono::Duration::seconds(900));
+    }
+
+    #[test]
+    fn sum_filters_by_resolution() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let base = timestamp(3_000_000);
+        let five_min = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(5),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(base),
+            resolution_seconds: value_objects::ResolutionSeconds(300),
+            interval_end: None,
+        };
+        let one_hour = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(60),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(base),
+            resolution_seconds: value_objects::ResolutionSeconds(3600),
+            interval_end: None,
+        };
+        repository.save_batch(vec![five_min, one_hour]).unwrap();
+
+        let window_to = base + chrono::Duration::seconds(3600);
+        let all = repository
+            .sum(base, window_to, &[channel_id()], None)
+            .unwrap();
+        assert_eq!(
+            all, 65,
+            "no filter sums every resolution (legacy behaviour)"
+        );
+        let only_hourly = repository
+            .sum(base, window_to, &[channel_id()], Some(3600))
+            .unwrap();
+        assert_eq!(only_hourly, 60);
+        let only_5min = repository
+            .sum(base, window_to, &[channel_id()], Some(300))
+            .unwrap();
+        assert_eq!(only_5min, 5);
+    }
+
+    #[test]
+    fn rejects_overlapping_intervals_at_the_same_resolution() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let at = timestamp(4_000_000);
+        let first = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(1),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(60),
+            interval_end: Some(at + chrono::Duration::seconds(60)),
+        };
+        repository.save(first).unwrap();
+
+        // A 60-second row starting one second later overlaps the first interval:
+        // the database exclusion guard must reject it as corrupt data.
+        let overlap = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(2),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at + chrono::Duration::seconds(1)),
+            resolution_seconds: value_objects::ResolutionSeconds(60),
+            interval_end: Some(at + chrono::Duration::seconds(61)),
+        };
+        assert!(
+            repository.save(overlap).is_err(),
+            "an overlapping row at the same resolution must be rejected"
+        );
+
+        // A back-to-back row (starting exactly at the previous exclusive end) is
+        // adjacent, not overlapping, and must be accepted.
+        let adjacent = Measurement {
+            id: value_objects::Id(Uuid::new_v4()),
+            value: value_objects::Value(3),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at + chrono::Duration::seconds(60)),
+            resolution_seconds: value_objects::ResolutionSeconds(60),
+            interval_end: Some(at + chrono::Duration::seconds(120)),
+        };
+        repository.save(adjacent).unwrap();
+        assert_eq!(
+            repository.find_by_channel_id(channel_id()).unwrap().len(),
+            2
+        );
+    }
+
     fn measurement(id: u128, value: i64) -> Measurement {
         Measurement {
             id: value_objects::Id(Uuid::from_u128(id)),
             value: value_objects::Value(value),
             channel_id: channel_id(),
             timestamp: value_objects::Timestamp(timestamp(id as i64)),
+            // 1-second buckets: consecutive ids (one second apart) become adjacent,
+            // non-overlapping intervals, satisfying the overlap guard.
+            resolution_seconds: value_objects::ResolutionSeconds(1),
+            interval_end: None,
         }
     }
 

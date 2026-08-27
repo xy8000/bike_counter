@@ -113,6 +113,8 @@ pub fn measurement_a() -> Measurement {
         channel_id: measurement_vo::ChannelId(CHANNEL_ID_A),
         value: measurement_vo::Value(42),
         timestamp: measurement_vo::Timestamp(timestamp()),
+        resolution_seconds: measurement_vo::ResolutionSeconds(3600),
+        interval_end: None,
     }
 }
 
@@ -122,6 +124,8 @@ pub fn measurement_b() -> Measurement {
         channel_id: measurement_vo::ChannelId(CHANNEL_ID_B),
         value: measurement_vo::Value(1337),
         timestamp: measurement_vo::Timestamp(timestamp()),
+        resolution_seconds: measurement_vo::ResolutionSeconds(3600),
+        interval_end: None,
     }
 }
 

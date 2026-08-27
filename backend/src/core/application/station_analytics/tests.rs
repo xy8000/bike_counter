@@ -19,7 +19,7 @@ use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::{
     ChannelBucket, ChannelHourTotal, ChannelTotal, HourTotal, MeasurementRepository, MonthTotal,
-    TimeBucket, WeekdayTotal,
+    ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
@@ -71,6 +71,8 @@ fn measurement(channel_id: u128, value: i64, when: DateTime<Utc>) -> Measurement
         value: measurement_vo::Value(value),
         channel_id: measurement_vo::ChannelId(Uuid::from_u128(channel_id)),
         timestamp: measurement_vo::Timestamp(when),
+        resolution_seconds: measurement_vo::ResolutionSeconds(3600),
+        interval_end: None,
     }
 }
 
@@ -223,12 +225,14 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<i64, DomainError> {
         Ok(self
             .measurements
             .iter()
             .filter(|m| m.timestamp.0 >= from && m.timestamp.0 <= to)
             .filter(|m| channel_ids.contains(&m.channel_id))
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
             .map(|m| m.value.0)
             .sum())
     }
@@ -241,9 +245,13 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         origin: DateTime<Utc>,
         _timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<TimeBucket>, DomainError> {
         let mut map: BTreeMap<DateTime<Utc>, i64> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
             let start = Self::bucket_start(m.timestamp.0, origin, bucket_seconds);
             *map.entry(start).or_insert(0) += m.value.0;
         }
@@ -261,9 +269,13 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         origin: DateTime<Utc>,
         _timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelBucket>, DomainError> {
         let mut map: BTreeMap<(Uuid, DateTime<Utc>), i64> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
             let start = Self::bucket_start(m.timestamp.0, origin, bucket_seconds);
             *map.entry((m.channel_id.0, start)).or_insert(0) += m.value.0;
         }
@@ -283,9 +295,13 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         to: DateTime<Utc>,
         _timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<WeekdayTotal>, DomainError> {
         let mut map: BTreeMap<u8, i64> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
             let weekday = (m.timestamp.0.weekday().num_days_from_monday() + 1) as u8;
             *map.entry(weekday).or_insert(0) += m.value.0;
         }
@@ -301,9 +317,13 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         to: DateTime<Utc>,
         _timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<HourTotal>, DomainError> {
         let mut map: BTreeMap<u8, i64> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
             let hour = m.timestamp.0.hour() as u8;
             *map.entry(hour).or_insert(0) += m.value.0;
         }
@@ -319,9 +339,13 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         to: DateTime<Utc>,
         _timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelHourTotal>, DomainError> {
         let mut map: BTreeMap<(Uuid, u8), i64> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
             let hour = m.timestamp.0.hour() as u8;
             *map.entry((m.channel_id.0, hour)).or_insert(0) += m.value.0;
         }
@@ -339,9 +363,13 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelTotal>, DomainError> {
         let mut map: BTreeMap<Uuid, i64> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
             *map.entry(m.channel_id.0).or_insert(0) += m.value.0;
         }
         Ok(map
@@ -354,6 +382,7 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         &self,
         timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
     ) -> Result<Vec<MonthTotal>, DomainError> {
         let tz: chrono_tz::Tz = timezone.parse().map_err(|_| {
             DomainError::InvalidQuery(format!("unknown IANA timezone '{timezone}'"))
@@ -363,6 +392,7 @@ impl MeasurementRepository for MemoryMeasurementRepository {
             .measurements
             .iter()
             .filter(|m| channel_ids.iter().any(|id| id.0 == m.channel_id.0))
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
         {
             let local = m.timestamp.0.with_timezone(&tz);
             *map.entry((local.year(), local.month())).or_insert(0) += m.value.0;
@@ -374,6 +404,33 @@ impl MeasurementRepository for MemoryMeasurementRepository {
                 month: month as u8,
                 total,
             })
+            .collect())
+    }
+
+    fn resolution_coverage(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<ResolutionCoverage>, DomainError> {
+        let mut map: BTreeMap<i64, (DateTime<Utc>, DateTime<Utc>, i64)> = BTreeMap::new();
+        for m in self.in_window(from, to, channel_ids) {
+            let r = m.resolution_seconds.0;
+            let entry = map.entry(r).or_insert((m.timestamp.0, m.timestamp.0, 0));
+            entry.0 = entry.0.min(m.timestamp.0);
+            entry.1 = entry.1.max(m.timestamp.0);
+            entry.2 += 1;
+        }
+        Ok(map
+            .into_iter()
+            .map(
+                |(resolution_seconds, (first, last, count))| ResolutionCoverage {
+                    resolution_seconds,
+                    first,
+                    last,
+                    count,
+                },
+            )
             .collect())
     }
 }

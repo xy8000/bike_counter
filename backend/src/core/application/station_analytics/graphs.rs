@@ -201,6 +201,7 @@ pub(super) fn period_data(
         current.origin,
         timezone,
         channel_ids,
+        None,
     )?;
     let previous_rows = repository.sum_buckets_by_channel(
         previous.from,
@@ -209,6 +210,7 @@ pub(super) fn period_data(
         previous.origin,
         timezone,
         channel_ids,
+        None,
     )?;
 
     // Aggregate series: fold the per-channel buckets back into one series
@@ -238,9 +240,9 @@ pub(super) fn period_data(
 
     // Aggregate hour-of-day radar over the raw measurements (the 30-day and
     // year buckets are 1-day wide and cannot be split into hours).
-    let hourly = repository.sum_hours(current.from, current.to, timezone, channel_ids)?;
+    let hourly = repository.sum_hours(current.from, current.to, timezone, channel_ids, None)?;
     let hourly_previous =
-        repository.sum_hours(previous.from, previous.to, timezone, channel_ids)?;
+        repository.sum_hours(previous.from, previous.to, timezone, channel_ids, None)?;
 
     // Per-group series + pie from the per-channel buckets.
     let mut current_by_group: HashMap<uuid::Uuid, Vec<TimeBucket>> = HashMap::new();
@@ -272,7 +274,9 @@ pub(super) fn period_data(
 
     // Per-group hour-of-day totals for the nerd-stats hour radar.
     let mut current_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
-    for row in repository.sum_hours_by_channel(current.from, current.to, timezone, channel_ids)? {
+    for row in
+        repository.sum_hours_by_channel(current.from, current.to, timezone, channel_ids, None)?
+    {
         if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
             current_hour_by_group
                 .entry(group_id)
@@ -284,7 +288,9 @@ pub(super) fn period_data(
         }
     }
     let mut previous_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
-    for row in repository.sum_hours_by_channel(previous.from, previous.to, timezone, channel_ids)? {
+    for row in
+        repository.sum_hours_by_channel(previous.from, previous.to, timezone, channel_ids, None)?
+    {
         if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
             previous_hour_by_group
                 .entry(group_id)

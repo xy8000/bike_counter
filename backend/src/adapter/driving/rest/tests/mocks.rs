@@ -248,6 +248,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<i64, DomainError> {
         Ok(self
             .measurements
@@ -266,6 +267,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         _origin: DateTime<Utc>,
         _timezone: &str,
         _channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::TimeBucket>, DomainError>
     {
         Ok(Vec::new())
@@ -279,6 +281,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         _origin: DateTime<Utc>,
         _timezone: &str,
         _channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::ChannelBucket>, DomainError>
     {
         Ok(Vec::new())
@@ -290,6 +293,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         _to: DateTime<Utc>,
         _timezone: &str,
         _channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::WeekdayTotal>, DomainError>
     {
         Ok(Vec::new())
@@ -301,6 +305,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         _to: chrono::DateTime<chrono::Utc>,
         _timezone: &str,
         _channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::HourTotal>, DomainError>
     {
         Ok(Vec::new())
@@ -312,6 +317,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         _to: chrono::DateTime<chrono::Utc>,
         _timezone: &str,
         _channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<
         Vec<crate::core::domain::measurements::repository_port::ChannelHourTotal>,
         DomainError,
@@ -323,6 +329,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         _from: DateTime<Utc>,
         _to: DateTime<Utc>,
         _channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::ChannelTotal>, DomainError>
     {
         Ok(Vec::new())
@@ -332,6 +339,7 @@ impl MeasurementRepository for MockMeasurementRepository {
         &self,
         timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
+        _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::MonthTotal>, DomainError>
     {
         let tz: chrono_tz::Tz = timezone.parse().map_err(|_| {

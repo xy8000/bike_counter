@@ -50,6 +50,13 @@ The core owns all entity identity (`Uuid`s, `data_source_id` links); the adapter
 only reports stable external ids. Do not return database/DTO types — only the
 port's record types and `ProviderError`.
 
+Every [`MeasurementRecord`](backend/src/core/domain/data_source/provider_port.rs:128)
+must declare `resolution_seconds` — the length in seconds of the interval its
+count covers (an open value: 300 = 5 min, 900 = 15 min, 3600 = 1 h, ...). Drop
+any observation whose duration you cannot determine (a re-import recovers it);
+never guess a duration. Calendar-anchored resolutions (daily/weekly) additionally
+set `interval_end` to the exact, DST-aware interval end.
+
 ### 2. Read configuration from the data source
 
 A provider's config is declared in the `[data_sources.provider]` TOML section:
