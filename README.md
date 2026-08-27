@@ -1,6 +1,8 @@
 # Bike-Counter
 
-This Repository can be used to analyse the Bike-Counter-Stations of Münster.
+This Repository can be used to analyse the Bike-Counter-Stations of Münster and
+Bonn (both imported from their official Open Data sources; see
+[Data sources](#data-sources)).
 
 It is a **monorepo** with two sub-projects:
 
@@ -111,6 +113,17 @@ an array entry under `[[data_sources]]`:
   import time window) and `cache_duration` (optional seconds, defaults to `300` —
   the archive-cache window).
 
+The **Bonn** provider (`bonn_opendata_http_provider`) reads three official CC0
+resources: the station-locations **GeoJSON**
+(`stadtplan.bonn.de/geojson?Thema=22640`; `station_nr` + `lage` + coordinates),
+the previous-day ("Vortag") measurements **CSV**
+(`stadtplan.bonn.de/csv?OD=4285`; hourly, `wann` is UTC, one count per station —
+no direction split) and an optional set of **historical** hourly wide CSVs
+(2023–2025) declared in `historical_urls` (space-separated URLs). Its vars are
+`stations_url` (required), `measurements_url` (required), `historical_urls`
+(optional) and the shared `max_measurement_batch_size` / `cache_duration`
+(optional, defaults `500` / `300`).
+
 On startup the application syncs the configured data sources into the
 `data_sources` table: new ones are added, ones that are no longer configured are
 removed. The `data_sources` list may be empty (no import happens, but the API
@@ -162,6 +175,20 @@ Europe/Berlin local time and stored as UTC). The station-aggregate column and th
 `-status` columns are ignored. The channel→file map is derived from the station
 directories (every channel of a station lives in that station's monthly files),
 so building the index never reads CSV headers.
+
+The Bonn provider serves the same three levels from the official resources. The
+station metadata comes from the GeoJSON; the **Vortag CSV** supplies the rolling
+current data (its `station_id` is joined to a station by the `lage` name) and the
+optional **2023–2025 hourly backfill** is parsed from the wide yearly CSVs
+(per-station columns, German local timestamps converted DST-aware to UTC, a small
+alias table for the stations Bonn renamed between years). The three
+`(errechnete Gesamtzahl)` aggregate stations and the historical aggregate columns
+are excluded so the global summary is not double-counted. The first import serves
+the backfill plus the current data; the `imported_until` watermark then keeps
+only the current data flowing — that first run may require raising
+`data_source_update_max_lifetime_seconds`. Older Bonn years (2015–2022) are
+published on govdata but their resources resolve to HTML pages, so they are not
+enabled by default.
 
 The measurements import is bounded by a **time window** so even the first
 multi-year import stays responsive: each provider call only reads the monthly

@@ -35,3 +35,24 @@ url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.
 max_measurement_batch_size = "500"
 # Import time window per provider call, in hours (default 7 days = 168).
 max_measurement_timeframe_hours = "168"
+
+[[data_sources]]
+name = "Bonn"
+
+[data_sources.provider]
+type = "bonn_opendata_http_provider"
+# Minimum provider-message severity to persist (default: WARNING).
+log_level = "WARNING"
+
+[data_sources.provider.vars]
+# Official station locations (GeoJSON: station_nr + lage + coordinates).
+stations_url = "https://stadtplan.bonn.de/geojson?Thema=22640"
+# Official previous-day measurements (Vortag CSV, hourly, `wann` is UTC).
+measurements_url = "https://stadtplan.bonn.de/csv?OD=4285"
+# Optional historical hourly backfill (2023-2025, wide yearly CSVs), space-separated.
+# The first import serves this backfill plus the rolling Vortag data; the
+# `imported_until` watermark then keeps only the current data flowing.
+historical_urls = "https://opendata.bonn.de/sites/default/files/Fahrradzaehlstellen2023_stuendlich.csv https://opendata.bonn.de/sites/default/files/MessergebnisseFahrradzaehlstationenStundenauswertung2024.csv https://opendata.bonn.de/sites/default/files/fahrradzaehldatenbonn2025.csv"
+max_measurement_batch_size = "500"
+# Cache window for the fetched resources, in seconds (default 300).
+cache_duration = "300"

@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
 use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
@@ -18,6 +19,8 @@ impl DataProviderFactory for DataProviderFactoryImpl {
     ) -> Result<Arc<dyn DataProvider>, ConfigError> {
         if config.provider().provider_type() == MuensterGithubAdapter::provider_type() {
             Ok(Arc::new(MuensterGithubAdapter::new(config)?))
+        } else if config.provider().provider_type() == BonnOpendataAdapter::provider_type() {
+            Ok(Arc::new(BonnOpendataAdapter::new(config)?))
         } else {
             Err(ConfigError::InvalidFormat(format!(
                 "unknown data provider type: {}",
@@ -32,6 +35,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::DataProviderFactoryImpl;
+    use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
     use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration,
@@ -49,6 +53,23 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("url".to_string(), "https://github.com".to_string());
         let config = data_source(MuensterGithubAdapter::provider_type(), vars);
+
+        let factory = DataProviderFactoryImpl;
+        assert!(factory.build(&config).is_ok());
+    }
+
+    #[test]
+    fn builds_bonn_provider_type() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "stations_url".to_string(),
+            "https://stadtplan.bonn.de/geojson?Thema=22640".to_string(),
+        );
+        vars.insert(
+            "measurements_url".to_string(),
+            "https://stadtplan.bonn.de/csv?OD=4285".to_string(),
+        );
+        let config = data_source(BonnOpendataAdapter::provider_type(), vars);
 
         let factory = DataProviderFactoryImpl;
         assert!(factory.build(&config).is_ok());
