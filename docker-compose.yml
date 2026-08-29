@@ -37,6 +37,7 @@ services:
     networks:
       - default
       - asset_network
+      - tile_network
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
       interval: 30s
@@ -83,6 +84,105 @@ services:
       mc mb --ignore-existing local/bike-counter-images
       "
 
+  # Self-hosted vector tile server (Martin). Serves the basemap from the
+  # read-only ./tiles volume (a .pmtiles built once — see
+  # scripts/build_tiles.sh). Reachable only from within the internal
+  # `tile_network` (i.e. only the backend BFF, which proxies `/api/map/*` to
+  # it); no host port is exposed.
+  martin:
+    image: ghcr.io/maplibre/martin:1.14.0
+    container_name: bike_counter_martin
+    restart: unless-stopped
+    depends_on:
+      # The Germany basemap is built by the one-shot `basemap` init container;
+      # martin only starts once it has succeeded, so basemap.pmtiles is present.
+      basemap:
+        condition: service_completed_successfully
+    # The image's ENTRYPOINT is `martin` and it treats positional args as
+    # connection strings, so a missing tile file makes it crash-loop with
+    # "Unrecognizable connection string". Override the entrypoint with a guard
+    # that serves every present source (coarse world + Germany detail) and
+    # otherwise waits (staying alive) until the tile data exists.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        # Note: `$` is written as `$$` because docker-compose interpolates a
+        # single `$` from the host environment (the script must see the literal
+        # shell variable instead).
+        SOURCES=""
+        [ -f /data/world.mbtiles ] && SOURCES="$$SOURCES /data/world.mbtiles"
+        if [ -f /data/basemap.pmtiles ]; then
+          SOURCES="$$SOURCES /data/basemap.pmtiles"
+        fi
+        set -- $$SOURCES
+        if [ "$$#" -gt 0 ]; then
+          exec martin "$$@"
+        else
+          echo "waiting for tile data: run make tiles (world) — the Germany basemap is built by the basemap init container on docker compose up"
+          sleep infinity
+        fi
+    volumes:
+      - ./tiles:/data:ro
+    networks:
+      - tile_network
+    # Informational only: the backend BFF handles an unreachable Martin with a
+    # 502, so no other service depends on this becoming healthy.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/catalog"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # One-shot init container that builds the Germany OSM vector basemap
+  # (tiles/basemap.pmtiles, OpenMapTiles schema) into the shared ./tiles volume
+  # with Planetiler. Java runs only inside this container — the host needs no
+  # Java/Rust toolchain. The `martin` service waits for this to complete so the
+  # basemap exists when the tile server starts. Skips when the file already
+  # exists (cached across runs); set SKIP_BASEMAP=1 (e.g. the e2e, which only
+  # needs the world backdrop) to skip the build.
+  basemap:
+    image: eclipse-temurin:21-jre
+    container_name: bike_counter_basemap_init
+    restart: "no"
+    environment:
+      - SKIP_BASEMAP
+    volumes:
+      - ./tiles:/data
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        if [ "$${SKIP_BASEMAP:-0}" = "1" ]; then
+          echo "SKIP_BASEMAP=1 — skipping basemap build"
+          exit 0
+        fi
+        if [ -f /data/basemap.pmtiles ]; then
+          echo "basemap.pmtiles already exists — skipping build"
+          exit 0
+        fi
+        cd /data
+        if [ ! -f planetiler.jar ]; then
+          echo "Downloading Planetiler ..."
+          curl -fL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+        fi
+        echo "Building tiles/basemap.pmtiles (downloads the Germany extract on first run; this can take a while) ..."
+        # --download fetches the Germany extract and Planetiler's auxiliary input
+        # files (lake centerlines, water polygons, Natural Earth). Low-RAM
+        # profile: `sortedtable` nodemap (disk-backed; valid values are
+        # [noop, sortedtable, sparsearray, array] — `sparse`/`chunkedtable`
+        # crash Planetiler) + `mmap` storage, so the build fits a 14 GB host
+        # even while the rest of the stack runs. Override via JAVA_MEM /
+        # STORAGE / NODEMAP_TYPE.
+        java "$${JAVA_MEM:--Xmx4g}" -jar planetiler.jar \
+          --area=germany \
+          --download \
+          --output=/data/basemap.pmtiles \
+          --nodemap-type="$${NODEMAP_TYPE:-sortedtable}" \
+          --storage="$${STORAGE:-mmap}"
+        echo "basemap build complete: /data/basemap.pmtiles"
+
   frontend:
     build:
       context: ./frontend
@@ -110,6 +210,10 @@ networks:
   # disables external access and, together with explicit network membership,
   # keeps MinIO unreachable from db/frontend on the default network.
   asset_network:
+    internal: true
+  # Internal network shared only by the backend and the Martin tile server.
+  # `internal: true` keeps Martin unreachable from db/frontend and the host.
+  tile_network:
     internal: true
 
 volumes:

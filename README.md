@@ -12,8 +12,10 @@ It is a **monorepo** with two sub-projects:
   `/api/bff` that is consumed by the frontend **only** and appears in Swagger
   under its own `BFF API` collection.
 - [`frontend/`](frontend) — React (Vite) single-page application served by nginx
-  in the Docker stack: a Leaflet map with one marker per counting station that
-  has GPS coordinates, a left sidebar listing the stations currently visible in
+  in the Docker stack: a self-hosted MapLibre GL map (vector tiles served by
+  Martin behind the BFF at `/api/map/...` — see [`tiles/`](tiles)) with one
+  marker per counting station that has GPS coordinates, a left sidebar listing
+  the stations currently visible in
   the viewport (name, description, channel count, bikes in the last 24 h), a
   Komoot-style header with a search dialog, a live aggregate summary, a
   per-station detail page (`/stations/:id`) with the overview stat boxes (incl.
@@ -250,10 +252,10 @@ station↔asset link; the binary bytes never touch the database.
     bucket and `assets` table mirror the assets folder. The frontend brand bike
     icon (favicon + header) lives separately in `frontend/public/bike-icon.svg`
     and is never streamed through the BFF; frontend brand assets belong in
-    `frontend/public/`, backend builtin assets in `backend/assets/`. The Leaflet
+    `frontend/public/`, backend builtin assets in `backend/assets/`. The MapLibre
     map marker (the emerald pin + bike, also never streamed) lives in the map
     feature as `frontend/src/features/map/map-flag-counting-station.svg` and is
-    imported by `frontend/src/lib/leaflet.ts` via Vite, so editing that SVG file
+    imported by `frontend/src/lib/map.tsx` via Vite, so editing that SVG file
     restyles both the map and the detail-preview markers without a code change.
 - The **BFF streams** image bytes to the browser
   (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend

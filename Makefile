@@ -9,7 +9,7 @@
 #   make coverage  -> backend line-coverage gate, overall >= 80% and core >= 95% (scripts/coverage.sh)
 #   make coverage-open -> open the HTML coverage report in a browser
 
-.PHONY: help build run down logs fmt check test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
+.PHONY: help build tiles basemap-update run down logs fmt check test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -17,7 +17,15 @@ help: ## Show available targets
 build: ## Build the backend (debug)
 	cargo build --manifest-path backend/Cargo.toml --quiet
 
-run: ## Boot the full docker-compose stack (PostgreSQL + backend + frontend) in the foreground
+tiles: ## Generate the tiny Natural Earth world backdrop (tiles/world.mbtiles, z0-5)
+	node frontend/scripts/build-world-tiles.mjs
+
+basemap-update: ## Rebuild the Germany OSM basemap from the latest OSM extract (slow: drops the cached pmtiles + extract so the init container re-downloads + rebuilds), then restart martin
+	rm -f tiles/basemap.pmtiles tiles/data/sources/germany.osm.pbf tiles/data/sources/germany.osm.pbf_inprogress
+	docker compose up basemap
+	docker compose up -d --force-recreate martin
+
+run: tiles ## Boot the full docker-compose stack (PostgreSQL + backend + frontend) in the foreground
 	docker compose up --build
 
 down: ## Stop and remove the docker-compose stack (keeps the database volume)

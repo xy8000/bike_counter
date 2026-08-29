@@ -26,7 +26,7 @@ test('the map view URL carries the visible bbox and the open overview', async ({
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
 
   // Closing the overview with a map void click drops the station param again.
-  const map = page.locator('.leaflet-container')
+  const map = page.locator('.maplibregl-map')
   const box = await map.boundingBox()
   expect(box).not.toBeNull()
   await map.click({ position: { x: (box?.width ?? 100) - 20, y: (box?.height ?? 100) / 2 } })
@@ -51,6 +51,6 @@ test('a shared detail URL keeps the station id in the path and renders the detai
   await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
   await expect(page).toHaveURL(new RegExp(`/stations/${stationId}`))
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
-  await expect(page.locator('.leaflet-container')).toHaveCount(1)
+  await expect(page.locator('.maplibregl-map')).toHaveCount(1)
   await expect(page.getByRole('complementary')).toHaveCount(0)
 })

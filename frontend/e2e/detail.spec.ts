@@ -38,7 +38,7 @@ test('the shared detail page renders the station content and a highlighted map p
   await expect(page.locator('.recharts-wrapper').first()).toBeVisible()
   // Exactly one map: the highlighted detail preview (the map view has markers +
   // the sidebar; the detail page has neither).
-  await expect(page.locator('.leaflet-container')).toHaveCount(1)
+  await expect(page.locator('.maplibregl-map')).toHaveCount(1)
   await expect(page.getByRole('complementary')).toHaveCount(0)
 })
 
@@ -129,7 +129,7 @@ test('clicking the map preview opens the map view at the preview bounds', async 
   const stationId = await openFirstStation(page)
   await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
 
-  const preview = page.locator('.leaflet-container')
+  const preview = page.locator('.maplibregl-map')
   await expect(preview).toBeVisible()
   // Click away from the centred marker (top-left corner of the preview).
   await preview.click({ position: { x: 20, y: 20 } })

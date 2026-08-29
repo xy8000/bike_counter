@@ -93,7 +93,7 @@ test.describe('station summary', () => {
     await expect(page).toHaveURL(/[?&]disabled=[0-9a-f-]+/)
     // … and the clicked marker turns gray once the aggregation re-runs without
     // that station: both the class and the actual computed gray filter.
-    await expect(marker).toHaveClass(/leaflet-disabled-marker/, { timeout: 240_000 })
+    await expect(marker).toHaveClass(/station-marker--disabled/, { timeout: 240_000 })
     await expect(marker).toHaveCSS('filter', /grayscale/)
   })
 
@@ -110,7 +110,7 @@ test.describe('station summary', () => {
     await page.goto(sharedUrl, { waitUntil: 'domcontentloaded' })
     await waitForSummaryContent(page)
     await expect(mapMarkers(page).first()).toBeVisible()
-    const disabledMarker = page.locator('.leaflet-disabled-marker').first()
+    const disabledMarker = page.locator('.station-marker--disabled').first()
     await expect(disabledMarker).toBeVisible({ timeout: 240_000 })
     await expect(disabledMarker).toHaveCSS('filter', /grayscale/)
   })

@@ -31,11 +31,11 @@ test('the sidebar renders only the stations visible in the current viewport', as
   await expect(firstRow.locator('img')).toBeVisible()
   await expect(firstRow.getByText('bikes / last day')).toBeVisible()
 
-  // Focus the map and zoom in with the keyboard (the Leaflet zoom control sits
-  // at the top-right, clear of the sidebar). After each moveend the map
-  // re-renders and can drop a keypress, so keep zooming until the visible set
-  // actually shrinks.
-  const map = page.locator('.leaflet-container')
+  // Focus the map and zoom in with the keyboard (the MapLibre navigation
+  // control sits at the top-right, clear of the sidebar). After each moveend
+  // the map re-renders and can drop a keypress, so keep zooming until the
+  // visible set actually shrinks.
+  const map = page.locator('.maplibregl-map')
   // The focus click must land on map "void", not a marker: a marker hit opens
   // the station overview, which replaces the sidebar and breaks the count
   // assertions. Click a far corner, well clear of the central Münster cluster.

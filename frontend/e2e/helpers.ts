@@ -21,9 +21,9 @@ export function sidebarStationItems(page: Page): Locator {
   return sidebar(page).locator('li:has(button)')
 }
 
-/// The Leaflet marker icons (one per station visible in the current viewport).
+/// The MapLibre station marker images (one per station in the current viewport).
 export function mapMarkers(page: Page): Locator {
-  return page.locator('.leaflet-marker-icon')
+  return page.locator('.station-marker')
 }
 
 export interface VisibleCounts {

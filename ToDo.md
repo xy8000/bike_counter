@@ -441,6 +441,10 @@ Align overview loading skeletons with the rendered cards (plan 54)
 - [x] Frontend: new `stationOverview/Skeletons.tsx` `OverviewPanelSkeleton` (total-card skeleton + four metric-box skeletons in the same `gap-2` column as the rendered cards); the overview panel uses it for both the shell and stats loading states, and the shell ghost now includes the badge/updated row
 - [x] Gates green: `npm run build` (tsc + vite), `make test-playwright` (21)
 
+Map control scrollbar flicker (plan 62)
+
+- [x] Frontend: contain full-screen map-page overflow so the sidebar's temporary loading-state overflow cannot create a document scrollbar and shift the top-right MapLibre navigation control.
+
 Small UI + script fixes (plan 55)
 
 - [x] Makefile: replaced `cd <dir> && <tool>` with `--manifest-path` / `--prefix` for build, fmt, test, test-rest, clean, playwright-install and frontend-build

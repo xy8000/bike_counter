@@ -1,37 +1,18 @@
-import {
-  MapContainer,
-  Marker,
-  Popup,
-  TileLayer,
-  useMapEvents,
-  ZoomControl,
-} from 'react-leaflet'
-import L from 'leaflet'
-import type { Map as LeafletMap } from 'leaflet'
+import { Marker, Popup } from '@vis.gl/react-maplibre'
+import type { Map as MaplibreMap } from 'maplibre-gl'
 import { ExternalLink } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Bounds } from '../../lib/geo'
-import { MUENSTER_CENTER } from '../../lib/geo'
 import type { StationMap } from '../stations/types'
-import { MapController } from './MapController'
-// Side effect: sets up the default marker icons and imports leaflet.css. Also
-// exports the emerald stationIcon used by the markers below.
-import { stationIcon } from '../../lib/leaflet'
+import { stationMarkerImage } from '../../lib/map'
+import { BaseMap } from './BaseMap'
 
-/// Renders inside <MapContainer>: clicking the map "void" (i.e. anywhere except
-/// a marker) closes the open station overview. Marker clicks stop propagation
-/// (see below), so they never reach this handler. `useMapEvents` needs the
-/// Leaflet map context that only <MapContainer>'s children have, so this must be
-/// its own child component (not called from MapView itself).
-function MapVoidClickHandler({ onDeselect }: { onDeselect: () => void }) {
-  useMapEvents({ click: () => onDeselect() })
-  return null
-}
-
-/// The interactive Leaflet map with one marker per visible station. Clicking a
-/// marker opens the station overview panel; clicking the map void closes it.
-/// When `initialBounds` is set (from a shared URL) the map fits that view on
-/// mount instead of the Münster default; otherwise it keeps the default.
+/// The interactive MapLibre map with one marker per visible station. Clicking a
+/// marker opens the station overview panel (and a popup with the station name +
+/// detail links); clicking the map void closes them. When `initialBounds` is set
+/// (from a shared URL) the map fits that view on mount instead of the Münster
+/// default.
 export function MapView({
   stations,
   initialBounds,
@@ -43,81 +24,69 @@ export function MapView({
   stations: StationMap[] | null
   initialBounds?: Bounds | null
   onBounds: (bounds: Bounds) => void
-  onReady: (map: LeafletMap) => void
+  onReady: (map: MaplibreMap) => void
   onSelectStation: (station: StationMap) => void
   onDeselect: () => void
 }) {
+  // The station whose popup is open (independent of the overview panel, which
+  // the parent owns). Cleared on a map void click / station switch.
+  const [popupStation, setPopupStation] = useState<StationMap | null>(null)
+
   return (
-    // `center`/`zoom` take priority over `bounds` in react-leaflet's
-    // MapContainer, so pass either the shared bounds or the default center/zoom.
-    <MapContainer
-      {...(initialBounds
-        ? {
-            bounds: [
-              [initialBounds.min_lat, initialBounds.min_lng],
-              [initialBounds.max_lat, initialBounds.max_lng],
-            ],
-            boundsOptions: { animate: false },
-          }
-        : { center: MUENSTER_CENTER, zoom: 13 })}
-      className="absolute inset-0 z-0"
-      // The default zoom control sits top-left, hidden behind the overlay
-      // sidebar; disable it and render an explicit one on the right.
-      zoomControl={false}
+    <BaseMap
+      bounds={initialBounds ?? undefined}
+      onReady={onReady}
+      onBounds={onBounds}
+      navigationControl
+      onVoidClick={() => {
+        setPopupStation(null)
+        onDeselect()
+      }}
     >
-      <ZoomControl position="topright" />
-      {/* OpenStreetMap's public tile server (tile.openstreetmap.org) blocks
-          client-side requests it can't attribute to a real app and returns
-          its usage-policy 403 image instead of tiles. CARTO's free raster
-          tiles permit browser use without an API key. */}
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-      />
       {(stations ?? []).map((station) => (
-        <Marker
-          key={station.id}
-          position={[station.latitude, station.longitude]}
-          icon={stationIcon}
-          // Leaflet forwards both to the marker <img>; used by the Playwright
-          // e2e tests to locate a marker and to assert its popup, and improves
-          // accessibility (screen readers + tooltip).
-          alt={station.name}
-          title={station.name}
-          eventHandlers={{
-            click: (event) => {
-              // Do not let the marker click bubble to the map's void-click
-              // handler (which would close the overview we are about to open).
-              L.DomEvent.stopPropagation(event.originalEvent)
+        <Marker key={station.id} longitude={station.longitude} latitude={station.latitude}>
+          {/* The marker DOM element is a child of the map container, so its click
+              bubbles up to the map's onClick; stop it here (the BaseMap void-click
+              guard ignores .maplibregl-marker clicks as a second layer). */}
+          <div
+            className="cursor-pointer"
+            onClick={(event) => {
+              event.stopPropagation()
+              setPopupStation(station)
               onSelectStation(station)
-            },
-          }}
-        >
-          <Popup>
-            <div className="flex items-center gap-2">
-              {/* The station name opens the detail page in the same tab without
-                  looking like a link; the icon button is the explicit
-                  affordance. */}
-              <Link
-                to={`/stations/${station.id}`}
-                className="font-medium text-foreground hover:no-underline"
-              >
-                {station.name}
-              </Link>
-              <Link
-                to={`/stations/${station.id}`}
-                aria-label="Open detail page"
-                title="Open detail page"
-                className="inline-flex items-center text-primary hover:underline"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Link>
-            </div>
-          </Popup>
+            }}
+          >
+            {stationMarkerImage(station.name)}
+          </div>
         </Marker>
       ))}
-      <MapVoidClickHandler onDeselect={onDeselect} />
-      <MapController onBounds={onBounds} onReady={onReady} />
-    </MapContainer>
+      {popupStation && (
+        <Popup
+          longitude={popupStation.longitude}
+          latitude={popupStation.latitude}
+          offset={28}
+          closeButton={false}
+        >
+          <div className="station-popup flex items-center gap-2">
+            {/* The station name opens the detail page in the same tab without
+                looking like a link; the icon button is the explicit affordance. */}
+            <Link
+              to={`/stations/${popupStation.id}`}
+              className="font-medium text-foreground hover:no-underline"
+            >
+              {popupStation.name}
+            </Link>
+            <Link
+              to={`/stations/${popupStation.id}`}
+              aria-label="Open detail page"
+              title="Open detail page"
+              className="inline-flex items-center text-primary hover:underline"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </Popup>
+      )}
+    </BaseMap>
   )
 }

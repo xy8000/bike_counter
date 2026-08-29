@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import type { Map as LeafletMap } from 'leaflet'
+import type { Map as MaplibreMap } from 'maplibre-gl'
 import type { Bounds } from '../../lib/geo'
 import { parseBoundsQuery, serializeBounds } from '../../lib/geo'
 import { useVisibleStations } from '../stations/useVisibleStations'
@@ -33,7 +33,7 @@ export default function MapPage() {
     () => searchParams.get('station') ?? null,
   )
 
-  const mapRef = useRef<LeafletMap | null>(null)
+  const mapRef = useRef<MaplibreMap | null>(null)
   const {
     mapStations,
     shell,
@@ -84,7 +84,7 @@ export default function MapPage() {
   const selectStation = ({ id, latitude, longitude }: StationLocation) => {
     const map = mapRef.current
     if (map && latitude !== null && longitude !== null) {
-      map.flyTo([latitude, longitude], 15, { duration: 0.8 })
+      map.flyTo({ center: [longitude, latitude], zoom: 15, duration: 0.8 })
     }
     setSelectedStationId(id)
   }
@@ -105,7 +105,7 @@ export default function MapPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-screen flex-col overflow-hidden">
       <SearchableHeader onSelect={findAndClose} onFind={findAndClose} onDetail={openDetail} />
 
       <div className="relative flex min-h-0 flex-1">

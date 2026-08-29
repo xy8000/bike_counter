@@ -1,4 +1,4 @@
-import type { Map as LeafletMap } from 'leaflet'
+import type { Map as MaplibreMap } from 'maplibre-gl'
 
 /// Geographic bounding box used by the BFF's visible-stations query.
 export interface Bounds {
@@ -67,15 +67,13 @@ export function parseBoundsQuery(searchParams: URLSearchParams): Bounds | null {
   return valid ? { min_lat, min_lng, max_lat, max_lng } : null
 }
 
-export function mapBounds(map: LeafletMap): Bounds {
+export function mapBounds(map: MaplibreMap): Bounds {
   const bounds = map.getBounds()
-  const southWest = bounds.getSouthWest()
-  const northEast = bounds.getNorthEast()
   return {
-    min_lat: southWest.lat,
-    min_lng: southWest.lng,
-    max_lat: northEast.lat,
-    max_lng: northEast.lng,
+    min_lat: bounds.getSouth(),
+    min_lng: bounds.getWest(),
+    max_lat: bounds.getNorth(),
+    max_lng: bounds.getEast(),
   }
 }
 

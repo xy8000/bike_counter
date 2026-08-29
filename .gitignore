@@ -72,4 +72,16 @@ frontend/playwright/.cache/
 # Local sample data (large upstream archive, not part of the build).
 example
 
+### Map tiles ###
+# Self-hosted vector-tile data (large, built/downloaded once; see tiles/README.md).
+tiles/*.mbtiles
+tiles/*.pmtiles
+# Planetiler build artifacts: the tool jar and the Geofabrik download cache.
+# The host `scripts/build_tiles.sh` keeps them at the repo root; the `basemap`
+# init container keeps them inside ./tiles (its /data workdir).
+planetiler.jar
+data/
+tiles/planetiler.jar
+tiles/data/
+
 # End of https://www.toptal.com/developers/gitignore/api/rust,visualstudiocode,git

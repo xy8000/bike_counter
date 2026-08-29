@@ -93,15 +93,20 @@
   body {
     @apply bg-background text-foreground;
   }
-  /* Tailwind's preflight (img { max-width: 100% }) would squash Leaflet's
-     absolutely-positioned tiles and marker icons, so restore normal sizing. */
-  .leaflet-container img {
+  /* Tailwind's preflight (img { max-width: 100% }) would squash the MapLibre
+     marker images, so restore normal sizing and give them their native size. */
+  .station-marker {
     max-width: none !important;
+    width: 32px;
+    height: 40px;
+  }
+  .station-marker--large {
+    width: 44px;
+    height: 55px;
   }
   /* Disabled stations on the station-summary map: the emerald flag becomes a
-     muted gray silhouette. Leaflet applies the icon's `className` directly on
-     the marker <img>, so the rule targets the element itself, not a child. */
-  .leaflet-disabled-marker {
+     muted gray silhouette (the class is applied on the marker <img>). */
+  .station-marker--disabled {
     filter: grayscale(1) opacity(0.55);
   }
 }
