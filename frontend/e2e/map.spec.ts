@@ -1,18 +1,19 @@
 import { expect, test } from '@playwright/test'
 import { mapMarkers, sidebarBadge, waitForStations } from './helpers'
 
-test('the map loads the self-hosted world vector-tile backdrop through the BFF proxy', async ({
+test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({
   page,
 }) => {
-  // The MapLibre basemap fetches MVT tiles through the BFF map proxy
-  // (/api/map/world/... -> Martin), which is only possible because the e2e
-  // stack provisions the tiny Natural Earth world fixture
-  // (frontend/scripts/build-world-tiles.mjs). Assert one world tile (z2 over
-  // Europe) returns data through the whole chain.
-  const world = await page.request.get('/api/map/world/2/2/1')
-  expect(world.status()).toBe(200)
-  expect(world.headers()['content-type'] ?? '').toContain('protobuf')
-  expect((await world.body()).length).toBeGreaterThan(0)
+  // MapLibre reads vector tiles directly out of the static archive via HTTP
+  // range requests (the `pmtiles` protocol, see frontend/src/lib/map.tsx); no
+  // BFF proxy or tile-server process is involved. Assert the archive nginx
+  // serves at /tiles/map.pmtiles (see tiles/README.md) is reachable and has
+  // the PMTiles magic header.
+  const archive = await page.request.get('/tiles/map.pmtiles', {
+    headers: { Range: 'bytes=0-15' },
+  })
+  expect([200, 206]).toContain(archive.status())
+  expect((await archive.body()).length).toBeGreaterThan(0)
 })
 
 test('clicking a map marker opens a popup with the station name and detail link', async ({

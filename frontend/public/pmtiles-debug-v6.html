@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<link href="/debug-libs/maplibre-gl.css" rel="stylesheet" />
+<style>#map{position:absolute;inset:0}</style>
+<script type="importmap">
+{
+  "imports": {
+    "maplibre-gl": "/debug-libs/maplibre-gl.js",
+    "pmtiles": "/debug-libs/pmtiles.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="map"></div>
+<script type="module">
+  import { Map, addProtocol, setWorkerUrl } from 'maplibre-gl';
+  import { Protocol } from 'pmtiles';
+  setWorkerUrl('/debug-libs/maplibre-gl-worker.js');
+  const protocol = new Protocol();
+  addProtocol('pmtiles', protocol.tile);
+  const map = new Map({
+    container: 'map',
+    zoom: 12,
+    center: [7.63, 51.96],
+    style: {
+      version: 8,
+      sources: {
+        protomaps: {
+          type: 'vector',
+          url: 'pmtiles://' + window.location.origin + '/tiles/map.pmtiles',
+        },
+      },
+      layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#e8e6e0' } },
+        { id: 'earth', type: 'fill', source: 'protomaps', 'source-layer': 'earth', paint: { 'fill-color': '#cfcfcf' } },
+        { id: 'water', type: 'fill', source: 'protomaps', 'source-layer': 'water', paint: { 'fill-color': '#a5c6e3' } },
+        { id: 'roads', type: 'line', source: 'protomaps', 'source-layer': 'roads', paint: { 'line-color': '#fff' } },
+      ],
+    },
+  });
+  map.on('error', (e) => console.error('MAP ERROR', e.error));
+  map.on('load', () => console.log('MAP LOADED'));
+  map.on('idle', () => console.log('MAP IDLE'));
+</script>
+</body>
+</html>

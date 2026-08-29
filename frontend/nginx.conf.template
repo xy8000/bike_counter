@@ -16,6 +16,14 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # The self-hosted PMTiles basemap archive (see tiles/README.md), mounted
+    # read-only from ./tiles. Served as a plain static file; nginx supports
+    # byte-range requests for static files by default, which is how MapLibre's
+    # `pmtiles` protocol reads individual tiles out of the single archive.
+    location /tiles/ {
+        add_header Cache-Control "public, max-age=3600";
+    }
+
     # Reverse-proxy the backend (BFF + REST) so the browser only ever talks
     # same-origin. `proxy_pass` without a trailing slash keeps the full URI,
     # e.g. /api/bff/stations -> http://backend:8080/api/bff/stations.

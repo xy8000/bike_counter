@@ -1,89 +1,249 @@
 {
   "version": 8,
-  "name": "Bike counter basemap (Natural Earth world + Germany OSM)",
+  "name": "Bike counter basemap (Protomaps basemap, self-hosted PMTiles)",
   "sources": {
-    "world": {
+    "protomaps": {
       "type": "vector",
-      "tiles": ["/api/map/world/{z}/{x}/{y}"],
-      "maxzoom": 5,
-      "attribution": "© OpenStreetMap contributors, Natural Earth"
-    },
-    "basemap": {
-      "type": "vector",
-      "tiles": ["/api/map/basemap/{z}/{x}/{y}"],
-      "maxzoom": 14,
-      "attribution": "© OpenStreetMap contributors"
+      "url": "pmtiles://REPLACED_AT_RUNTIME/tiles/map.pmtiles",
+      "attribution": "© OpenStreetMap contributors, © Protomaps"
     }
   },
   "layers": [
     {
       "id": "background",
       "type": "background",
-      "paint": { "background-color": "#e8e6e0" }
+      "paint": {
+        "background-color": "#e8e6e0"
+      }
     },
     {
-      "id": "world-water",
+      "id": "earth",
       "type": "fill",
-      "source": "world",
-      "source-layer": "water",
-      "maxzoom": 5,
-      "paint": { "fill-color": "#a5c6e3" }
+      "source": "protomaps",
+      "source-layer": "earth",
+      "paint": {
+        "fill-color": "#e8e6e0"
+      }
     },
     {
-      "id": "world-land",
+      "id": "landcover",
       "type": "fill",
-      "source": "world",
+      "source": "protomaps",
       "source-layer": "landcover",
-      "maxzoom": 5,
-      "paint": { "fill-color": "#e8e6e0" }
+      "paint": {
+        "fill-color": "#d7dcc4"
+      }
     },
     {
-      "id": "de-water",
+      "id": "landuse",
       "type": "fill",
-      "source": "basemap",
-      "source-layer": "water",
-      "minzoom": 5,
-      "paint": { "fill-color": "#a5c6e3" }
-    },
-    {
-      "id": "de-landcover",
-      "type": "fill",
-      "source": "basemap",
-      "source-layer": "landcover",
-      "minzoom": 5,
-      "paint": { "fill-color": "#d7dcc4" }
-    },
-    {
-      "id": "de-landuse",
-      "type": "fill",
-      "source": "basemap",
+      "source": "protomaps",
       "source-layer": "landuse",
-      "minzoom": 5,
-      "paint": { "fill-color": "#e0e0d0" }
+      "paint": {
+        "fill-color": "#e0e0d0"
+      }
     },
     {
-      "id": "de-transportation",
-      "type": "line",
-      "source": "basemap",
-      "source-layer": "transportation",
-      "minzoom": 5,
-      "paint": { "line-color": "#ffffff", "line-width": 1.2 }
-    },
-    {
-      "id": "de-boundary",
-      "type": "line",
-      "source": "basemap",
-      "source-layer": "boundary",
-      "minzoom": 5,
-      "paint": { "line-color": "#9a9a9a", "line-width": 1 }
-    },
-    {
-      "id": "de-building",
+      "id": "water",
       "type": "fill",
-      "source": "basemap",
-      "source-layer": "building",
+      "source": "protomaps",
+      "source-layer": "water",
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "Polygon"
+      ],
+      "paint": {
+        "fill-color": "#a5c6e3"
+      }
+    },
+    {
+      "id": "water_stream",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "water",
+      "minzoom": 14,
+      "filter": [
+        "==",
+        [
+          "get",
+          "kind"
+        ],
+        "stream"
+      ],
+      "paint": {
+        "line-color": "#a5c6e3",
+        "line-width": 0.5
+      }
+    },
+    {
+      "id": "water_river",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "water",
+      "minzoom": 9,
+      "filter": [
+        "==",
+        [
+          "get",
+          "kind"
+        ],
+        "river"
+      ],
+      "paint": {
+        "line-color": "#a5c6e3",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          0.5,
+          12,
+          1.0,
+          15,
+          2.0
+        ]
+      }
+    },
+    {
+      "id": "water_canal",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "water",
+      "minzoom": 12,
+      "filter": [
+        "==",
+        [
+          "get",
+          "kind"
+        ],
+        "canal"
+      ],
+      "paint": {
+        "line-color": "#a5c6e3",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          0.5,
+          15,
+          2.0
+        ]
+      }
+    },
+    {
+      "id": "water_other",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "water",
+      "filter": [
+        "any",
+        [
+          "==",
+          [
+            "get",
+            "kind"
+          ],
+          "ditch"
+        ],
+        [
+          "==",
+          [
+            "get",
+            "kind"
+          ],
+          "drain"
+        ]
+      ],
+      "paint": {
+        "line-color": "#a5c6e3",
+        "line-width": 0.5
+      }
+    },
+    {
+      "id": "roads",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "paint": {
+        "line-color": "#ffffff",
+        "line-width": 1.2
+      }
+    },
+    {
+  "id": "bike_lanes",
+  "type": "line",
+  "source": "protomaps",
+  "source-layer": "roads",
+  "minzoom": 12,
+  "filter": [
+    "==",
+    ["get", "kind_detail"],
+    "cycleway"
+  ],
+  "paint": {
+    "line-color": "#4caf50",
+    "line-width": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      12, 1.5,
+      15, 3,
+      18, 5
+    ]
+  }
+},
+    {
+      "id": "road_labels",
+      "type": "symbol",
+      "source": "protomaps",
+      "source-layer": "roads",
+      "minzoom": 12,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": [
+          "get",
+          "name"
+        ],
+        "text-size": 11,
+        "text-allow-overlap": false
+      },
+      "paint": {
+        "text-color": "#555555",
+        "text-halo-color": "#e8e6e0",
+        "text-halo-width": 1.5
+      }
+    },
+    {
+      "id": "boundaries",
+      "type": "line",
+      "source": "protomaps",
+      "source-layer": "boundaries",
+      "paint": {
+        "line-color": "#9a9a9a",
+        "line-width": 1
+      }
+    },
+    {
+      "id": "buildings",
+      "type": "fill",
+      "source": "protomaps",
+      "source-layer": "buildings",
       "minzoom": 13,
-      "paint": { "fill-color": "#d6c9b8" }
+      "paint": {
+        "fill-color": "#d6c9b8"
+      }
     }
   ]
 }

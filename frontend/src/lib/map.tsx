@@ -4,14 +4,20 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // so without this the worker 404s, no tiles are fetched and the map's `load`
 // event never fires. Bundle the worker with Vite (`?worker&url`) and register
 // its URL before any map is created.
-import { setWorkerUrl } from 'maplibre-gl'
+import { addProtocol, setWorkerUrl } from 'maplibre-gl'
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
+import { Protocol } from 'pmtiles'
 // The brand emerald (--primary, emerald-600 #059669) pin-with-bike marker,
 // imported as a Vite asset so editing the SVG file in the map feature updates
 // the markers on rebuild/HMR without a code change.
 import markerUrl from '../features/map/map-flag-counting-station.svg'
 
 setWorkerUrl(maplibreWorkerUrl)
+
+// Registers the `pmtiles://` protocol so MapLibre reads vector tiles directly
+// out of a static `.pmtiles` file via HTTP range requests, with no tile-server
+// process (see frontend/public/styles/basemap.json and tiles/README.md).
+addProtocol('pmtiles', new Protocol().tile)
 
 export { markerUrl }
 

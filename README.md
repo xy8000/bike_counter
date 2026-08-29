@@ -12,8 +12,9 @@ It is a **monorepo** with two sub-projects:
   `/api/bff` that is consumed by the frontend **only** and appears in Swagger
   under its own `BFF API` collection.
 - [`frontend/`](frontend) — React (Vite) single-page application served by nginx
-  in the Docker stack: a self-hosted MapLibre GL map (vector tiles served by
-  Martin behind the BFF at `/api/map/...` — see [`tiles/`](tiles)) with one
+  in the Docker stack: a self-hosted MapLibre GL map (a static PMTiles vector
+  basemap served directly by nginx and read by the browser via range
+  requests — see [`tiles/`](tiles)) with one
   marker per counting station that has GPS coordinates, a left sidebar listing
   the stations currently visible in
   the viewport (name, description, channel count, bikes in the last 24 h), a

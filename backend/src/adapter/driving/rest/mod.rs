@@ -1,7 +1,6 @@
 pub mod dto;
 pub mod handlers;
 pub mod openapi;
-pub mod tiles;
 
 #[cfg(test)]
 mod tests;
@@ -32,7 +31,6 @@ use crate::adapter::driving::rest::handlers::{
     reset_imported_until,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
-use crate::adapter::driving::rest::tiles::get_tile_proxy;
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
 use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::service_port::ChannelServicePort;
@@ -138,7 +136,6 @@ impl RestApiAdapter {
                 get(get_bff_stations_summary_monthly),
             )
             .route("/api/bff/assets/:id/content", get(get_bff_asset_content))
-            .route("/api/map/*path", get(get_tile_proxy))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))
             .route(

@@ -1,103 +1,115 @@
-# Self-hosted vector basemap tiles
+# Self-hosted PMTiles basemap
 
-This directory holds the **data** for the self-hosted vector basemap. The files
-here are git-ignored because they are large and built/downloaded once; the
-`martin` docker-compose service mounts this folder read-only at `/data` and
-serves every present archive as a separate source (the source id is the file
-stem, e.g. `world` from `world.mbtiles`):
+This directory holds the **data** for the self-hosted vector basemap: a single
+`tiles/map.pmtiles` archive, git-ignored because it's built once and can be
+large. The `frontend` docker-compose service mounts this folder read-only into
+nginx (`/usr/share/nginx/html/tiles`), which serves it as a plain static file
+at `/tiles/map.pmtiles`.
 
-- `world.mbtiles` — a coarse **global** basemap (zoom 0–5, ~1,365 tiles / ~2 MB)
-  so the map is never blank when zoomed out: an ocean layer plus land polygons
-  from Natural Earth (real coastlines, no OSM detail). Generated on demand by
-  `node frontend/scripts/build-world-tiles.mjs` (`make tiles`) and served at
-  `/world/{z}/{x}/{y}`.
-- `basemap.pmtiles` — the **detailed** Germany basemap (OpenMapTiles schema,
-  zoom 5–14), built from a Geofabrik Germany extract. It naturally covers the
-  integrated cities (Münster, Bonn, Hamburg) at street zoom (z12–14). Served at
-  `/basemap/{z}/{x}/{y}`. Built automatically by the one-shot `basemap` init
-  container on `docker compose up` (or manually via `./scripts/build_tiles.sh`).
+There is **no tile-server process**. MapLibre reads individual tiles directly
+out of the static archive via HTTP range requests, using the `pmtiles` npm
+package's protocol handler (registered in
+[`frontend/src/lib/map.tsx`](../frontend/src/lib/map.tsx)) — this is the
+"serverless PMTiles" pattern used by Protomaps/OpenFreeMap-based deployments.
+nginx supports byte-range requests for static files by default, so no special
+config is needed beyond the `/tiles/` location in
+[`nginx.conf.template`](../frontend/nginx.conf.template).
 
-The frontend style
+## What's in `map.pmtiles`
+
+A single archive combining two *extracts* (not full downloads) of the public
+[Protomaps basemap](https://docs.protomaps.com/basemaps/downloads)
+(OpenStreetMap-derived, continuously updated, free daily builds at
+`build.protomaps.com`):
+
+- A **worldwide** low-zoom sub-pyramid (z0-5) — real coastlines everywhere on
+  Earth, not just Germany, so the map is never blank when zoomed out or when
+  panning outside Germany.
+- A **Germany-only** detail extract (z6-15, bbox `5.8,47.2,15.1,55.1`) — full
+  street-level OSM detail (roads, buildings, boundaries) for the integrated
+  cities (Münster, Bonn, Hamburg).
+
+These two zoom ranges don't overlap, so they can be combined into one archive
+with `pmtiles merge`. The style
 ([`frontend/public/styles/basemap.json`](../frontend/public/styles/basemap.json))
-paints the world water/land first (z0–5) and the Germany layers on top (z5–14),
-so zooming out shows the whole world and zooming into Germany shows real OSM
-detail.
+uses the real [Protomaps basemap layer schema](https://docs.protomaps.com/basemaps/layers)
+(`earth`, `water`, `landcover`, `landuse`, `roads`, `boundaries`, `buildings`)
+— fills and lines only, no labels/POIs (which would need the `glyphs`/`sprite`
+assets Protomaps hosts externally; omitted to keep the map fully self-hosted at
+runtime).
 
-Martin does **not** render a basemap — it serves tiles from data you provide.
-Until a tile archive exists, the `martin` container stays up and logs a single
-"waiting for tile data" message (it does not crash-loop); the BFF map-tile proxy
-answers `502` and the rest of the stack is unaffected. The map markers/popups
-render independently of the basemap.
-
-## World backdrop (fast, no OSM data)
+## Building `tiles/map.pmtiles`
 
 ```bash
-make tiles   # node frontend/scripts/build-world-tiles.mjs -> tiles/world.mbtiles
+make tiles   # docker compose up tiles -> tiles/map.pmtiles
 ```
 
-`make run` depends on `tiles`, so a clean checkout / stack reset always has the
-tiny world backdrop.
+`docker compose up`/`make run` build it automatically via the one-shot `tiles`
+init container (same shape as the old `minio-init`): it downloads the pinned
+[`pmtiles` CLI](https://github.com/protomaps/go-pmtiles) release binary, runs
+two `pmtiles extract` calls against the pinned Protomaps build plus a
+`pmtiles merge`, and is skipped entirely once `tiles/map.pmtiles` exists
+(cached across runs), or via `SKIP_TILES=1` (used by the e2e when the basemap
+isn't needed).
 
-## Germany OSM basemap (init container — default)
+### Updating the pinned Protomaps build
 
-`docker compose up` runs a one-shot `basemap` init container (like `minio-init`)
-that builds `tiles/basemap.pmtiles` with Planetiler into the shared `./tiles`
-volume; `martin` waits for it to finish before starting. Java runs **only inside
-that container** — the host needs no Java/Rust toolchain. The build is skipped
-when `basemap.pmtiles` already exists (cached across runs), and `SKIP_BASEMAP=1`
-skips it entirely (the e2e uses this — it only needs the world backdrop).
+The `tiles` init container downloads a **dated** Protomaps daily build
+(`PROTOMAPS_BUILD_URL` in [`docker-compose.yml`](../docker-compose.yml)), not
+a "latest" alias — Protomaps publishes dated snapshots and explicitly
+discourages hotlinking them in production. This is a **build-time only**
+input (the running app never talks to Protomaps — see below), but the pinned
+date should still be refreshed periodically:
 
-On a 14 GB machine the init container uses Planetiler's low-RAM profile
-(`--storage=mmap --nodemap-type=sparse`, `-Xmx8g`), which fits alongside the
-running stack. Override via the `JAVA_MEM` / `STORAGE` / `NODEMAP_TYPE`
-environment variables. The first run downloads the ~3.5 GB Geofabrik extract and
-takes a while.
+1. Check the current builds at <https://maps.protomaps.com/builds/> for a
+   recent `YYYYMMDD.pmtiles` filename.
+2. Update `PROTOMAPS_BUILD_URL` in `docker-compose.yml` (or set the
+   environment variable to override it without editing the file).
+3. `make tiles-update` to rebuild from the new pin.
 
-Alternatively, drop any pre-built OpenMapTiles/OpenFreeMap Germany `.pmtiles` at
-`tiles/basemap.pmtiles`, or build on the host with
-`./scripts/build_tiles.sh`. Martin serves `basemap.pmtiles` if present; the
-world `world.mbtiles` remains the zoomed-out backdrop.
-
-## Updating the basemap (new streets/roads)
-
-The basemap is a **static snapshot** of OSM at build time — it does not update
-on its own (the station/measurement data does, via the data-source job). There is
-no incremental tile update: vector-tile builders process the full extract, so
-refreshing means rebuilding from the latest extract:
+### Rebuilding from a fresh extract
 
 ```bash
-make basemap-update   # drops the cached pmtiles + Germany extract, re-runs the
-                      # basemap init container (re-downloads the latest extract +
-                      # rebuilds, slow), then restarts martin
+make tiles-update   # drops the cached tiles/map.pmtiles, re-runs the tiles init container
 ```
+
+## Resilience
+
+Extraction only happens at build time, exactly like the previous
+Geofabrik/Planetiler download this replaced: once `tiles/map.pmtiles` exists,
+the running app never makes another request to Protomaps. If
+`build.protomaps.com` becomes unreachable, only building/rebuilding the
+archive fails — an already-built `tiles/map.pmtiles` keeps working
+indefinitely.
 
 ## After provisioning
 
 ```bash
-docker compose up -d --force-recreate martin
+docker compose up -d --build frontend
 ```
 
-Then verify a tile comes back through the whole chain for each source:
+Then verify the archive is reachable through nginx:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
-  http://localhost:8081/api/map/world/2/2/1          # Europe (world source)
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
-  http://localhost:8081/api/map/basemap/13/4269/2707 # Münster (basemap source)
+  http://localhost:8081/tiles/map.pmtiles
 ```
 
-Both should print `200 application/x-protobuf`.
+Should print `200 application/octet-stream` (or `206` if requested with a
+`Range` header, which is how MapLibre actually reads it).
 
 ## Notes
 
 - The frontend uses `maplibre-gl@^6`. maplibre-gl 6 parses tiles in a separate
   Web Worker (`maplibre-gl-worker.mjs`, which imports
   `./maplibre-gl-shared.mjs`); the bundler does not emit it on its own, so
-  [`lib/map.tsx`](../frontend/src/lib/map.tsx:1) bundles it with Vite
+  [`lib/map.tsx`](../frontend/src/lib/map.tsx) bundles it with Vite
   (`?worker&url`) and registers it via `setWorkerUrl()` before any map is
   created — without this, no tiles load.
-- `BaseMap` fetches the style at runtime and rewrites each vector source's
-  `tiles` to absolute URLs, because maplibre-gl 6 cannot build a `Request` from
-  a relative URL.
-- Tiles are served **without** caching headers by the BFF proxy; there is no
-  tile archive cache either.
+- Previous architectures (git history): plan 59/60/61 ran a `martin` tile
+  server behind a BFF proxy (`/api/map/*`) serving a hand-rolled Natural Earth
+  MVT generator plus a Planetiler/Geofabrik Germany build; plan 64 replaced
+  all of that with the static-file approach documented here after the custom
+  MVT generator produced several rendering bugs (wrong ring winding,
+  antimeridian-wrapped polygons, overzoom artifacts) — see
+  [`plans/64_serverless_pmtiles_basemap_plan.md`](../plans/64_serverless_pmtiles_basemap_plan.md).

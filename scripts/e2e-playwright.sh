@@ -8,11 +8,10 @@
 # sidebar visible stations). Tears the stack down afterwards.
 #
 # Requirements: Docker, Docker Compose v2 (`docker compose`), Node.js + npm
-# (frontend dependencies), and network access to GitHub (the Münster archive).
-# The self-hosted basemap is optional for the tests: the markers and popups
-# render independently of the tile layer, but a tiny Natural Earth world
-# backdrop (tiles/world.mbtiles) is generated so the map-tile assertion in
-# map.spec.ts verifies the BFF -> Martin chain with real data.
+# (frontend dependencies), and network access to GitHub (the Münster archive)
+# and to Protomaps (the self-hosted PMTiles basemap extract; see
+# tiles/README.md). The basemap is optional for the tests: the markers and
+# popups render independently of the tile layer.
 #
 # A temporary config.toml is created at the repo root (the backend service
 # mounts ./config.toml). Any pre-existing config.toml is backed up and restored.
@@ -105,21 +104,9 @@ EOF
 echo "--- Clearing any leftover containers from a previous run"
 docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
 
-echo "--- Generating the tiny Natural Earth world backdrop for the e2e stack"
-if [ ! -d "${PROJECT_ROOT}/frontend/node_modules/vt-pbf" ]; then
-  echo "  npm ci (installing frontend dependencies for the world fixture)"
-  npm ci --prefix "${PROJECT_ROOT}/frontend" >/dev/null 2>&1 || true
-fi
-if ! node "${PROJECT_ROOT}/frontend/scripts/build-world-tiles.mjs"; then
-  echo "ERROR: failed to generate the world tile backdrop" >&2
-  exit 1
-fi
-
 echo "--- Building and starting the stack (this builds the release binary)"
 BUILD_LOG="$(mktemp)"
-# SKIP_BASEMAP=1 makes the `basemap` init container exit immediately (the e2e
-# only needs the tiny world backdrop, not the multi-minute Germany OSM build).
-if ! SKIP_BASEMAP=1 docker compose -f "${COMPOSE_FILE}" up -d --build >"${BUILD_LOG}" 2>&1; then
+if ! docker compose -f "${COMPOSE_FILE}" up -d --build >"${BUILD_LOG}" 2>&1; then
   echo "ERROR: docker compose up --build failed (see log tail)" >&2
   tail -n 60 "${BUILD_LOG}" >&2 || true
   exit 1

@@ -37,7 +37,6 @@ services:
     networks:
       - default
       - asset_network
-      - tile_network
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
       interval: 30s
@@ -84,104 +83,80 @@ services:
       mc mb --ignore-existing local/bike-counter-images
       "
 
-  # Self-hosted vector tile server (Martin). Serves the basemap from the
-  # read-only ./tiles volume (a .pmtiles built once — see
-  # scripts/build_tiles.sh). Reachable only from within the internal
-  # `tile_network` (i.e. only the backend BFF, which proxies `/api/map/*` to
-  # it); no host port is exposed.
-  martin:
-    image: ghcr.io/maplibre/martin:1.14.0
-    container_name: bike_counter_martin
-    restart: unless-stopped
-    depends_on:
-      # The Germany basemap is built by the one-shot `basemap` init container;
-      # martin only starts once it has succeeded, so basemap.pmtiles is present.
-      basemap:
-        condition: service_completed_successfully
-    # The image's ENTRYPOINT is `martin` and it treats positional args as
-    # connection strings, so a missing tile file makes it crash-loop with
-    # "Unrecognizable connection string". Override the entrypoint with a guard
-    # that serves every present source (coarse world + Germany detail) and
-    # otherwise waits (staying alive) until the tile data exists.
-    entrypoint:
-      - sh
-      - -c
-      - |
-        # Note: `$` is written as `$$` because docker-compose interpolates a
-        # single `$` from the host environment (the script must see the literal
-        # shell variable instead).
-        SOURCES=""
-        [ -f /data/world.mbtiles ] && SOURCES="$$SOURCES /data/world.mbtiles"
-        if [ -f /data/basemap.pmtiles ]; then
-          SOURCES="$$SOURCES /data/basemap.pmtiles"
-        fi
-        set -- $$SOURCES
-        if [ "$$#" -gt 0 ]; then
-          exec martin "$$@"
-        else
-          echo "waiting for tile data: run make tiles (world) — the Germany basemap is built by the basemap init container on docker compose up"
-          sleep infinity
-        fi
-    volumes:
-      - ./tiles:/data:ro
-    networks:
-      - tile_network
-    # Informational only: the backend BFF handles an unreachable Martin with a
-    # 502, so no other service depends on this becoming healthy.
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/catalog"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  # One-shot init container that builds the Germany OSM vector basemap
-  # (tiles/basemap.pmtiles, OpenMapTiles schema) into the shared ./tiles volume
-  # with Planetiler. Java runs only inside this container — the host needs no
-  # Java/Rust toolchain. The `martin` service waits for this to complete so the
-  # basemap exists when the tile server starts. Skips when the file already
-  # exists (cached across runs); set SKIP_BASEMAP=1 (e.g. the e2e, which only
-  # needs the world backdrop) to skip the build.
-  basemap:
-    image: eclipse-temurin:21-jre
-    container_name: bike_counter_basemap_init
+  # One-shot init container that produces `tiles/map.pmtiles`: a single static
+  # PMTiles archive combining a coarse worldwide backdrop (z0-5, real
+  # coastlines everywhere) with Germany OSM detail (z6-15). Both pieces are
+  # *extracted* (not downloaded in full) from the public Protomaps basemap via
+  # HTTP range requests, using the official `pmtiles` CLI
+  # (github.com/protomaps/go-pmtiles) — see tiles/README.md. The frontend
+  # serves the resulting file directly as a static asset (nginx); MapLibre
+  # reads tiles out of it via range requests (the `pmtiles` npm package), so
+  # there is no tile-server process and no BFF tile proxy. Skips when
+  # tiles/map.pmtiles already exists (cached across runs); SKIP_TILES=1 (e.g.
+  # the e2e) skips it entirely.
+  tiles:
+    image: alpine:3.20
+    container_name: bike_counter_tiles_init
     restart: "no"
     environment:
-      - SKIP_BASEMAP
+      - SKIP_TILES
+      # A dated Protomaps daily build (see maps.protomaps.com/builds). Pinned
+      # rather than "latest" because Protomaps publishes dated snapshots, not
+      # a stable alias, and explicitly discourages hotlinking; bump this
+      # periodically (tiles/README.md documents how).
+      - PROTOMAPS_BUILD_URL=${PROTOMAPS_BUILD_URL:-https://build.protomaps.com/20260829.pmtiles}
+      # Germany bounding box (min_lon,min_lat,max_lon,max_lat).
+      - GERMANY_BBOX=${GERMANY_BBOX:-5.8,47.2,15.1,55.1}
+      - GO_PMTILES_VERSION=1.31.2
     volumes:
       - ./tiles:/data
     entrypoint:
-      - /bin/bash
+      - /bin/sh
       - -c
       - |
-        set -euo pipefail
-        if [ "$${SKIP_BASEMAP:-0}" = "1" ]; then
-          echo "SKIP_BASEMAP=1 — skipping basemap build"
+        # Note: `$` is written as `$$` because docker-compose interpolates a
+        # single `$` from the host environment (the script must see the
+        # literal shell variable instead) — see the entrypoint comment this
+        # replaced (the old `martin` service) for the same gotcha.
+        set -eu
+        if [ "$${SKIP_TILES:-0}" = "1" ]; then
+          echo "SKIP_TILES=1 — skipping tile extraction"
           exit 0
         fi
-        if [ -f /data/basemap.pmtiles ]; then
-          echo "basemap.pmtiles already exists — skipping build"
+        if [ -f /data/map.pmtiles ]; then
+          echo "tiles/map.pmtiles already exists — skipping extraction"
           exit 0
         fi
-        cd /data
-        if [ ! -f planetiler.jar ]; then
-          echo "Downloading Planetiler ..."
-          curl -fL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-        fi
-        echo "Building tiles/basemap.pmtiles (downloads the Germany extract on first run; this can take a while) ..."
-        # --download fetches the Germany extract and Planetiler's auxiliary input
-        # files (lake centerlines, water polygons, Natural Earth). Low-RAM
-        # profile: `sortedtable` nodemap (disk-backed; valid values are
-        # [noop, sortedtable, sparsearray, array] — `sparse`/`chunkedtable`
-        # crash Planetiler) + `mmap` storage, so the build fits a 14 GB host
-        # even while the rest of the stack runs. Override via JAVA_MEM /
-        # STORAGE / NODEMAP_TYPE.
-        java "$${JAVA_MEM:--Xmx4g}" -jar planetiler.jar \
-          --area=germany \
-          --download \
-          --output=/data/basemap.pmtiles \
-          --nodemap-type="$${NODEMAP_TYPE:-sortedtable}" \
-          --storage="$${STORAGE:-mmap}"
-        echo "basemap build complete: /data/basemap.pmtiles"
+        apk add --no-cache curl >/dev/null
+        cd /tmp
+        echo "Downloading pmtiles CLI v$${GO_PMTILES_VERSION} ..."
+        curl -fL -o pmtiles.tar.gz \
+          "https://github.com/protomaps/go-pmtiles/releases/download/v$${GO_PMTILES_VERSION}/go-pmtiles_$${GO_PMTILES_VERSION}_Linux_x86_64.tar.gz"
+        tar -xzf pmtiles.tar.gz pmtiles
+        chmod +x pmtiles
+        # The remote extract streams several GB over HTTP/2 range requests,
+        # which occasionally drops with a transient stream error; retry a few
+        # times rather than failing the whole (slow) extraction outright.
+        extract_with_retry() {
+          attempt=1
+          while [ "$$attempt" -le 3 ]; do
+            if ./pmtiles extract "$$@"; then
+              return 0
+            fi
+            echo "extract failed (attempt $$attempt/3), retrying ..."
+            attempt=$$((attempt + 1))
+          done
+          return 1
+        }
+        echo "Extracting the worldwide backdrop (z0-5) ..."
+        extract_with_retry "$${PROTOMAPS_BUILD_URL}" /data/world.pmtiles --maxzoom=5
+        echo "Extracting the Germany detail (z6-15, bbox=$${GERMANY_BBOX}) ..."
+        extract_with_retry "$${PROTOMAPS_BUILD_URL}" /data/germany.pmtiles \
+          --bbox="$${GERMANY_BBOX}" --minzoom=6 --maxzoom=15
+        echo "Merging into tiles/map.pmtiles ..."
+        ./pmtiles merge /data/world.pmtiles /data/germany.pmtiles /data/map.pmtiles
+        rm -f /data/world.pmtiles /data/germany.pmtiles
+        echo "tiles/map.pmtiles ready"
 
   frontend:
     build:
@@ -196,6 +171,10 @@ services:
       # resolves the backend hostname at request time and handles that.
       backend:
         condition: service_started
+      tiles:
+        condition: service_completed_successfully
+    volumes:
+      - ./tiles:/usr/share/nginx/html/tiles:ro
     ports:
       - "8081:80"
     healthcheck:
@@ -210,10 +189,6 @@ networks:
   # disables external access and, together with explicit network membership,
   # keeps MinIO unreachable from db/frontend on the default network.
   asset_network:
-    internal: true
-  # Internal network shared only by the backend and the Martin tile server.
-  # `internal: true` keeps Martin unreachable from db/frontend and the host.
-  tile_network:
     internal: true
 
 volumes:

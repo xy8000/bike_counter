@@ -1,12 +1,17 @@
 import { Map, NavigationControl } from '@vis.gl/react-maplibre'
-import type { Map as MaplibreMap, LngLatBoundsLike, StyleSpecification } from 'maplibre-gl'
+import type {
+  Map as MaplibreMap,
+  LngLatBoundsLike,
+  StyleSpecification,
+} from 'maplibre-gl'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Bounds } from '../../lib/geo'
 import { mapBounds } from '../../lib/geo'
 
 /// The self-hosted vector basemap style (served by nginx as a static asset).
-/// Its `tiles` point at the BFF map-tile proxy `/api/map/{z}/{x}/{y}`
-/// (Frontend -> BFF -> Martin).
+/// Its single vector source reads `/tiles/map.pmtiles` directly via HTTP range
+/// requests (the `pmtiles` protocol registered in `lib/map.tsx`) — no tile
+/// server and no BFF proxy involved.
 export const MAP_STYLE = '/styles/basemap.json'
 
 /// The default Münster view, used when a map has no explicit bounds (the map
@@ -48,9 +53,12 @@ export function BaseMap({
       ]
     : undefined
 
-  // MapLibre cannot construct a `Request` from a relative tile URL, so the
-  // style's `tiles` are resolved to absolute URLs against the page origin at
-  // runtime (the committed style keeps them relative, so any origin works).
+  // The pmtiles protocol requires a full URL with its own scheme after
+  // `pmtiles://` (e.g. `pmtiles://https://host/map.pmtiles`) — a bare relative
+  // path is not a valid PMTiles URL (protomaps/PMTiles#509) and silently never
+  // gets past the initial TileJSON fetch. The committed style keeps a
+  // placeholder so it works from any origin; it is resolved to this page's
+  // origin at runtime.
   const [style, setStyle] = useState<StyleSpecification | string | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -58,16 +66,9 @@ export function BaseMap({
       .then((response) => response.json())
       .then((raw: StyleSpecification) => {
         if (cancelled) return
-        // MapLibre cannot build a `Request` from a relative tile URL, so every
-        // vector source's `tiles` are resolved to absolute URLs against the page
-        // origin at runtime (the committed style keeps them relative, so any
-        // origin works). Prepend the origin via string concatenation (NOT
-        // `new URL`, which percent-encodes the `{z}/{x}/{y}` placeholders).
         for (const source of Object.values(raw.sources ?? {})) {
-          if (source && source.type === 'vector' && Array.isArray(source.tiles)) {
-            source.tiles = source.tiles.map((tile) =>
-              tile.startsWith('/') ? `${window.location.origin}${tile}` : tile,
-            )
+          if (source && source.type === 'vector' && typeof source.url === 'string') {
+            source.url = source.url.replace('REPLACED_AT_RUNTIME', window.location.origin)
           }
         }
         setStyle(raw)
@@ -92,12 +93,11 @@ export function BaseMap({
       // not repeat continents ("Africa twice").
       renderWorldCopies={false}
       // The full zoom range: 0 shows the whole world (zoom all the way out). The
-      // Germany `basemap` source is built to z14, but MapLibre overzooms those
-      // tiles up to z15 (one extra "street" zoom level) with no additional layer
-      // or data. The `world` source (Natural Earth) caps at z5; the `basemap`
-      // source (Germany OSM) runs from z5 to z14, so Germany takes over exactly
-      // where the world backdrop ends.
-      maxZoom={15}
+      // Germany detail in the combined pmtiles archive is built to z15 (matching
+      // the source Protomaps build). Above z15 MapLibre overzooms those tiles
+      // (vector fills/lines stay crisp — no new street detail appears, which
+      // only comes from a higher-zoom data source).
+      maxZoom={18}
       attributionControl={{ compact: true }}
       keyboard={interactive}
       dragPan={interactive}
