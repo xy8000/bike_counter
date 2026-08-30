@@ -7,4 +7,6 @@ if [ ! -f config.toml ]; then
   exit 1
 fi
 
-exec /usr/local/bin/bike_counter
+# Forward arguments so the standalone `bike_counter tiles` subcommand (used by
+# `make tiles` / `make tiles-update`) works through the backend image.
+exec /usr/local/bin/bike_counter "$@"

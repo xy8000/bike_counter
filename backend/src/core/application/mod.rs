@@ -11,3 +11,4 @@ pub mod persistent_state_service;
 pub mod provider_message_service;
 pub mod startup_service;
 pub mod station_analytics;
+pub mod tiles_update_service;

@@ -40,42 +40,51 @@ runtime).
 
 ## Building `tiles/map.pmtiles`
 
+The basemap is **mandatory** and built by the backend itself (a Rust driven
+adapter, [`backend/src/adapter/driven/tiles_init/`](../backend/src/adapter/driven/tiles_init/)):
+at startup the backend downloads the pinned
+[`pmtiles` CLI](https://github.com/protomaps/go-pmtiles) (version from the
+`[maps]` TOML section) and runs two `pmtiles extract` calls against the pinned
+Protomaps build plus a `pmtiles merge`. The server only reports ready once the
+archive exists — there is **no `SKIP_TILES`**, the application cannot run
+without tiles.
+
 ```bash
-make tiles   # docker compose up tiles -> tiles/map.pmtiles
+make tiles   # docker compose run --rm --no-deps backend tiles -> tiles/map.pmtiles
 ```
 
-`docker compose up`/`make run` build it automatically via the one-shot `tiles`
-init container (same shape as the old `minio-init`): it downloads the pinned
-[`pmtiles` CLI](https://github.com/protomaps/go-pmtiles) release binary, runs
-two `pmtiles extract` calls against the pinned Protomaps build plus a
-`pmtiles merge`, and is skipped entirely once `tiles/map.pmtiles` exists
-(cached across runs), or via `SKIP_TILES=1` (used by the e2e when the basemap
-isn't needed).
+`docker compose up`/`make run` build it automatically as part of the backend's
+startup. Once `tiles/map.pmtiles` exists it is reused (cached across runs).
+Refreshing it is the job of the cron-scheduled `tiles_update` job (see
+[below](#updating-the-pinned-protomaps-build)), which rebuilds into a temporary
+file and swaps it in atomically so the running app stays online.
 
 ### Updating the pinned Protomaps build
 
-The `tiles` init container downloads a **dated** Protomaps daily build
-(`PROTOMAPS_BUILD_URL` in [`docker-compose.yml`](../docker-compose.yml)), not
-a "latest" alias — Protomaps publishes dated snapshots and explicitly
-discourages hotlinking them in production. This is a **build-time only**
-input (the running app never talks to Protomaps — see below), but the pinned
-date should still be refreshed periodically:
+The backend downloads a **dated** Protomaps daily build
+(`protomaps_build_url` in the `[maps]` section of
+[`config.toml`](../config.toml.example)), not a "latest" alias — Protomaps
+publishes dated snapshots and explicitly discourages hotlinking them in
+production. This is a **provisioning-time only** input (the running app never
+talks to Protomaps — see below), but the pinned date should still be refreshed
+periodically:
 
 1. Check the current builds at <https://maps.protomaps.com/builds/> for a
    recent `YYYYMMDD.pmtiles` filename.
-2. Update `PROTOMAPS_BUILD_URL` in `docker-compose.yml` (or set the
-   environment variable to override it without editing the file).
-3. `make tiles-update` to rebuild from the new pin.
+2. Update `protomaps_build_url` in the `[maps]` section of `config.toml`.
+3. `make tiles-update` to rebuild from the new pin, or wait for the next
+   `tiles_update` cron run, which applies it atomically.
 
 ### Rebuilding from a fresh extract
 
 ```bash
-make tiles-update   # drops the cached tiles/map.pmtiles, re-runs the tiles init container
+make tiles-update   # drops the cached tiles/map.pmtiles, re-runs the tiles build
 ```
 
 ## Resilience
 
-Extraction only happens at build time, exactly like the previous
+Extraction only happens when provisioning (the mandatory startup build or the
+scheduled `tiles_update` run), exactly like the previous
 Geofabrik/Planetiler download this replaced: once `tiles/map.pmtiles` exists,
 the running app never makes another request to Protomaps. If
 `build.protomaps.com` becomes unreachable, only building/rebuilding the

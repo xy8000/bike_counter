@@ -75,5 +75,7 @@ example
 ### Map tiles ###
 # Self-hosted PMTiles basemap archive (large, extracted once; see tiles/README.md).
 tiles/*.pmtiles
+# Cached go-pmtiles CLI downloaded by the backend (see backend/src/adapter/driven/tiles_init/).
+tiles/.pmtiles-bin/
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,visualstudiocode,git

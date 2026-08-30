@@ -8,3 +8,4 @@ pub mod health;
 pub mod jobs;
 pub mod measurements;
 pub mod station_analytics;
+pub mod tiles;

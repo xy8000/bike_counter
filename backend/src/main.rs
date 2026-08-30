@@ -15,6 +15,7 @@ use crate::adapter::driven::postgres::{
     PostgresProviderMessageRepository, create_pool,
 };
 use crate::adapter::driven::provider_handles::ProviderHandles;
+use crate::adapter::driven::tiles_init::TilesInit;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
 use crate::core::application::asset_cleanup_service::AssetCleanupService;
@@ -29,6 +30,7 @@ use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
+use crate::core::application::tiles_update_service::TilesUpdateService;
 use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::assets::asset::BuiltinImage;
 use crate::core::domain::assets::asset::value_objects::{ContentType, ObjectKey};
@@ -38,6 +40,7 @@ use crate::core::domain::configuration::repository_port::ConfigurationRepository
 use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
 use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
+use crate::core::domain::tiles::provisioning_port::TilesProvisioningPort;
 
 /// The built-in images embedded in the binary (idempotently synced to MinIO at
 /// startup). Every file in `backend/assets/` becomes a `builtin/{path}` object —
@@ -93,6 +96,30 @@ fn main() {
             "Failed to read configuration from file. Please check the file path and format.",
         ));
     let database_configuration = configuration.database().clone();
+    let maps_configuration = configuration.maps().clone();
+
+    // The self-hosted basemap is mandatory. `TilesInit` builds it during the
+    // init phase (before the HTTP server binds) if it is missing, and the
+    // scheduled `TilesUpdateService` refreshes it atomically on the `[maps]`
+    // cron schedule.
+    let tiles_init: Arc<dyn TilesProvisioningPort> = Arc::new(TilesInit::new(maps_configuration));
+
+    // Standalone basemap build: `bike_counter tiles` runs only the tiles init
+    // step (used by `make tiles` / `make tiles-update`) and exits. It needs no
+    // database, only the `[maps]` configuration.
+    if std::env::args().nth(1).as_deref() == Some("tiles") {
+        if let Err(error) = tiles_init.ensure_available() {
+            eprintln!("Failed to build tiles: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // The application can only run with tiles: block until the basemap exists so
+    // `/health/ready` is only reachable once migrations and tiles are done.
+    tiles_init
+        .ensure_available()
+        .unwrap_or_else(|error| panic!("Failed to ensure tiles/map.pmtiles: {error}"));
 
     // Log a redacted summary. NEVER print the full `DatabaseConfiguration` via
     // Debug, as it contains the plaintext password.
@@ -222,6 +249,14 @@ fn main() {
         configuration.clone(),
     ));
 
+    // Scheduled refresh of the self-hosted basemap (see the `[maps]` config).
+    // The build swaps the archive in atomically, so the app stays online.
+    let tiles_update_service = Arc::new(TilesUpdateService::new(
+        job_repo.clone(),
+        tiles_init.clone(),
+        configuration.clone(),
+    ));
+
     let counting_station_service = Arc::new(CountingStationService::new(counting_station_repo));
     let channel_service = Arc::new(ChannelService::new(channel_repo));
     let measurement_service = Arc::new(MeasurementService::new(measurement_repo));
@@ -263,6 +298,10 @@ fn main() {
         tokio::spawn(job_scheduler::run_scheduler(
             asset_cleanup_service,
             configuration.asset_cleanup_cron().to_string(),
+        ));
+        tokio::spawn(job_scheduler::run_scheduler(
+            tiles_update_service,
+            configuration.maps().update_cron().to_string(),
         ));
         rest_adapter.run(addr).await
     }) {

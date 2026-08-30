@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
     AssetStorageConfiguration, DataSourceConfiguration, DatabaseConfiguration,
+    MapsConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
 
@@ -10,6 +11,8 @@ use crate::core::domain::configuration::error::ConfigError;
 pub const DEFAULT_DATA_SOURCE_UPDATE_CRON: &str = "0 0 * * * *";
 /// Default asset cleanup frequency: daily at 04:00 (CRON syntax).
 pub const DEFAULT_ASSET_CLEANUP_CRON: &str = "0 0 4 * * *";
+/// Default maps/tiles refresh frequency: every two months (CRON syntax).
+pub const DEFAULT_MAPS_UPDATE_CRON: &str = "0 0 3 1 1,3,5,7,9,11 *";
 /// Default provider log level: provider messages below this severity are
 /// dropped by the core before they are persisted.
 pub const DEFAULT_PROVIDER_LOG_LEVEL: &str = "WARNING";
@@ -28,6 +31,8 @@ pub struct Configuration {
     asset_cleanup_max_lifetime_seconds: i64,
     /// S3-compatible object storage holding the image binaries.
     asset_storage: AssetStorageConfiguration,
+    /// Self-hosted vector basemap ("maps") configuration.
+    maps: MapsConfiguration,
 }
 
 impl Configuration {
@@ -40,6 +45,7 @@ impl Configuration {
         asset_storage: AssetStorageConfiguration,
         asset_cleanup_cron: String,
         asset_cleanup_max_lifetime_seconds: i64,
+        maps: MapsConfiguration,
     ) -> Result<Self, ConfigError> {
         cron::Schedule::from_str(&data_source_update_cron).map_err(|error| {
             ConfigError::InvalidFormat(format!(
@@ -80,6 +86,7 @@ impl Configuration {
             asset_cleanup_cron,
             asset_cleanup_max_lifetime_seconds,
             asset_storage,
+            maps,
         })
     }
 
@@ -125,10 +132,16 @@ impl Configuration {
     pub fn asset_storage(&self) -> &AssetStorageConfiguration {
         &self.asset_storage
     }
+
+    /// Self-hosted vector basemap ("maps") configuration.
+    pub fn maps(&self) -> &MapsConfiguration {
+        &self.maps
+    }
 }
 
 pub mod value_objects {
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     use crate::core::domain::configuration::error::ConfigError;
 
@@ -334,6 +347,78 @@ pub mod value_objects {
             self.vars.get(key).map(|value| value.as_str())
         }
     }
+
+    /// Self-hosted vector basemap ("maps") configuration: the refresh schedule
+    /// and the pinned Protomaps source. The Germany bbox is hard-coded in the
+    /// tiles adapter, not configurable.
+    #[derive(Debug, Clone)]
+    pub struct MapsConfiguration {
+        /// CRON expression defining when the tiles update job re-triggers.
+        update_cron: String,
+        /// Required ShedLock-style max lifetime for the tiles update job.
+        update_max_lifetime_seconds: i64,
+        /// Pinned Protomaps daily build URL (dated snapshot).
+        protomaps_build_url: String,
+        /// Pinned go-pmtiles CLI version.
+        go_pmtiles_version: String,
+    }
+
+    impl MapsConfiguration {
+        pub fn new(
+            update_cron: String,
+            update_max_lifetime_seconds: i64,
+            protomaps_build_url: String,
+            go_pmtiles_version: String,
+        ) -> Result<Self, ConfigError> {
+            cron::Schedule::from_str(&update_cron).map_err(|error| {
+                ConfigError::InvalidFormat(format!(
+                    "invalid maps.update_cron '{update_cron}': {error}"
+                ))
+            })?;
+            if update_max_lifetime_seconds <= 0 {
+                return Err(ConfigError::InvalidFormat(
+                    "maps.update_max_lifetime_seconds must be a positive integer".to_string(),
+                ));
+            }
+            if protomaps_build_url.trim().is_empty() {
+                return Err(ConfigError::EmptyValue("maps.protomaps_build_url"));
+            }
+            if go_pmtiles_version.trim().is_empty() {
+                return Err(ConfigError::EmptyValue("maps.go_pmtiles_version"));
+            }
+            Ok(Self {
+                update_cron,
+                update_max_lifetime_seconds,
+                protomaps_build_url,
+                go_pmtiles_version,
+            })
+        }
+
+        /// CRON expression defining when the tiles update job is re-triggered.
+        pub fn update_cron(&self) -> &str {
+            &self.update_cron
+        }
+
+        /// Required ShedLock-style max lifetime for the tiles update job.
+        pub fn update_max_lifetime_seconds(&self) -> i64 {
+            self.update_max_lifetime_seconds
+        }
+
+        /// The configured max lifetime as a `chrono::Duration` for the domain.
+        pub fn update_max_lifetime(&self) -> chrono::Duration {
+            chrono::Duration::seconds(self.update_max_lifetime_seconds)
+        }
+
+        /// Pinned Protomaps daily build URL (dated snapshot).
+        pub fn protomaps_build_url(&self) -> &str {
+            &self.protomaps_build_url
+        }
+
+        /// Pinned go-pmtiles CLI version.
+        pub fn go_pmtiles_version(&self) -> &str {
+            &self.go_pmtiles_version
+        }
+    }
 }
 
 #[cfg(test)]
@@ -342,9 +427,10 @@ mod tests {
 
     use super::DEFAULT_ASSET_CLEANUP_CRON;
     use super::DEFAULT_DATA_SOURCE_UPDATE_CRON;
+    use super::DEFAULT_MAPS_UPDATE_CRON;
     use super::value_objects::{
         AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
-        DatabaseConfiguration,
+        DatabaseConfiguration, MapsConfiguration,
     };
     use crate::core::domain::configuration::error::ConfigError;
 
@@ -373,6 +459,16 @@ mod tests {
         .unwrap()
     }
 
+    fn maps_config() -> MapsConfiguration {
+        MapsConfiguration::new(
+            DEFAULT_MAPS_UPDATE_CRON.to_string(),
+            7200,
+            "https://build.protomaps.com/20260829.pmtiles".to_string(),
+            "1.31.2".to_string(),
+        )
+        .unwrap()
+    }
+
     fn configuration(
         database: DatabaseConfiguration,
         data_sources: Vec<DataSourceConfiguration>,
@@ -389,6 +485,7 @@ mod tests {
             asset_storage_config(),
             asset_cleanup_cron,
             asset_cleanup_max_lifetime_seconds,
+            maps_config(),
         )
     }
 
@@ -517,6 +614,72 @@ mod tests {
         assert_eq!(config.secret_key(), "minioadmin");
         assert_eq!(config.bucket(), "bike-counter-images");
         assert_eq!(config.region(), "us-east-1");
+    }
+
+    #[test]
+    fn exposes_maps_values() {
+        let config = maps_config();
+        assert_eq!(config.update_cron(), DEFAULT_MAPS_UPDATE_CRON);
+        assert_eq!(config.update_max_lifetime_seconds(), 7200);
+        assert_eq!(
+            config.update_max_lifetime(),
+            chrono::Duration::seconds(7200)
+        );
+        assert_eq!(
+            config.protomaps_build_url(),
+            "https://build.protomaps.com/20260829.pmtiles"
+        );
+        assert_eq!(config.go_pmtiles_version(), "1.31.2");
+    }
+
+    #[test]
+    fn rejects_invalid_maps_update_cron() {
+        assert!(matches!(
+            MapsConfiguration::new(
+                "not a cron".to_string(),
+                3600,
+                "https://example.com/source.pmtiles".to_string(),
+                "1.31.2".to_string(),
+            ),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_non_positive_maps_update_lifetime() {
+        for lifetime in [0, -1] {
+            assert!(matches!(
+                MapsConfiguration::new(
+                    DEFAULT_MAPS_UPDATE_CRON.to_string(),
+                    lifetime,
+                    "https://example.com/source.pmtiles".to_string(),
+                    "1.31.2".to_string(),
+                ),
+                Err(ConfigError::InvalidFormat(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_empty_maps_source_values() {
+        assert!(matches!(
+            MapsConfiguration::new(
+                DEFAULT_MAPS_UPDATE_CRON.to_string(),
+                3600,
+                "  ".to_string(),
+                "1.31.2".to_string(),
+            ),
+            Err(ConfigError::EmptyValue("maps.protomaps_build_url"))
+        ));
+        assert!(matches!(
+            MapsConfiguration::new(
+                DEFAULT_MAPS_UPDATE_CRON.to_string(),
+                3600,
+                "https://example.com/source.pmtiles".to_string(),
+                "  ".to_string(),
+            ),
+            Err(ConfigError::EmptyValue("maps.go_pmtiles_version"))
+        ));
     }
 
     #[test]

@@ -32,6 +32,9 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./config.toml:/app/config.toml:ro
+      # Host tiles dir, writable so the backend can build the basemap; the
+      # frontend mounts the same dir read-only.
+      - ./tiles:/data
     ports:
       - "8080:8080"
     networks:
@@ -83,81 +86,6 @@ services:
       mc mb --ignore-existing local/bike-counter-images
       "
 
-  # One-shot init container that produces `tiles/map.pmtiles`: a single static
-  # PMTiles archive combining a coarse worldwide backdrop (z0-5, real
-  # coastlines everywhere) with Germany OSM detail (z6-15). Both pieces are
-  # *extracted* (not downloaded in full) from the public Protomaps basemap via
-  # HTTP range requests, using the official `pmtiles` CLI
-  # (github.com/protomaps/go-pmtiles) — see tiles/README.md. The frontend
-  # serves the resulting file directly as a static asset (nginx); MapLibre
-  # reads tiles out of it via range requests (the `pmtiles` npm package), so
-  # there is no tile-server process and no BFF tile proxy. Skips when
-  # tiles/map.pmtiles already exists (cached across runs); SKIP_TILES=1 (e.g.
-  # the e2e) skips it entirely.
-  tiles:
-    image: alpine:3.20
-    container_name: bike_counter_tiles_init
-    restart: "no"
-    environment:
-      - SKIP_TILES
-      # A dated Protomaps daily build (see maps.protomaps.com/builds). Pinned
-      # rather than "latest" because Protomaps publishes dated snapshots, not
-      # a stable alias, and explicitly discourages hotlinking; bump this
-      # periodically (tiles/README.md documents how).
-      - PROTOMAPS_BUILD_URL=${PROTOMAPS_BUILD_URL:-https://build.protomaps.com/20260829.pmtiles}
-      # Germany bounding box (min_lon,min_lat,max_lon,max_lat).
-      - GERMANY_BBOX=${GERMANY_BBOX:-5.8,47.2,15.1,55.1}
-      - GO_PMTILES_VERSION=1.31.2
-    volumes:
-      - ./tiles:/data
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        # Note: `$` is written as `$$` because docker-compose interpolates a
-        # single `$` from the host environment (the script must see the
-        # literal shell variable instead) — see the entrypoint comment this
-        # replaced (the old `martin` service) for the same gotcha.
-        set -eu
-        if [ "$${SKIP_TILES:-0}" = "1" ]; then
-          echo "SKIP_TILES=1 — skipping tile extraction"
-          exit 0
-        fi
-        if [ -f /data/map.pmtiles ]; then
-          echo "tiles/map.pmtiles already exists — skipping extraction"
-          exit 0
-        fi
-        apk add --no-cache curl >/dev/null
-        cd /tmp
-        echo "Downloading pmtiles CLI v$${GO_PMTILES_VERSION} ..."
-        curl -fL -o pmtiles.tar.gz \
-          "https://github.com/protomaps/go-pmtiles/releases/download/v$${GO_PMTILES_VERSION}/go-pmtiles_$${GO_PMTILES_VERSION}_Linux_x86_64.tar.gz"
-        tar -xzf pmtiles.tar.gz pmtiles
-        chmod +x pmtiles
-        # The remote extract streams several GB over HTTP/2 range requests,
-        # which occasionally drops with a transient stream error; retry a few
-        # times rather than failing the whole (slow) extraction outright.
-        extract_with_retry() {
-          attempt=1
-          while [ "$$attempt" -le 3 ]; do
-            if ./pmtiles extract "$$@"; then
-              return 0
-            fi
-            echo "extract failed (attempt $$attempt/3), retrying ..."
-            attempt=$$((attempt + 1))
-          done
-          return 1
-        }
-        echo "Extracting the worldwide backdrop (z0-5) ..."
-        extract_with_retry "$${PROTOMAPS_BUILD_URL}" /data/world.pmtiles --maxzoom=5
-        echo "Extracting the Germany detail (z6-15, bbox=$${GERMANY_BBOX}) ..."
-        extract_with_retry "$${PROTOMAPS_BUILD_URL}" /data/germany.pmtiles \
-          --bbox="$${GERMANY_BBOX}" --minzoom=6 --maxzoom=15
-        echo "Merging into tiles/map.pmtiles ..."
-        ./pmtiles merge /data/world.pmtiles /data/germany.pmtiles /data/map.pmtiles
-        rm -f /data/world.pmtiles /data/germany.pmtiles
-        echo "tiles/map.pmtiles ready"
-
   frontend:
     build:
       context: ./frontend
@@ -165,14 +93,11 @@ services:
     container_name: bike_counter_frontend
     restart: unless-stopped
     depends_on:
-      # Only require the backend container to be running. Readiness can report
-      # 503 while a data-source provider is temporarily unreachable, which
-      # would otherwise leave the frontend waiting forever; the nginx config
-      # resolves the backend hostname at request time and handles that.
+      # Wait for the backend to be fully ready. The backend only reports ready
+      # (and only starts its HTTP server) once the database is migrated and the
+      # basemap exists, so the frontend never serves a map without tiles.
       backend:
-        condition: service_started
-      tiles:
-        condition: service_completed_successfully
+        condition: service_healthy
     volumes:
       - ./tiles:/usr/share/nginx/html/tiles:ro
     ports:

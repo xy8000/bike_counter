@@ -6,3 +6,4 @@ pub mod minio_asset_storage;
 pub mod muenster_github;
 pub mod postgres;
 pub mod provider_handles;
+pub mod tiles_init;

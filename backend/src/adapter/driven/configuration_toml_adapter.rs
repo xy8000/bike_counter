@@ -3,11 +3,11 @@ use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
     AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
-    DatabaseConfiguration,
+    DatabaseConfiguration, MapsConfiguration,
 };
 use crate::core::domain::configuration::configuration::{
     Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
-    DEFAULT_PROVIDER_LOG_LEVEL,
+    DEFAULT_MAPS_UPDATE_CRON, DEFAULT_PROVIDER_LOG_LEVEL,
 };
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::configuration::repository_port::ConfigurationRepository;
@@ -25,6 +25,8 @@ struct ConfigurationDto {
     asset_cleanup_cron: String,
     asset_cleanup_max_lifetime_seconds: i64,
     asset_storage: AssetStorageDto,
+    #[serde(default = "default_maps")]
+    maps: MapsDto,
     database_url: String,
     database_user: String,
     database_password: String,
@@ -41,6 +43,41 @@ fn default_asset_cleanup_cron() -> String {
 
 fn default_log_level() -> String {
     DEFAULT_PROVIDER_LOG_LEVEL.to_string()
+}
+
+/// Default tiles-update max lifetime (seconds) when the `[maps]` table is
+/// omitted entirely. The extraction can take a while (multi-GB range requests),
+/// so 2 h is a generous bound for the ShedLock-style job lifetime.
+const DEFAULT_MAPS_UPDATE_MAX_LIFETIME_SECONDS: i64 = 7200;
+/// Default pinned Protomaps build when the `[maps]` table is omitted.
+const DEFAULT_MAPS_PROTOMAPS_BUILD_URL: &str = "https://build.protomaps.com/20260829.pmtiles";
+/// Default pinned go-pmtiles CLI version when the `[maps]` table is omitted.
+const DEFAULT_MAPS_GO_PMTILES_VERSION: &str = "1.31.2";
+
+fn default_maps_update_cron() -> String {
+    DEFAULT_MAPS_UPDATE_CRON.to_string()
+}
+
+fn default_maps_update_max_lifetime() -> i64 {
+    DEFAULT_MAPS_UPDATE_MAX_LIFETIME_SECONDS
+}
+
+fn default_maps_protomaps_build_url() -> String {
+    DEFAULT_MAPS_PROTOMAPS_BUILD_URL.to_string()
+}
+
+fn default_maps_go_pmtiles_version() -> String {
+    DEFAULT_MAPS_GO_PMTILES_VERSION.to_string()
+}
+
+/// Default `[maps]` table used when the section is omitted entirely.
+fn default_maps() -> MapsDto {
+    MapsDto {
+        update_cron: default_maps_update_cron(),
+        update_max_lifetime_seconds: DEFAULT_MAPS_UPDATE_MAX_LIFETIME_SECONDS,
+        protomaps_build_url: default_maps_protomaps_build_url(),
+        go_pmtiles_version: default_maps_go_pmtiles_version(),
+    }
 }
 
 /// Validates a provider `log_level` string against the known severity values
@@ -77,6 +114,18 @@ struct DataProviderDto {
     vars: HashMap<String, String>,
     #[serde(default = "default_log_level")]
     log_level: String,
+}
+
+#[derive(Deserialize)]
+struct MapsDto {
+    #[serde(default = "default_maps_update_cron")]
+    update_cron: String,
+    #[serde(default = "default_maps_update_max_lifetime")]
+    update_max_lifetime_seconds: i64,
+    #[serde(default = "default_maps_protomaps_build_url")]
+    protomaps_build_url: String,
+    #[serde(default = "default_maps_go_pmtiles_version")]
+    go_pmtiles_version: String,
 }
 
 pub struct ConfigurationTomlAdapter {
@@ -123,6 +172,13 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             dto.asset_storage.region,
         )?;
 
+        let maps = MapsConfiguration::new(
+            dto.maps.update_cron,
+            dto.maps.update_max_lifetime_seconds,
+            dto.maps.protomaps_build_url,
+            dto.maps.go_pmtiles_version,
+        )?;
+
         Configuration::new(
             database,
             data_sources,
@@ -131,6 +187,7 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             asset_storage,
             dto.asset_cleanup_cron,
             dto.asset_cleanup_max_lifetime_seconds,
+            maps,
         )
     }
 }
@@ -168,8 +225,9 @@ mod tests {
         format!(
             "asset_cleanup_cron = \"0 0 4 * * *\"\n\
              asset_cleanup_max_lifetime_seconds = 3600\n\n\
-             {config}\n\n{}",
-            asset_storage_section()
+             {config}\n\n{}\n\n{}",
+            asset_storage_section(),
+            maps_section()
         )
     }
 
@@ -185,8 +243,17 @@ mod tests {
             region = \"us-east-1\"\n"
     }
 
+    fn maps_section() -> &'static str {
+        "\
+            [maps]\n\
+            update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
+            update_max_lifetime_seconds = 7200\n\
+            protomaps_build_url = \"https://build.protomaps.com/20260829.pmtiles\"\n\
+            go_pmtiles_version = \"1.31.2\"\n"
+    }
+
     fn with_asset_storage(config: &str) -> String {
-        format!("{config}\n\n{}", asset_storage_section())
+        format!("{config}\n\n{}\n\n{}", asset_storage_section(), maps_section())
     }
 
     #[test]
@@ -531,5 +598,115 @@ mod tests {
 
         std::fs::remove_file(path).unwrap();
         assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn reads_maps_section() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
+            [asset_storage]\n\
+            endpoint = \"http://minio:9000\"\n\
+            access_key = \"minioadmin\"\n\
+            secret_key = \"minioadmin\"\n\
+            bucket = \"bike-counter-images\"\n\
+            region = \"us-east-1\"\n\
+            [maps]\n\
+            update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
+            update_max_lifetime_seconds = 1800\n\
+            protomaps_build_url = \"https://example.com/source.pmtiles\"\n\
+            go_pmtiles_version = \"9.9.9\"\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(configuration.maps().update_cron(), "0 0 3 1 1,3,5,7,9,11 *");
+        assert_eq!(configuration.maps().update_max_lifetime_seconds(), 1800);
+        assert_eq!(
+            configuration.maps().protomaps_build_url(),
+            "https://example.com/source.pmtiles"
+        );
+        assert_eq!(configuration.maps().go_pmtiles_version(), "9.9.9");
+    }
+
+    #[test]
+    fn defaults_maps_when_section_absent() {
+        let path = write_config(&with_asset_storage(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n",
+        ));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(configuration.maps().update_cron(), DEFAULT_MAPS_UPDATE_CRON);
+        assert_eq!(configuration.maps().update_max_lifetime_seconds(), 7200);
+        assert_eq!(
+            configuration.maps().protomaps_build_url(),
+            "https://build.protomaps.com/20260829.pmtiles"
+        );
+        assert_eq!(configuration.maps().go_pmtiles_version(), "1.31.2");
+    }
+
+    #[test]
+    fn defaults_maps_update_max_lifetime_when_not_configured() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
+            [asset_storage]\n\
+            endpoint = \"http://minio:9000\"\n\
+            access_key = \"minioadmin\"\n\
+            secret_key = \"minioadmin\"\n\
+            bucket = \"bike-counter-images\"\n\
+            region = \"us-east-1\"\n\
+            [maps]\n\
+            update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(configuration.maps().update_max_lifetime_seconds(), 7200);
+    }
+
+    #[test]
+    fn rejects_maps_update_max_lifetime_when_zero() {
+        let path = write_config(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
+            [asset_storage]\n\
+            endpoint = \"http://minio:9000\"\n\
+            access_key = \"minioadmin\"\n\
+            secret_key = \"minioadmin\"\n\
+            bucket = \"bike-counter-images\"\n\
+            region = \"us-east-1\"\n\
+            [maps]\n\
+            update_max_lifetime_seconds = 0\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(
+            result,
+            Err(ConfigError::InvalidFormat(message))
+                if message.contains("maps.update_max_lifetime_seconds")
+        ));
     }
 }

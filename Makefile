@@ -17,14 +17,14 @@ help: ## Show available targets
 build: ## Build the backend (debug)
 	cargo build --manifest-path backend/Cargo.toml --quiet
 
-tiles: ## Build tiles/map.pmtiles (worldwide backdrop + Germany detail), extracted once from the public Protomaps basemap via the one-shot `tiles` init container
-	docker compose up tiles
+tiles: ## Build tiles/map.pmtiles (worldwide backdrop + Germany detail) via the backend's `tiles` subcommand (reuses go-pmtiles)
+	docker compose run --rm --no-deps backend tiles
 
-tiles-update: ## Rebuild tiles/map.pmtiles from a fresh Protomaps extract (drops the cached file, re-runs the tiles init container)
+tiles-update: ## Rebuild tiles/map.pmtiles from a fresh extract (drops the cached file, re-runs the tiles build)
 	rm -f tiles/map.pmtiles
-	docker compose up tiles
+	docker compose run --rm --no-deps backend tiles
 
-run: tiles ## Boot the full docker-compose stack (PostgreSQL + backend + frontend) in the foreground
+run: ## Boot the full docker-compose stack (PostgreSQL + backend + frontend) in the foreground
 	docker compose up --build
 
 down: ## Stop and remove the docker-compose stack (keeps the database volume)

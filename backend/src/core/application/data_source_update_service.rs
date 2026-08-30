@@ -319,6 +319,14 @@ mod tests {
             asset_storage(),
             DEFAULT_ASSET_CLEANUP_CRON.to_string(),
             3600,
+            crate::core::domain::configuration::configuration::value_objects::MapsConfiguration::new(
+                crate::core::domain::configuration::configuration::DEFAULT_MAPS_UPDATE_CRON
+                    .to_string(),
+                7200,
+                "https://build.protomaps.com/20260829.pmtiles".to_string(),
+                "1.31.2".to_string(),
+            )
+            .unwrap(),
         )
         .unwrap()
     }

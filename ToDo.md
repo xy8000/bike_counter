@@ -453,3 +453,13 @@ Small UI + script fixes (plan 55)
 - [x] Backend + frontend: each search result row shows the station image (bike-icon fallback) via `StationSummaryDto.image_url` + `StationSummary.image_url` + a `StationListItem` thumbnail
 - [x] Frontend: the header summary keeps only the "updated …" timestamp when space is tight (stats truncate, timestamp is `shrink-0`), and search-result rows highlight across the full row on hover (`li` hover instead of the button)
 - [x] Gates green: `make check`, `make test-rest` (95), `npm run build` (tsc + vite)
+
+Bundle the tiles init into the backend startup (plan 65)
+
+- [x] Backend: `MapsConfiguration` + `[maps]` TOML section (`update_cron` default every two months, `update_max_lifetime_seconds` default 2 hours, pinned `protomaps_build_url` + `go_pmtiles_version`) added to `Configuration`, the TOML adapter, `config.toml.example` and the test-script configs
+- [x] Backend: `TilesInit` driven adapter (`backend/src/adapter/driven/tiles_init/`) reuses the official `go-pmtiles` CLI (downloaded at runtime, cached) to extract world z0-5 + Germany bbox (hard-coded) and merge into `map.pmtiles`; `ensure_available()` at startup (mandatory, no skip) + atomic `update()` (build to temp, then rename); subprocess output streamed to stdout
+- [x] Backend: `TilesProvisioningPort` (domain) + `TilesUpdateService` (`tiles_update` ShedLock-style job on the `[maps]` cron)
+- [x] Backend: `main.rs` ensures tiles in the init phase before the server binds; `bike_counter tiles` subcommand + `entrypoint.sh` arg forwarding for `make tiles` / `make tiles-update`
+- [x] Infra: `docker-compose.yml` removes the `tiles` service, mounts `./tiles:/data` into the backend, and the frontend waits on `backend: service_healthy`; Makefile `tiles`/`tiles-update` use `docker compose run --rm --no-deps backend tiles`; `run` drops the `tiles` prerequisite; smoke-test readiness wait raised for the first-run basemap build
+- [x] Docs: `tiles/README.md`, `README.md`, `ToDo.md`, `plans/65_..._plan.md` + `plans/README.md`
+- [ ] Gates green (pending local run): `make check`, `make test`, `make test-rest`, `make coverage`, `make test-e2e`, `docker compose config`

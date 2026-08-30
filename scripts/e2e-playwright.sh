@@ -89,6 +89,12 @@ secret_key = "minioadmin"
 bucket = "bike-counter-images"
 region = "us-east-1"
 
+[maps]
+update_cron = "0 0 3 1 1,3,5,7,9,11 *"
+update_max_lifetime_seconds = 3600
+protomaps_build_url = "https://build.protomaps.com/20260829.pmtiles"
+go_pmtiles_version = "1.31.2"
+
 [[data_sources]]
 name = "Münster"
 
@@ -113,9 +119,11 @@ if ! docker compose -f "${COMPOSE_FILE}" up -d --build >"${BUILD_LOG}" 2>&1; the
 fi
 echo "--- Stack built."
 
+# The backend builds the basemap at startup on first run (no skip possible),
+# which can take minutes; allow up to 8 minutes for readiness.
 echo "--- Waiting for ${APP_URL}/health/ready"
 READY=0
-for _ in $(seq 1 120); do
+for _ in $(seq 1 240); do
   if curl --fail --silent "${APP_URL}/health/ready" >/dev/null 2>&1; then
     READY=1
     break

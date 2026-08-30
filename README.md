@@ -370,9 +370,14 @@ PostgreSQL, so set `database_url="postgres://localhost:5432"`:
 
 ```bash
 cd backend
-cargo build
-cargo run
+TILES_DIR=./tiles cargo run
 ```
+
+The basemap is **mandatory**: set `TILES_DIR` to a writable directory (default
+`/data`, the compose mount) so the backend can build `tiles/map.pmtiles` on
+startup. The first run downloads the pinned `go-pmtiles` CLI and the Protomaps
+extract, so it needs network access and takes a few minutes (progress is
+streamed to the console).
 
 The backend prints the loaded configuration and then serves:
 
@@ -411,7 +416,11 @@ docker compose logs -f           # make logs
   and mounts [`config.toml`](config.toml) into the container. Its
   [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to start
   without a `config.toml` and otherwise just runs the REST server (which applies
-  the refinery migrations on startup).
+  the refinery migrations on startup). The backend also builds the self-hosted
+  basemap (`tiles/map.pmtiles` — mandatory, see
+  [`tiles/README.md`](tiles/README.md)) during its init phase from the `[maps]`
+  configuration, and a cron-scheduled `tiles_update` job refreshes it atomically
+  (build into a temp file, then swap). `make tiles` runs just that build step.
 - The `frontend` service builds the React app (Vite) into static assets served by
   nginx, which reverse-proxies `/api` to the `backend` service so the browser
   only ever talks same-origin (no CORS). It is exposed on <http://localhost:8081>.
