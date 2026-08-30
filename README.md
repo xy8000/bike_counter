@@ -407,6 +407,12 @@ docker compose logs -f           # make logs
 
 - The `db` service runs PostgreSQL with the development defaults
   (`postgres` / `postgres` / `bike_counter`) and persists data in a named volume.
+  Like MinIO, it lives on an **internal-only** `db_network` (no host port), so
+  Postgres is reachable only from within Docker — from the `backend` service and
+  via `docker compose exec db psql …`. There is no `5432` binding on the host.
+  If you still need a host-side `psql`/`pg_dump` for the compose database, run it
+  inside the container:
+  `docker compose exec db psql -U postgres -d bike_counter`.
 - The `minio` service runs a private S3-compatible object store for counting-
   station images on an **internal-only** `asset_network` (no host port) with its
   own named volume; the one-shot `minio-init` service (MinIO client `mc`) creates
@@ -646,7 +652,8 @@ A [`Makefile`](Makefile) wraps the common commands. Run `make help` for the full
 list:
 
 ```bash
-make check      # backend CI gate: cargo fmt --check + cargo clippy --all-targets -- -D warnings
+make check      # backend CI gate: cargo fmt --check + cargo clippy --all-targets -- -D warnings + cargo audit
+make audit      # backend: cargo audit (fails on any advisory)
 make test       # backend: all tests (repository tests spin up a Postgres test container via Docker)
 make test-rest  # backend: only the REST endpoint tests (in-memory mocks, no database required)
 make test-e2e   # end-to-end smoke test against the real docker-compose stack (requires Docker)
@@ -665,6 +672,11 @@ Under the hood the scripts are:
 
 - [`scripts/fmt-test.sh`](scripts/fmt-test.sh) – CI-style gate: `cargo fmt --check`
   and `cargo clippy --all-targets -- -D warnings`, failing non-zero on any drift.
+- [`scripts/audit.sh`](scripts/audit.sh) – `cargo audit` security gate: fails
+  non-zero on any advisory. The `backend/.cargo/audit.toml` lists the two known
+  unfixable `quick-xml` advisories (via `rust-s3`/`aws-creds`, with a
+  justification); anything else is a hard failure. Install once with
+  `cargo install cargo-audit`.
 - [`scripts/docker-compose-test.sh`](scripts/docker-compose-test.sh) – boots the
   real docker-compose stack (PostgreSQL + app), waits for readiness, asserts the
   jobs + data-sources APIs return `200`, verifies a `data_source_update` job with

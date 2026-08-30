@@ -1,0 +1,17 @@
+# cargo-audit configuration (see `cargo audit --help`).
+#
+# Ignored advisories — accepted risk, each with a documented justification:
+#
+# - RUSTSEC-2026-0195 / RUSTSEC-2026-0194 (quick-xml < 0.41, DoS in XML parsing):
+#   quick-xml 0.38.4 is pulled in transitively by `rust-s3` (0.37.2, latest) via
+#   `aws-creds` (0.39.1, latest), both of which pin `quick-xml ^0.38`. The fix
+#   (>= 0.41.0) is a major version, so no compatible patched version exists yet;
+#   there is no 0.38.x backport. The affected code path only runs when
+#   aws-creds parses AWS EC2 instance-metadata / STS credentials, which this app
+#   never does (MinIO credentials are static from config.toml). Re-audit and
+#   remove the ignore once rust-s3/aws-creds allow quick-xml >= 0.41.
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0195",
+  "RUSTSEC-2026-0194",
+]

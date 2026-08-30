@@ -61,7 +61,10 @@ impl AssetService {
 
     /// Lowercase hex SHA-256 of `bytes`.
     fn sha256_of(bytes: &[u8]) -> String {
-        format!("{:x}", Sha2Digest::digest(bytes))
+        Sha2Digest::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     /// Uploads `bytes` under `object_key` and persists the resulting metadata.

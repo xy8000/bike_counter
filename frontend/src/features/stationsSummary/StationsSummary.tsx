@@ -244,7 +244,9 @@ export function StationsSummary() {
         <div className="mx-auto max-w-6xl px-4 py-6">
           <div className="mb-6 flex items-center justify-between gap-4">
             <Button asChild variant="outline" size="sm">
-              <Link to="/">
+              {/* Restore the exact map view by rebuilding /?<bounds> from the
+                  bounds already in this /summary URL (fallback / when absent). */}
+              <Link to={bounds ? `/?${serializeBounds(bounds).toString()}` : '/'}>
                 <ArrowLeft /> Back to map
               </Link>
             </Button>

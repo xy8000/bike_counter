@@ -42,7 +42,7 @@ async fn openapi_document_is_served() {
     let (status, body) = app.get_json("/api-docs/openapi.json").await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["openapi"], "3.0.3");
+    assert_eq!(body["openapi"], "3.1.0");
     let paths = body["paths"]
         .as_object()
         .expect("paths should be an object");

@@ -96,27 +96,27 @@ impl RestApiAdapter {
             .route("/api/bff/stations/search", get(get_bff_stations_search))
             .route("/api/bff/global-summary", get(get_bff_global_summary))
             .route(
-                "/api/bff/station-overview/:id",
+                "/api/bff/station-overview/{id}",
                 get(get_bff_station_overview),
             )
             .route(
-                "/api/bff/station-overview/:id/stats",
+                "/api/bff/station-overview/{id}/stats",
                 get(get_bff_station_overview_stats),
             )
             .route(
-                "/api/bff/station-detail/:id",
+                "/api/bff/station-detail/{id}",
                 get(get_bff_station_detail_page),
             )
             .route(
-                "/api/bff/station-detail/:id/overview",
+                "/api/bff/station-detail/{id}/overview",
                 get(get_bff_station_detail_overview),
             )
             .route(
-                "/api/bff/station-detail/:id/graphs/:timeframe",
+                "/api/bff/station-detail/{id}/graphs/{timeframe}",
                 get(get_bff_station_detail_graphs),
             )
             .route(
-                "/api/bff/station-detail/:id/monthly",
+                "/api/bff/station-detail/{id}/monthly",
                 get(get_bff_station_detail_monthly),
             )
             .route(
@@ -128,45 +128,45 @@ impl RestApiAdapter {
                 get(get_bff_stations_summary_overview),
             )
             .route(
-                "/api/bff/stations/summary/graphs/:timeframe",
+                "/api/bff/stations/summary/graphs/{timeframe}",
                 get(get_bff_stations_summary_graphs),
             )
             .route(
                 "/api/bff/stations/summary/monthly",
                 get(get_bff_stations_summary_monthly),
             )
-            .route("/api/bff/assets/:id/content", get(get_bff_asset_content))
+            .route("/api/bff/assets/{id}/content", get(get_bff_asset_content))
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))
             .route(
-                "/api/v1/counting-stations/:id",
+                "/api/v1/counting-stations/{id}",
                 get(get_counting_station_by_id).patch(patch_counting_station),
             )
             .route("/api/v1/channels", get(list_channels))
-            .route("/api/v1/channels/:id", get(get_channel_by_id))
+            .route("/api/v1/channels/{id}", get(get_channel_by_id))
             .route("/api/v1/measurements", get(list_measurements))
             .route("/api/v1/measurements/raw", get(list_measurements_raw))
-            .route("/api/v1/measurements/:id", get(get_measurement_by_id))
+            .route("/api/v1/measurements/{id}", get(get_measurement_by_id))
             .route("/api/v1/data-sources", get(list_data_sources))
-            .route("/api/v1/data-sources/:id", get(get_data_source_by_id))
+            .route("/api/v1/data-sources/{id}", get(get_data_source_by_id))
             .route(
-                "/api/v1/data-sources/:id/persistent_state",
+                "/api/v1/data-sources/{id}/persistent_state",
                 get(get_persistent_state).delete(clear_persistent_state),
             )
             .route(
-                "/api/v1/data-sources/:id/persistent_state/:key",
+                "/api/v1/data-sources/{id}/persistent_state/{key}",
                 put(put_persistent_state_entry).delete(delete_persistent_state_entry),
             )
             .route(
-                "/api/v1/data-sources/:id/messages",
+                "/api/v1/data-sources/{id}/messages",
                 get(list_provider_messages),
             )
             .route(
-                "/api/v1/data-sources/:id/imported_until",
+                "/api/v1/data-sources/{id}/imported_until",
                 delete(reset_imported_until),
             )
             .route("/api/v1/jobs", get(list_jobs))
-            .route("/api/v1/jobs/:id", get(get_job_by_id))
+            .route("/api/v1/jobs/{id}", get(get_job_by_id))
             .route("/health/live", get(get_health_live))
             .route("/health/ready", get(get_health_ready))
             .with_state(app_state)

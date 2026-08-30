@@ -207,7 +207,7 @@ impl TilesInit {
         let response = ureq::get(&url)
             .call()
             .map_err(|e| format!("failed to download {url}: {e}"))?;
-        let mut reader = response.into_reader();
+        let mut reader = response.into_body().into_reader();
         let mut file = fs::File::create(&tarball)
             .map_err(|e| format!("failed to create {}: {e}", tarball.display()))?;
         std::io::copy(&mut reader, &mut file)

@@ -263,11 +263,15 @@ impl HamburgStaAdapter {
             }
             filter.push_str(&format!("phenomenonTime le {}", to.to_rfc3339()));
         }
+        // `$orderby=phenomenonTime asc` must be percent-encoded (`%20`): ureq 3
+        // parses the URL with `http::Uri`, which rejects a literal space in the
+        // query string ("http: invalid uri character"), unlike ureq 2.
+        const ORDERBY: &str = "$orderby=phenomenonTime%20asc";
         if filter.is_empty() {
-            format!("{base}?$orderby=phenomenonTime asc&$top={OBSERVATIONS_PAGE_SIZE}")
+            format!("{base}?{ORDERBY}&$top={OBSERVATIONS_PAGE_SIZE}")
         } else {
             format!(
-                "{base}?$filter={}&$orderby=phenomenonTime asc&$top={OBSERVATIONS_PAGE_SIZE}",
+                "{base}?$filter={}&{ORDERBY}&$top={OBSERVATIONS_PAGE_SIZE}",
                 filter_param(&filter),
             )
         }
@@ -415,7 +419,34 @@ fn parse_host_and_port(url: &str) -> Option<(String, u16)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_param, parse_host_and_port};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use chrono::{DateTime, Utc};
+
+    use crate::adapter::driven::hamburg_sta::fetcher::ResourceFetcher;
+    use crate::core::domain::configuration::configuration::value_objects::{
+        DataProviderConfiguration, DataSourceConfiguration,
+    };
+
+    use super::{HamburgStaAdapter, filter_param, parse_host_and_port};
+
+    fn config() -> DataSourceConfiguration {
+        let provider = DataProviderConfiguration::new(
+            HamburgStaAdapter::provider_type().to_string(),
+            HashMap::new(),
+        )
+        .unwrap();
+        DataSourceConfiguration::new("Hamburg".to_string(), provider).unwrap()
+    }
+
+    /// A fetcher that is never called; used only to build the adapter.
+    struct StubFetcher;
+    impl ResourceFetcher for StubFetcher {
+        fn fetch(&self, url: &str) -> Result<String, String> {
+            Err(format!("unexpected fetch: {url}"))
+        }
+    }
 
     #[test]
     fn encodes_filter_query_params() {
@@ -435,5 +466,29 @@ mod tests {
             parse_host_and_port("http://localhost:8080/"),
             Some(("localhost".to_string(), 8080))
         );
+    }
+
+    #[test]
+    fn observations_url_is_uri_parseable() {
+        // Regression: the `$orderby` value must be percent-encoded. ureq 3 parses
+        // URLs with `http::Uri`, which rejects a literal space in the query
+        // string ("http: invalid uri character"), unlike ureq 2.
+        let adapter = HamburgStaAdapter::with_fetcher(&config(), Arc::new(StubFetcher)).unwrap();
+        let from: DateTime<Utc> = "2026-01-02T00:00:00Z".parse().unwrap();
+        let to: DateTime<Utc> = "2026-01-03T00:00:00Z".parse().unwrap();
+
+        for url in [
+            adapter.observations_url(30072, None, None),
+            adapter.observations_url(30072, Some(from), Some(to)),
+        ] {
+            let uri: ureq::http::Uri = url.parse().unwrap_or_else(|e| {
+                panic!("observations URL is not a valid http::Uri: {url} -> {e}")
+            });
+            assert_eq!(uri.scheme_str(), Some("https"));
+            assert!(
+                !url.contains("phenomenonTime asc"),
+                "literal space in URL: {url}"
+            );
+        }
     }
 }

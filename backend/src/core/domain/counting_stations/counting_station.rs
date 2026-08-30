@@ -376,6 +376,14 @@ mod tests {
     }
 
     #[test]
+    fn calendar_month_window_rejects_out_of_range_months_back() {
+        // `months_before` cannot step back u32::MAX months; the defensive
+        // `checked_sub_months` guard must surface an InvalidQuery error.
+        let result = calendar_month_window(Berlin, utc(2024, 1, 15, 12, 0, 0), u32::MAX);
+        assert!(matches!(result, Err(DomainError::InvalidQuery(_))));
+    }
+
+    #[test]
     fn previous_local_days_returns_the_last_n_complete_days() {
         // Berlin 2024-01-11 (CET): the previous 7 complete days (Jan 4..10)
         // span UTC [2024-01-03T23:00:00Z, 2024-01-10T23:00:00Z).

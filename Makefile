@@ -2,14 +2,15 @@
 # monorepo (backend/ = Rust crate, frontend/ = React app).
 #   make help      -> list all targets
 #   make run       -> boot the whole stack (PostgreSQL + backend + frontend) via docker compose
-#   make check     -> backend formatting + lint gate (scripts/fmt-test.sh)
+#   make check     -> backend formatting + lint + security-audit gate (scripts/fmt-test.sh + scripts/audit.sh)
+#   make audit     -> backend dependency security audit (scripts/audit.sh)
 #   make test-e2e  -> end-to-end docker-compose smoke test (scripts/docker-compose-test.sh)
 #   make test-playwright -> Playwright browser e2e tests against the real stack (scripts/e2e-playwright.sh)
 #   make playwright-install -> install the Playwright Chromium browser (once)
 #   make coverage  -> backend line-coverage gate, overall >= 80% and core >= 95% (scripts/coverage.sh)
 #   make coverage-open -> open the HTML coverage report in a browser
 
-.PHONY: help build tiles tiles-update run down logs fmt check test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
+.PHONY: help build tiles tiles-update run down logs fmt check audit test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -36,8 +37,12 @@ logs: ## Follow the logs of all services
 fmt: ## Apply rustfmt formatting to the backend
 	cargo fmt --manifest-path backend/Cargo.toml --quiet
 
-check: ## CI gate: rustfmt --check + clippy -D warnings (scripts/fmt-test.sh)
+check: ## CI gate: rustfmt --check + clippy -D warnings + cargo audit (scripts/fmt-test.sh + scripts/audit.sh)
 	./scripts/fmt-test.sh
+	./scripts/audit.sh
+
+audit: ## CI gate: cargo audit, fails on any advisory (scripts/audit.sh)
+	./scripts/audit.sh
 
 test: ## Run all backend tests (repository tests spin up a Postgres test container via Docker)
 	cargo test --manifest-path backend/Cargo.toml --quiet

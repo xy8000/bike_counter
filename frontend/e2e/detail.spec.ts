@@ -125,6 +125,32 @@ test('the back-to-map button re-routes to the map and the browser back event ret
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
 })
 
+test('back to map after an in-app detail navigation restores the previous view', async ({
+  page,
+}) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  // Open the overview via a marker (this flies to the station and puts the id
+  // in the URL), then let the fly-to settle so the URL holds the final bounds.
+  await mapMarkers(page).first().click()
+  await expect(page).toHaveURL(/[?&]station=[^&]+/)
+  await page.waitForTimeout(1200)
+  const expectedMapUrl = page.url()
+
+  // The overview's detail link navigates in-app to the station detail page.
+  await page
+    .getByRole('complementary')
+    .getByRole('link', { name: 'Open detail page' })
+    .click()
+  await expect(page).toHaveURL(/\/stations\/[0-9a-f-]+/)
+
+  // Back to map restores the exact previous map URL (bounds + open station).
+  await page.getByRole('link', { name: 'Back to map' }).click()
+  await expect(page).toHaveURL(expectedMapUrl)
+  await expect(mapMarkers(page).first()).toBeVisible()
+})
+
 test('clicking the map preview opens the map view at the preview bounds', async ({ page }) => {
   const stationId = await openFirstStation(page)
   await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
@@ -174,9 +200,14 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
 
   // The bar chart draws its Y axis on the left with tick labels (regression:
   // the chart used to have no Y-axis at all), and every year button shows its
-  // total with the "bikes" unit.
+  // total with the "bikes" unit. recharts 3 moved the tick labels into their
+  // own z-index layer group (`recharts-yAxis-tick-labels`) and hides the
+  // domain-edge tick via its tick-visibility logic, so assert any visible
+  // tick label instead of the first one.
   await expect(
-    monthlyCard.locator('.recharts-yAxis .recharts-cartesian-axis-tick').first(),
+    monthlyCard
+      .locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value')
+      .first(),
   ).toBeVisible()
   await expect(monthlyCard.getByRole('button').first()).toContainText('bikes')
 

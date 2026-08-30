@@ -16,13 +16,11 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::task::{Context, Poll};
 
-use futures::{SinkExt, Stream};
+use futures::{SinkExt, Stream, StreamExt};
 use s3::bucket::Bucket;
 use s3::creds::Credentials;
 use s3::region::Region;
-use tokio::io::AsyncWrite;
 
 use crate::core::domain::assets::asset::value_objects::{ContentType, ObjectKey};
 use crate::core::domain::assets::asset_storage_port::{
@@ -32,7 +30,7 @@ use crate::core::domain::configuration::configuration::value_objects::AssetStora
 use crate::core::domain::error::DomainError;
 
 pub struct MinioAssetStorage {
-    bucket: Bucket,
+    bucket: Box<Bucket>,
     /// Small runtime used to drive the async rust-s3 calls from blocking
     /// contexts (there is no tokio runtime available inside `spawn_blocking`).
     runtime: tokio::runtime::Runtime,
@@ -129,68 +127,35 @@ impl AssetStorage for MinioAssetStorage {
         let bucket = self.bucket.clone();
         let key = object_key.0.clone();
         Box::pin(async move {
-            // Bounded channel: the ChunkWriter applies backpressure, so a slow
+            // Bounded channel: the sender applies backpressure, so a slow
             // browser never buffers the whole object in memory. The futures
             // channel's receiver is itself a `Stream`.
             let (tx, rx) = futures::channel::mpsc::channel::<Result<bytes::Bytes, io::Error>>(8);
-            // Stream the object into the channel on a background task while the
-            // caller consumes the receiver (real streaming, no full buffering).
+            // Consume rust-s3's byte stream (`get_object_stream` returns a
+            // `ResponseDataStream`) on a background task, forwarding each chunk
+            // into the channel while the caller consumes the receiver (real
+            // streaming, no full buffering).
             tokio::spawn(async move {
-                let mut writer = ChunkWriter { tx: tx.clone() };
-                let result = bucket.get_object_stream(&key, &mut writer).await;
-                drop(writer);
-                if let Err(error) = result {
+                let mut stream = match bucket.get_object_stream(&key).await {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        let mut sender = tx.clone();
+                        let _ = sender.send(Err(io::Error::other(error.to_string()))).await;
+                        return;
+                    }
+                };
+                while let Some(chunk) = stream.bytes().next().await {
+                    let item = chunk.map_err(|error| io::Error::other(error.to_string()));
                     let mut sender = tx.clone();
-                    let _ = sender.send(Err(io::Error::other(error.to_string()))).await;
+                    if sender.send(item).await.is_err() {
+                        break; // consumer dropped, stop producing
+                    }
                 }
             });
             let body: Box<dyn Stream<Item = Result<bytes::Bytes, io::Error>> + Send + Unpin> =
                 Box::new(rx);
             Ok(AssetObjectStream { body })
         })
-    }
-}
-
-/// An `AsyncWrite` that forwards every chunk into a bounded mpsc channel, used
-/// by rust-s3's writer-based `get_object_stream` to produce a real byte stream.
-/// The bounded channel applies backpressure: when the consumer is slower than
-/// MinIO, `poll_write` returns `Pending` instead of buffering the whole object.
-struct ChunkWriter {
-    tx: futures::channel::mpsc::Sender<Result<bytes::Bytes, io::Error>>,
-}
-
-impl AsyncWrite for ChunkWriter {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-        let item = Ok(bytes::Bytes::copy_from_slice(buf));
-        // Wait for channel capacity before accepting more bytes.
-        match this.tx.poll_ready(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(error)) => {
-                return Poll::Ready(Err(io::Error::other(error.to_string())));
-            }
-            Poll::Pending => return Poll::Pending,
-        }
-        if let Err(error) = this.tx.start_send(item) {
-            return Poll::Ready(Err(io::Error::other(error.to_string())));
-        }
-        Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        // The mpsc channel has no buffering beyond the queue itself, so there is
-        // nothing to flush.
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        // Dropping the sender (which `get_object_stream` does after writing)
-        // closes the stream; no explicit close is needed.
-        Poll::Ready(Ok(()))
     }
 }
 

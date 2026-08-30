@@ -1,6 +1,6 @@
-# 67 - Dependency, base-image upgrade + cargo audit
+# 68 - Dependency, base-image upgrade + cargo audit
 
-Status: in progress
+Status: implemented
 
 ## Problem
 
@@ -97,10 +97,54 @@ major upgrades may require code refactoring.
 - `make test-e2e` green (compose stack builds with the new base images).
 - `docker compose config` valid.
 
+## Implementation notes
+
+- **Frontend** ([`package.json`](../frontend/package.json:15)): latest stable —
+  React 19.2, Vite 8, TypeScript 7, recharts 3.10, pmtiles 4.5,
+  `@vitejs/plugin-react` 6.1, Tailwind v4; `npm run build` green after recharts 3
+  refactors ([`chart.tsx`](../frontend/src/components/ui/chart.tsx:115):
+  `TooltipContentProps`/`DefaultLegendContentProps`, `Partial<>`,
+  `String(item.dataKey)`) and [`vite.config.ts`](../frontend/vite.config.ts:1)
+  `import.meta.dirname`. Note recharts 3 moved tick labels into a separate
+  `.recharts-{x|y}Axis-tick-labels` z-index layer — the monthly-chart e2e
+  assertion uses `.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value`.
+- **Backend** ([`Cargo.toml`](../backend/Cargo.toml:6)): axum 0.8 (route paths
+  `:id` → `{id}`), ureq 3 (`into_body().read_to_string()/into_reader()`,
+  `headers()`), utoipa 5 (OpenAPI 3.1.0), rust-s3 0.37 (`Box<Bucket>`,
+  `get_object_stream` → `ResponseDataStream`), refinery 0.9, toml 1.1, cron 0.17,
+  sha2 0.11 (hex via iter), zip 8.6, tower 0.5, testcontainers 0.27 (pinned via
+  `testcontainers-modules`).
+- **Docker**: backend `alpine` latest, frontend `node` LTS + `nginx` latest,
+  compose `postgres:18-alpine` (volume mount is now `/var/lib/postgresql` for
+  PG18). Pinned `go_pmtiles_version` + `protomaps_build_url` bumped across
+  [`config.toml.example`](../config.toml.example:33), test-script configs and the
+  backend defaults/tests.
+- **cargo audit**: [`scripts/audit.sh`](../scripts/audit.sh:1) + `make audit`,
+  wired into `make check`; [`backend/.cargo/audit.toml`](../backend/.cargo/audit.toml:1)
+  ignores the two unfixable `quick-xml` advisories (RUSTSEC-2026-0195/0194, via
+  `rust-s3`/`aws-creds` pin `^0.38`) with justification; documented in
+  [`agents.md`](../agents.md:25).
+- **ureq 3 Hamburg fixes** (found during the post-upgrade data re-import; the
+  PG18 volume recreation wiped the imported data — see plan 69's data-loss
+  caveat — and re-importing Hamburg surfaced these regressions):
+  - [`hamburg_sta/adapter.rs`](../backend/src/adapter/driven/hamburg_sta/adapter.rs:255)
+    percent-encodes the `$orderby=phenomenonTime asc` value (`%20`) — ureq 3
+    parses URLs with `http::Uri`, which rejects a literal space in the query
+    string (`http: invalid uri character`) whereas ureq 2 tolerated it. Regression
+    test `observations_url_is_uri_parseable` added.
+  - [`hamburg_sta/fetcher.rs`](../backend/src/adapter/driven/hamburg_sta/fetcher.rs:22)
+    retries transient transport errors (`HostNotFound`/`ConnectionFailed`/`Timeout`/`Io`)
+    up to 3 times with backoff — the Hamburg API intermittently throttles the large
+    5-min backfill with `EAI_AGAIN` (`failed to lookup address information: Try again`),
+    which previously aborted the whole data-source update job.
+- Gates: `make check` (incl. audit), `make test` (449), `make test-rest` (95),
+  `make coverage` (overall 87.01% / core 95.04%), `npm run build`,
+  `make test-e2e`, `make test-playwright` (23) all green.
+
 ## Definition of done
 
-- [ ] Frontend deps + Node at latest stable, lockfile regenerated, build green.
-- [ ] Rust deps at latest stable majors, refactored, all backend gates green.
-- [ ] Docker base images + pinned map versions bumped and documented.
-- [ ] `cargo audit` gate added, run green, documented in agents.md.
-- [ ] [`plans/README.md`](../plans/README.md:1) registration updated.
+- [x] Frontend deps + Node at latest stable, lockfile regenerated, build green.
+- [x] Rust deps at latest stable majors, refactored, all backend gates green.
+- [x] Docker base images + pinned map versions bumped and documented.
+- [x] `cargo audit` gate added, run green, documented in agents.md.
+- [x] [`plans/README.md`](../plans/README.md:1) registration updated.

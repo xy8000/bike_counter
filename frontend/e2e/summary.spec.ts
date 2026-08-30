@@ -115,11 +115,22 @@ test.describe('station summary', () => {
     await expect(disabledMarker).toHaveCSS('filter', /grayscale/)
   })
 
-  test('the back-to-map link returns to the map view', async ({ page }) => {
+  test('the back-to-map link returns to the same map view', async ({ page }) => {
     await page.goto(await smallSummaryUrl(page), { waitUntil: 'domcontentloaded' })
+    // The loaded page gives us the origin to resolve the relative summary path.
+    const summaryUrl = new URL(page.url())
 
     await page.getByRole('link', { name: 'Back to map' }).click()
+    // The restored map view carries the same bbox as the /summary URL it came
+    // from (regression: it used to reset to the Münster default view).
     await expect(page).toHaveURL(/[?&]min_lat=/)
+    const mapUrl = new URL(page.url())
+    for (const key of ['min_lat', 'min_lng', 'max_lat', 'max_lng']) {
+      expect(Number(mapUrl.searchParams.get(key))).toBeCloseTo(
+        Number(summaryUrl.searchParams.get(key)),
+        6,
+      )
+    }
     await expect(mapMarkers(page).first()).toBeVisible()
     await expect(sidebar(page)).toBeVisible()
   })

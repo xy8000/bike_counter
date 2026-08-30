@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -165,6 +165,11 @@ function channelHourRadar(
 export function StationDetail() {
   const { stationId } = useParams()
   const navigate = useNavigate()
+  // When the page was reached through in-app navigation (not a shared/deep
+  // link), the previous history entry is the map with its bounds + open
+  // station; "Back to map" restores that exact view via history-back.
+  const location = useLocation()
+  const hasInAppHistory = location.key !== 'default'
   const { data: page, error } = useStationDetailPage(stationId ?? null)
 
   const openDetail = (station: StationSummary) => {
@@ -191,7 +196,18 @@ export function StationDetail() {
         <div className="mx-auto max-w-6xl px-4 py-6">
           <div className="mb-6 flex items-center justify-between gap-4">
             <Button asChild variant="outline" size="sm">
-              <Link to="/">
+              {/* Restore the prior map view via history when we were reached by
+                  in-app navigation; shared/deep links (location.key ===
+                  'default') fall back to the plain map route. */}
+              <Link
+                to="/"
+                onClick={(event) => {
+                  if (hasInAppHistory) {
+                    event.preventDefault()
+                    navigate(-1)
+                  }
+                }}
+              >
                 <ArrowLeft /> Back to map
               </Link>
             </Button>

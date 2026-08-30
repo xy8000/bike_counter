@@ -143,7 +143,7 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
         let content = std::fs::read_to_string(&self.file_path).map_err(ConfigError::IoError)?;
 
         let dto: ConfigurationDto = toml::from_str(&content)
-            .map_err(|_| ConfigError::InvalidFormat(self.file_path.clone()))?;
+            .map_err(|error| ConfigError::InvalidFormat(format!("{}: {error}", self.file_path)))?;
 
         let database = DatabaseConfiguration::new(
             dto.database_url,
@@ -253,7 +253,11 @@ mod tests {
     }
 
     fn with_asset_storage(config: &str) -> String {
-        format!("{config}\n\n{}\n\n{}", asset_storage_section(), maps_section())
+        format!(
+            "{config}\n\n{}\n\n{}",
+            asset_storage_section(),
+            maps_section()
+        )
     }
 
     #[test]
@@ -603,7 +607,9 @@ mod tests {
     #[test]
     fn reads_maps_section() {
         let path = write_config(
-            "database_url = \"postgres://localhost\"\n\
+            "asset_cleanup_cron = \"0 0 4 * * *\"\n\
+            asset_cleanup_max_lifetime_seconds = 3600\n\
+            database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
@@ -637,7 +643,9 @@ mod tests {
     #[test]
     fn defaults_maps_when_section_absent() {
         let path = write_config(&with_asset_storage(
-            "database_url = \"postgres://localhost\"\n\
+            "asset_cleanup_cron = \"0 0 4 * * *\"\n\
+            asset_cleanup_max_lifetime_seconds = 3600\n\
+            database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
@@ -660,7 +668,9 @@ mod tests {
     #[test]
     fn defaults_maps_update_max_lifetime_when_not_configured() {
         let path = write_config(
-            "database_url = \"postgres://localhost\"\n\
+            "asset_cleanup_cron = \"0 0 4 * * *\"\n\
+            asset_cleanup_max_lifetime_seconds = 3600\n\
+            database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
@@ -685,7 +695,9 @@ mod tests {
     #[test]
     fn rejects_maps_update_max_lifetime_when_zero() {
         let path = write_config(
-            "database_url = \"postgres://localhost\"\n\
+            "asset_cleanup_cron = \"0 0 4 * * *\"\n\
+            asset_cleanup_max_lifetime_seconds = 3600\n\
+            database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\

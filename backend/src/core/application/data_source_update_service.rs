@@ -373,6 +373,7 @@ mod tests {
     struct MockJobRepository {
         jobs: Mutex<Vec<Job>>,
         fail_set_running: bool,
+        fail_expire: bool,
     }
 
     impl MockJobRepository {
@@ -380,11 +381,16 @@ mod tests {
             Self {
                 jobs: Mutex::new(jobs),
                 fail_set_running: false,
+                fail_expire: false,
             }
         }
 
         fn set_fail_set_running(&mut self, fail: bool) {
             self.fail_set_running = fail;
+        }
+
+        fn set_fail_expire(&mut self, fail: bool) {
+            self.fail_expire = fail;
         }
 
         fn jobs(&self) -> Vec<Job> {
@@ -509,6 +515,9 @@ mod tests {
             job_type: &str,
             now: DateTime<Utc>,
         ) -> Result<u64, DomainError> {
+            if self.fail_expire {
+                return Err(DomainError::Database("expire failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             let mut expired = 0u64;
             for job in jobs.iter_mut() {
@@ -1078,6 +1087,20 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].status, JobStatus::Failed);
         assert!(jobs[0].failure_message.is_some());
+    }
+
+    #[test]
+    fn run_if_due_handles_expire_running_jobs_error() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_expire(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        // The expire error is logged and the service still proceeds: the job has
+        // never succeeded, so a new run starts anyway.
+        service.run_if_due();
+        assert_eq!(job_repo.jobs().len(), 1);
     }
 
     #[test]

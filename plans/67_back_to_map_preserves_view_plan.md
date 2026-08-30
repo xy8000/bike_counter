@@ -1,6 +1,6 @@
-# 66 - Back to map preserves the previous view
+# 67 - Back to map preserves the previous view
 
-Status: in progress
+Status: implemented
 
 ## Problem
 
@@ -80,10 +80,24 @@ Frontend-only. No backend, API or data-model changes.
 - Backend untouched, so `make check` / `make test-rest` are expected to stay
   green and re-run to be safe.
 
+## Implementation notes
+
+- [`StationsSummary.tsx`](../frontend/src/features/stationsSummary/StationsSummary.tsx:247)
+  now renders `to={bounds ? \`/?${serializeBounds(bounds).toString()}\` : '/'}` so
+  the map re-seeds from the `/summary` URL bounds.
+- [`StationDetail.tsx`](../frontend/src/features/stationDetail/StationDetail.tsx:202)
+  reads `location.key`; when `!== 'default'` (in-app navigation) the Back-to-map
+  link calls `preventDefault()` + `navigate(-1)` and otherwise keeps `href="/"`.
+- e2e: [`summary.spec.ts`](../frontend/e2e/summary.spec.ts:118) compares the
+  restored bbox against the `/summary` URL bbox with `toBeCloseTo(…, 6)`;
+  [`detail.spec.ts`](../frontend/e2e/detail.spec.ts:128) adds the in-app
+  back-to-map test.
+- Note: `npm run build` + `make test-playwright` (23/23) green.
+
 ## Definition of done
 
-- [ ] Summary "Back to map" restores the bounds from the `/summary` URL.
-- [ ] Detail "Back to map" restores the prior map view via history, with a `/`
+- [x] Summary "Back to map" restores the bounds from the `/summary` URL.
+- [x] Detail "Back to map" restores the prior map view via history, with a `/`
       fallback for deep links.
-- [ ] e2e updated and `make test-playwright` green.
-- [ ] [`plans/README.md`](../plans/README.md:1) registration updated.
+- [x] e2e updated and `make test-playwright` green.
+- [x] [`plans/README.md`](../plans/README.md:1) registration updated.

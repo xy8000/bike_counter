@@ -26,7 +26,7 @@ this repository. **Read this file before making any change.**
 
 | Command | Purpose |
 |---|---|
-| `make check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` |
+| `make check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo audit` (fails on any advisory; [`scripts/audit.sh`](scripts/audit.sh)) |
 | `make test` | Full test suite (Postgres repository tests spin up a Docker test container) |
 | `make test-rest` | REST endpoint tests only (in-memory mocks, no Docker required) |
 | `make coverage` | **Coverage gate — fails when overall *production* line coverage is below `COVERAGE_THRESHOLD` (default 80%) or the core (`src/core/`) is below `CORE_COVERAGE_THRESHOLD` (default 95%)** |
@@ -51,6 +51,7 @@ Install the tooling once:
 ```bash
 rustup component add llvm-tools-preview
 cargo install cargo-llvm-cov
+cargo install cargo-audit
 ```
 
 Notes:

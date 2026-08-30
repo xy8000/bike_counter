@@ -45,21 +45,31 @@ impl ArchiveFetcher for HttpFetcher {
     fn head(&self, url: &str) -> Option<UpstreamHeaders> {
         let response = ureq::head(url).call().ok()?;
         Some(UpstreamHeaders {
-            etag: response.header("ETag").map(str::to_string),
-            last_modified: response.header("Last-Modified").map(str::to_string),
+            etag: header_value(&response, "ETag"),
+            last_modified: header_value(&response, "Last-Modified"),
         })
     }
 
     fn get(&self, url: &str, target: &Path) -> Result<UpstreamHeaders, String> {
         let response = ureq::get(url).call().map_err(|error| format!("{error}"))?;
         let headers = UpstreamHeaders {
-            etag: response.header("ETag").map(str::to_string),
-            last_modified: response.header("Last-Modified").map(str::to_string),
+            etag: header_value(&response, "ETag"),
+            last_modified: header_value(&response, "Last-Modified"),
         };
-        let mut reader = response.into_reader();
+        let mut reader = response.into_body().into_reader();
         let mut file = BufWriter::new(File::create(target).map_err(|e| e.to_string())?);
         std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
         Ok(headers)
     }
+}
+
+/// Reads a single response header value as a `String`, if present and valid
+/// ASCII. ureq 3 exposes the response as an `http::Response<Body>`.
+fn header_value(response: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
 }
