@@ -189,6 +189,10 @@ pub struct MetricDto {
     /// Percentage change `(current - previous) / previous * 100`; `None` when a
     /// percentage is not meaningful (previous period is zero or both are zero).
     pub delta_percent: Option<f64>,
+    /// Bike-Trends: true (single-station detail, setting on) when the station
+    /// does not have data covering the whole current + previous window of this
+    /// metric, so the trend is not meaningful (the UI shows "New" instead).
+    pub is_new: bool,
 }
 
 impl From<crate::core::domain::station_analytics::MetricWindow> for MetricDto {
@@ -199,6 +203,7 @@ impl From<crate::core::domain::station_analytics::MetricWindow> for MetricDto {
             previous: window.previous,
             trend: trend_of(window.current, window.previous),
             delta_percent: delta_percent(window.current, window.previous),
+            is_new: window.is_new,
         }
     }
 }
@@ -245,6 +250,11 @@ pub struct BffStationQueryParams {
 pub struct AsOfQueryParams {
     #[serde(default)]
     pub as_of: Option<DateTime<Utc>>,
+    /// Bike-Trends: when true, the detail overview/graphs report `is_new` for
+    /// metrics/timeframes where the station lacks data covering the whole
+    /// current + previous window. Defaults to false.
+    #[serde(default)]
+    pub exclude_new_stations: bool,
 }
 
 /// The **page-shell** BFF payload for the counting-station detail page: the
@@ -369,6 +379,10 @@ pub struct PeriodGraphsDto {
     pub hourly_previous: Vec<HourTotalDto>,
     pub channel_pie: Vec<ChannelTotalDto>,
     pub per_channel: Vec<PerChannelSeriesDto>,
+    /// Bike-Trends: true (detail page, setting on) when the station does not
+    /// have data covering the whole current + previous window of this timeframe,
+    /// so there is no like-for-like previous period to compare.
+    pub is_new: bool,
 }
 
 impl From<PeriodGraphs> for PeriodGraphsDto {
@@ -401,6 +415,7 @@ impl From<PeriodGraphs> for PeriodGraphsDto {
                     hourly_previous: hours(series.hourly_previous),
                 })
                 .collect(),
+            is_new: graphs.is_new,
         }
     }
 }
@@ -462,6 +477,20 @@ pub struct BffStationSummaryQueryParams {
     /// Optional reference time that pins the windows of the summary sub-resources.
     #[serde(default)]
     pub as_of: Option<DateTime<Utc>>,
+    /// Bike-Trends: when true, the summary overview/graphs only aggregate
+    /// stations with data covering the whole current + previous window.
+    /// Defaults to false.
+    #[serde(default)]
+    pub exclude_new_stations: bool,
+}
+
+/// Query parameters of the global-summary endpoint. The Bike-Trends
+/// `exclude_new_stations` flag restricts the "bikes / last day" total to
+/// stations with data covering the whole last day and its comparison day.
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+pub struct GlobalSummaryQueryParams {
+    #[serde(default)]
+    pub exclude_new_stations: bool,
 }
 
 /// A minimal station reference returned by the summary page: id, name,

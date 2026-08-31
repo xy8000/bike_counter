@@ -23,10 +23,10 @@ use uuid::Uuid;
 
 use crate::adapter::driving::bff::dto::{
     ActionDto, AsOfQueryParams, BffStationQueryParams, BffStationSummaryQueryParams, ChannelRefDto,
-    GlobalSummaryDto, MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto, SidebarStationDto,
-    SidebarStatsDto, StationDetailPageDto, StationMapDto, StationMapListDto, StationOverviewDto,
-    StationOverviewStatsDto, StationSearchDto, StationSummaryDto, StationsSummaryOverviewDto,
-    StationsSummaryPageDto, SummaryPeriodGraphsDto,
+    GlobalSummaryDto, GlobalSummaryQueryParams, MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto,
+    SidebarStationDto, SidebarStatsDto, StationDetailPageDto, StationMapDto, StationMapListDto,
+    StationOverviewDto, StationOverviewStatsDto, StationSearchDto, StationSummaryDto,
+    StationsSummaryOverviewDto, StationsSummaryPageDto, SummaryPeriodGraphsDto,
 };
 use crate::adapter::driving::rest::dto::{ErrorResponseDto, LinkDto};
 use crate::adapter::driving::rest::handlers::{AppState, blocking, map_domain_error};
@@ -485,8 +485,9 @@ pub async fn get_bff_station_detail_overview(
     State(state): State<AppState>,
 ) -> Result<Json<StationOverviewStatsDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = as_of_or_now(params.as_of);
+    let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
-    let stats = blocking(move || service.detail_overview_stats(Id(id), now))
+    let stats = blocking(move || service.detail_overview_stats(Id(id), now, exclude_new_stations))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(stats.into()))
@@ -521,10 +522,13 @@ pub async fn get_bff_station_detail_graphs(
         ))));
     };
     let now = as_of_or_now(params.as_of);
+    let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
-    let graphs = blocking(move || service.detail_graphs_timeframe(Id(id), timeframe, now))
-        .await
-        .map_err(map_domain_error)?;
+    let graphs = blocking(move || {
+        service.detail_graphs_timeframe(Id(id), timeframe, now, exclude_new_stations)
+    })
+    .await
+    .map_err(map_domain_error)?;
     Ok(Json(graphs.into()))
 }
 
@@ -558,6 +562,7 @@ pub async fn get_bff_station_detail_monthly(
     get,
     path = "/api/bff/global-summary",
     tag = "BFF API",
+    params(GlobalSummaryQueryParams),
     responses(
         (status = 200, description = "Whole-system statistics (all stations, channels, bikes and last update)", body = GlobalSummaryDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
@@ -565,10 +570,12 @@ pub async fn get_bff_station_detail_monthly(
 )]
 pub async fn get_bff_global_summary(
     State(state): State<AppState>,
+    Query(params): Query<GlobalSummaryQueryParams>,
 ) -> Result<Json<GlobalSummaryDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
+    let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
-    let summary = blocking(move || service.global_summary(now))
+    let summary = blocking(move || service.global_summary(now, exclude_new_stations))
         .await
         .map_err(map_domain_error)?;
 
@@ -651,7 +658,9 @@ pub async fn get_bff_station_overview_stats(
 ) -> Result<Json<StationOverviewStatsDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
     let analytics_service = state.station_analytics_service.clone();
-    let stats = blocking(move || analytics_service.detail_overview_stats(Id(id), now))
+    // The station-overview panel (map popup) uses the same computation as the
+    // detail page but without the Bike-Trends flag.
+    let stats = blocking(move || analytics_service.detail_overview_stats(Id(id), now, false))
         .await
         .map_err(map_domain_error)?;
     Ok(Json(stats.into()))
@@ -765,11 +774,14 @@ pub async fn get_bff_stations_summary_overview(
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
+    let exclude_new_stations = params.exclude_new_stations;
 
     let service = state.station_analytics_service.clone();
-    let stats = blocking(move || service.stations_summary_overview(bounds, &exclude, now))
-        .await
-        .map_err(map_domain_error)?;
+    let stats = blocking(move || {
+        service.stations_summary_overview(bounds, &exclude, now, exclude_new_stations)
+    })
+    .await
+    .map_err(map_domain_error)?;
     Ok(Json(stats.into()))
 }
 
@@ -802,10 +814,17 @@ pub async fn get_bff_stations_summary_graphs(
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
+    let exclude_new_stations = params.exclude_new_stations;
 
     let service = state.station_analytics_service.clone();
     let graphs = blocking(move || {
-        service.stations_summary_graphs_timeframe(bounds, &exclude, timeframe, now)
+        service.stations_summary_graphs_timeframe(
+            bounds,
+            &exclude,
+            timeframe,
+            now,
+            exclude_new_stations,
+        )
     })
     .await
     .map_err(map_domain_error)?;
@@ -831,11 +850,14 @@ pub async fn get_bff_stations_summary_monthly(
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
+    let exclude_new_stations = params.exclude_new_stations;
 
     let service = state.station_analytics_service.clone();
-    let monthly = blocking(move || service.stations_summary_monthly(bounds, &exclude, now))
-        .await
-        .map_err(map_domain_error)?;
+    let monthly = blocking(move || {
+        service.stations_summary_monthly(bounds, &exclude, now, exclude_new_stations)
+    })
+    .await
+    .map_err(map_domain_error)?;
     Ok(Json(monthly.into()))
 }
 

@@ -94,6 +94,11 @@ pub struct MetricWindow {
     pub key: MetricKey,
     pub current: i64,
     pub previous: i64,
+    /// True (single-station analytics, Bike-Trends setting on) when the station
+    /// does **not** have measurements covering the whole current and previous
+    /// window of this metric, i.e. it is "new" and has no like-for-like baseline.
+    /// The UI then shows a neutral "New" indicator instead of a trend arrow.
+    pub is_new: bool,
 }
 
 /// The metrics shown on the overview panel (and reused by the detail page and
@@ -180,6 +185,11 @@ pub struct PeriodGraphs {
     pub channel_pie: Vec<ChannelTotal>,
     /// One series per channel for the time-series graphs (nerd stats).
     pub per_channel: Vec<PerChannelSeries>,
+    /// True (detail page, Bike-Trends setting on) when the station does **not**
+    /// have measurements covering the whole current and previous window of this
+    /// timeframe, i.e. it is "new" and the previous-period comparison is not
+    /// meaningful. The UI then shows a "no full-period data to compare" notice.
+    pub is_new: bool,
 }
 
 /// The same graphs restricted to a single channel (nerd stats).

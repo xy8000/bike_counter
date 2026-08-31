@@ -3,9 +3,14 @@ import { fetchSummaryOverview } from './api'
 import type { StationsSummaryOverview } from './types'
 
 /// Loads the overview card of the summary page. The URL depends on the shell's
-/// HATEOAS link (bounds + `as_of`) plus the local exclude set, so toggling a
-/// disabled station re-fetches only this card.
-export function useStationsSummaryOverview(link: string | null, exclude: string[]) {
+/// HATEOAS link (bounds + `as_of`), the local exclude set and the Bike-Trends
+/// flag, so toggling a disabled station or the setting re-fetches only this
+/// card.
+export function useStationsSummaryOverview(
+  link: string | null,
+  exclude: string[],
+  excludeNewStations: boolean,
+) {
   const [overview, setOverview] = useState<StationsSummaryOverview | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -19,7 +24,7 @@ export function useStationsSummaryOverview(link: string | null, exclude: string[
     setLoading(true)
     setOverview(null)
     setError(false)
-    fetchSummaryOverview(link, exclude)
+    fetchSummaryOverview(link, exclude, excludeNewStations)
       .then((data) => {
         if (!cancelled) setOverview(data)
       })
@@ -33,7 +38,7 @@ export function useStationsSummaryOverview(link: string | null, exclude: string[
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, excludeKey])
+  }, [link, excludeKey, excludeNewStations])
 
   return { overview, loading, error }
 }

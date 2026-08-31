@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -34,6 +34,8 @@ import {
   type TimeframeConfig,
 } from '../stationDetail/timeframes'
 import { WeekdayRadar, type RadarSeries } from '../stationDetail/WeekdayRadar'
+import { useTrendSettings } from '../settings/TrendSettingsContext'
+import { SettingsDialog } from '../settings/SettingsDialog'
 import { SummaryMap } from './SummaryMap'
 import { GRAPH_LINK_KEYS } from './types'
 import type { StationsSummaryPage, SummaryPeriodGraphs, SummaryStation } from './types'
@@ -297,25 +299,30 @@ function SummaryContent({
   bounds: NonNullable<ReturnType<typeof parseBoundsQuery>>
 }) {
   const { stations } = page
-  // The exclude set is passed to the card hooks; toggling re-fetches only the
-  // exclude-dependent cards, never the shell.
+  // The exclude set and the Bike-Trends flag are passed to the card hooks;
+  // toggling either re-fetches only the dependent cards, never the shell.
   const disabledList = Array.from(disabled)
+  const { excludeNewStations } = useTrendSettings()
   // Default to the week timeframe, like the detail page.
   const [timeframe, setTimeframe] = useState<Timeframe>('week')
   const [comparePrevious, setComparePrevious] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const cfg = TIMEFRAMES[timeframe]
 
   const { overview, error: overviewError } = useStationsSummaryOverview(
     page._links.overview,
     disabledList,
+    excludeNewStations,
   )
   const { graphs, error: graphsError } = useStationsSummaryGraphs(
     page._links[GRAPH_LINK_KEYS[timeframe]],
     disabledList,
+    excludeNewStations,
   )
   const { monthly, error: monthlyError } = useStationsSummaryMonthly(
     page._links.monthly,
     disabledList,
+    excludeNewStations,
   )
 
   const period = graphs
@@ -416,6 +423,18 @@ function SummaryContent({
               />
               <Label htmlFor="compare-previous">Compare previous period</Label>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              title="Calculation settings"
+              aria-label="Calculation settings"
+            >
+              <SlidersHorizontal />
+              Settings
+            </Button>
+            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
           </div>
         </div>
 

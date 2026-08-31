@@ -32,7 +32,14 @@ It is a **monorepo** with two sub-projects:
   and the same charts with per-**station** nerd stats. The map view + disabled
   stations are encoded in the URL (`min_lat`/`min_lng`/`max_lat`/`max_lng` +
   `disabled`), so a summary can be shared and restored; the page shows a loading
-  state while the backend aggregates (caching is planned later).
+  state while the backend aggregates (caching is planned later). A **Calculation
+  settings** button next to the timeframe controls on the detail and summary
+  pages opens a dialogue that toggles "exclude new stations from trends": when
+  on, the trend metrics, the current-vs-previous graph comparisons and the
+  summary's monthly bar chart only include stations with data covering the whole
+  compared period, so a newly-built station cannot skew the trends (a station
+  without a full-period baseline shows a neutral "New" instead of a misleading
+  arrow).
 
 Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
@@ -536,7 +543,9 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
 - `GET /api/bff/global-summary` – whole-system statistics for the header:
   `station_count`, `channel_count`, `bikes_last_day_total` (sum of every
   station's previous local-day total) and the `last_update` timestamp of the most
-  recent successful data-source update.
+  recent successful data-source update. Optional `exclude_new_stations=true`
+  (Bike-Trends) restricts `bikes_last_day_total` to stations with data covering
+  the whole last day and its comparison day.
 - `GET /api/bff/station-overview/{id}` – the overview panel **shell** for one
   station: `id`, `name`, `description`, `latitude`, `longitude`,
   `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
@@ -559,10 +568,13 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   a pure function of the reference time and therefore cacheable.
 - `GET /api/bff/station-detail/{id}/overview` – the overview card: the four
   overview metrics (each with `key` = `last_day` / `last_7_days` /
-  `last_month` / `last_year`, `current`, `previous`, `trend` and
-  `delta_percent`) plus `total_bikes`. The metrics use **complete calendar
+  `last_month` / `last_year`, `current`, `previous`, `trend`, `delta_percent`
+  and `is_new`) plus `total_bikes`. The metrics use **complete calendar
   periods** in the station's own timezone, each compared with the immediately
-  preceding equal-length period.
+  preceding equal-length period. With `exclude_new_stations=true` (Bike-Trends),
+  `is_new` is true when the station has no data covering the whole current +
+  previous window, so the UI shows a neutral "New" instead of a misleading
+  trend.
 - `GET /api/bff/station-detail/{id}/graphs/{timeframe}` – one timeframe's graphs
   for the selected key — `day` (last day vs the day before, 5 min), `week`
   (current vs last week, 1 h), `last_30_days` (last 30 days vs the 30 days
@@ -578,14 +590,19 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   summary of the stations visible in the bounding box (all four bounds required;
   optional `exclude=<comma-separated station ids>` drops stations from the
   aggregation while keeping them in the returned `stations` list so the map can
-  gray them out). The shell holds a fallback `image_url`, the `stations`
+  gray them out; optional `exclude_new_stations=true` (Bike-Trends) only
+  aggregates stations with data covering the whole current + previous window).
+  The shell holds a fallback `image_url`, the `stations`
   (id/name/lat/lng/channel_count), `last_update` and a HATEOAS `_links` map
   (carrying `as_of` and the bounds) pointing at the same per-card sub-resources:
   `/overview` (aggregated metrics + `total_bikes`), `/graphs/{timeframe}` (same
   four timeframes, with nerd stats keyed by **station** — `per_station`,
-  `station_pie` — instead of channel) and `/monthly`. All bucketed reads reuse
-  the existing `MeasurementRepository` primitives over the union of the included
-  stations' channels, so no new data fields are introduced.
+  `station_pie` — instead of channel) and `/monthly` (with
+  `exclude_new_stations=true`, the summary monthly chart drops stations without
+  data covering the whole current + previous calendar year — the same windows as
+  the `year` timeframe). All bucketed reads reuse the existing
+  `MeasurementRepository` primitives over the union of the included stations'
+  channels, so no new data fields are introduced.
 - `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
   from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
   (`immutable` for built-in assets, short-lived for provider assets). Only the

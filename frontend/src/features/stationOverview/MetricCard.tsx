@@ -25,14 +25,25 @@ export function MetricCard({ metric }: { metric: StationOverviewMetric }) {
         </p>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5">
-        <div className="flex items-center gap-1">
-          <TrendIcon trend={metric.trend} />
-          <span className="text-sm font-semibold">
-            {metric.delta_percent === null
-              ? '–'
-              : `${metric.delta_percent > 0 ? '+' : ''}${metric.delta_percent}%`}
+        {metric.is_new ? (
+          // Bike-Trends: the station has no data covering the whole compared
+          // period, so a trend arrow would be misleading — show a neutral "New".
+          <span
+            className="text-sm font-semibold text-muted-foreground"
+            title="No data covering the whole compared period"
+          >
+            New
           </span>
-        </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <TrendIcon trend={metric.trend} />
+            <span className="text-sm font-semibold">
+              {metric.delta_percent === null
+                ? '–'
+                : `${metric.delta_percent > 0 ? '+' : ''}${metric.delta_percent}%`}
+            </span>
+          </div>
+        )}
         <span className="text-xs text-muted-foreground">vs. {formatNumber(metric.previous)}</span>
       </div>
     </div>

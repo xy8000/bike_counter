@@ -4,8 +4,8 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelHourTotal, ChannelTotal, HourTotal, MeasurementRepository, MonthTotal,
-    ResolutionCoverage, TimeBucket, WeekdayTotal,
+    ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelTotal, HourTotal,
+    MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 
 use super::pool::PgPool;
@@ -551,6 +551,40 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 first: row.get(1),
                 last: row.get(2),
                 count: row.get(3),
+            });
+        }
+        Ok(coverage)
+    }
+
+    fn resolution_coverage_by_channel(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelCoverage>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, resolution_seconds, MIN(timestamp), MAX(timestamp), COUNT(*)::bigint \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $2 AND timestamp <= $3 \
+                 GROUP BY channel_id, resolution_seconds \
+                 ORDER BY channel_id, resolution_seconds",
+                &[&channel_uuids, &from, &to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut coverage = Vec::with_capacity(rows.len());
+        for row in rows {
+            coverage.push(ChannelCoverage {
+                channel_id: row.get(0),
+                resolution_seconds: row.get(1),
+                first: row.get(2),
+                last: row.get(3),
+                count: row.get(4),
             });
         }
         Ok(coverage)

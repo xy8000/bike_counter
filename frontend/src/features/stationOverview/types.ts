@@ -8,6 +8,10 @@ export interface StationOverviewMetric {
   previous: number
   trend: Trend
   delta_percent: number | null
+  /// Bike-Trends: true (detail page, setting on) when the station does not have
+  /// data covering the whole current + previous window, so the trend is not
+  /// meaningful — the UI shows a neutral "New" indicator instead.
+  is_new: boolean
 }
 
 /// The overview **shell** (from GET /api/bff/station-overview/{id}): the

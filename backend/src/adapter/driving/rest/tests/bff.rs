@@ -278,6 +278,17 @@ async fn bff_global_summary_returns_whole_system_stats() {
     );
 }
 
+#[tokio::test]
+async fn bff_global_summary_accepts_exclude_new_stations() {
+    let app = TestApp::new();
+    // The Bike-Trends flag is accepted and the header total is still returned.
+    let (status, body) = app
+        .get_json("/api/bff/global-summary?exclude_new_stations=true")
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["bikes_last_day_total"].is_i64() || body["bikes_last_day_total"].is_u64());
+}
+
 // ---------------------------------------------------------------------------
 // OpenAPI
 // ---------------------------------------------------------------------------
@@ -567,6 +578,41 @@ async fn bff_station_detail_overview_returns_total_and_metrics() {
 }
 
 #[tokio::test]
+async fn bff_station_detail_overview_exclude_new_stations_reports_is_new() {
+    let app = TestApp::new();
+    let url = |exclude_new_stations: bool| {
+        format!(
+            "/api/bff/station-detail/{}/overview?as_of=2024-01-11T12:00:00Z&exclude_new_stations={}",
+            fixtures::STATION_ID_A,
+            exclude_new_stations
+        )
+    };
+
+    // Without the setting the trend is reported normally (is_new = false).
+    let (status, plain) = app.get_json(&url(false)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        plain["metrics"]
+            .as_array()
+            .expect("metrics should be an array")
+            .iter()
+            .all(|metric| metric["is_new"] == false)
+    );
+
+    // With the setting on and no full-period coverage in the REST mock, the
+    // station is treated as "new" for every metric.
+    let (status, filtered) = app.get_json(&url(true)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        filtered["metrics"]
+            .as_array()
+            .expect("metrics should be an array")
+            .iter()
+            .all(|metric| metric["is_new"] == true)
+    );
+}
+
+#[tokio::test]
 async fn bff_station_detail_graphs_returns_one_timeframe() {
     let app = TestApp::new();
     let (status, body) = app
@@ -770,6 +816,43 @@ async fn bff_station_summary_returns_shell_and_card_sub_resources() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["monthly_totals"].is_array());
+}
+
+#[tokio::test]
+async fn bff_station_summary_overview_accepts_exclude_new_stations() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary/overview{STATIONS_BBOX}&exclude_new_stations=true"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // The factual totals stay untouched by the trend filter …
+    assert_eq!(body["channel_count"], 2);
+    assert_eq!(body["total_bikes"], 1379);
+    // … and the four trend metrics are still returned.
+    assert_eq!(
+        body["metrics"]
+            .as_array()
+            .expect("metrics should be an array")
+            .len(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn bff_station_summary_monthly_accepts_exclude_new_stations() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/stations/summary/monthly{STATIONS_BBOX}&exclude_new_stations=true"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["monthly_totals"].is_array(),
+        "the monthly card still returns its totals under the Bike-Trends flag"
+    );
 }
 
 #[tokio::test]

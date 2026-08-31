@@ -74,6 +74,23 @@ pub struct ResolutionCoverage {
     pub count: i64,
 }
 
+/// Per-resolution coverage of a window **restricted to a single channel**
+/// (per-channel series). Like [`ResolutionCoverage`] but each row carries its
+/// `channel_id`, so the analytics can decide per station whether a window is
+/// fully covered (the Bike-Trends like-for-like filter) in one query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelCoverage {
+    pub channel_id: Uuid,
+    /// Interval length in seconds (e.g. 300 = 5 min, 3600 = 1 hour).
+    pub resolution_seconds: i64,
+    /// Earliest measurement timestamp at this resolution within the window.
+    pub first: DateTime<Utc>,
+    /// Latest measurement timestamp at this resolution within the window.
+    pub last: DateTime<Utc>,
+    /// Number of measurements at this resolution within the window.
+    pub count: i64,
+}
+
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
     /// Inserts a batch idempotently and returns the number of rows actually
@@ -207,6 +224,21 @@ pub trait MeasurementRepository {
         _to: DateTime<Utc>,
         _channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<ResolutionCoverage>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    /// Like [`resolution_coverage`](Self::resolution_coverage) but grouped per
+    /// channel, so each returned row carries its `channel_id` (used to decide per
+    /// station whether a window is fully covered in one query). Ascending by
+    /// channel then resolution.
+    ///
+    /// Defaults to empty coverage so resolution-unaware mocks need no override.
+    fn resolution_coverage_by_channel(
+        &self,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+        _channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelCoverage>, DomainError> {
         Ok(Vec::new())
     }
 }

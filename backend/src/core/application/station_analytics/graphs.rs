@@ -7,7 +7,7 @@
 //! windows for an arbitrary selected range touches only this module (and
 //! [`super::metrics`]).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
@@ -20,11 +20,13 @@ use crate::core::domain::counting_stations::counting_station::{
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::{
-    ChannelTotal, HourTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
+    ChannelBucket, ChannelTotal, HourTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::{
     PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal, SummaryPeriodGraphs,
 };
+
+use super::resolution::{covers_whole_window, has_full_coverage};
 
 /// Fixed bucket widths (seconds) used by the detail/summary graphs.
 const SECONDS_PER_5_MINUTES: i64 = 5 * 60;
@@ -183,6 +185,12 @@ fn weekday_totals(buckets: &[TimeBucket], tz: Tz) -> Vec<WeekdayTotal> {
 /// order. Everything (the aggregate series, the weekday radar and the pie)
 /// is derived from the **two** per-channel bucket queries, so the heavy
 /// aggregation runs a single `date_bin` scan per period per timeframe.
+///
+/// With `exclude_new_stations` (the Bike-Trends setting) only groups that have
+/// measurements covering the whole current **and** previous window are folded
+/// in (like-for-like), so newly-built stations no longer inflate the current
+/// period. The check is generic over any window pair — a future custom from/to
+/// date picker reuses it unchanged.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn period_data(
     repository: &dyn MeasurementRepository,
@@ -190,28 +198,100 @@ pub(super) fn period_data(
     previous: &Window,
     timezone: &str,
     tz: Tz,
+    now: DateTime<Utc>,
     channel_ids: &[ChannelId],
     group_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
     group_order: &[uuid::Uuid],
+    exclude_new_stations: bool,
 ) -> Result<PeriodData, DomainError> {
-    let current_rows = repository.sum_buckets_by_channel(
-        current.from,
-        current.to,
-        current.bucket_seconds,
-        current.origin,
-        timezone,
-        channel_ids,
-        None,
-    )?;
-    let previous_rows = repository.sum_buckets_by_channel(
-        previous.from,
-        previous.to,
-        previous.bucket_seconds,
-        previous.origin,
-        timezone,
-        channel_ids,
-        None,
-    )?;
+    // Bike-Trends like-for-like filter: the set of groups that fully cover the
+    // current AND the previous window, derived from per-channel coverage. Empty
+    // (no filtering) when the setting is off.
+    let established_groups: HashSet<uuid::Uuid> = if exclude_new_stations {
+        // A still-running current window (`to >= now`, e.g. the current week or
+        // year) never gates: its data may not have arrived yet, so every group
+        // qualifies for it — only the completed previous window is decisive.
+        let mut covers_current: HashSet<uuid::Uuid> = if current.to >= now {
+            group_order.iter().copied().collect()
+        } else {
+            HashSet::new()
+        };
+        if current.to < now {
+            let current_coverage =
+                repository.resolution_coverage_by_channel(current.from, current.to, channel_ids)?;
+            for row in &current_coverage {
+                if covers_whole_window(
+                    row.resolution_seconds,
+                    row.first,
+                    row.last,
+                    current.from,
+                    current.to,
+                    now,
+                ) && let Some(&group) = group_of_channel.get(&row.channel_id)
+                {
+                    covers_current.insert(group);
+                }
+            }
+        }
+        let mut covers_previous: HashSet<uuid::Uuid> = HashSet::new();
+        let previous_coverage =
+            repository.resolution_coverage_by_channel(previous.from, previous.to, channel_ids)?;
+        for row in &previous_coverage {
+            if covers_whole_window(
+                row.resolution_seconds,
+                row.first,
+                row.last,
+                previous.from,
+                previous.to,
+                now,
+            ) && let Some(&group) = group_of_channel.get(&row.channel_id)
+            {
+                covers_previous.insert(group);
+            }
+        }
+        covers_current
+            .intersection(&covers_previous)
+            .copied()
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // Whether a channel belongs to an established (fully covered) group. With
+    // the setting off every channel qualifies, so the default path is untouched.
+    let in_established = |channel_id: uuid::Uuid| -> bool {
+        !exclude_new_stations
+            || group_of_channel
+                .get(&channel_id)
+                .is_some_and(|group| established_groups.contains(group))
+    };
+
+    let current_rows: Vec<ChannelBucket> = repository
+        .sum_buckets_by_channel(
+            current.from,
+            current.to,
+            current.bucket_seconds,
+            current.origin,
+            timezone,
+            channel_ids,
+            None,
+        )?
+        .into_iter()
+        .filter(|row| in_established(row.channel_id))
+        .collect();
+    let previous_rows: Vec<ChannelBucket> = repository
+        .sum_buckets_by_channel(
+            previous.from,
+            previous.to,
+            previous.bucket_seconds,
+            previous.origin,
+            timezone,
+            channel_ids,
+            None,
+        )?
+        .into_iter()
+        .filter(|row| in_established(row.channel_id))
+        .collect();
 
     // Aggregate series: fold the per-channel buckets back into one series
     // keyed by bucket start (the repository orders by channel then bucket).
@@ -238,11 +318,64 @@ pub(super) fn period_data(
     let weekday_radar = weekday_totals(&current_series, tz);
     let weekday_radar_previous = weekday_totals(&previous_series, tz);
 
+    // Per-group hour-of-day totals for the nerd-stats hour radar.
+    let mut current_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
+    for row in
+        repository.sum_hours_by_channel(current.from, current.to, timezone, channel_ids, None)?
+    {
+        if in_established(row.channel_id)
+            && let Some(&group_id) = group_of_channel.get(&row.channel_id)
+        {
+            current_hour_by_group
+                .entry(group_id)
+                .or_default()
+                .push(HourTotal {
+                    hour: row.hour,
+                    total: row.total,
+                });
+        }
+    }
+    let mut previous_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
+    for row in
+        repository.sum_hours_by_channel(previous.from, previous.to, timezone, channel_ids, None)?
+    {
+        if in_established(row.channel_id)
+            && let Some(&group_id) = group_of_channel.get(&row.channel_id)
+        {
+            previous_hour_by_group
+                .entry(group_id)
+                .or_default()
+                .push(HourTotal {
+                    hour: row.hour,
+                    total: row.total,
+                });
+        }
+    }
+
     // Aggregate hour-of-day radar over the raw measurements (the 30-day and
-    // year buckets are 1-day wide and cannot be split into hours).
-    let hourly = repository.sum_hours(current.from, current.to, timezone, channel_ids, None)?;
-    let hourly_previous =
-        repository.sum_hours(previous.from, previous.to, timezone, channel_ids, None)?;
+    // year buckets are 1-day wide and cannot be split into hours). With the
+    // setting on the aggregate is folded from the (already filtered) per-group
+    // rows, because the aggregate `sum_hours` cannot be restricted per group.
+    let (hourly, hourly_previous) = if exclude_new_stations {
+        let fold = |by_group: &HashMap<uuid::Uuid, Vec<HourTotal>>| {
+            let mut totals: BTreeMap<u8, i64> = BTreeMap::new();
+            for hours in by_group.values() {
+                for hour in hours {
+                    *totals.entry(hour.hour).or_insert(0) += hour.total;
+                }
+            }
+            totals
+                .into_iter()
+                .map(|(hour, total)| HourTotal { hour, total })
+                .collect()
+        };
+        (fold(&current_hour_by_group), fold(&previous_hour_by_group))
+    } else {
+        (
+            repository.sum_hours(current.from, current.to, timezone, channel_ids, None)?,
+            repository.sum_hours(previous.from, previous.to, timezone, channel_ids, None)?,
+        )
+    };
 
     // Per-group series + pie from the per-channel buckets.
     let mut current_by_group: HashMap<uuid::Uuid, Vec<TimeBucket>> = HashMap::new();
@@ -272,38 +405,9 @@ pub(super) fn period_data(
         }
     }
 
-    // Per-group hour-of-day totals for the nerd-stats hour radar.
-    let mut current_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
-    for row in
-        repository.sum_hours_by_channel(current.from, current.to, timezone, channel_ids, None)?
-    {
-        if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
-            current_hour_by_group
-                .entry(group_id)
-                .or_default()
-                .push(HourTotal {
-                    hour: row.hour,
-                    total: row.total,
-                });
-        }
-    }
-    let mut previous_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
-    for row in
-        repository.sum_hours_by_channel(previous.from, previous.to, timezone, channel_ids, None)?
-    {
-        if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
-            previous_hour_by_group
-                .entry(group_id)
-                .or_default()
-                .push(HourTotal {
-                    hour: row.hour,
-                    total: row.total,
-                });
-        }
-    }
-
     // Keep the group order stable; a group is only included when it has
-    // data in at least one of the two periods.
+    // data in at least one of the two periods (non-established groups are
+    // empty after filtering and are dropped automatically).
     let per_group = group_order
         .iter()
         .filter_map(|group_id| {
@@ -337,14 +441,23 @@ pub(super) fn period_data(
 }
 
 /// The per-channel detail graphs for one timeframe (nerd stats per channel).
+///
+/// The detail page is a single station, so nothing is filtered here. With
+/// `exclude_new_stations` (the Bike-Trends setting) the station-level `is_new`
+/// flag is derived from the station's coverage of the whole current + previous
+/// window, so the UI can show a "no full-period data to compare" notice instead
+/// of a misleading trend.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn period_graphs_per_channel(
     repository: &dyn MeasurementRepository,
     current: &Window,
     previous: &Window,
     timezone: &str,
     tz: Tz,
+    now: DateTime<Utc>,
     channel_ids: &[ChannelId],
     channels: &[Channel],
+    exclude_new_stations: bool,
 ) -> Result<PeriodGraphs, DomainError> {
     let group_of_channel: HashMap<uuid::Uuid, uuid::Uuid> =
         channels.iter().map(|c| (c.id.0, c.id.0)).collect();
@@ -355,10 +468,27 @@ pub(super) fn period_graphs_per_channel(
         previous,
         timezone,
         tz,
+        now,
         channel_ids,
         &group_of_channel,
         &group_order,
+        false,
     )?;
+
+    // Station-level "new" flag (Bike-Trends): the station does not have
+    // measurements covering the whole current or previous window, so there is no
+    // like-for-like comparison. Computed over the station's channels in two
+    // aggregate coverage queries.
+    let is_new = if exclude_new_stations {
+        let current_coverage =
+            repository.resolution_coverage(current.from, current.to, channel_ids)?;
+        let previous_coverage =
+            repository.resolution_coverage(previous.from, previous.to, channel_ids)?;
+        !has_full_coverage(&current_coverage, current.from, current.to, now)
+            || !has_full_coverage(&previous_coverage, previous.from, previous.to, now)
+    } else {
+        false
+    };
 
     let channel_pie = data
         .per_group
@@ -392,10 +522,13 @@ pub(super) fn period_graphs_per_channel(
         hourly_previous: data.hourly_previous,
         channel_pie,
         per_channel,
+        is_new,
     })
 }
 
 /// The per-station summary graphs for one timeframe (nerd stats per station).
+/// With `exclude_new_stations` only stations with full coverage of the current
+/// AND previous window are aggregated (like-for-like).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn period_graphs_per_station(
     repository: &dyn MeasurementRepository,
@@ -403,9 +536,11 @@ pub(super) fn period_graphs_per_station(
     previous: &Window,
     timezone: &str,
     tz: Tz,
+    now: DateTime<Utc>,
     channel_ids: &[ChannelId],
     station_ids: &[uuid::Uuid],
     station_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
+    exclude_new_stations: bool,
 ) -> Result<SummaryPeriodGraphs, DomainError> {
     let data = period_data(
         repository,
@@ -413,9 +548,11 @@ pub(super) fn period_graphs_per_station(
         previous,
         timezone,
         tz,
+        now,
         channel_ids,
         station_of_channel,
         station_ids,
+        exclude_new_stations,
     )?;
 
     let station_pie = data

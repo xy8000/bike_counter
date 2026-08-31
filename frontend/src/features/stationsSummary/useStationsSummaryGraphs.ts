@@ -3,10 +3,14 @@ import { fetchSummaryGraphs } from './api'
 import type { SummaryPeriodGraphs } from './types'
 
 /// Loads one timeframe of the summary graphs card. The URL depends on the
-/// shell's HATEOAS link (bounds + `as_of`) plus the local exclude set; the link
-/// changes when the timeframe changes, so switching timeframes re-fetches only
-/// this card.
-export function useStationsSummaryGraphs(link: string | null, exclude: string[]) {
+/// shell's HATEOAS link (bounds + `as_of`), the local exclude set and the
+/// Bike-Trends flag; the link changes when the timeframe changes, so switching
+/// timeframes re-fetches only this card.
+export function useStationsSummaryGraphs(
+  link: string | null,
+  exclude: string[],
+  excludeNewStations: boolean,
+) {
   const [graphs, setGraphs] = useState<SummaryPeriodGraphs | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -18,7 +22,7 @@ export function useStationsSummaryGraphs(link: string | null, exclude: string[])
     setLoading(true)
     setGraphs(null)
     setError(false)
-    fetchSummaryGraphs(link, exclude)
+    fetchSummaryGraphs(link, exclude, excludeNewStations)
       .then((data) => {
         if (!cancelled) setGraphs(data)
       })
@@ -32,7 +36,7 @@ export function useStationsSummaryGraphs(link: string | null, exclude: string[])
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, excludeKey])
+  }, [link, excludeKey, excludeNewStations])
 
   return { graphs, loading, error }
 }

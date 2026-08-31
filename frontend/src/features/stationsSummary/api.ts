@@ -36,27 +36,47 @@ export async function fetchStationsSummaryPage(bounds: Bounds): Promise<Stations
   return { ...data, _links: unwrapLinks<StationsSummaryLinks>(data._links) }
 }
 
-/// Appends the excluded station ids to a summary card's HATEOAS link (the link
-/// already carries the bounds + `as_of`).
-function withExclude(baseUrl: string, exclude: string[]): string {
-  if (exclude.length === 0) return baseUrl
-  const separator = baseUrl.includes('?') ? '&' : '?'
-  return `${baseUrl}${separator}exclude=${exclude.join(',')}`
+/// Appends the excluded station ids and the Bike-Trends flag to a summary card's
+/// HATEOAS link (the link already carries the bounds + `as_of`).
+function withSummaryParams(
+  baseUrl: string,
+  exclude: string[],
+  excludeNewStations: boolean,
+): string {
+  let url = baseUrl
+  if (exclude.length > 0) {
+    const separator = url.includes('?') ? '&' : '?'
+    url = `${url}${separator}exclude=${exclude.join(',')}`
+  }
+  if (excludeNewStations) {
+    const separator = url.includes('?') ? '&' : '?'
+    url = `${url}${separator}exclude_new_stations=true`
+  }
+  return url
 }
 
 /// Fetch one summary stats card by its HATEOAS link, including the local
-/// exclude set in the query.
+/// exclude set and the Bike-Trends flag in the query.
 export function fetchSummaryOverview(
   link: string,
   exclude: string[],
+  excludeNewStations: boolean,
 ): Promise<StationsSummaryOverview> {
-  return getJson(withExclude(link, exclude))
+  return getJson(withSummaryParams(link, exclude, excludeNewStations))
 }
 
-export function fetchSummaryGraphs(link: string, exclude: string[]): Promise<SummaryPeriodGraphs> {
-  return getJson(withExclude(link, exclude))
+export function fetchSummaryGraphs(
+  link: string,
+  exclude: string[],
+  excludeNewStations: boolean,
+): Promise<SummaryPeriodGraphs> {
+  return getJson(withSummaryParams(link, exclude, excludeNewStations))
 }
 
-export function fetchSummaryMonthly(link: string, exclude: string[]): Promise<MonthlyTotals> {
-  return getJson(withExclude(link, exclude))
+export function fetchSummaryMonthly(
+  link: string,
+  exclude: string[],
+  excludeNewStations: boolean,
+): Promise<MonthlyTotals> {
+  return getJson(withSummaryParams(link, exclude, excludeNewStations))
 }

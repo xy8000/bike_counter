@@ -18,8 +18,8 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelHourTotal, ChannelTotal, HourTotal, MeasurementRepository, MonthTotal,
-    ResolutionCoverage, TimeBucket, WeekdayTotal,
+    ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelTotal, HourTotal,
+    MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
@@ -433,6 +433,36 @@ impl MeasurementRepository for MemoryMeasurementRepository {
             )
             .collect())
     }
+
+    #[allow(clippy::type_complexity)]
+    fn resolution_coverage_by_channel(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<ChannelCoverage>, DomainError> {
+        let mut map: BTreeMap<(Uuid, i64), (DateTime<Utc>, DateTime<Utc>, i64)> = BTreeMap::new();
+        for m in self.in_window(from, to, channel_ids) {
+            let r = m.resolution_seconds.0;
+            let key = (m.channel_id.0, r);
+            let entry = map.entry(key).or_insert((m.timestamp.0, m.timestamp.0, 0));
+            entry.0 = entry.0.min(m.timestamp.0);
+            entry.1 = entry.1.max(m.timestamp.0);
+            entry.2 += 1;
+        }
+        Ok(map
+            .into_iter()
+            .map(
+                |((channel_id, resolution_seconds), (first, last, count))| ChannelCoverage {
+                    channel_id,
+                    resolution_seconds,
+                    first,
+                    last,
+                    count,
+                },
+            )
+            .collect())
+    }
 }
 
 struct MemoryJobRepository {
@@ -719,7 +749,9 @@ fn global_summary_returns_global_counts_and_last_update() {
         ],
         vec![finished_job(0x31, utc(2024, 1, 2, 10, 0, 0))],
     );
-    let summary = service.global_summary(utc(2024, 1, 2, 12, 0, 0)).unwrap();
+    let summary = service
+        .global_summary(utc(2024, 1, 2, 12, 0, 0), false)
+        .unwrap();
     assert_eq!(summary.station_count, 2);
     assert_eq!(summary.channel_count, 3);
     assert_eq!(summary.bikes_last_day_total, 15);
@@ -729,7 +761,7 @@ fn global_summary_returns_global_counts_and_last_update() {
 #[test]
 fn global_summary_has_no_last_update_without_finished_jobs() {
     let summary = service(vec![], vec![], vec![], vec![])
-        .global_summary(utc(2024, 1, 2, 12, 0, 0))
+        .global_summary(utc(2024, 1, 2, 12, 0, 0), false)
         .unwrap();
     assert_eq!(summary.station_count, 0);
     assert_eq!(summary.channel_count, 0);
@@ -796,6 +828,7 @@ fn overview_stats_metrics_follow_the_station_timezone() {
         .detail_overview_stats(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             utc(2024, 1, 2, 12, 0, 0),
+            false,
         )
         .unwrap();
     let day = stats
@@ -837,7 +870,7 @@ fn detail_computes_all_windows() {
     assert_eq!(page.channels.len(), 2);
 
     let day = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Day, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, now, false)
         .unwrap();
     assert_eq!(
         sum_buckets(&day.current),
@@ -847,13 +880,13 @@ fn detail_computes_all_windows() {
     assert!(day.previous.is_empty(), "no data for the day before");
 
     let week = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Week, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Week, now, false)
         .unwrap();
     assert_eq!(sum_buckets(&week.current), 150, "Jan 8 (Mon) + Jan 10");
     assert_eq!(sum_buckets(&week.previous), 40, "Jan 4 + Jan 5");
 
     let last_30_days = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now, false)
         .unwrap();
     assert_eq!(
         sum_buckets(&last_30_days.current),
@@ -866,7 +899,7 @@ fn detail_computes_all_windows() {
     );
 
     let year = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Year, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Year, now, false)
         .unwrap();
     assert_eq!(sum_buckets(&year.current), 190, "all 2024 measurements");
     assert_eq!(sum_buckets(&year.previous), 25, "Dec 2023 + Jun 2023");
@@ -884,10 +917,10 @@ fn detail_computes_previous_periods_for_day_and_last_30_days() {
     let service = promenade_service(measurements);
     let id = station_vo::Id(Uuid::from_u128(STATION_1));
     let day = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Day, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, now, false)
         .unwrap();
     let last_30_days = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now, false)
         .unwrap();
 
     assert!(day.current.is_empty());
@@ -961,13 +994,13 @@ fn detail_resolutions_bucket_by_hour_and_day() {
     let service = promenade_service(measurements);
     let id = station_vo::Id(Uuid::from_u128(STATION_1));
     let week = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Week, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Week, now, false)
         .unwrap();
     let last_30_days = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now, false)
         .unwrap();
     let year = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Year, now)
+        .detail_graphs_timeframe(id, GraphTimeframe::Year, now, false)
         .unwrap();
 
     let week_starts: Vec<i64> = week.current.iter().map(|b| b.start.timestamp()).collect();
@@ -1032,6 +1065,7 @@ fn detail_current_week_has_no_future_buckets() {
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Week,
             now,
+            false,
         )
         .unwrap();
     assert_eq!(week.current.len(), 1);
@@ -1051,6 +1085,7 @@ fn detail_per_channel_series_and_pie() {
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Last30Days,
             now,
+            false,
         )
         .unwrap();
 
@@ -1089,6 +1124,7 @@ fn detail_per_channel_weekday_radar_follows_the_station_timezone() {
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Last30Days,
             now,
+            false,
         )
         .unwrap();
 
@@ -1130,6 +1166,7 @@ fn detail_weekday_radar_aggregates_over_last_30_days() {
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Last30Days,
             now,
+            false,
         )
         .unwrap();
 
@@ -1157,6 +1194,7 @@ fn detail_previous_and_hour_radars_are_computed() {
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Day,
             now,
+            false,
         )
         .unwrap();
 
@@ -1223,7 +1261,7 @@ fn detail_station_without_channels_returns_empty_graphs() {
     let page = service.detail_page(id, detail_now()).unwrap();
     assert!(page.channels.is_empty());
     let day = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Day, detail_now())
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, detail_now(), false)
         .unwrap();
     assert!(day.current.is_empty());
     assert!(day.per_channel.is_empty());
@@ -1241,7 +1279,7 @@ fn detail_overview_stats_returns_all_time_total_and_metrics() {
         measurement(CHANNEL_A1, 7, utc(2023, 6, 15, 12, 0, 0)),   // previous year
     ];
     let stats = promenade_service(measurements)
-        .detail_overview_stats(station_vo::Id(Uuid::from_u128(STATION_1)), now)
+        .detail_overview_stats(station_vo::Id(Uuid::from_u128(STATION_1)), now, false)
         .unwrap();
     assert_eq!(stats.total_bikes, 127, "sum over the whole history");
     assert_eq!(stats.metrics.len(), 4);
@@ -1321,7 +1359,7 @@ fn stations_summary_filters_by_bounds_and_counts_channels() {
     assert_eq!(by_id.get(&Uuid::from_u128(STATION_B)), Some(&1));
 
     let overview = service
-        .stations_summary_overview(bounds(), &[], summary_now())
+        .stations_summary_overview(bounds(), &[], summary_now(), false)
         .unwrap();
     assert_eq!(overview.channel_count, 3, "all included channels");
     assert_eq!(overview.metrics.len(), 4);
@@ -1349,7 +1387,7 @@ fn stations_summary_keeps_disabled_stations_in_the_list_but_excludes_them_from_a
 
     // … but its channels are excluded from the aggregation.
     let overview = service
-        .stations_summary_overview(bounds(), &exclude, summary_now())
+        .stations_summary_overview(bounds(), &exclude, summary_now(), false)
         .unwrap();
     assert_eq!(overview.channel_count, 1, "only station B's channel");
 }
@@ -1365,7 +1403,7 @@ fn stations_summary_aggregates_all_four_metrics_across_stations() {
         measurement(CHANNEL_A2, 100, utc(2022, 6, 15, 12, 0, 0)),
     ];
     let overview = default_summary_service(measurements)
-        .stations_summary_overview(bounds(), &[], summary_now())
+        .stations_summary_overview(bounds(), &[], summary_now(), false)
         .unwrap();
 
     assert_eq!(metric_of(&overview, MetricKey::LastDay).current, 15);
@@ -1382,7 +1420,13 @@ fn stations_summary_aggregates_per_station_graphs_and_station_pie() {
         measurement(CHANNEL_B1, 50, utc(2024, 1, 8, 13, 0, 0)),
     ];
     let week = default_summary_service(measurements)
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, summary_now())
+        .stations_summary_graphs_timeframe(
+            bounds(),
+            &[],
+            GraphTimeframe::Week,
+            summary_now(),
+            false,
+        )
         .unwrap();
 
     assert_eq!(sum_buckets(&week.current), 170, "aggregate current week");
@@ -1410,7 +1454,13 @@ fn stations_summary_per_station_weekday_radar_folds_each_station_buckets() {
         measurement(CHANNEL_B1, 7, utc(2024, 1, 8, 12, 0, 0)),  // Mon
     ];
     let week = default_summary_service(measurements)
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, summary_now())
+        .stations_summary_graphs_timeframe(
+            bounds(),
+            &[],
+            GraphTimeframe::Week,
+            summary_now(),
+            false,
+        )
         .unwrap();
 
     let a_radar = &week.per_station[0].weekday_radar;
@@ -1426,7 +1476,13 @@ fn stations_summary_computes_previous_and_hour_radars() {
         measurement(CHANNEL_B1, 50, utc(2024, 1, 2, 20, 0, 0)),  // previous week
     ];
     let week = default_summary_service(measurements)
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, summary_now())
+        .stations_summary_graphs_timeframe(
+            bounds(),
+            &[],
+            GraphTimeframe::Week,
+            summary_now(),
+            false,
+        )
         .unwrap();
 
     let current_weekdays: HashMap<_, _> = week
@@ -1480,7 +1536,7 @@ fn stations_summary_computes_monthly_totals_over_the_union() {
     ];
     let service = default_summary_service(measurements);
     let monthly = service
-        .stations_summary_monthly(bounds(), &[], summary_now())
+        .stations_summary_monthly(bounds(), &[], summary_now(), false)
         .unwrap();
     assert_eq!(
         monthly,
@@ -1498,9 +1554,62 @@ fn stations_summary_computes_monthly_totals_over_the_union() {
         ]
     );
     let overview = service
-        .stations_summary_overview(bounds(), &[], summary_now())
+        .stations_summary_overview(bounds(), &[], summary_now(), false)
         .unwrap();
     assert_eq!(overview.total_bikes, 125);
+}
+
+#[test]
+fn stations_summary_monthly_excludes_new_stations() {
+    let service = default_summary_service(vec![
+        // Station A is established: it covers the whole current + previous year
+        // (a measurement at the previous year's start and one at `now`).
+        measurement(CHANNEL_A1, 10, utc(2022, 12, 31, 23, 0, 0)),
+        measurement(CHANNEL_A1, 100, utc(2024, 1, 11, 12, 0, 0)),
+        // Station B is new: a single mid-window measurement.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 10, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_monthly(bounds(), &[], now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_monthly(bounds(), &[], now, true)
+        .unwrap();
+
+    assert_eq!(
+        plain,
+        vec![
+            MonthTotal {
+                year: 2023,
+                month: 1,
+                total: 10
+            },
+            MonthTotal {
+                year: 2024,
+                month: 1,
+                total: 600
+            },
+        ],
+        "A + B"
+    );
+    assert_eq!(
+        filtered,
+        vec![
+            MonthTotal {
+                year: 2023,
+                month: 1,
+                total: 10
+            },
+            MonthTotal {
+                year: 2024,
+                month: 1,
+                total: 100
+            },
+        ],
+        "B (a new station) is dropped from the monthly chart"
+    );
 }
 
 #[test]
@@ -1519,7 +1628,7 @@ fn stations_summary_empty_bounds_returns_empty_stations_and_graphs() {
     assert!(page.stations.is_empty());
 
     let overview = service
-        .stations_summary_overview(empty_bounds, &[], summary_now())
+        .stations_summary_overview(empty_bounds, &[], summary_now(), false)
         .unwrap();
     assert_eq!(overview.channel_count, 0);
     assert_eq!(overview.total_bikes, 0);
@@ -1531,13 +1640,19 @@ fn stations_summary_empty_bounds_returns_empty_stations_and_graphs() {
     );
 
     let week = service
-        .stations_summary_graphs_timeframe(empty_bounds, &[], GraphTimeframe::Week, summary_now())
+        .stations_summary_graphs_timeframe(
+            empty_bounds,
+            &[],
+            GraphTimeframe::Week,
+            summary_now(),
+            false,
+        )
         .unwrap();
     assert!(week.current.is_empty());
     assert!(week.per_station.is_empty());
 
     let monthly = service
-        .stations_summary_monthly(empty_bounds, &[], summary_now())
+        .stations_summary_monthly(empty_bounds, &[], summary_now(), false)
         .unwrap();
     assert!(monthly.is_empty());
 }
@@ -1568,7 +1683,7 @@ fn stations_summary_propagates_invalid_timezone() {
         vec![],
         vec![],
     );
-    let result = service.stations_summary_overview(bounds(), &[], summary_now());
+    let result = service.stations_summary_overview(bounds(), &[], summary_now(), false);
     assert!(matches!(result, Err(DomainError::InvalidQuery(_))));
 }
 
@@ -1590,6 +1705,257 @@ fn graph_windows_rejects_invalid_timezone_via_detail() {
         station_vo::Id(Uuid::from_u128(STATION_1)),
         GraphTimeframe::Week,
         detail_now(),
+        false,
     );
     assert!(matches!(result, Err(DomainError::InvalidQuery(_))));
+}
+
+// -----------------------------------------------------------------------
+// Bike-Trends: exclude_new_stations (full-window coverage)
+// -----------------------------------------------------------------------
+
+#[test]
+fn detail_overview_stats_marks_a_new_station() {
+    let now = detail_now();
+    let service = promenade_service(vec![measurement(
+        CHANNEL_A1,
+        100,
+        utc(2024, 1, 10, 12, 0, 0),
+    )]);
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+
+    // Without the setting the trend is reported normally (is_new = false).
+    let plain = service.detail_overview_stats(id, now, false).unwrap();
+    assert!(plain.metrics.iter().all(|metric| !metric.is_new));
+
+    // With the setting on, a single recent measurement does not cover any whole
+    // current + previous window, so every metric is flagged "new".
+    let filtered = service.detail_overview_stats(id, now, true).unwrap();
+    assert!(
+        filtered.metrics.iter().all(|metric| metric.is_new),
+        "a single mid-window measurement has no like-for-like baseline"
+    );
+}
+
+#[test]
+fn detail_overview_stats_not_new_when_the_station_covers_the_windows() {
+    let now = detail_now();
+    // Measurements at the union-window boundaries (two years back + the previous
+    // local day's end) cover every metric's current + previous window.
+    let service = promenade_service(vec![
+        measurement(CHANNEL_A1, 100, utc(2022, 1, 1, 0, 0, 0)),
+        // 22:00 is just inside the previous local day's closed window (which ends
+        // one microsecond before 23:00).
+        measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)),
+    ]);
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let stats = service.detail_overview_stats(id, now, true).unwrap();
+    assert!(
+        stats.metrics.iter().all(|metric| !metric.is_new),
+        "full-window coverage is not treated as a new station"
+    );
+}
+
+#[test]
+fn stations_summary_overview_excludes_new_stations_like_for_like() {
+    let service = default_summary_service(vec![
+        // Station A is "established": first measurement two years back, last
+        // inside the previous local day -> covers every metric window.
+        measurement(CHANNEL_A1, 100, utc(2022, 1, 1, 0, 0, 0)),
+        measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)),
+        // Station B is "new": a single mid-window measurement.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 10, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_overview(bounds(), &[], now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_overview(bounds(), &[], now, true)
+        .unwrap();
+
+    assert_eq!(metric_of(&plain, MetricKey::LastDay).current, 700, "A + B");
+    assert_eq!(
+        metric_of(&filtered, MetricKey::LastDay).current,
+        200,
+        "B (a new station) is dropped from the day trend"
+    );
+    assert_eq!(
+        plain.total_bikes, filtered.total_bikes,
+        "the all-time total stays factual and is not filtered"
+    );
+}
+
+#[test]
+fn stations_summary_graphs_exclude_new_stations() {
+    let service = default_summary_service(vec![
+        // Station A covers the whole current + previous local day: boundary
+        // measurements at each day's start (23:00) and just inside each day's end
+        // (22:00, because the day window closes at 22:59:59.999999).
+        measurement(CHANNEL_A1, 100, utc(2024, 1, 8, 23, 0, 0)), // previous day start
+        measurement(CHANNEL_A1, 50, utc(2024, 1, 9, 22, 0, 0)),  // previous day end
+        measurement(CHANNEL_A1, 150, utc(2024, 1, 9, 23, 0, 0)), // current day start
+        measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)), // current day end
+        // Station B is new: a single mid-window measurement.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 10, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Day, now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Day, now, true)
+        .unwrap();
+
+    assert_eq!(sum_buckets(&plain.current), 850, "A (350) + B (500)");
+    assert_eq!(plain.per_station.len(), 2);
+    assert_eq!(
+        sum_buckets(&filtered.current),
+        350,
+        "only A is like-for-like"
+    );
+    assert_eq!(filtered.per_station.len(), 1);
+    assert_eq!(
+        filtered.per_station[0].station_id,
+        Uuid::from_u128(STATION_1),
+        "B is dropped from the aggregate and the per-station series"
+    );
+    assert_eq!(
+        sum_buckets(&filtered.previous),
+        150,
+        "A's previous day (100 + 50)"
+    );
+}
+
+#[test]
+fn established_stations_with_a_stale_last_measurement_are_not_dropped() {
+    // Regression: the current week window ends at `now`. A station's latest
+    // measurement can legitimately lag `now` by more than one resolution
+    // interval (the importer never lands exactly on `now`, and a seeded stack
+    // goes stale as the wall clock moves on). Requiring a measurement within
+    // one interval of `now` wrongly dropped EVERY established station and
+    // emptied all the graphs; only a station that was actually built mid-window
+    // (no data at the window's start) counts as "new".
+    let service = default_summary_service(vec![
+        // A is established: it covers the whole previous week and reports from
+        // the current week's start — but its latest measurement is ~2 days old.
+        measurement(CHANNEL_A1, 100, utc(2023, 12, 31, 23, 0, 0)), // prev week start
+        measurement(CHANNEL_A1, 50, utc(2024, 1, 7, 22, 0, 0)),    // prev week end
+        measurement(CHANNEL_A1, 150, utc(2024, 1, 7, 23, 0, 0)),   // current week start
+        measurement(CHANNEL_A1, 200, utc(2024, 1, 9, 12, 0, 0)),   // stale latest
+        // B is genuinely new: only mid-week data, nothing in the previous week.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 9, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, true)
+        .unwrap();
+
+    assert_eq!(sum_buckets(&plain.current), 850, "A (350) + B (500)");
+    assert_eq!(
+        sum_buckets(&filtered.current),
+        350,
+        "A's current week (150 + 200) stays even with a stale latest measurement"
+    );
+    assert_eq!(filtered.per_station.len(), 1);
+    assert_eq!(
+        filtered.per_station[0].station_id,
+        Uuid::from_u128(STATION_1),
+        "only the genuinely-new station B is dropped"
+    );
+    assert_eq!(
+        sum_buckets(&filtered.previous),
+        150,
+        "A's previous week (100 + 50)"
+    );
+}
+
+#[test]
+fn stations_summary_graphs_keep_a_station_with_no_current_week_data() {
+    // The current (still-running) week may not have any data yet — e.g. the
+    // import has not arrived, or a seeded stack went stale as the wall clock
+    // moved on. A station that covered the whole previous week is established,
+    // so it must not be dropped just because the incomplete current week is
+    // empty for it; only a genuinely new station (no previous-week data) is
+    // dropped.
+    let service = default_summary_service(vec![
+        // A: full previous week, nothing in the current week.
+        measurement(CHANNEL_A1, 100, utc(2023, 12, 31, 23, 0, 0)), // prev week start
+        measurement(CHANNEL_A1, 50, utc(2024, 1, 7, 22, 0, 0)),    // prev week end
+        // B: genuinely new, data only mid-current-week, no previous week.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 9, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, true)
+        .unwrap();
+
+    assert_eq!(
+        sum_buckets(&plain.current),
+        500,
+        "only B has current-week data"
+    );
+    assert_eq!(plain.per_station.len(), 2);
+
+    // With the setting on, the new station B is dropped, but A is kept for the
+    // like-for-like previous overlay even though the current week is empty for it.
+    assert_eq!(filtered.per_station.len(), 1);
+    assert_eq!(
+        filtered.per_station[0].station_id,
+        Uuid::from_u128(STATION_1),
+        "A is established via the whole previous week"
+    );
+    assert_eq!(
+        sum_buckets(&filtered.current),
+        0,
+        "A has no current-week data yet, so the current series is empty"
+    );
+    assert_eq!(
+        sum_buckets(&filtered.previous),
+        150,
+        "A's previous week (100 + 50) is still overlaid"
+    );
+}
+
+#[test]
+fn global_summary_excludes_new_stations_from_the_last_day_total() {
+    let service = service(
+        vec![station(STATION_1, "A", None), station(STATION_B, "B", None)],
+        vec![
+            channel(CHANNEL_A1, STATION_1, "a1"),
+            channel(CHANNEL_B1, STATION_B, "b1"),
+        ],
+        vec![
+            // A covers the whole last day + its comparison day (a measurement at
+            // each day's start and one just inside the last day's end).
+            measurement(CHANNEL_A1, 100, utc(2024, 1, 8, 23, 0, 0)),
+            measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)),
+            // B is new: a single mid-window measurement.
+            measurement(CHANNEL_B1, 500, utc(2024, 1, 10, 12, 0, 0)),
+        ],
+        vec![],
+    );
+    let now = utc(2024, 1, 11, 12, 0, 0);
+
+    let plain = service.global_summary(now, false).unwrap();
+    let filtered = service.global_summary(now, true).unwrap();
+    assert_eq!(plain.bikes_last_day_total, 700);
+    assert_eq!(
+        filtered.bikes_last_day_total, 200,
+        "the new station B is dropped from the header total"
+    );
+    assert_eq!(
+        plain.station_count, filtered.station_count,
+        "the station count stays factual"
+    );
 }

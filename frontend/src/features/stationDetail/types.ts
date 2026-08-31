@@ -64,6 +64,10 @@ export interface PeriodGraphs {
   hourly_previous: HourTotal[]
   channel_pie: ChannelTotal[]
   per_channel: PerChannelSeries[]
+  /// Bike-Trends: true (detail page, setting on) when the station does not have
+  /// data covering the whole current + previous window of this timeframe, so
+  /// there is no like-for-like previous period to compare.
+  is_new: boolean
 }
 
 /// The HATEOAS links of the detail page shell: one URL per stats card. The

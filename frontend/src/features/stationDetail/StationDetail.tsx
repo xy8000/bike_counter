@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -17,6 +17,8 @@ import { serializeBounds, stationBounds } from '../../lib/geo'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
 import { SearchableHeader } from '../header/SearchableHeader'
 import type { StationSummary } from '../stations/types'
+import { useTrendSettings } from '../settings/TrendSettingsContext'
+import { SettingsDialog } from '../settings/SettingsDialog'
 import { MetricCard } from '../stationOverview/MetricCard'
 import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
 import type { ChannelRef, PeriodGraphs, StationDetailPage, Timeframe } from './types'
@@ -243,13 +245,20 @@ function DetailContent({ page }: { page: StationDetailPage }) {
   // safe default view.
   const [timeframe, setTimeframe] = useState<Timeframe>('week')
   const [comparePrevious, setComparePrevious] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const cfg = TIMEFRAMES[timeframe]
+  const { excludeNewStations } = useTrendSettings()
 
   // Each stats card fetches its own sub-resource through the shell's links
   // (which carry the `as_of` reference), so cards load and fail independently.
-  const { data: overview, error: overviewError } = useStationOverviewStats(page._links.overview)
+  // The Bike-Trends flag is appended to the windowed cards.
+  const { data: overview, error: overviewError } = useStationOverviewStats(
+    page._links.overview,
+    excludeNewStations,
+  )
   const { data: graphs, error: graphsError } = useStationGraphs(
     page._links[GRAPH_LINK_KEYS[timeframe]],
+    excludeNewStations,
   )
   const { data: monthly, error: monthlyError } = useStationMonthly(page._links.monthly)
 
@@ -348,8 +357,30 @@ function DetailContent({ page }: { page: StationDetailPage }) {
               />
               <Label htmlFor="compare-previous">Compare previous period</Label>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              title="Calculation settings"
+              aria-label="Calculation settings"
+            >
+              <SlidersHorizontal />
+              Settings
+            </Button>
+            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
           </div>
         </div>
+
+        {/* Bike-Trends: with the setting on, a station without full-period
+            coverage reports is_new — the previous-period comparison is not
+            meaningful, so tell the user instead of drawing an empty overlay. */}
+        {period?.is_new && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            This station has no data covering the whole compared period — the previous period
+            comparison is not shown.
+          </p>
+        )}
 
         {period ? (
           <div className="grid grid-cols-1 gap-4">

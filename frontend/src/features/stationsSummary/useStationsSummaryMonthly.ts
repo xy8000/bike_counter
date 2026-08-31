@@ -3,9 +3,13 @@ import { fetchSummaryMonthly } from './api'
 import type { MonthlyTotals } from './types'
 
 /// Loads the monthly totals card of the summary page. The URL depends on the
-/// shell's HATEOAS link plus the local exclude set, so toggling a disabled
-/// station re-fetches only this card.
-export function useStationsSummaryMonthly(link: string | null, exclude: string[]) {
+/// shell's HATEOAS link, the local exclude set and the Bike-Trends flag, so
+/// toggling a disabled station or the setting re-fetches only this card.
+export function useStationsSummaryMonthly(
+  link: string | null,
+  exclude: string[],
+  excludeNewStations: boolean,
+) {
   const [monthly, setMonthly] = useState<MonthlyTotals | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -17,7 +21,7 @@ export function useStationsSummaryMonthly(link: string | null, exclude: string[]
     setLoading(true)
     setMonthly(null)
     setError(false)
-    fetchSummaryMonthly(link, exclude)
+    fetchSummaryMonthly(link, exclude, excludeNewStations)
       .then((data) => {
         if (!cancelled) setMonthly(data)
       })
@@ -31,7 +35,7 @@ export function useStationsSummaryMonthly(link: string | null, exclude: string[]
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, excludeKey])
+  }, [link, excludeKey, excludeNewStations])
 
   return { monthly, loading, error }
 }

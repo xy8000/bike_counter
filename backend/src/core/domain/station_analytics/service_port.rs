@@ -41,8 +41,14 @@ pub trait StationAnalyticsServicePort: Send + Sync {
     ) -> Result<Vec<SidebarStationStats>, DomainError>;
 
     /// Whole-system statistics: the sum of every station's previous complete
-    /// local day total (each in its own timezone), based on `now`.
-    fn global_summary(&self, now: DateTime<Utc>) -> Result<GlobalSummary, DomainError>;
+    /// local day total (each in its own timezone), based on `now`. With
+    /// `exclude_new_stations` (Bike-Trends) only stations with data covering the
+    /// whole last day **and** its comparison day are counted.
+    fn global_summary(
+        &self,
+        now: DateTime<Utc>,
+        exclude_new_stations: bool,
+    ) -> Result<GlobalSummary, DomainError>;
 
     /// The station overview panel **shell**: the station, its channel count and
     /// the last successful update. No aggregation — the stats card fetches its
@@ -60,21 +66,26 @@ pub trait StationAnalyticsServicePort: Send + Sync {
     ) -> Result<StationDetailPage, DomainError>;
 
     /// The overview card of the detail page: the all-time total and the four
-    /// trend metrics, over complete calendar periods from `now`.
+    /// trend metrics, over complete calendar periods from `now`. With
+    /// `exclude_new_stations` (Bike-Trends) each metric reports `is_new` when
+    /// the station lacks full coverage of the current + previous window.
     fn detail_overview_stats(
         &self,
         station_id: Id,
         now: DateTime<Utc>,
+        exclude_new_stations: bool,
     ) -> Result<crate::core::domain::station_analytics::StationOverviewStats, DomainError>;
 
     /// The graph data for one selectable timeframe of the detail page (aggregate
     /// series + radars + channel pie + per-channel nerd stats), over the windows
-    /// derived from `now`.
+    /// derived from `now`. With `exclude_new_stations` (Bike-Trends) the graphs
+    /// carry an `is_new` flag when the station lacks full-period coverage.
     fn detail_graphs_timeframe(
         &self,
         station_id: Id,
         timeframe: GraphTimeframe,
         now: DateTime<Utc>,
+        exclude_new_stations: bool,
     ) -> Result<PeriodGraphs, DomainError>;
 
     /// The monthly totals of the detail page: total per local calendar month
@@ -96,31 +107,39 @@ pub trait StationAnalyticsServicePort: Send + Sync {
     ) -> Result<StationsSummaryPage, DomainError>;
 
     /// The overview card of the summary page: the aggregated channel count,
-    /// all-time total and four trend metrics over the included stations.
+    /// all-time total and four trend metrics over the included stations. With
+    /// `exclude_new_stations` (Bike-Trends) a station is skipped for a metric
+    /// unless it has data covering the whole current + previous window.
     fn stations_summary_overview(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         now: DateTime<Utc>,
+        exclude_new_stations: bool,
     ) -> Result<StationsSummaryOverview, DomainError>;
 
     /// The graph data for one selectable timeframe of the summary page (aggregate
     /// series + radars + station pie + per-station nerd stats) over the included
-    /// stations.
+    /// stations. With `exclude_new_stations` (Bike-Trends) only stations with
+    /// full coverage of the current + previous window are aggregated.
     fn stations_summary_graphs_timeframe(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         timeframe: GraphTimeframe,
         now: DateTime<Utc>,
+        exclude_new_stations: bool,
     ) -> Result<SummaryPeriodGraphs, DomainError>;
 
     /// The monthly totals of the summary page over the included stations'
-    /// channels.
+    /// channels. With `exclude_new_stations` (Bike-Trends) stations that lack
+    /// full data for the whole current + previous year are dropped, so the
+    /// monthly bar chart is also like-for-like.
     fn stations_summary_monthly(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         now: DateTime<Utc>,
+        exclude_new_stations: bool,
     ) -> Result<Vec<MonthTotal>, DomainError>;
 }
