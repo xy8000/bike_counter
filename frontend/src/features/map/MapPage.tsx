@@ -5,6 +5,7 @@ import type { Bounds } from '../../lib/geo'
 import { parseBoundsQuery, serializeBounds } from '../../lib/geo'
 import { useVisibleStations } from '../stations/useVisibleStations'
 import { SearchableHeader } from '../header/SearchableHeader'
+import { LeftPanel } from '../sidebar/LeftPanel'
 import { Sidebar } from '../sidebar/Sidebar'
 import { MapView } from './MapView'
 import { StationOverview } from '../stationOverview/StationOverview'
@@ -109,24 +110,30 @@ export default function MapPage() {
       <SearchableHeader onSelect={findAndClose} onFind={findAndClose} onDetail={openDetail} />
 
       <div className="relative flex min-h-0 flex-1">
-        {selectedStationId === null ? (
-          <Sidebar
-            collapsed={sidebarCollapsed}
-            onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
-            shell={shell}
-            stats={stats}
-            loading={loading}
-            error={stationsError}
-            statsError={statsError}
-            onSelectStation={selectStation}
-            onSummarize={summarizeVisible}
-          />
-        ) : (
-          <StationOverview
-            stationId={selectedStationId}
-            onClose={() => setSelectedStationId(null)}
-          />
-        )}
+        {/* The generic left panel: holds either the station list or the station
+            overview, and the pull/push handle collapses/expands whichever is
+            currently shown. */}
+        <LeftPanel
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
+        >
+          {selectedStationId === null ? (
+            <Sidebar
+              shell={shell}
+              stats={stats}
+              loading={loading}
+              error={stationsError}
+              statsError={statsError}
+              onSelectStation={selectStation}
+              onSummarize={summarizeVisible}
+            />
+          ) : (
+            <StationOverview
+              stationId={selectedStationId}
+              onClose={() => setSelectedStationId(null)}
+            />
+          )}
+        </LeftPanel>
 
         <main className="relative min-w-0 flex-1">
           <MapView

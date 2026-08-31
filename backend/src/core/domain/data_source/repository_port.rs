@@ -22,4 +22,9 @@ pub trait DataSourceRepository {
     /// Clears the incremental import watermark (`imported_until = NULL`), so the
     /// next update re-imports everything for the data source.
     fn clear_imported_until(&self, id: Id) -> Result<(), DomainError>;
+
+    /// Records the wall-clock time the data source was last successfully
+    /// updated (per source, so a partial multi-source run still counts the
+    /// sources that succeeded).
+    fn update_last_updated(&self, id: Id, timestamp: DateTime<Utc>) -> Result<(), DomainError>;
 }

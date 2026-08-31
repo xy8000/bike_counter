@@ -14,6 +14,10 @@ pub struct DataSource {
     /// The incremental import watermark: everything on/before this timestamp has
     /// been imported. `None` means "not yet imported" (full re-import).
     pub imported_until: Option<DateTime<Utc>>,
+    /// Wall-clock time the data source was last successfully updated. Drives the
+    /// "last updated" timestamps in the UI; unlike the coarse update job (which
+    /// is `FAILED` when any single source fails) it survives partial successes.
+    pub last_updated_at: Option<DateTime<Utc>>,
 }
 
 impl DataSource {
@@ -23,6 +27,7 @@ impl DataSource {
             name: value_objects::Name(name),
             provider_type: value_objects::ProviderType(provider_type),
             imported_until: None,
+            last_updated_at: None,
         }
     }
 

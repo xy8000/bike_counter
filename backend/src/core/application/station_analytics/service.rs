@@ -25,6 +25,7 @@ use crate::core::domain::counting_stations::counting_station::previous_local_day
 use crate::core::domain::counting_stations::counting_station::previous_local_days;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
@@ -44,6 +45,7 @@ pub struct StationAnalyticsService {
     channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
     measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
     job_repository: Arc<dyn JobRepository + Send + Sync>,
+    data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
 }
 
 /// Per-station channel counts and the channel→station id map, over every
@@ -59,12 +61,14 @@ impl StationAnalyticsService {
         channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
         measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
         job_repository: Arc<dyn JobRepository + Send + Sync>,
+        data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
     ) -> Self {
         Self {
             counting_station_repository,
             channel_repository,
             measurement_repository,
             job_repository,
+            data_source_repository,
         }
     }
 
@@ -423,7 +427,10 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             station_count: stations.len(),
             channel_count: channels.len(),
             bikes_last_day_total,
-            last_update: metrics::last_update(self.job_repository.as_ref())?,
+            last_update: metrics::last_update(
+                self.job_repository.as_ref(),
+                self.data_source_repository.as_ref(),
+            )?,
         })
     }
 
@@ -436,7 +443,10 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         Ok(StationOverviewShell {
             station,
             channel_count,
-            last_update: metrics::last_update(self.job_repository.as_ref())?,
+            last_update: metrics::last_update(
+                self.job_repository.as_ref(),
+                self.data_source_repository.as_ref(),
+            )?,
         })
     }
 
@@ -452,7 +462,10 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         Ok(StationDetailPage {
             station,
             channels,
-            last_update: metrics::last_update(self.job_repository.as_ref())?,
+            last_update: metrics::last_update(
+                self.job_repository.as_ref(),
+                self.data_source_repository.as_ref(),
+            )?,
         })
     }
 
@@ -559,7 +572,10 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
     ) -> Result<StationsSummaryPage, DomainError> {
         Ok(StationsSummaryPage {
             stations: self.summary_stations_in_bounds(bounds)?,
-            last_update: metrics::last_update(self.job_repository.as_ref())?,
+            last_update: metrics::last_update(
+                self.job_repository.as_ref(),
+                self.data_source_repository.as_ref(),
+            )?,
         })
     }
 

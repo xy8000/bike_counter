@@ -12,6 +12,9 @@ use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
+use crate::core::domain::data_source::data_source::DataSource;
+use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::jobs::repository_port::JobRepository;
@@ -525,17 +528,69 @@ impl JobRepository for MemoryJobRepository {
     }
 }
 
+struct MemoryDataSourceRepository {
+    data_sources: Vec<DataSource>,
+}
+
+impl DataSourceRepository for MemoryDataSourceRepository {
+    fn upsert(&self, _data_source: DataSource) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn find_by_id(&self, _id: data_source_vo::Id) -> Result<Option<DataSource>, DomainError> {
+        Ok(None)
+    }
+    fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
+        Ok(None)
+    }
+    fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
+        Ok(self.data_sources.clone())
+    }
+    fn delete(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn update_imported_until(
+        &self,
+        _id: data_source_vo::Id,
+        _timestamp: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn clear_imported_until(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn update_last_updated(
+        &self,
+        _id: data_source_vo::Id,
+        _timestamp: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+}
+
 fn service(
     stations: Vec<CountingStation>,
     channels: Vec<Channel>,
     measurements: Vec<Measurement>,
     jobs: Vec<Job>,
 ) -> StationAnalyticsService {
+    service_with_data_sources(stations, channels, measurements, jobs, vec![])
+}
+
+/// Like [`service`] but with a configurable data-source set, so tests can seed
+/// per-source `last_updated_at` (the UI's "last updated" source of truth).
+fn service_with_data_sources(
+    stations: Vec<CountingStation>,
+    channels: Vec<Channel>,
+    measurements: Vec<Measurement>,
+    jobs: Vec<Job>,
+    data_sources: Vec<DataSource>,
+) -> StationAnalyticsService {
     StationAnalyticsService::new(
         Arc::new(MemoryCountingStationRepository { stations }),
         Arc::new(MemoryChannelRepository { channels }),
         Arc::new(MemoryMeasurementRepository { measurements }),
         Arc::new(MemoryJobRepository { jobs }),
+        Arc::new(MemoryDataSourceRepository { data_sources }),
     )
 }
 
@@ -767,6 +822,39 @@ fn global_summary_has_no_last_update_without_finished_jobs() {
     assert_eq!(summary.channel_count, 0);
     assert_eq!(summary.bikes_last_day_total, 0);
     assert_eq!(summary.last_update, None);
+}
+
+#[test]
+fn global_summary_last_update_prefers_the_newest_per_source_update() {
+    // The per-source marker (11:00) outranks the older finished job (10:00): a
+    // source that succeeded after the last fully-successful job still counts.
+    let mut source = DataSource::new("Münster".to_string(), "provider".to_string());
+    source.last_updated_at = Some(utc(2024, 1, 2, 11, 0, 0));
+    let service = service_with_data_sources(
+        vec![],
+        vec![],
+        vec![],
+        vec![finished_job(0x51, utc(2024, 1, 2, 10, 0, 0))],
+        vec![source],
+    );
+    let summary = service
+        .global_summary(utc(2024, 1, 2, 12, 0, 0), false)
+        .unwrap();
+    assert_eq!(summary.last_update, Some(utc(2024, 1, 2, 11, 0, 0)));
+}
+
+#[test]
+fn global_summary_last_update_survives_a_failed_job_with_other_sources_ok() {
+    // The "never" bug: the single coarse job is FAILED because one city errored,
+    // but the other cities imported fine and carry a per-source timestamp, so
+    // the header must still show a real "updated" time instead of "never".
+    let mut source = DataSource::new("Bonn".to_string(), "provider".to_string());
+    source.last_updated_at = Some(utc(2024, 1, 2, 9, 30, 0));
+    let service = service_with_data_sources(vec![], vec![], vec![], vec![], vec![source]);
+    let summary = service
+        .global_summary(utc(2024, 1, 2, 12, 0, 0), false)
+        .unwrap();
+    assert_eq!(summary.last_update, Some(utc(2024, 1, 2, 9, 30, 0)));
 }
 
 // -----------------------------------------------------------------------

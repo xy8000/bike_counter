@@ -242,6 +242,10 @@ impl DataSourceUpdateService {
                 self.data_source_repository
                     .update_imported_until(runtime.data_source_id, last_timestamp)?;
             }
+            // Per-source success marker: survives a later source failing (the
+            // whole job is FAILED then, but this source's data is fresh).
+            self.data_source_repository
+                .update_last_updated(runtime.data_source_id, Utc::now())?;
         }
         Ok(())
     }
@@ -611,6 +615,23 @@ mod tests {
                 .find(|ds| ds.id == id)
             {
                 ds.imported_until = None;
+            }
+            Ok(())
+        }
+
+        fn update_last_updated(
+            &self,
+            id: DataSourceId,
+            timestamp: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            if let Some(ds) = self
+                .data_sources
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|ds| ds.id == id)
+            {
+                ds.last_updated_at = Some(timestamp);
             }
             Ok(())
         }
@@ -1169,5 +1190,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.imported_until, Some(t0));
+        assert!(
+            stored.last_updated_at.is_some(),
+            "a successful source update stamps last_updated_at (drives the header)"
+        );
     }
 }

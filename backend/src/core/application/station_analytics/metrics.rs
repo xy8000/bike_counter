@@ -21,6 +21,7 @@ use crate::core::domain::counting_stations::counting_station::{
     calendar_month_window, calendar_year_window, previous_calendar_month, previous_calendar_year,
     previous_local_days,
 };
+use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
@@ -38,9 +39,24 @@ pub(super) fn sum_window(
 }
 
 /// Timestamp of the most recent successful data-source update.
+///
+/// Prefers the newest per-data-source `last_updated_at`: it is advanced for each
+/// source that succeeds, so a multi-source run where one later source fails (the
+/// coarse job is `FAILED`, but the earlier sources imported fine) still reports a
+/// real timestamp. Falls back to the newest finished update job's `finished_at`
+/// for legacy/seed data where the per-source column was never written.
 pub(super) fn last_update(
     job_repository: &dyn JobRepository,
+    data_source_repository: &dyn DataSourceRepository,
 ) -> Result<Option<DateTime<Utc>>, DomainError> {
+    let per_source = data_source_repository
+        .find_all()?
+        .into_iter()
+        .filter_map(|data_source| data_source.last_updated_at)
+        .max();
+    if per_source.is_some() {
+        return Ok(per_source);
+    }
     Ok(job_repository
         .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)?
         .and_then(|job| job.finished_at))

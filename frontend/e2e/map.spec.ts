@@ -93,6 +93,25 @@ test('clicking a map marker opens the overview panel and a map void click closes
   await expect(sidebarBadge(page)).toBeVisible()
 })
 
+test('the sidebar collapse also works while the overview is open', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  await mapMarkers(page).first().click()
+  const panel = page.getByRole('complementary')
+  await expect(panel.getByText('Total bikes (all time)')).toBeVisible()
+
+  // The handle stays available while the overview is open: pushing collapses
+  // the whole panel (overview included)…
+  await page.getByRole('button', { name: 'Hide station list' }).click()
+  await expect(page.getByRole('button', { name: 'Show station list' })).toBeVisible()
+  await expect(panel).toHaveCSS('translate', /-/)
+
+  // …and pulling re-opens the same overview.
+  await page.getByRole('button', { name: 'Show station list' }).click()
+  await expect(panel.getByText('Total bikes (all time)')).toBeVisible()
+})
+
 test('the overview detail link navigates in the same tab', async ({ page }) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await waitForStations(page)

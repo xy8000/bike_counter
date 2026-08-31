@@ -1,4 +1,4 @@
-import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react'
+import { BarChart3 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -24,15 +24,11 @@ function SidebarListSkeleton({ count = 5 }: { count?: number }) {
   )
 }
 
-/// Left overlay panel listing the counting stations visible in the current map
-/// bounds. Collapses to a slim vertical edge (Komoot style). The station list
-/// scrolls in its own area; the "Summarize visible stations" action sits in a
-/// pinned footer below it so the list stays scrollable. The shell (identity +
-/// image) renders directly and the per-station stats fill in from the parallel
-/// stats sub-resource.
+/// The station-list content shown inside the generic left panel ([`LeftPanel`]).
+/// It lists the counting stations visible in the current map bounds; the list
+/// scrolls in its own area and the "Summarize visible stations" action sits in
+/// a pinned footer below it.
 export function Sidebar({
-  collapsed,
-  onToggle,
   shell,
   stats,
   loading,
@@ -41,8 +37,6 @@ export function Sidebar({
   onSelectStation,
   onSummarize,
 }: {
-  collapsed: boolean
-  onToggle: () => void
   shell: SidebarShell | null
   stats: Map<string, SidebarStationStats> | null
   loading: boolean
@@ -51,42 +45,13 @@ export function Sidebar({
   onSelectStation: (station: SidebarStation) => void
   onSummarize: () => void
 }) {
-  if (collapsed) {
-    return (
-      <aside className="absolute inset-y-0 left-0 z-[500] flex w-10 min-h-0 flex-col bg-primary shadow-md">
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={onToggle}
-          title="Show station list (H)"
-          aria-label="Show station list"
-          className="flex-1 rounded-none text-primary-foreground hover:bg-white/15 hover:text-primary-foreground"
-        >
-          <ChevronRight />
-        </Button>
-      </aside>
-    )
-  }
-
   return (
-    <aside className="absolute inset-y-0 left-0 z-[500] flex w-[360px] min-h-0 flex-col border-r bg-background shadow-lg transition-[width]">
+    <>
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="min-w-0 flex-1 text-base font-semibold">Visible counting stations</h2>
-        <div className="flex items-center gap-2">
-          <Badge variant="default" className="rounded-full">
-            {shell ? `${shell.visible_count} / ${shell.total_count}` : '–'}
-          </Badge>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-            title="Hide station list (H)"
-            aria-label="Hide station list"
-          >
-            <ChevronLeft />
-          </Button>
-        </div>
+        <Badge variant="default" className="rounded-full">
+          {shell ? `${shell.visible_count} / ${shell.total_count}` : '–'}
+        </Badge>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         {error && (
@@ -133,6 +98,6 @@ export function Sidebar({
           Summarize visible stations
         </Button>
       </div>
-    </aside>
+    </>
   )
 }

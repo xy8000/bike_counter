@@ -412,6 +412,14 @@ impl DataSourceRepository for MockDataSourceRepository {
     fn clear_imported_until(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
         Ok(())
     }
+
+    fn update_last_updated(
+        &self,
+        _id: data_source_vo::Id,
+        _timestamp: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 /// A configurable health indicator standing in for a real downstream service.
@@ -611,6 +619,7 @@ pub fn sample_station_analytics_service() -> Arc<StationAnalyticsService> {
         Arc::new(sample_channel_repository()),
         Arc::new(sample_measurement_repository()),
         Arc::new(sample_job_repository()),
+        Arc::new(MockDataSourceRepository::default()),
     ))
 }
 

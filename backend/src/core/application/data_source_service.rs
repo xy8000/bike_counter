@@ -106,6 +106,14 @@ mod tests {
         fn clear_imported_until(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
             Ok(())
         }
+
+        fn update_last_updated(
+            &self,
+            _id: data_source_vo::Id,
+            _timestamp: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     fn service() -> DataSourceService {

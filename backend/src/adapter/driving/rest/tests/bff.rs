@@ -15,7 +15,8 @@ use uuid::Uuid;
 use crate::adapter::driving::rest::tests::TestApp;
 use crate::adapter::driving::rest::tests::fixtures;
 use crate::adapter::driving::rest::tests::mocks::{
-    MockChannelRepository, MockCountingStationRepository, MockMeasurementRepository,
+    MockChannelRepository, MockCountingStationRepository, MockDataSourceRepository,
+    MockMeasurementRepository,
 };
 use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::channels::channel::Channel;
@@ -205,6 +206,7 @@ async fn bff_sidebar_stats_counts_bikes_on_the_last_day() {
             measurements: vec![measurement],
         }),
         Arc::new(crate::adapter::driving::rest::tests::fixtures::sample_job_repository()),
+        Arc::new(MockDataSourceRepository::default()),
     ));
     let app = TestApp::with_station_analytics_service(service);
 
@@ -985,6 +987,7 @@ async fn bff_station_summary_aggregates_per_station_data() {
             measurements: vec![measurement],
         }),
         Arc::new(crate::adapter::driving::rest::tests::fixtures::sample_job_repository()),
+        Arc::new(MockDataSourceRepository::default()),
     ));
     let app = TestApp::with_station_analytics_service(service);
 

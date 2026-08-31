@@ -223,7 +223,8 @@ impl JobRepository for PostgresJobRepository {
             .query_opt(
                 &format!(
                     "SELECT {SELECT_COLUMNS} FROM jobs \
-                     WHERE job_type = $1 AND status = 'FINISHED' ORDER BY created_at DESC LIMIT 1"
+                     WHERE job_type = $1 AND status = 'FINISHED' \
+                     ORDER BY finished_at DESC NULLS LAST LIMIT 1"
                 ),
                 &[&job_type],
             )
@@ -482,6 +483,44 @@ mod tests {
                 .unwrap()
                 .id,
             finished_id
+        );
+    }
+
+    #[test]
+    fn find_last_finished_orders_by_finished_at_not_created_at() {
+        let db = TestDb::new();
+        let now = Utc::now();
+        let earlier = now - Duration::seconds(600);
+        let later = now - Duration::seconds(300);
+
+        // Job A is created first but finishes later than job B, so ordering by
+        // `created_at` (the old query) would return the wrong job.
+        let a_id = Uuid::new_v4();
+        db.repository
+            .insert(job(a_id, "data_source_update"))
+            .unwrap();
+        db.repository
+            .set_running(a_id, earlier - Duration::seconds(60))
+            .unwrap();
+        db.repository.set_finished(a_id, later).unwrap();
+
+        let b_id = Uuid::new_v4();
+        db.repository
+            .insert(job(b_id, "data_source_update"))
+            .unwrap();
+        db.repository
+            .set_running(b_id, earlier - Duration::seconds(30))
+            .unwrap();
+        db.repository.set_finished(b_id, earlier).unwrap();
+
+        let last = db
+            .repository
+            .find_last_finished_by_type("data_source_update")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            last.id, a_id,
+            "the newest finished_at wins, not the newest created_at"
         );
     }
 

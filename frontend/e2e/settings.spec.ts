@@ -29,8 +29,8 @@ test('the detail-page settings button toggles the exclude-new-stations flag', as
   await openDetailPage(page)
 
   const dialog = await openSettings(page)
-  const checkbox = dialog.getByRole('checkbox', { name: SETTING_LABEL })
-  await expect(checkbox).not.toBeChecked()
+  const toggle = dialog.getByRole('switch', { name: SETTING_LABEL })
+  await expect(toggle).not.toBeChecked()
 
   // Enabling the setting makes the header's global summary refetch with the
   // flag appended (the like-for-like total).
@@ -39,8 +39,8 @@ test('the detail-page settings button toggles the exclude-new-stations flag', as
       request.url().includes('/api/bff/global-summary') &&
       request.url().includes('exclude_new_stations=true'),
   )
-  await checkbox.check()
-  await expect(checkbox).toBeChecked()
+  await toggle.click()
+  await expect(toggle).toBeChecked()
   await expect(flaggedRequest).resolves.toBeTruthy()
 })
 
@@ -66,17 +66,44 @@ test('the summary-page settings button opens the same dialogue', async ({ page }
   })
 
   const dialog = await openSettings(page)
-  await expect(dialog.getByRole('checkbox', { name: SETTING_LABEL })).toBeVisible()
+  await expect(dialog.getByRole('switch', { name: SETTING_LABEL })).toBeVisible()
 })
 
 test('the Bike-Trends setting persists across reloads', async ({ page }) => {
   await openDetailPage(page)
 
   const dialog = await openSettings(page)
-  await dialog.getByRole('checkbox', { name: SETTING_LABEL }).check()
+  await dialog.getByRole('switch', { name: SETTING_LABEL }).click()
 
   // A fresh page reads the same value back from localStorage.
   await page.reload({ waitUntil: 'domcontentloaded' })
   const dialogAfterReload = await openSettings(page)
-  await expect(dialogAfterReload.getByRole('checkbox', { name: SETTING_LABEL })).toBeChecked()
+  await expect(dialogAfterReload.getByRole('switch', { name: SETTING_LABEL })).toBeChecked()
+})
+
+test('enabling/disabling the setting switches the example graph', async ({ page }) => {
+  await openDetailPage(page)
+
+  const dialog = await openSettings(page)
+  const toggle = dialog.getByRole('switch', { name: SETTING_LABEL })
+
+  // Off: the "All stations" graph (new station's bikes stacked on top, recent
+  // months jump) is shown.
+  await expect(toggle).not.toBeChecked()
+  await expect(dialog.getByText('All stations')).toBeVisible()
+  await expect(dialog.getByText('Established only')).toBeHidden()
+  await expect(dialog.getByText(/recent months jump/)).toBeVisible()
+
+  // Enabling switches to the "Established only" graph.
+  await toggle.click()
+  await expect(toggle).toBeChecked()
+  await expect(dialog.getByText('Established only')).toBeVisible()
+  await expect(dialog.getByText('All stations')).toBeHidden()
+  await expect(dialog.getByText(/totals grow more evenly/)).toBeVisible()
+
+  // Disabling switches back to "All stations".
+  await toggle.click()
+  await expect(toggle).not.toBeChecked()
+  await expect(dialog.getByText('All stations')).toBeVisible()
+  await expect(dialog.getByText('Established only')).toBeHidden()
 })

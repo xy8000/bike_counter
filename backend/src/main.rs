@@ -239,6 +239,7 @@ fn main() {
         channel_repo.clone(),
         measurement_repo.clone(),
         job_repo.clone(),
+        data_source_repo.clone(),
     ));
 
     // Scheduled cleanup of orphaned objects in the asset storage bucket.

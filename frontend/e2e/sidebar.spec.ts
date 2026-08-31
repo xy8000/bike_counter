@@ -3,6 +3,7 @@ import {
   mapMarkers,
   readSidebarCounts,
   sidebar,
+  sidebarBadge,
   sidebarStationItems,
   waitForStations,
 } from './helpers'
@@ -63,4 +64,47 @@ test('the sidebar renders only the stations visible in the current viewport', as
   const after = await readSidebarCounts(page)
   await expect(sidebarStationItems(page)).toHaveCount(after.visible)
   await expect(mapMarkers(page)).toHaveCount(after.visible)
+})
+
+test('a collapsed panel re-opens onto the overview when a station is selected', async ({
+  page,
+}) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  // Collapse the station list first.
+  await page.getByRole('button', { name: 'Hide station list' }).click()
+  await expect(page.getByRole('button', { name: 'Show station list' })).toBeVisible()
+
+  // Opening a station's overview while collapsed keeps the panel collapsed…
+  await mapMarkers(page).first().click()
+  await expect(page.getByRole('button', { name: 'Show station list' })).toBeVisible()
+
+  // …and pulling it open reveals the overview, not the station list.
+  await page.getByRole('button', { name: 'Show station list' }).click()
+  const panel = page.getByRole('complementary')
+  await expect(panel.getByText('Total bikes (all time)')).toBeVisible()
+  await expect(panel.getByText('Visible counting stations')).toHaveCount(0)
+})
+
+test('the mid-height pull/push handle slides the sidebar in and out', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  // Expanded: the "push" handle is on the panel's right edge, mid-height.
+  const push = page.getByRole('button', { name: 'Hide station list' })
+  await expect(push).toBeVisible()
+  await expect(sidebarBadge(page)).toBeVisible()
+
+  // Pushing slides the whole panel left off-screen (a negative CSS `translate`);
+  // only the "pull" handle stays visible at the map's left edge.
+  await push.click()
+  const pull = page.getByRole('button', { name: 'Show station list' })
+  await expect(pull).toBeVisible()
+  await expect(sidebar(page)).toHaveCSS('translate', /-/)
+
+  // Pulling slides it back out over the map.
+  await pull.click()
+  await expect(page.getByRole('button', { name: 'Hide station list' })).toBeVisible()
+  await expect(sidebarBadge(page)).toBeVisible()
 })

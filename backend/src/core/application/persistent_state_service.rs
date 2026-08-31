@@ -222,6 +222,19 @@ mod tests {
             }
             Ok(())
         }
+
+        fn update_last_updated(&self, id: Id, timestamp: DateTime<Utc>) -> Result<(), DomainError> {
+            if let Some(data_source) = self
+                .data_sources
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|ds| ds.id == id)
+            {
+                data_source.last_updated_at = Some(timestamp);
+            }
+            Ok(())
+        }
     }
 
     fn data_source(name: &str) -> DataSource {

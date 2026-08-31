@@ -10,11 +10,11 @@ import { OverviewPanelSkeleton } from './Skeletons'
 import { TotalBikesCard } from './TotalBikesCard'
 import { useStationOverview } from './useStationOverview'
 
-/// The counting-station overview panel. Rendered in the same left slot as the
-/// sidebar (same size/style) when a map marker is selected; clicking the map
-/// void or the close button returns to the sidebar. The shell (identity — the
-/// name renders immediately) loads first; the stats card fills in from the
-/// parallel stats sub-resource.
+/// The counting-station overview content shown inside the generic left panel
+/// ([`LeftPanel`]) when a map marker is selected; clicking the map void or the
+/// close button returns to the station list. The shell (identity — the name
+/// renders immediately) loads first; the stats card fills in from the parallel
+/// stats sub-resource.
 export function StationOverview({
   stationId,
   onClose,
@@ -25,7 +25,7 @@ export function StationOverview({
   const { page, stats, error, statsError } = useStationOverview(stationId)
 
   return (
-    <aside className="absolute inset-y-0 left-0 z-[500] flex w-[360px] min-h-0 flex-col border-r bg-background shadow-lg">
+    <>
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         {page ? (
           // The station name opens the detail page without looking like a link
@@ -126,6 +126,6 @@ export function StationOverview({
           </div>
         )}
       </ScrollArea>
-    </aside>
+    </>
   )
 }
