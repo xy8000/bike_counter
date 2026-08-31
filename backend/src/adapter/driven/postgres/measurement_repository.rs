@@ -4,8 +4,9 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelLatest, ChannelTotal, HourTotal,
-    MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelLatest,
+    ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal,
+    ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 
 use super::pool::PgPool;
@@ -17,6 +18,89 @@ pub struct PostgresMeasurementRepository {
 impl PostgresMeasurementRepository {
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
+    }
+}
+
+/// Builds the SQL for the bucket queries, shared by `sum_buckets` and
+/// `sum_buckets_by_channel`. The bound parameters are built inline by the
+/// callers, where the owned `from`/`to`/`origin`/`resolution_seconds` values
+/// live (so their references stay valid through the query call).
+///
+/// `Fixed` granularity uses `date_bin` aligned to `origin` (parameters `$2`
+/// interval seconds and `$4` origin); the calendar granularities use
+/// `date_trunc` (the timezone moves to `$2`, with no seconds/origin
+/// parameters). `with_channel` selects the per-channel variant (adds
+/// `channel_id` to the SELECT and GROUP BY).
+fn buckets_sql(granularity: BucketGranularity, with_channel: bool) -> String {
+    match granularity {
+        BucketGranularity::Fixed { .. } => {
+            let select = if with_channel {
+                "SELECT channel_id, \
+                   (date_bin(make_interval(secs => $2::float8), \
+                             (timestamp AT TIME ZONE $3), \
+                             ($4::timestamptz AT TIME ZONE $3)) \
+                    AT TIME ZONE $3) AS bucket, \
+                   COALESCE(SUM(value), 0)::bigint AS total"
+            } else {
+                "SELECT \
+                   (date_bin(make_interval(secs => $2::float8), \
+                             (timestamp AT TIME ZONE $3), \
+                             ($4::timestamptz AT TIME ZONE $3)) \
+                    AT TIME ZONE $3) AS bucket, \
+                   COALESCE(SUM(value), 0)::bigint AS total"
+            };
+            let group_by = if with_channel {
+                "channel_id, bucket"
+            } else {
+                "bucket"
+            };
+            format!(
+                "{select} \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $5 AND timestamp <= $6 \
+                   AND ($7::bigint IS NULL OR resolution_seconds = $7::bigint) \
+                 GROUP BY {group_by} \
+                 ORDER BY {group_by}"
+            )
+        }
+        BucketGranularity::Day
+        | BucketGranularity::Week
+        | BucketGranularity::Month
+        | BucketGranularity::Quarter => {
+            let unit = match granularity {
+                BucketGranularity::Day => "day",
+                BucketGranularity::Week => "week",
+                BucketGranularity::Month => "month",
+                BucketGranularity::Quarter => "quarter",
+                BucketGranularity::Fixed { .. } => unreachable!(),
+            };
+            let select = if with_channel {
+                format!(
+                    "SELECT channel_id, \
+                       (date_trunc('{unit}', (timestamp AT TIME ZONE $2)) AT TIME ZONE $2)::timestamptz AS bucket, \
+                       COALESCE(SUM(value), 0)::bigint AS total"
+                )
+            } else {
+                format!(
+                    "SELECT \
+                       (date_trunc('{unit}', (timestamp AT TIME ZONE $2)) AT TIME ZONE $2)::timestamptz AS bucket, \
+                       COALESCE(SUM(value), 0)::bigint AS total"
+                )
+            };
+            let group_by = if with_channel {
+                "channel_id, bucket"
+            } else {
+                "bucket"
+            };
+            format!(
+                "{select} \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+                 GROUP BY {group_by} \
+                 ORDER BY {group_by}"
+            )
+        }
     }
 }
 
@@ -249,7 +333,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         &self,
         from: chrono::DateTime<chrono::Utc>,
         to: chrono::DateTime<chrono::Utc>,
-        bucket_seconds: i64,
+        granularity: BucketGranularity,
         origin: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
@@ -260,32 +344,30 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let query = buckets_sql(granularity, false);
+        // The server infers `$2` as `double precision` from
+        // `make_interval(secs => ...)`, so send an f64 (not i64) to match the
+        // binary wire type. The owned values (`from`/`to`/`origin`/
+        // `resolution_seconds`/`seconds_f64`) live here, so their references
+        // stay valid through the query call.
+        let seconds_f64: Option<f64> = match granularity {
+            BucketGranularity::Fixed { seconds } => Some(seconds as f64),
+            _ => None,
+        };
+        let params: Vec<&(dyn ToSql + Sync)> = match granularity {
+            BucketGranularity::Fixed { .. } => vec![
+                &channel_uuids,
+                seconds_f64.as_ref().unwrap(),
+                &timezone,
+                &origin,
+                &from,
+                &to,
+                &resolution_seconds,
+            ],
+            _ => vec![&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+        };
         let rows = client
-            .query(
-                "SELECT \
-                   (date_bin(make_interval(secs => $2::float8), \
-                             (timestamp AT TIME ZONE $3), \
-                             ($4::timestamptz AT TIME ZONE $3)) \
-                    AT TIME ZONE $3) AS bucket, \
-                   COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $5 AND timestamp <= $6 \
-                   AND ($7::bigint IS NULL OR resolution_seconds = $7::bigint) \
-                 GROUP BY bucket \
-                 ORDER BY bucket",
-                &[
-                    &channel_uuids,
-                    // The server infers `$2` as `double precision` from
-                    // `make_interval(secs => ...)`, so send an f64 (not i64) to
-                    // match the binary wire type.
-                    &(bucket_seconds as f64),
-                    &timezone,
-                    &origin,
-                    &from,
-                    &to,
-                    &resolution_seconds,
-                ],
-            )
+            .query(&query, &params)
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut buckets = Vec::with_capacity(rows.len());
         for row in rows {
@@ -301,7 +383,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         &self,
         from: chrono::DateTime<chrono::Utc>,
         to: chrono::DateTime<chrono::Utc>,
-        bucket_seconds: i64,
+        granularity: BucketGranularity,
         origin: chrono::DateTime<chrono::Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
@@ -312,30 +394,25 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let query = buckets_sql(granularity, true);
+        let seconds_f64: Option<f64> = match granularity {
+            BucketGranularity::Fixed { seconds } => Some(seconds as f64),
+            _ => None,
+        };
+        let params: Vec<&(dyn ToSql + Sync)> = match granularity {
+            BucketGranularity::Fixed { .. } => vec![
+                &channel_uuids,
+                seconds_f64.as_ref().unwrap(),
+                &timezone,
+                &origin,
+                &from,
+                &to,
+                &resolution_seconds,
+            ],
+            _ => vec![&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+        };
         let rows = client
-            .query(
-                "SELECT channel_id, \
-                   (date_bin(make_interval(secs => $2::float8), \
-                             (timestamp AT TIME ZONE $3), \
-                             ($4::timestamptz AT TIME ZONE $3)) \
-                    AT TIME ZONE $3) AS bucket, \
-                   COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $5 AND timestamp <= $6 \
-                   AND ($7::bigint IS NULL OR resolution_seconds = $7::bigint) \
-                 GROUP BY channel_id, bucket \
-                 ORDER BY channel_id, bucket",
-                &[
-                    &channel_uuids,
-                    // Match the inferred `double precision` parameter type.
-                    &(bucket_seconds as f64),
-                    &timezone,
-                    &origin,
-                    &from,
-                    &to,
-                    &resolution_seconds,
-                ],
-            )
+            .query(&query, &params)
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut buckets = Vec::with_capacity(rows.len());
         for row in rows {
@@ -378,6 +455,43 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             weekdays.push(WeekdayTotal {
                 weekday: row.get::<_, i32>(0) as u8,
                 total: row.get(1),
+            });
+        }
+        Ok(weekdays)
+    }
+
+    fn sum_weekdays_by_channel(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelWeekdayTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, \
+                       EXTRACT(ISODOW FROM (timestamp AT TIME ZONE $2))::int AS weekday, \
+                       COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+                 GROUP BY channel_id, weekday \
+                 ORDER BY channel_id, weekday",
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut weekdays = Vec::with_capacity(rows.len());
+        for row in rows {
+            weekdays.push(ChannelWeekdayTotal {
+                channel_id: row.get(0),
+                weekday: row.get::<_, i32>(1) as u8,
+                total: row.get(2),
             });
         }
         Ok(weekdays)
@@ -638,7 +752,9 @@ mod tests {
     use crate::adapter::driven::postgres::create_pool;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::measurements::measurement::{Measurement, value_objects};
-    use crate::core::domain::measurements::repository_port::MeasurementRepository;
+    use crate::core::domain::measurements::repository_port::{
+        BucketGranularity, MeasurementRepository,
+    };
 
     #[test]
     fn persists_and_reads_measurements_in_postgres() {
@@ -1131,7 +1247,15 @@ mod tests {
         // sum_buckets: 5-minute buckets aligned to local Berlin time (UTC+1 in
         // January), so 12:00Z and 12:02Z fall into the same bucket starting 12:00Z.
         let buckets = repository
-            .sum_buckets(from, to, 300, origin, "Europe/Berlin", &channels, None)
+            .sum_buckets(
+                from,
+                to,
+                BucketGranularity::Fixed { seconds: 300 },
+                origin,
+                "Europe/Berlin",
+                &channels,
+                None,
+            )
             .unwrap();
         assert_eq!(buckets.len(), 2, "two distinct 5-minute buckets have data");
         assert_eq!(buckets[0].start, at(2024, 1, 10, 12, 0, 0));
@@ -1141,7 +1265,15 @@ mod tests {
 
         // sum_buckets_by_channel: each row carries its channel id.
         let per_channel = repository
-            .sum_buckets_by_channel(from, to, 300, origin, "Europe/Berlin", &channels, None)
+            .sum_buckets_by_channel(
+                from,
+                to,
+                BucketGranularity::Fixed { seconds: 300 },
+                origin,
+                "Europe/Berlin",
+                &channels,
+                None,
+            )
             .unwrap();
         let by_key: std::collections::HashMap<(Uuid, chrono::DateTime<Utc>), i64> = per_channel
             .iter()
@@ -1190,6 +1322,130 @@ mod tests {
             .collect();
         assert_eq!(by_id[&channel_a], 35);
         assert_eq!(by_id[&channel_b], 7);
+    }
+
+    #[test]
+    fn calendar_buckets_align_to_local_month_and_weekdays_by_channel() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let postgres = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .with_tag("16-alpine")
+            .start()
+            .unwrap();
+        let database_url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            postgres.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            database_url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
+
+        let station_id = Uuid::from_u128(900);
+        let data_source_id = Uuid::from_u128(910);
+        let channel_a = Uuid::from_u128(920);
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
+                &[&station_id, &"Test station", &"Test station description", &data_source_id],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) VALUES ($1, $2, $3, $4)",
+                &[&channel_a, &station_id, &"A", &"channel a"],
+            )
+            .unwrap();
+
+        let at = |y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32| {
+            Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+        };
+        let save = |value: i64, when: chrono::DateTime<Utc>| {
+            repository
+                .save(Measurement {
+                    id: value_objects::Id(Uuid::new_v4()),
+                    value: value_objects::Value(value),
+                    channel_id: value_objects::ChannelId(channel_a),
+                    timestamp: value_objects::Timestamp(when),
+                    resolution_seconds: value_objects::ResolutionSeconds(3600),
+                    interval_end: None,
+                })
+                .unwrap();
+        };
+        // Three distinct months (midday UTC, so each lands inside its own local
+        // calendar month in Berlin).
+        save(10, at(2024, 1, 10, 12, 0, 0));
+        save(20, at(2024, 2, 10, 12, 0, 0));
+        save(30, at(2024, 3, 10, 12, 0, 0));
+
+        let from = at(2024, 1, 1, 0, 0, 0);
+        let to = at(2024, 4, 1, 0, 0, 0);
+        let channels = [value_objects::ChannelId(channel_a)];
+
+        // Calendar month buckets, aligned to local (Berlin) midnight.
+        let buckets = repository
+            .sum_buckets(
+                from,
+                to,
+                BucketGranularity::Month,
+                from,
+                "Europe/Berlin",
+                &channels,
+                None,
+            )
+            .unwrap();
+        assert_eq!(buckets.len(), 3, "one bucket per local calendar month");
+        assert_eq!(
+            buckets[0].start,
+            at(2023, 12, 31, 23, 0, 0),
+            "Jan 1 00:00 Berlin"
+        );
+        assert_eq!(
+            buckets[1].start,
+            at(2024, 1, 31, 23, 0, 0),
+            "Feb 1 00:00 Berlin"
+        );
+        assert_eq!(
+            buckets[2].start,
+            at(2024, 2, 29, 23, 0, 0),
+            "Mar 1 00:00 Berlin"
+        );
+        assert_eq!(buckets[0].total, 10);
+        assert_eq!(buckets[1].total, 20);
+        assert_eq!(buckets[2].total, 30);
+
+        // Per-channel weekday totals over the window (Wed Jan 10 + Sat Feb 10).
+        let weekdays = repository
+            .sum_weekdays_by_channel(from, to, "Europe/Berlin", &channels, None)
+            .unwrap();
+        let by_weekday: std::collections::HashMap<u8, i64> = weekdays
+            .iter()
+            .map(|row| (row.weekday, row.total))
+            .collect();
+        assert_eq!(by_weekday[&3], 10, "Wednesday");
+        assert_eq!(by_weekday[&6], 20, "Saturday");
     }
 
     #[test]

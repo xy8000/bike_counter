@@ -684,6 +684,66 @@ async fn bff_station_detail_graphs_rejects_unknown_timeframe() {
 }
 
 #[tokio::test]
+async fn bff_station_detail_graphs_custom_range_returns_graphs_without_previous() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/graphs/day?from=2023-01-01T00:00:00Z&to=2023-05-01T00:00:00Z",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    for field in [
+        "current",
+        "weekday_radar",
+        "weekday_radar_previous",
+        "hourly",
+        "hourly_previous",
+        "channel_pie",
+        "per_channel",
+    ] {
+        assert!(
+            body[field].is_array(),
+            "a custom range should contain '{field}'"
+        );
+    }
+    assert!(
+        body["previous"].as_array().is_some_and(|p| p.is_empty()),
+        "a custom range has no previous period"
+    );
+}
+
+#[tokio::test]
+async fn bff_station_detail_graphs_rejects_partial_or_inverted_custom_range() {
+    let app = TestApp::new();
+    // Only `from` present → 400 (both-or-neither).
+    let (status, _) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/graphs/day?from=2023-01-01T00:00:00Z",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // `from` after `to` → 400.
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/graphs/day?from=2023-05-01T00:00:00Z&to=2023-01-01T00:00:00Z",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("from must be before to"),
+        "an inverted range should be rejected"
+    );
+}
+
+#[tokio::test]
 async fn bff_station_detail_monthly_returns_totals() {
     let app = TestApp::new();
     let (status, body) = app

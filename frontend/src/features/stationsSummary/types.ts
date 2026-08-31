@@ -1,10 +1,10 @@
 /// Types for the station-summary page (BFF `stations/summary`).
 import type { StationOverviewMetric } from '../stationOverview/types'
 import type {
+  FixedTimeframe,
   HourTotal,
   MonthTotal,
   TimeBucket,
-  Timeframe,
   WeekdayTotal,
 } from '../stationDetail/types'
 
@@ -62,8 +62,10 @@ export interface StationsSummaryLinks {
   monthly: string
 }
 
-/// Maps a `Timeframe` to its HATEOAS link key on the summary shell.
-export const GRAPH_LINK_KEYS: Record<Timeframe, keyof StationsSummaryLinks> = {
+/// Maps a fixed `Timeframe` to its HATEOAS link key on the summary shell. The
+/// `individual` timeframe uses the `graphs_day` link as its base and appends
+/// the custom `from`/`to` range.
+export const GRAPH_LINK_KEYS: Record<FixedTimeframe, keyof StationsSummaryLinks> = {
   day: 'graphs_day',
   week: 'graphs_week',
   last_30_days: 'graphs_last_30_days',

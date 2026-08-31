@@ -61,9 +61,22 @@ test('the sidebar renders only the stations visible in the current viewport', as
     .toBeLessThan(baseline.visible)
 
   // After zooming, the visible set shrank and stays internally consistent.
+  // The map settles asynchronously after the last zoom step (markers and the
+  // sidebar re-render on moveend), so wait for them to agree with the visible
+  // counter instead of asserting a single, possibly transient read.
+  await expect
+    .poll(
+      async () => {
+        const counts = await readSidebarCounts(page)
+        const items = await sidebarStationItems(page).count()
+        const markers = await mapMarkers(page).count()
+        return items === counts.visible && markers === counts.visible
+      },
+      { timeout: 20000 },
+    )
+    .toBe(true)
   const after = await readSidebarCounts(page)
-  await expect(sidebarStationItems(page)).toHaveCount(after.visible)
-  await expect(mapMarkers(page)).toHaveCount(after.visible)
+  expect(after.visible).toBeLessThan(baseline.visible)
 })
 
 test('a collapsed panel re-opens onto the overview when a station is selected', async ({

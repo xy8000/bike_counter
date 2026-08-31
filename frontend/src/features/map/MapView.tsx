@@ -4,14 +4,16 @@ import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { Bounds } from '../../lib/geo'
 import type { StationMap } from '../stations/types'
 import { stationMarkerImage } from '../../lib/map'
 import { BaseMap } from './BaseMap'
 
 /// The enriched identity a station popup shows, fed from the sidebar shell +
-/// stats (image + description + channel count). Falls back to the plain name +
-/// detail link while the shell/stats are still loading.
+/// stats (image + description + channel count). While the shell/stats are still
+/// loading the not-yet-known fields render as skeletons (same mechanism as the
+/// overview) instead of popping in, so the popup does not flicker.
 export interface PopupStationInfo {
   imageUrl: string
   description: string
@@ -34,6 +36,8 @@ export function MapView({
   onDeselect,
   selectedStationId,
   stationDetails,
+  error,
+  statsError,
 }: {
   stations: StationMap[] | null
   initialBounds?: Bounds | null
@@ -43,11 +47,19 @@ export function MapView({
   onDeselect: () => void
   selectedStationId?: string | null
   stationDetails?: Map<string, PopupStationInfo>
+  error?: boolean
+  statsError?: boolean
 }) {
   // The station whose popup is open (independent of the overview panel, which
   // the parent owns). Cleared on a map void click / station switch.
   const [popupStation, setPopupStation] = useState<StationMap | null>(null)
   const popupInfo = popupStation ? stationDetails?.get(popupStation.id) : undefined
+  // The shell identity (icon + description) is still loading when there is no
+  // entry for this station yet and the shell fetch has not errored.
+  const shellLoading = popupInfo === undefined && !error
+  // The channel-count badge is still loading while the stats sub-resource is
+  // pending (the shell entry exists but its count is not known yet).
+  const statsLoading = popupInfo !== undefined && popupInfo.channelCount === null && !statsError
 
   return (
     <BaseMap
@@ -96,17 +108,25 @@ export function MapView({
           // at the width we choose instead of being squeezed (or overflowing).
           maxWidth="18rem"
         >
-          <div className="station-popup flex w-72 max-w-full flex-col gap-1.5">
+          <div
+            className="station-popup flex w-72 max-w-full flex-col gap-1.5"
+            aria-busy={shellLoading || statsLoading || undefined}
+          >
             {/* Icon (top left), then the heading (name) beside it, with the
-                description on its own line below both. */}
+                description on its own line below both. While the shell/stats
+                sub-resources are still loading the not-yet-known fields render
+                as skeletons (same mechanism as the overview), so the popup does
+                not flicker when the data arrives. */}
             <div className="flex items-start gap-2">
-              {popupInfo && (
+              {popupInfo ? (
                 <img
                   src={popupInfo.imageUrl}
                   alt=""
                   className="h-8 w-8 shrink-0 rounded border object-cover"
                 />
-              )}
+              ) : shellLoading ? (
+                <Skeleton className="h-8 w-8 shrink-0 rounded border" />
+              ) : null}
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-2">
                   {/* The station name opens the detail page in the same tab
@@ -128,20 +148,28 @@ export function MapView({
                     <ExternalLink className="h-3.5 w-3.5" />
                   </Link>
                 </div>
-                {popupInfo && popupInfo.channelCount !== null && (
+                {popupInfo && popupInfo.channelCount !== null ? (
                   // The channel count rendered like the overview banner badge.
                   <Badge variant="secondary" className="mt-1">
                     {popupInfo.channelCount} channel
                     {popupInfo.channelCount === 1 ? '' : 's'}
                   </Badge>
-                )}
+                ) : statsLoading ? (
+                  <Skeleton className="mt-1 h-5 w-28 rounded-md" />
+                ) : shellLoading ? (
+                  <Skeleton className="mt-1 h-4 w-2/3" />
+                ) : null}
               </div>
             </div>
-            {popupInfo?.description && (
-              <p className="break-words text-xs leading-snug text-muted-foreground">
-                {popupInfo.description}
-              </p>
-            )}
+            {popupInfo ? (
+              popupInfo.description && (
+                <p className="break-words text-xs leading-snug text-muted-foreground">
+                  {popupInfo.description}
+                </p>
+              )
+            ) : shellLoading ? (
+              <Skeleton className="h-3 w-3/4" />
+            ) : null}
           </div>
         </Popup>
       )}

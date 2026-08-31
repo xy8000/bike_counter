@@ -88,6 +88,19 @@ pub trait StationAnalyticsServicePort: Send + Sync {
         exclude_new_stations: bool,
     ) -> Result<PeriodGraphs, DomainError>;
 
+    /// The graph data of the detail page for a custom `[from, to]` range (the
+    /// "Individual" timeframe): the bucket granularity is derived from the range
+    /// length and there is no previous period (compare is disabled for custom
+    /// ranges).
+    fn detail_graphs_custom(
+        &self,
+        station_id: Id,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        now: DateTime<Utc>,
+        exclude_new_stations: bool,
+    ) -> Result<PeriodGraphs, DomainError>;
+
     /// The monthly totals of the detail page: total per local calendar month
     /// over the whole history of the station's channels.
     fn detail_monthly(
@@ -127,6 +140,20 @@ pub trait StationAnalyticsServicePort: Send + Sync {
         bounds: GeoBounds,
         exclude: &[Id],
         timeframe: GraphTimeframe,
+        now: DateTime<Utc>,
+        exclude_new_stations: bool,
+    ) -> Result<SummaryPeriodGraphs, DomainError>;
+
+    /// The graph data of the summary page for a custom `[from, to]` range (the
+    /// "Individual" timeframe): the bucket granularity is derived from the range
+    /// length and there is no previous period (compare is disabled for custom
+    /// ranges).
+    fn stations_summary_graphs_custom(
+        &self,
+        bounds: GeoBounds,
+        exclude: &[Id],
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<SummaryPeriodGraphs, DomainError>;

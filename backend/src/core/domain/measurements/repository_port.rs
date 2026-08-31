@@ -59,6 +59,35 @@ pub struct MonthTotal {
     pub total: i64,
 }
 
+/// One weekday-of-day total restricted to a single channel (per-channel weekday
+/// radar over wide buckets).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelWeekdayTotal {
+    pub channel_id: Uuid,
+    pub weekday: u8,
+    pub total: i64,
+}
+
+/// The alignment of the time-series buckets for the detail/summary graphs.
+///
+/// The fixed timeframes use fixed-width `date_bin` buckets; the custom
+/// "Individual" date range derives its granularity from the range length and
+/// uses calendar-aligned `date_trunc` buckets for day/week/month/quarter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BucketGranularity {
+    /// Fixed-width buckets of `seconds`, aligned to `origin` (the `date_bin`
+    /// path; 15 minutes / 1 hour / 1 day for the fixed timeframes).
+    Fixed { seconds: i64 },
+    /// Calendar-aligned day (local midnight, `date_trunc('day')`).
+    Day,
+    /// Calendar-aligned ISO week (local Monday, `date_trunc('week')`).
+    Week,
+    /// Calendar-aligned month (`date_trunc('month')`).
+    Month,
+    /// Calendar-aligned quarter (`date_trunc('quarter')`).
+    Quarter,
+}
+
 /// Per-resolution coverage of a window: how much history exists at each
 /// `resolution_seconds`, so the analytics can pick the finest resolution that
 /// actually covers the requested window (the "combine" rule).
@@ -136,10 +165,12 @@ pub trait MeasurementRepository {
         resolution_seconds: Option<i64>,
     ) -> Result<i64, DomainError>;
 
-    /// Sums `value` into fixed-width buckets of `bucket_seconds` aligned to
-    /// `origin` (a UTC instant; the local bucket boundaries are computed in
-    /// `timezone`, so they follow the local DST rules). Only buckets that
-    /// actually contain measurements are returned — **no zero filling**.
+    /// Sums `value` into buckets aligned to `granularity`. Fixed-width
+    /// granularities are aligned to `origin` (a UTC instant; the local bucket
+    /// boundaries are computed in `timezone`, so they follow the local DST
+    /// rules); calendar granularities use `date_trunc` in `timezone`. Only
+    /// buckets that actually contain measurements are returned — **no zero
+    /// filling**.
     ///
     /// `resolution_seconds` restricts the aggregation to a single resolution;
     /// `None` sums all rows.
@@ -148,7 +179,7 @@ pub trait MeasurementRepository {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-        bucket_seconds: i64,
+        granularity: BucketGranularity,
         origin: DateTime<Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
@@ -162,7 +193,7 @@ pub trait MeasurementRepository {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-        bucket_seconds: i64,
+        granularity: BucketGranularity,
         origin: DateTime<Utc>,
         timezone: &str,
         channel_ids: &[value_objects::ChannelId],
@@ -179,6 +210,21 @@ pub trait MeasurementRepository {
         channel_ids: &[value_objects::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<WeekdayTotal>, DomainError>;
+
+    /// Like [`sum_weekdays`](Self::sum_weekdays) but grouped per channel, so
+    /// each returned row carries its `channel_id` (used for the per-channel
+    /// weekday radar when the buckets are wider than a day). Defaults to empty
+    /// so bucket-unaware mocks need no override.
+    fn sum_weekdays_by_channel(
+        &self,
+        _from: DateTime<Utc>,
+        _to: DateTime<Utc>,
+        _timezone: &str,
+        _channel_ids: &[value_objects::ChannelId],
+        _resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelWeekdayTotal>, DomainError> {
+        Ok(Vec::new())
+    }
 
     /// Sums `value` per local hour of day (0 = midnight .. 23 = 23:00) over the
     /// window (used for the hour-of-day radar chart).

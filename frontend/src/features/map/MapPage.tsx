@@ -166,6 +166,8 @@ export default function MapPage() {
             onDeselect={() => setSelectedStationId(null)}
             selectedStationId={selectedStationId}
             stationDetails={stationDetails}
+            error={stationsError}
+            statsError={statsError}
           />
         </main>
       </div>

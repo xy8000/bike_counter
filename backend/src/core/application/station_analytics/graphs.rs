@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
 
 use crate::core::domain::channels::channel::Channel;
@@ -20,7 +20,8 @@ use crate::core::domain::counting_stations::counting_station::{
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelTotal, HourTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelBucket, ChannelTotal, HourTotal, MeasurementRepository, TimeBucket,
+    WeekdayTotal,
 };
 use crate::core::domain::station_analytics::{
     PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal, SummaryPeriodGraphs,
@@ -33,11 +34,13 @@ const SECONDS_PER_5_MINUTES: i64 = 5 * 60;
 const SECONDS_PER_HOUR: i64 = 60 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
-/// One time-window: `[from, to]` with the bucket width and alignment origin.
+/// One time-window: `[from, to]` with the bucket granularity and alignment
+/// origin (used by the fixed-width `date_bin` buckets; calendar granularities
+/// ignore it).
 pub(super) struct Window {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-    bucket_seconds: i64,
+    granularity: BucketGranularity,
     origin: DateTime<Utc>,
 }
 
@@ -99,13 +102,17 @@ pub(super) fn graph_windows(tz: Tz, now: DateTime<Utc>) -> Result<GraphWindows, 
             current: Window {
                 from: day_from,
                 to: day_to,
-                bucket_seconds: SECONDS_PER_5_MINUTES,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_5_MINUTES,
+                },
                 origin: day_from,
             },
             previous: Window {
                 from: previous_day_from,
                 to: previous_day_to,
-                bucket_seconds: SECONDS_PER_5_MINUTES,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_5_MINUTES,
+                },
                 origin: previous_day_from,
             },
         },
@@ -113,13 +120,17 @@ pub(super) fn graph_windows(tz: Tz, now: DateTime<Utc>) -> Result<GraphWindows, 
             current: Window {
                 from: week_start,
                 to: now,
-                bucket_seconds: SECONDS_PER_HOUR,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_HOUR,
+                },
                 origin: week_start,
             },
             previous: Window {
                 from: last_week_from,
                 to: last_week_to,
-                bucket_seconds: SECONDS_PER_HOUR,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_HOUR,
+                },
                 origin: last_week_from,
             },
         },
@@ -127,13 +138,17 @@ pub(super) fn graph_windows(tz: Tz, now: DateTime<Utc>) -> Result<GraphWindows, 
             current: Window {
                 from: last_30_from,
                 to: last_30_to,
-                bucket_seconds: SECONDS_PER_DAY,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_DAY,
+                },
                 origin: last_30_from,
             },
             previous: Window {
                 from: previous_30_from,
                 to: previous_30_to,
-                bucket_seconds: SECONDS_PER_DAY,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_DAY,
+                },
                 origin: previous_30_from,
             },
         },
@@ -141,17 +156,202 @@ pub(super) fn graph_windows(tz: Tz, now: DateTime<Utc>) -> Result<GraphWindows, 
             current: Window {
                 from: year_start,
                 to: now,
-                bucket_seconds: SECONDS_PER_DAY,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_DAY,
+                },
                 origin: year_start,
             },
             previous: Window {
                 from: last_year_from,
                 to: last_year_to,
-                bucket_seconds: SECONDS_PER_DAY,
+                granularity: BucketGranularity::Fixed {
+                    seconds: SECONDS_PER_DAY,
+                },
                 origin: last_year_from,
             },
         },
     })
+}
+
+/// Whether buckets of this granularity are at most one day wide, so folding them
+/// into weekday totals is meaningful.
+fn is_daily_or_finer(granularity: BucketGranularity) -> bool {
+    match granularity {
+        BucketGranularity::Fixed { seconds } => seconds <= SECONDS_PER_DAY,
+        BucketGranularity::Day => true,
+        BucketGranularity::Week | BucketGranularity::Month | BucketGranularity::Quarter => false,
+    }
+}
+
+/// The calendar-aligned bucket granularity for a custom from/to range, chosen
+/// by the range length: `<= 24h` → 15 minutes, `<= 48h` → 1 hour, `<= 30d` →
+/// 1 day, `<= 90d` → 1 week, `<= 2y` → 1 month, otherwise → 1 quarter.
+fn custom_granularity(span: Duration) -> BucketGranularity {
+    let hours = span.num_hours();
+    let days = span.num_days();
+    if hours <= 24 {
+        BucketGranularity::Fixed { seconds: 15 * 60 }
+    } else if hours <= 48 {
+        BucketGranularity::Fixed { seconds: 3600 }
+    } else if days <= 30 {
+        BucketGranularity::Day
+    } else if days <= 90 {
+        BucketGranularity::Week
+    } else if days <= 730 {
+        BucketGranularity::Month
+    } else {
+        BucketGranularity::Quarter
+    }
+}
+
+/// A single custom window `[from, to]` for the "Individual" date range, with
+/// the granularity derived from the range length. There is no previous period —
+/// the compare checkbox is disabled for custom ranges. Fixed-width hour /
+/// 15-minute buckets are aligned to the local midnight of `from` so they sit on
+/// quarter-hour / hour boundaries.
+pub(super) fn custom_window(
+    tz: Tz,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Window, DomainError> {
+    if from >= to {
+        return Err(DomainError::InvalidQuery(
+            "from must be before to".to_string(),
+        ));
+    }
+    let granularity = custom_granularity(to - from);
+    let origin = match granularity {
+        BucketGranularity::Fixed { .. } => {
+            let local = from.with_timezone(&tz);
+            let midnight = local
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .ok_or_else(|| DomainError::InvalidQuery("invalid from date".to_string()))?;
+            tz.from_local_datetime(&midnight)
+                .earliest()
+                .ok_or_else(|| DomainError::InvalidQuery("invalid from date".to_string()))?
+                .with_timezone(&Utc)
+        }
+        _ => from,
+    };
+    Ok(Window {
+        from,
+        to,
+        granularity,
+        origin,
+    })
+}
+
+/// The UTC start of the first calendar bucket (`day`/`week`/`month`/`quarter`)
+/// containing `time`, in `tz` — mirrors the repository's `date_trunc`.
+fn calendar_bucket_start(
+    time: DateTime<Utc>,
+    tz: Tz,
+    granularity: BucketGranularity,
+) -> DateTime<Utc> {
+    let local = time.with_timezone(&tz);
+    let date = local.date_naive();
+    let midnight = match granularity {
+        BucketGranularity::Day => date,
+        BucketGranularity::Week => {
+            date - chrono::Days::new(local.weekday().num_days_from_monday() as u64)
+        }
+        BucketGranularity::Month => chrono::NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+            .expect("valid month bucket"),
+        BucketGranularity::Quarter => {
+            let month = ((date.month() - 1) / 3) * 3 + 1;
+            chrono::NaiveDate::from_ymd_opt(date.year(), month, 1).expect("valid quarter bucket")
+        }
+        BucketGranularity::Fixed { .. } => unreachable!("fixed granularity has no calendar bucket"),
+    };
+    let naive = midnight.and_hms_opt(0, 0, 0).expect("local midnight");
+    tz.from_local_datetime(&naive)
+        .earliest()
+        .expect("valid local midnight")
+        .with_timezone(&Utc)
+}
+
+/// Advances `time` by `months` local calendar months (used for the month and
+/// quarter bucket steps, whose lengths vary).
+fn add_local_months(time: DateTime<Utc>, tz: Tz, months: u32) -> DateTime<Utc> {
+    time.with_timezone(&tz)
+        .checked_add_months(chrono::Months::new(months))
+        .map(|next| next.with_timezone(&Utc))
+        .unwrap_or(time)
+}
+
+/// The complete list of bucket starts of a granularity across `[from, to]`,
+/// aligned like the repository's `date_bin`/`date_trunc`. Used to zero-fill a
+/// custom date range so the whole selected period is drawn (months/weeks
+/// without traffic render as 0 instead of being omitted).
+fn bucket_starts(
+    granularity: BucketGranularity,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    origin: DateTime<Utc>,
+    tz: Tz,
+) -> Vec<DateTime<Utc>> {
+    let mut starts = Vec::new();
+    // Half-open grid over `[from, to)`: a bucket starting exactly at `to` is the
+    // first bucket outside the selection, so it is not drawn as an empty bar.
+    match granularity {
+        BucketGranularity::Fixed { seconds } => {
+            let elapsed = (from - origin).num_seconds().div_euclid(seconds);
+            let mut cur = origin + Duration::seconds(elapsed * seconds);
+            while cur < to {
+                starts.push(cur);
+                cur += Duration::seconds(seconds);
+            }
+        }
+        granularity @ (BucketGranularity::Day
+        | BucketGranularity::Week
+        | BucketGranularity::Month
+        | BucketGranularity::Quarter) => {
+            let step_months = match granularity {
+                BucketGranularity::Month => Some(1),
+                BucketGranularity::Quarter => Some(3),
+                _ => None,
+            };
+            let mut cur = calendar_bucket_start(from, tz, granularity);
+            while cur < to {
+                starts.push(cur);
+                cur = match step_months {
+                    Some(months) => add_local_months(cur, tz, months),
+                    None => {
+                        cur + match granularity {
+                            BucketGranularity::Day => Duration::days(1),
+                            BucketGranularity::Week => Duration::days(7),
+                            _ => unreachable!(),
+                        }
+                    }
+                };
+            }
+        }
+    }
+    starts
+}
+
+/// Zero-fills a bucket series across `[from, to]` at the window's granularity,
+/// so a custom date range always draws the whole selected period.
+fn zero_fill_buckets(
+    series: Vec<TimeBucket>,
+    granularity: BucketGranularity,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    origin: DateTime<Utc>,
+    tz: Tz,
+) -> Vec<TimeBucket> {
+    let totals: BTreeMap<DateTime<Utc>, i64> = series
+        .into_iter()
+        .map(|bucket| (bucket.start, bucket.total))
+        .collect();
+    bucket_starts(granularity, from, to, origin, tz)
+        .into_iter()
+        .map(|start| TimeBucket {
+            start,
+            total: totals.get(&start).copied().unwrap_or(0),
+        })
+        .collect()
 }
 
 /// Folds buckets into per-weekday totals (ISO Mon = 1 .. Sun = 7) in `tz`.
@@ -179,23 +379,40 @@ fn weekday_totals(buckets: &[TimeBucket], tz: Tz) -> Vec<WeekdayTotal> {
         .collect()
 }
 
-/// The aggregate + per-group data for one timeframe. A "group" is a channel
+/// Folds per-group weekday totals into an aggregate. Used when the buckets are
+/// wider than a day (custom week/month/quarter ranges) and the weekday radar
+/// must come from raw measurements instead of the bucket series.
+fn fold_weekdays(by_group: &HashMap<uuid::Uuid, Vec<WeekdayTotal>>) -> Vec<WeekdayTotal> {
+    let mut totals: BTreeMap<u8, i64> = BTreeMap::new();
+    for weekdays in by_group.values() {
+        for weekday in weekdays {
+            *totals.entry(weekday.weekday).or_insert(0) += weekday.total;
+        }
+    }
+    totals
+        .into_iter()
+        .filter(|(_, total)| *total > 0)
+        .map(|(weekday, total)| WeekdayTotal { weekday, total })
+        .collect()
+}
+
+/// The aggregate + per-group data for one window pair. A "group" is a channel
 /// (detail page) or a station (summary page); `group_of_channel` maps each
 /// channel id to its group id and `group_order` gives the stable output
 /// order. Everything (the aggregate series, the weekday radar and the pie)
 /// is derived from the **two** per-channel bucket queries, so the heavy
-/// aggregation runs a single `date_bin` scan per period per timeframe.
+/// aggregation runs a single bucket scan per period.
 ///
 /// With `exclude_new_stations` (the Bike-Trends setting) only groups that have
 /// measurements covering the whole current **and** previous window are folded
 /// in (like-for-like), so newly-built stations no longer inflate the current
-/// period. The check is generic over any window pair — a future custom from/to
-/// date picker reuses it unchanged.
+/// period. A custom from/to range has no previous period (`previous = None`):
+/// only the current window gates, and the previous outputs stay empty.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn period_data(
     repository: &dyn MeasurementRepository,
     current: &Window,
-    previous: &Window,
+    previous: Option<&Window>,
     timezone: &str,
     tz: Tz,
     now: DateTime<Utc>,
@@ -233,22 +450,32 @@ pub(super) fn period_data(
                 }
             }
         }
-        let mut covers_previous: HashSet<uuid::Uuid> = HashSet::new();
-        let previous_coverage =
-            repository.resolution_coverage_by_channel(previous.from, previous.to, channel_ids)?;
-        for row in &previous_coverage {
-            if covers_whole_window(
-                row.resolution_seconds,
-                row.first,
-                row.last,
-                previous.from,
-                previous.to,
-                now,
-            ) && let Some(&group) = group_of_channel.get(&row.channel_id)
-            {
-                covers_previous.insert(group);
+        let covers_previous: HashSet<uuid::Uuid> = match previous {
+            Some(previous) => {
+                let mut covers = HashSet::new();
+                let previous_coverage = repository.resolution_coverage_by_channel(
+                    previous.from,
+                    previous.to,
+                    channel_ids,
+                )?;
+                for row in &previous_coverage {
+                    if covers_whole_window(
+                        row.resolution_seconds,
+                        row.first,
+                        row.last,
+                        previous.from,
+                        previous.to,
+                        now,
+                    ) && let Some(&group) = group_of_channel.get(&row.channel_id)
+                    {
+                        covers.insert(group);
+                    }
+                }
+                covers
             }
-        }
+            // No previous period (custom range): only the current window gates.
+            None => group_order.iter().copied().collect(),
+        };
         covers_current
             .intersection(&covers_previous)
             .copied()
@@ -270,7 +497,7 @@ pub(super) fn period_data(
         .sum_buckets_by_channel(
             current.from,
             current.to,
-            current.bucket_seconds,
+            current.granularity,
             current.origin,
             timezone,
             channel_ids,
@@ -279,16 +506,20 @@ pub(super) fn period_data(
         .into_iter()
         .filter(|row| in_established(row.channel_id))
         .collect();
-    let previous_rows: Vec<ChannelBucket> = repository
-        .sum_buckets_by_channel(
-            previous.from,
-            previous.to,
-            previous.bucket_seconds,
-            previous.origin,
-            timezone,
-            channel_ids,
-            None,
-        )?
+    let previous_rows: Vec<ChannelBucket> = previous
+        .map(|previous| {
+            repository.sum_buckets_by_channel(
+                previous.from,
+                previous.to,
+                previous.granularity,
+                previous.origin,
+                timezone,
+                channel_ids,
+                None,
+            )
+        })
+        .transpose()?
+        .unwrap_or_default()
         .into_iter()
         .filter(|row| in_established(row.channel_id))
         .collect();
@@ -303,6 +534,23 @@ pub(super) fn period_data(
         .into_iter()
         .map(|(start, total)| TimeBucket { start, total })
         .collect();
+    // A custom range has no previous period and the user picked the exact
+    // from/to, so the aggregate series is zero-filled to draw the whole period
+    // (months/weeks without traffic render as 0 instead of being omitted).
+    // When the range has no data at all the series stays empty, so the UI can
+    // still show an empty state instead of a full grid of zero bars.
+    let current_series = if previous.is_none() && !current_series.is_empty() {
+        zero_fill_buckets(
+            current_series,
+            current.granularity,
+            current.from,
+            current.to,
+            current.origin,
+            tz,
+        )
+    } else {
+        current_series
+    };
     let mut previous_map: BTreeMap<DateTime<Utc>, i64> = BTreeMap::new();
     for row in &previous_rows {
         *previous_map.entry(row.start).or_insert(0) += row.total;
@@ -312,11 +560,45 @@ pub(super) fn period_data(
         .map(|(start, total)| TimeBucket { start, total })
         .collect();
 
-    // Aggregate weekday radar: every bucket belongs to a single local
-    // weekday, so folding the series yields the same totals as a per-row
-    // `sum_weekdays`. Same for the previous period.
-    let weekday_radar = weekday_totals(&current_series, tz);
-    let weekday_radar_previous = weekday_totals(&previous_series, tz);
+    // Weekday radar: with daily-or-finer buckets (the fixed timeframes) folding
+    // the bucket series yields the same totals as a per-row sum. With wider
+    // custom-range buckets (week/month/quarter) the weekday radar is computed
+    // over the raw measurements via `sum_weekdays_by_channel`, restricted to
+    // established groups. A custom range has no previous period, so the
+    // previous weekday radar stays empty.
+    let wide_buckets = !is_daily_or_finer(current.granularity);
+    let mut current_weekday_by_group: HashMap<uuid::Uuid, Vec<WeekdayTotal>> = HashMap::new();
+    if wide_buckets {
+        for row in repository.sum_weekdays_by_channel(
+            current.from,
+            current.to,
+            timezone,
+            channel_ids,
+            None,
+        )? {
+            if in_established(row.channel_id)
+                && let Some(&group_id) = group_of_channel.get(&row.channel_id)
+            {
+                current_weekday_by_group
+                    .entry(group_id)
+                    .or_default()
+                    .push(WeekdayTotal {
+                        weekday: row.weekday,
+                        total: row.total,
+                    });
+            }
+        }
+    }
+    let weekday_radar = if wide_buckets {
+        fold_weekdays(&current_weekday_by_group)
+    } else {
+        weekday_totals(&current_series, tz)
+    };
+    let weekday_radar_previous = if wide_buckets {
+        Vec::new()
+    } else {
+        weekday_totals(&previous_series, tz)
+    };
 
     // Per-group hour-of-day totals for the nerd-stats hour radar.
     let mut current_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
@@ -336,19 +618,25 @@ pub(super) fn period_data(
         }
     }
     let mut previous_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
-    for row in
-        repository.sum_hours_by_channel(previous.from, previous.to, timezone, channel_ids, None)?
-    {
-        if in_established(row.channel_id)
-            && let Some(&group_id) = group_of_channel.get(&row.channel_id)
-        {
-            previous_hour_by_group
-                .entry(group_id)
-                .or_default()
-                .push(HourTotal {
-                    hour: row.hour,
-                    total: row.total,
-                });
+    if let Some(previous) = previous {
+        for row in repository.sum_hours_by_channel(
+            previous.from,
+            previous.to,
+            timezone,
+            channel_ids,
+            None,
+        )? {
+            if in_established(row.channel_id)
+                && let Some(&group_id) = group_of_channel.get(&row.channel_id)
+            {
+                previous_hour_by_group
+                    .entry(group_id)
+                    .or_default()
+                    .push(HourTotal {
+                        hour: row.hour,
+                        total: row.total,
+                    });
+            }
         }
     }
 
@@ -371,9 +659,15 @@ pub(super) fn period_data(
         };
         (fold(&current_hour_by_group), fold(&previous_hour_by_group))
     } else {
+        let previous_hours = match previous {
+            Some(previous) => {
+                repository.sum_hours(previous.from, previous.to, timezone, channel_ids, None)?
+            }
+            None => Vec::new(),
+        };
         (
             repository.sum_hours(current.from, current.to, timezone, channel_ids, None)?,
-            repository.sum_hours(previous.from, previous.to, timezone, channel_ids, None)?,
+            previous_hours,
         )
     };
 
@@ -407,24 +701,50 @@ pub(super) fn period_data(
 
     // Keep the group order stable; a group is only included when it has
     // data in at least one of the two periods (non-established groups are
-    // empty after filtering and are dropped automatically).
+    // empty after filtering and are dropped automatically). For a custom
+    // range the per-group current series is zero-filled too, so the
+    // per-channel / per-station nerd charts draw the whole selected period.
+    let custom_range = previous.is_none();
     let per_group = group_order
         .iter()
         .filter_map(|group_id| {
-            let current = current_by_group.remove(group_id).unwrap_or_default();
-            let previous = previous_by_group.remove(group_id).unwrap_or_default();
-            if current.is_empty() && previous.is_empty() {
+            let mut current_series = current_by_group.remove(group_id).unwrap_or_default();
+            let previous_series = previous_by_group.remove(group_id).unwrap_or_default();
+            if current_series.is_empty() && previous_series.is_empty() {
                 return None;
             }
+            if custom_range && !current_series.is_empty() {
+                current_series = zero_fill_buckets(
+                    current_series,
+                    current.granularity,
+                    current.from,
+                    current.to,
+                    current.origin,
+                    tz,
+                );
+            }
+            let (weekday_radar, weekday_radar_previous) = if wide_buckets {
+                (
+                    current_weekday_by_group
+                        .remove(group_id)
+                        .unwrap_or_default(),
+                    Vec::new(),
+                )
+            } else {
+                (
+                    weekday_totals(&current_series, tz),
+                    weekday_totals(&previous_series, tz),
+                )
+            };
             Some(GroupGraphData {
                 group_id: *group_id,
-                weekday_radar: weekday_totals(&current, tz),
-                weekday_radar_previous: weekday_totals(&previous, tz),
+                weekday_radar,
+                weekday_radar_previous,
                 hourly: current_hour_by_group.remove(group_id).unwrap_or_default(),
                 hourly_previous: previous_hour_by_group.remove(group_id).unwrap_or_default(),
                 pie_total: pie_by_group.get(group_id).copied().unwrap_or(0),
-                current,
-                previous,
+                current: current_series,
+                previous: previous_series,
             })
         })
         .collect();
@@ -451,7 +771,7 @@ pub(super) fn period_data(
 pub(super) fn period_graphs_per_channel(
     repository: &dyn MeasurementRepository,
     current: &Window,
-    previous: &Window,
+    previous: Option<&Window>,
     timezone: &str,
     tz: Tz,
     now: DateTime<Utc>,
@@ -477,15 +797,22 @@ pub(super) fn period_graphs_per_channel(
 
     // Station-level "new" flag (Bike-Trends): the station does not have
     // measurements covering the whole current or previous window, so there is no
-    // like-for-like comparison. Computed over the station's channels in two
-    // aggregate coverage queries.
+    // like-for-like comparison. Computed over the station's channels in
+    // aggregate coverage queries. A custom range has no previous period, so
+    // only the current window is checked.
     let is_new = if exclude_new_stations {
         let current_coverage =
             repository.resolution_coverage(current.from, current.to, channel_ids)?;
-        let previous_coverage =
-            repository.resolution_coverage(previous.from, previous.to, channel_ids)?;
-        !has_full_coverage(&current_coverage, current.from, current.to, now)
-            || !has_full_coverage(&previous_coverage, previous.from, previous.to, now)
+        let current_ok = has_full_coverage(&current_coverage, current.from, current.to, now);
+        let previous_ok = match previous {
+            Some(previous) => {
+                let previous_coverage =
+                    repository.resolution_coverage(previous.from, previous.to, channel_ids)?;
+                has_full_coverage(&previous_coverage, previous.from, previous.to, now)
+            }
+            None => true,
+        };
+        !current_ok || !previous_ok
     } else {
         false
     };
@@ -533,7 +860,7 @@ pub(super) fn period_graphs_per_channel(
 pub(super) fn period_graphs_per_station(
     repository: &dyn MeasurementRepository,
     current: &Window,
-    previous: &Window,
+    previous: Option<&Window>,
     timezone: &str,
     tz: Tz,
     now: DateTime<Utc>,

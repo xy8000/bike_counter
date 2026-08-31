@@ -21,8 +21,9 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelTotal, HourTotal,
-    MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelTotal,
+    ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal, ResolutionCoverage,
+    TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
@@ -188,12 +189,60 @@ impl MemoryMeasurementRepository {
 
     fn bucket_start(
         timestamp: DateTime<Utc>,
+        granularity: BucketGranularity,
         origin: DateTime<Utc>,
-        bucket_seconds: i64,
+        timezone: &str,
     ) -> DateTime<Utc> {
-        let elapsed = timestamp.signed_duration_since(origin).num_seconds();
-        let index = elapsed.div_euclid(bucket_seconds);
-        origin + chrono::Duration::seconds(index * bucket_seconds)
+        // Mirrors the real repository: fixed-width buckets align to `origin`,
+        // calendar buckets truncate to the local day/week/month/quarter start in
+        // the station timezone (`date_trunc`), so the zero-fill grid in graphs.rs
+        // lines up with the test buckets.
+        let tz: chrono_tz::Tz = timezone.parse().expect("test timezone must be valid");
+        match granularity {
+            BucketGranularity::Fixed { seconds } => {
+                let elapsed = timestamp.signed_duration_since(origin).num_seconds();
+                let index = elapsed.div_euclid(seconds);
+                origin + chrono::Duration::seconds(index * seconds)
+            }
+            BucketGranularity::Day => {
+                let local = timestamp.with_timezone(&tz);
+                let naive = local.date_naive().and_hms_opt(0, 0, 0).unwrap();
+                tz.from_local_datetime(&naive)
+                    .earliest()
+                    .unwrap()
+                    .with_timezone(&Utc)
+            }
+            BucketGranularity::Week => {
+                let local = timestamp.with_timezone(&tz);
+                let date = local.date_naive()
+                    - chrono::Days::new(local.weekday().num_days_from_monday() as u64);
+                let naive = date.and_hms_opt(0, 0, 0).unwrap();
+                tz.from_local_datetime(&naive)
+                    .earliest()
+                    .unwrap()
+                    .with_timezone(&Utc)
+            }
+            BucketGranularity::Month => {
+                let local = timestamp.with_timezone(&tz);
+                let first =
+                    chrono::NaiveDate::from_ymd_opt(local.year(), local.month(), 1).unwrap();
+                let naive = first.and_hms_opt(0, 0, 0).unwrap();
+                tz.from_local_datetime(&naive)
+                    .earliest()
+                    .unwrap()
+                    .with_timezone(&Utc)
+            }
+            BucketGranularity::Quarter => {
+                let local = timestamp.with_timezone(&tz);
+                let month = ((local.month() - 1) / 3) * 3 + 1;
+                let first = chrono::NaiveDate::from_ymd_opt(local.year(), month, 1).unwrap();
+                let naive = first.and_hms_opt(0, 0, 0).unwrap();
+                tz.from_local_datetime(&naive)
+                    .earliest()
+                    .unwrap()
+                    .with_timezone(&Utc)
+            }
+        }
     }
 }
 
@@ -245,9 +294,9 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-        bucket_seconds: i64,
+        granularity: BucketGranularity,
         origin: DateTime<Utc>,
-        _timezone: &str,
+        timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<TimeBucket>, DomainError> {
@@ -256,7 +305,7 @@ impl MeasurementRepository for MemoryMeasurementRepository {
             .in_window(from, to, channel_ids)
             .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
         {
-            let start = Self::bucket_start(m.timestamp.0, origin, bucket_seconds);
+            let start = Self::bucket_start(m.timestamp.0, granularity, origin, timezone);
             *map.entry(start).or_insert(0) += m.value.0;
         }
         Ok(map
@@ -269,9 +318,9 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-        bucket_seconds: i64,
+        granularity: BucketGranularity,
         origin: DateTime<Utc>,
-        _timezone: &str,
+        timezone: &str,
         channel_ids: &[measurement_vo::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelBucket>, DomainError> {
@@ -280,7 +329,7 @@ impl MeasurementRepository for MemoryMeasurementRepository {
             .in_window(from, to, channel_ids)
             .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
         {
-            let start = Self::bucket_start(m.timestamp.0, origin, bucket_seconds);
+            let start = Self::bucket_start(m.timestamp.0, granularity, origin, timezone);
             *map.entry((m.channel_id.0, start)).or_insert(0) += m.value.0;
         }
         Ok(map
@@ -312,6 +361,32 @@ impl MeasurementRepository for MemoryMeasurementRepository {
         Ok(map
             .into_iter()
             .map(|(weekday, total)| WeekdayTotal { weekday, total })
+            .collect())
+    }
+
+    fn sum_weekdays_by_channel(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        _timezone: &str,
+        channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelWeekdayTotal>, DomainError> {
+        let mut map: BTreeMap<(Uuid, u8), i64> = BTreeMap::new();
+        for m in self
+            .in_window(from, to, channel_ids)
+            .filter(|m| resolution_seconds.is_none_or(|r| m.resolution_seconds.0 == r))
+        {
+            let weekday = (m.timestamp.0.weekday().num_days_from_monday() + 1) as u8;
+            *map.entry((m.channel_id.0, weekday)).or_insert(0) += m.value.0;
+        }
+        Ok(map
+            .into_iter()
+            .map(|((channel_id, weekday), total)| ChannelWeekdayTotal {
+                channel_id,
+                weekday,
+                total,
+            })
             .collect())
     }
 
@@ -2047,4 +2122,369 @@ fn global_summary_excludes_new_stations_from_the_last_day_total() {
         plain.station_count, filtered.station_count,
         "the station count stays factual"
     );
+}
+
+#[test]
+fn detail_custom_range_groups_by_range_length() {
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    // A "now" after every custom range below, so the current window is complete.
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    let custom = |measurements: Vec<Measurement>, from: DateTime<Utc>, to: DateTime<Utc>| {
+        promenade_service(measurements)
+            .detail_graphs_custom(id, from, to, now, false)
+            .unwrap()
+    };
+    let diffs = |series: &[TimeBucket]| -> Vec<i64> {
+        series
+            .windows(2)
+            .map(|w| (w[1].start - w[0].start).num_seconds())
+            .collect()
+    };
+
+    // <= 24h → 15-minute buckets.
+    let m: Vec<Measurement> = (0..6u32)
+        .flat_map(|h| {
+            [0u32, 15, 30, 45]
+                .into_iter()
+                .map(|minute| measurement(CHANNEL_A1, 1, utc(2023, 1, 1, h, minute, 0)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let g = custom(m, utc(2023, 1, 1, 0, 0, 0), utc(2023, 1, 1, 6, 0, 0));
+    assert_eq!(g.current.len(), 24, "one 15-minute bucket per quarter hour");
+    assert!(diffs(&g.current).iter().all(|d| *d == 900));
+
+    // <= 48h → 1-hour buckets.
+    let m: Vec<Measurement> = (0..48u32)
+        .map(|h| {
+            measurement(
+                CHANNEL_A1,
+                1,
+                utc(2023, 1, 1, 0, 0, 0) + chrono::Duration::hours(h as i64),
+            )
+        })
+        .collect();
+    let g = custom(m, utc(2023, 1, 1, 0, 0, 0), utc(2023, 1, 3, 0, 0, 0));
+    assert_eq!(g.current.len(), 48, "one hour bucket per hour");
+    assert!(diffs(&g.current).iter().all(|d| *d == 3600));
+
+    // <= 30d → 1-day buckets.
+    let m: Vec<Measurement> = (0..10u32)
+        .map(|d| {
+            measurement(
+                CHANNEL_A1,
+                1,
+                utc(2023, 1, 1, 0, 0, 0) + chrono::Duration::days(d as i64),
+            )
+        })
+        .collect();
+    let g = custom(m, utc(2023, 1, 1, 0, 0, 0), utc(2023, 1, 10, 0, 0, 0));
+    assert_eq!(g.current.len(), 10, "one day bucket per day");
+    assert!(diffs(&g.current).iter().all(|d| *d == 86_400));
+
+    // <= 90d → 1-week buckets (Monday-aligned in the station timezone).
+    let m: Vec<Measurement> = (0..8u32)
+        .map(|w| {
+            measurement(
+                CHANNEL_A1,
+                1,
+                utc(2023, 1, 2, 0, 0, 0) + chrono::Duration::days((w * 7) as i64),
+            )
+        })
+        .collect();
+    let g = custom(m, utc(2023, 1, 2, 0, 0, 0), utc(2023, 2, 26, 0, 0, 0));
+    assert_eq!(g.current.len(), 8, "one week bucket per week");
+    assert_eq!(
+        g.current[0].start,
+        utc(2023, 1, 1, 23, 0, 0),
+        "Monday-aligned week start in the station timezone"
+    );
+
+    // <= 2y → 1-month buckets (calendar-aligned).
+    let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 1, utc(2023, 1, 10, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2023, 2, 10, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2023, 3, 10, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2023, 4, 10, 0, 0, 0)),
+    ];
+    let g = custom(m, utc(2023, 1, 1, 0, 0, 0), utc(2023, 4, 30, 0, 0, 0));
+    assert_eq!(g.current.len(), 4, "one month bucket per month");
+    assert_eq!(
+        g.current[0].start,
+        utc(2022, 12, 31, 23, 0, 0),
+        "month-aligned start in the station timezone"
+    );
+    assert_eq!(
+        g.current[3].start,
+        utc(2023, 3, 31, 22, 0, 0),
+        "month-aligned last (summer time)"
+    );
+
+    // > 2y → 1-quarter buckets (calendar-aligned), zero-filled to the whole
+    // selected range (Q1 2020 .. Q1 2023).
+    let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 1, utc(2020, 1, 15, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2020, 4, 15, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2020, 7, 15, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2020, 10, 15, 0, 0, 0)),
+        measurement(CHANNEL_A1, 1, utc(2021, 1, 15, 0, 0, 0)),
+    ];
+    let g = custom(m, utc(2020, 1, 1, 0, 0, 0), utc(2023, 1, 1, 0, 0, 0));
+    assert_eq!(
+        g.current.len(),
+        13,
+        "one quarter bucket per quarter of the selected range"
+    );
+    assert_eq!(
+        g.current[0].start,
+        utc(2019, 12, 31, 23, 0, 0),
+        "quarter-aligned start in the station timezone"
+    );
+    assert_eq!(
+        g.current[4].start,
+        utc(2020, 12, 31, 23, 0, 0),
+        "quarter-aligned start of Q1 2021"
+    );
+    assert_eq!(
+        g.current[12].start,
+        utc(2022, 12, 31, 23, 0, 0),
+        "quarter-aligned start of Q1 2023"
+    );
+    assert_eq!(g.current[8].total, 0, "an empty quarter renders as 0");
+    assert_eq!(
+        sum_buckets(&g.current),
+        5,
+        "zero-fill does not change totals"
+    );
+}
+
+#[test]
+fn detail_custom_range_zero_fills_empty_buckets() {
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    // Data only in January and August; the months in between have no traffic.
+    let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 10, utc(2024, 1, 15, 0, 0, 0)),
+        measurement(CHANNEL_A1, 5, utc(2024, 8, 15, 0, 0, 0)),
+    ];
+    let g = promenade_service(m)
+        .detail_graphs_custom(
+            id,
+            utc(2024, 1, 1, 0, 0, 0),
+            utc(2024, 8, 31, 0, 0, 0),
+            now,
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        g.current.len(),
+        8,
+        "every month of the selected range is drawn, not only months with data"
+    );
+    assert_eq!(
+        g.current[0],
+        TimeBucket {
+            start: utc(2023, 12, 31, 23, 0, 0),
+            total: 10,
+        },
+        "January is zero-filled in as the first bucket"
+    );
+    assert_eq!(g.current[1].total, 0, "February renders as 0");
+    assert_eq!(g.current[6].total, 0, "July renders as 0");
+    assert_eq!(
+        g.current[7],
+        TimeBucket {
+            start: utc(2024, 7, 31, 22, 0, 0),
+            total: 5,
+        },
+        "August keeps its total"
+    );
+    assert_eq!(
+        sum_buckets(&g.current),
+        15,
+        "zero-fill does not change totals"
+    );
+    assert_eq!(g.per_channel.len(), 1, "only the channel with data is kept");
+    assert_eq!(
+        g.per_channel[0].current.len(),
+        8,
+        "the per-channel series is zero-filled to the whole period too"
+    );
+}
+
+#[test]
+fn detail_custom_range_has_no_previous_period_and_wide_radars() {
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 10, utc(2023, 1, 10, 12, 0, 0)), // Wed
+        measurement(CHANNEL_A2, 5, utc(2023, 2, 20, 12, 0, 0)),  // Mon
+    ];
+    let g = promenade_service(m)
+        .detail_graphs_custom(
+            id,
+            utc(2023, 1, 1, 0, 0, 0),
+            utc(2023, 5, 1, 0, 0, 0),
+            now,
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        sum_buckets(&g.current),
+        15,
+        "both channels over the custom range"
+    );
+    assert!(
+        g.previous.is_empty(),
+        "a custom range has no previous period"
+    );
+    assert!(g.weekday_radar_previous.is_empty());
+    assert!(g.hourly_previous.is_empty());
+    // Wide (month) buckets: the weekday radar still reflects the raw measurements.
+    let radar_total: i64 = g.weekday_radar.iter().map(|w| w.total).sum();
+    assert_eq!(radar_total, 15);
+    assert!(g.per_channel.iter().all(|c| {
+        c.previous.is_empty() && c.weekday_radar_previous.is_empty() && c.hourly_previous.is_empty()
+    }));
+}
+
+#[test]
+fn stations_summary_custom_range_aggregates_without_previous() {
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 100, utc(2023, 1, 10, 12, 0, 0)),
+        measurement(CHANNEL_B1, 50, utc(2023, 2, 20, 12, 0, 0)),
+    ];
+    let g = default_summary_service(m)
+        .stations_summary_graphs_custom(
+            bounds(),
+            &[],
+            utc(2023, 1, 1, 0, 0, 0),
+            utc(2023, 5, 1, 0, 0, 0),
+            now,
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        sum_buckets(&g.current),
+        150,
+        "both stations over the custom range"
+    );
+    assert!(
+        g.previous.is_empty(),
+        "a custom range has no previous period"
+    );
+    assert_eq!(g.per_station.len(), 2);
+    assert!(g.per_station.iter().all(|s| s.previous.is_empty()));
+}
+
+#[test]
+fn detail_custom_range_rejects_an_inverted_range() {
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    let result = promenade_service(vec![]).detail_graphs_custom(
+        id,
+        utc(2023, 5, 1, 0, 0, 0),
+        utc(2023, 1, 1, 0, 0, 0),
+        now,
+        false,
+    );
+    assert!(result.is_err(), "from after to is rejected");
+}
+
+#[test]
+fn detail_custom_range_exclude_new_stations_checks_only_the_current_window() {
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    // A single mid-window measurement: the station does not cover the whole
+    // custom range, so with the Bike-Trends setting it is "new".
+    let m = vec![measurement(CHANNEL_A1, 5, utc(2023, 3, 1, 12, 0, 0))];
+    let g = promenade_service(m)
+        .detail_graphs_custom(
+            id,
+            utc(2023, 1, 1, 0, 0, 0),
+            utc(2023, 5, 1, 0, 0, 0),
+            now,
+            true,
+        )
+        .unwrap();
+    assert!(
+        g.is_new,
+        "the station lacks full coverage of the custom window"
+    );
+    // The detail page never filters its own series — it only reports `is_new`
+    // (the summary page is the one that drops non-established stations).
+    assert_eq!(sum_buckets(&g.current), 5, "its own data is still shown");
+    assert!(g.previous.is_empty());
+}
+
+#[test]
+fn stations_summary_custom_range_exclude_new_stations_filters_new_stations() {
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    // A covers the whole custom window (measurements at both bounds); B is new
+    // (a single mid-window measurement).
+    let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 10, utc(2023, 1, 1, 0, 0, 0)),
+        measurement(CHANNEL_A1, 20, utc(2023, 5, 1, 0, 0, 0)),
+        measurement(CHANNEL_B1, 50, utc(2023, 3, 1, 12, 0, 0)),
+    ];
+    let plain = default_summary_service(m.clone())
+        .stations_summary_graphs_custom(
+            bounds(),
+            &[],
+            utc(2023, 1, 1, 0, 0, 0),
+            utc(2023, 5, 1, 0, 0, 0),
+            now,
+            false,
+        )
+        .unwrap();
+    let filtered = default_summary_service(m)
+        .stations_summary_graphs_custom(
+            bounds(),
+            &[],
+            utc(2023, 1, 1, 0, 0, 0),
+            utc(2023, 5, 1, 0, 0, 0),
+            now,
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(
+        plain.per_station.len(),
+        2,
+        "all stations without the filter"
+    );
+    assert_eq!(
+        filtered.per_station.len(),
+        1,
+        "the new station B is dropped"
+    );
+    assert_eq!(sum_buckets(&filtered.current), 30, "only A is aggregated");
+}
+
+#[test]
+fn stations_summary_custom_range_with_no_included_stations_is_empty() {
+    let now = utc(2027, 1, 1, 0, 0, 0);
+    let empty = GeoBounds {
+        min_latitude: 0.0,
+        min_longitude: 0.0,
+        max_latitude: 0.001,
+        max_longitude: 0.001,
+    };
+    let g = default_summary_service(vec![])
+        .stations_summary_graphs_custom(
+            empty,
+            &[],
+            utc(2023, 1, 1, 0, 0, 0),
+            utc(2023, 5, 1, 0, 0, 0),
+            now,
+            false,
+        )
+        .unwrap();
+    assert!(g.current.is_empty());
+    assert!(g.per_station.is_empty());
+    assert!(g.station_pie.is_empty());
 }

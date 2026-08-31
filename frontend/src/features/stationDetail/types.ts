@@ -38,8 +38,15 @@ export interface MonthTotal {
   total: number
 }
 
-/// The selectable timeframes driven by the shared dropdown.
-export type Timeframe = 'day' | 'week' | 'last_30_days' | 'year'
+/// The selectable timeframes driven by the shared settings: the four fixed
+/// intervals plus `individual`, which shows two date pickers for a custom
+/// from/to range.
+export type Timeframe = 'day' | 'week' | 'last_30_days' | 'year' | 'individual'
+
+/// The fixed timeframes, each served by its own HATEOAS graph link. The
+/// `individual` timeframe has no fixed link — it builds its own from the
+/// custom from/to range.
+export type FixedTimeframe = Exclude<Timeframe, 'individual'>
 
 /// The per-channel time-series for one timeframe (nerd stats).
 export interface PerChannelSeries {
@@ -98,8 +105,10 @@ export interface StationDetailPage {
   _links: DetailLinks
 }
 
-/// Maps a `Timeframe` to its HATEOAS link key on the detail shell.
-export const GRAPH_LINK_KEYS: Record<Timeframe, keyof DetailLinks> = {
+/// Maps a fixed `Timeframe` to its HATEOAS link key on the detail shell. The
+/// `individual` timeframe uses the `graphs_day` link as its base and appends
+/// the custom `from`/`to` range.
+export const GRAPH_LINK_KEYS: Record<FixedTimeframe, keyof DetailLinks> = {
   day: 'graphs_day',
   week: 'graphs_week',
   last_30_days: 'graphs_last_30_days',

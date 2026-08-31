@@ -4,7 +4,7 @@
 /// lives here instead of being duplicated.
 
 import { formatFullDate, formatFullDateTime, LOCALE } from '../../lib/format'
-import type { TimeBucket, Timeframe } from './types'
+import type { FixedTimeframe, TimeBucket, Timeframe } from './types'
 import type { LineSeries } from './TimeSeriesLineChart'
 
 type TimeUnit = 'hour' | 'day' | 'month'
@@ -77,7 +77,7 @@ export interface TimeframeConfig {
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
 
-export const TIMEFRAMES: Record<Timeframe, TimeframeConfig> = {
+export const TIMEFRAMES: Record<FixedTimeframe, TimeframeConfig> = {
   day: {
     key: 'day',
     label: '24 hours',
@@ -139,7 +139,7 @@ export const TIMEFRAMES: Record<Timeframe, TimeframeConfig> = {
   },
 }
 
-export const TIMEFRAME_ORDER: Timeframe[] = ['day', 'week', 'last_30_days', 'year']
+export const TIMEFRAME_ORDER: FixedTimeframe[] = ['day', 'week', 'last_30_days', 'year']
 
 /// The x-axis domain of the selected timeframe, anchored on the current period's
 /// start. The year timeframe runs to the actual next local Jan 1; the others use
@@ -198,4 +198,104 @@ export function timeframeSeries(
     series.push({ key: 'previous', label: cfg.previousLabel, data: period.previous })
   }
   return series
+}
+
+// ---------------------------------------------------------------------------
+// "Individual" custom from/to range
+// ---------------------------------------------------------------------------
+
+/// The bucket resolution of a custom from/to range, mirroring the backend's
+/// `custom_granularity`: `<= 24h` → 15 minutes, `<= 48h` → 1 hour, `<= 30d` →
+/// 1 day, `<= 90d` → 1 week, `<= 2y` → 1 month, otherwise → 1 quarter.
+export type CustomResolution = '15m' | 'hour' | 'day' | 'week' | 'month' | 'quarter'
+
+/// Parses a `YYYY-MM-DD` input value into a browser-local `Date`.
+export function dateFromInput(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, (month ?? 1) - 1, day ?? 1)
+}
+
+/// Formats a browser-local `Date` as a `YYYY-MM-DD` input value.
+export function dateToInput(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/// The bucket resolution for an inclusive custom range `[from, to]` (the API
+/// range runs to the day after `to`, so the span equals the selected day count).
+export function customResolution(from: Date, to: Date): CustomResolution {
+  const toExclusive = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1)
+  const spanMs = toExclusive.getTime() - from.getTime()
+  const hours = spanMs / 3_600_000
+  const days = spanMs / 86_400_000
+  if (hours <= 24) return '15m'
+  if (hours <= 48) return 'hour'
+  if (days <= 30) return 'day'
+  if (days <= 90) return 'week'
+  if (days <= 730) return 'month'
+  return 'quarter'
+}
+
+/// Axis labels for week-aligned buckets: `dd.MM`.
+const weekAxis = timeAxis('day')
+
+/// Axis label for calendar-month buckets: `MMM yyyy`.
+function monthAxis(time: number): string {
+  return new Date(time).toLocaleDateString(LOCALE, { month: 'short', year: 'numeric' })
+}
+
+/// Axis label for calendar-quarter buckets: `Q<n> yyyy`.
+function quarterAxis(time: number): string {
+  const date = new Date(time)
+  const quarter = Math.floor(date.getMonth() / 3) + 1
+  return `Q${quarter} ${date.getFullYear()}`
+}
+
+/// The presentation config of the "Individual" timeframe, derived from the
+/// selected from/to range. There is no previous period (compare is disabled),
+/// so `previousLabel` is unused; the axis width covers the whole range.
+export function customTimeframeConfig(from: Date, to: Date): TimeframeConfig {
+  const resolution = customResolution(from, to)
+  const subtitle =
+    resolution === '15m'
+      ? '15-minute buckets'
+      : resolution === 'hour'
+        ? '1-hour buckets'
+        : resolution === 'week'
+          ? '1-week buckets'
+          : resolution === 'month'
+            ? '1-month buckets'
+            : resolution === 'quarter'
+              ? '1-quarter buckets'
+              : '1-day buckets'
+  const axis =
+    resolution === '15m' || resolution === 'hour'
+      ? timeAxis('hour')
+      : resolution === 'month'
+        ? monthAxis
+        : resolution === 'quarter'
+          ? quarterAxis
+          : weekAxis
+  const tooltip =
+    resolution === '15m' || resolution === 'hour' ? formatFullDateTime : formatFullDate
+  const toExclusive = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1)
+  return {
+    key: 'individual' as Timeframe,
+    label: 'Individual',
+    title: 'Individual range',
+    subtitle,
+    radarSubtitle: 'over the selected range',
+    pieSubtitle: 'over the selected range',
+    perChannelTitle: 'Individual by channel',
+    currentLabel: 'Selected range',
+    previousLabel: '',
+    axis,
+    tooltip,
+    // Identity period start: the aligned anchor is the first bucket, and the
+    // domain spans the whole selected range (no previous overlay).
+    periodStart: (time) => time,
+    domainWidthMs: toExclusive.getTime() - from.getTime(),
+  }
 }

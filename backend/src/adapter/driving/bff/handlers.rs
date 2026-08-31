@@ -94,6 +94,30 @@ fn as_of_query(as_of: DateTime<Utc>) -> String {
     as_of.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// Validates the optional custom `from`/`to` range of a graphs query (the
+/// "Individual" timeframe): both or neither must be present, and `from` must be
+/// before `to`. `Ok(None)` means the fixed `{timeframe}` path applies.
+#[allow(clippy::type_complexity)]
+fn parse_custom_range(
+    from: Option<DateTime<Utc>>,
+    to: Option<DateTime<Utc>>,
+) -> Result<Option<(DateTime<Utc>, DateTime<Utc>)>, DomainError> {
+    match (from, to) {
+        (Some(from), Some(to)) => {
+            if from >= to {
+                return Err(DomainError::InvalidQuery(
+                    "from must be before to".to_string(),
+                ));
+            }
+            Ok(Some((from, to)))
+        }
+        (None, None) => Ok(None),
+        _ => Err(DomainError::InvalidQuery(
+            "provide both 'from' and 'to' or neither".to_string(),
+        )),
+    }
+}
+
 /// Builds and validates the `GeoBounds` of a summary query (all four bounds are
 /// required and ordered).
 fn summary_bounds(params: &BffStationSummaryQueryParams) -> Result<GeoBounds, DomainError> {
@@ -517,19 +541,29 @@ pub async fn get_bff_station_detail_graphs(
     Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
 ) -> Result<Json<PeriodGraphsDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let Some(timeframe) = GraphTimeframe::from_key(&timeframe) else {
-        return Err(map_domain_error(DomainError::InvalidQuery(format!(
-            "unknown timeframe '{timeframe}'"
-        ))));
-    };
     let now = as_of_or_now(params.as_of);
     let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
-    let graphs = blocking(move || {
-        service.detail_graphs_timeframe(Id(id), timeframe, now, exclude_new_stations)
-    })
-    .await
-    .map_err(map_domain_error)?;
+    let graphs = match parse_custom_range(params.from, params.to).map_err(map_domain_error)? {
+        // Custom "Individual" range: the `{timeframe}` path segment is ignored.
+        Some((from, to)) => blocking(move || {
+            service.detail_graphs_custom(Id(id), from, to, now, exclude_new_stations)
+        })
+        .await
+        .map_err(map_domain_error)?,
+        None => {
+            let Some(timeframe) = GraphTimeframe::from_key(&timeframe) else {
+                return Err(map_domain_error(DomainError::InvalidQuery(format!(
+                    "unknown timeframe '{timeframe}'"
+                ))));
+            };
+            blocking(move || {
+                service.detail_graphs_timeframe(Id(id), timeframe, now, exclude_new_stations)
+            })
+            .await
+            .map_err(map_domain_error)?
+        }
+    };
     Ok(Json(graphs.into()))
 }
 
@@ -807,28 +841,49 @@ pub async fn get_bff_stations_summary_graphs(
     State(state): State<AppState>,
     Query(params): Query<BffStationSummaryQueryParams>,
 ) -> Result<Json<SummaryPeriodGraphsDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let Some(timeframe) = GraphTimeframe::from_key(&timeframe) else {
-        return Err(map_domain_error(DomainError::InvalidQuery(format!(
-            "unknown timeframe '{timeframe}'"
-        ))));
-    };
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
     let exclude_new_stations = params.exclude_new_stations;
-
     let service = state.station_analytics_service.clone();
-    let graphs = blocking(move || {
-        service.stations_summary_graphs_timeframe(
-            bounds,
-            &exclude,
-            timeframe,
-            now,
-            exclude_new_stations,
-        )
-    })
-    .await
-    .map_err(map_domain_error)?;
+
+    // Each `blocking` closure must own its captures; `exclude` is cloned for the
+    // custom branch so the two mutually-exclusive closures each get an owned
+    // slice (GeoBounds is `Copy`, so it needs no special handling).
+    let exclude_custom = exclude.clone();
+    let graphs = match parse_custom_range(params.from, params.to).map_err(map_domain_error)? {
+        // Custom "Individual" range: the `{timeframe}` path segment is ignored.
+        Some((from, to)) => blocking(move || {
+            service.stations_summary_graphs_custom(
+                bounds,
+                &exclude_custom,
+                from,
+                to,
+                now,
+                exclude_new_stations,
+            )
+        })
+        .await
+        .map_err(map_domain_error)?,
+        None => {
+            let Some(timeframe) = GraphTimeframe::from_key(&timeframe) else {
+                return Err(map_domain_error(DomainError::InvalidQuery(format!(
+                    "unknown timeframe '{timeframe}'"
+                ))));
+            };
+            blocking(move || {
+                service.stations_summary_graphs_timeframe(
+                    bounds,
+                    &exclude,
+                    timeframe,
+                    now,
+                    exclude_new_stations,
+                )
+            })
+            .await
+            .map_err(map_domain_error)?
+        }
+    };
     Ok(Json(graphs.into()))
 }
 

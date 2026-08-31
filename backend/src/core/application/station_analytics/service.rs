@@ -537,7 +537,39 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         graphs::period_graphs_per_channel(
             self.measurement_repository.as_ref(),
             &pair.current,
-            &pair.previous,
+            Some(&pair.previous),
+            &timezone,
+            tz,
+            now,
+            &channel_ids,
+            &channels,
+            exclude_new_stations,
+        )
+    }
+
+    fn detail_graphs_custom(
+        &self,
+        station_id: Id,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        now: DateTime<Utc>,
+        exclude_new_stations: bool,
+    ) -> Result<PeriodGraphs, DomainError> {
+        let station = self.counting_station_repository.find_by_id(station_id)?;
+        let tz: Tz = station.timezone.parse()?;
+        let timezone = station.timezone.0.clone();
+        let channels = self
+            .channel_repository
+            .find_by_counting_station_id(CountingStationId(station.id.0))?;
+        let channel_ids: Vec<ChannelId> = channels
+            .iter()
+            .map(|channel| ChannelId(channel.id.0))
+            .collect();
+        let current = graphs::custom_window(tz, from, to)?;
+        graphs::period_graphs_per_channel(
+            self.measurement_repository.as_ref(),
+            &current,
+            None,
             &timezone,
             tz,
             now,
@@ -651,7 +683,49 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         graphs::period_graphs_per_station(
             self.measurement_repository.as_ref(),
             &pair.current,
-            &pair.previous,
+            Some(&pair.previous),
+            &timezone,
+            tz,
+            now,
+            &channel_ids,
+            &station_ids,
+            &station_of_channel,
+            exclude_new_stations,
+        )
+    }
+
+    fn stations_summary_graphs_custom(
+        &self,
+        bounds: GeoBounds,
+        exclude: &[Id],
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        now: DateTime<Utc>,
+        exclude_new_stations: bool,
+    ) -> Result<SummaryPeriodGraphs, DomainError> {
+        let included = self.included_stations(bounds, exclude)?;
+        let Some(first) = included.first() else {
+            return Ok(SummaryPeriodGraphs {
+                current: Vec::new(),
+                previous: Vec::new(),
+                weekday_radar: Vec::new(),
+                weekday_radar_previous: Vec::new(),
+                hourly: Vec::new(),
+                hourly_previous: Vec::new(),
+                station_pie: Vec::new(),
+                per_station: Vec::new(),
+            });
+        };
+        let channels_by_station = self.channels_by_station()?;
+        let (station_ids, channel_ids, station_of_channel) =
+            Self::summary_group_ids(&included, &channels_by_station);
+        let tz: Tz = first.timezone.parse()?;
+        let timezone = first.timezone.0.clone();
+        let current = graphs::custom_window(tz, from, to)?;
+        graphs::period_graphs_per_station(
+            self.measurement_repository.as_ref(),
+            &current,
+            None,
             &timezone,
             tz,
             now,

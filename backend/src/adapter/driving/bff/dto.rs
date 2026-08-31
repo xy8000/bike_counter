@@ -276,7 +276,8 @@ pub struct BffStationQueryParams {
 
 /// Optional query parameters of the windowed stats-card sub-resources: the
 /// `as_of` reference time (ISO-8601 UTC) that pins the windows, making the
-/// response a pure function of the URL (and therefore cacheable).
+/// response a pure function of the URL (and therefore cacheable), plus the
+/// optional custom `from`/`to` range of the "Individual" timeframe.
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct AsOfQueryParams {
     #[serde(default)]
@@ -286,6 +287,14 @@ pub struct AsOfQueryParams {
     /// current + previous window. Defaults to false.
     #[serde(default)]
     pub exclude_new_stations: bool,
+    /// Custom range start (ISO-8601 UTC). When present, `to` must also be
+    /// present and the graphs ignore the `{timeframe}` path segment.
+    #[serde(default)]
+    pub from: Option<DateTime<Utc>>,
+    /// Custom range end (ISO-8601 UTC). When present, `from` must also be
+    /// present and `from` must be before `to`.
+    #[serde(default)]
+    pub to: Option<DateTime<Utc>>,
 }
 
 /// The **page-shell** BFF payload for the counting-station detail page: the
@@ -513,6 +522,14 @@ pub struct BffStationSummaryQueryParams {
     /// Defaults to false.
     #[serde(default)]
     pub exclude_new_stations: bool,
+    /// Custom range start (ISO-8601 UTC). When present, `to` must also be
+    /// present and the graphs ignore the `{timeframe}` path segment.
+    #[serde(default)]
+    pub from: Option<DateTime<Utc>>,
+    /// Custom range end (ISO-8601 UTC). When present, `from` must also be
+    /// present and `from` must be before `to`.
+    #[serde(default)]
+    pub to: Option<DateTime<Utc>>,
 }
 
 /// Query parameters of the global-summary endpoint. The Bike-Trends
