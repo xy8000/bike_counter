@@ -12,6 +12,7 @@ order. Statuses:
 
 | Status | Plan | File | Summary |
 |---|---|---|---|
+| [x] | Startup migration logging | [`72_startup_migration_logging_plan.md`](72_startup_migration_logging_plan.md) | Concise `Starting DB-Migrations` / applied-list / `not necessary` output during backend startup. |
 | [x] | Multi-city Playwright map/overview/detail tests | [`71_multicity_playwright_e2e_plan.md`](71_multicity_playwright_e2e_plan.md) | Single-boot Playwright run over a committed SQL fixture seeded from the current DB (Münster, Bonn, Hamburg), avoiding live provider imports; exercises map → overview → detail per city. |
 | [x] | Frontend Prettier formatting | [`70_frontend_prettier_fmt_plan.md`](70_frontend_prettier_fmt_plan.md) | Adds Prettier as the single frontend formatter and wires it into `make fmt` (write) + `make check` (CI check); no linting. |
 | [x] | Back to map preserves the previous view | [`67_back_to_map_preserves_view_plan.md`](67_back_to_map_preserves_view_plan.md) | Fixes the summary + detail "Back to map" links so they restore the prior map view: the summary link rebuilds `/?<bounds>` from the `/summary` URL, and the detail link history-backs when reached in-app (with a `/` fallback for deep links). |
