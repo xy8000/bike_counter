@@ -108,6 +108,34 @@ test('the hour-of-day radar renders next to the Weekdays radar', async ({ page }
   ).toBeVisible()
 })
 
+// Gasselstiege (Münster) has 6 channels; the e2e fixture synthesizes data for
+// all of them so every per-channel nerd-stats chart exceeds the 5-stream limit.
+const GASSELSTIEGE_ID = '97514fa2-2a21-4a17-b85c-6ec4aa74db27'
+
+test('the per-channel nerd-stats charts show the info note for a station with more than 5 channels', async ({
+  page,
+}) => {
+  await page.goto(`/stations/${GASSELSTIEGE_ID}`, { waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
+
+  // The per-channel line chart is replaced by the info note and draws nothing.
+  const lineCard = page.locator('[data-slot="card"]').filter({ hasText: 'This week by channel' })
+  await expect(lineCard.getByText(/too many data-streams to render/)).toBeVisible()
+  await expect(lineCard.locator('.recharts-wrapper')).toHaveCount(0)
+
+  // The per-channel weekday radar and the share pie are guarded the same way.
+  const weekdayCard = page.locator('[data-slot="card"]').filter({ hasText: 'Weekdays by channel' })
+  await expect(weekdayCard.getByText(/too many data-streams to render/)).toBeVisible()
+  const shareCard = page.locator('[data-slot="card"]').filter({ hasText: 'Share by channel' })
+  await expect(shareCard.getByText(/too many data-streams to render/)).toBeVisible()
+
+  // The aggregate "Detailed statistics" section is unaffected and still draws.
+  const statsSection = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Detailed statistics' }),
+  })
+  await expect(statsSection.locator('.recharts-wrapper').first()).toBeVisible()
+})
+
 test('the back-to-map button re-routes to the map and the browser back event returns', async ({
   page,
 }) => {

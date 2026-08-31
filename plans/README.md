@@ -12,6 +12,7 @@ order. Statuses:
 
 | Status | Plan | File | Summary |
 |---|---|---|---|
+| [x] | Frontend chart data-stream limit | [`73_frontend_chart_stream_limit_plan.md`](73_frontend_chart_stream_limit_plan.md) | Hides any per-station/per-channel chart that would draw more than 5 data-streams (line, weekday radar, hour radar, share pie) and shows an info-note instead, on both the summary and detail pages; adds Playwright e2e coverage. |
 | [x] | Startup migration logging | [`72_startup_migration_logging_plan.md`](72_startup_migration_logging_plan.md) | Concise `Starting DB-Migrations` / applied-list / `not necessary` output during backend startup. |
 | [x] | Multi-city Playwright map/overview/detail tests | [`71_multicity_playwright_e2e_plan.md`](71_multicity_playwright_e2e_plan.md) | Single-boot Playwright run over a committed SQL fixture seeded from the current DB (Münster, Bonn, Hamburg), avoiding live provider imports; exercises map → overview → detail per city. |
 | [x] | Frontend Prettier formatting | [`70_frontend_prettier_fmt_plan.md`](70_frontend_prettier_fmt_plan.md) | Adds Prettier as the single frontend formatter and wires it into `make fmt` (write) + `make check` (CI check); no linting. |

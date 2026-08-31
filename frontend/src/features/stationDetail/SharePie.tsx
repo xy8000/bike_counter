@@ -7,7 +7,8 @@ import {
 } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
 import { ChartEmptyState } from './ChartEmptyState'
-import { seriesColor } from './chartUtils'
+import { ChartLimitNotice } from './ChartLimitNotice'
+import { MAX_DATA_STREAMS, seriesColor } from './chartUtils'
 
 /// One share slice: an id, the display name and the total. Used for both the
 /// detail page's channel pie and the summary page's per-station pie.
@@ -20,13 +21,7 @@ export interface ShareSlice {
 /// Donut of each slice's share over the selected timeframe. Only slices with
 /// traffic get a segment; the tooltip shows the slice name. A small legend lists
 /// every slice with its colour and total.
-export function SharePie({
-  slices,
-  className,
-}: {
-  slices: ShareSlice[]
-  className?: string
-}) {
+export function SharePie({ slices, className }: { slices: ShareSlice[]; className?: string }) {
   const data = slices.filter((slice) => slice.total > 0)
   const config: ChartConfig = { total: { label: 'Bikes' } }
 
@@ -34,6 +29,10 @@ export function SharePie({
     <div className="flex flex-col items-center gap-3">
       {data.length === 0 ? (
         <ChartEmptyState message="No traffic for this period." className="py-16" />
+      ) : data.length > MAX_DATA_STREAMS ? (
+        // A per-channel/per-station pie with more than MAX_DATA_STREAMS slices
+        // is unreadable; show an info note instead of the donut + legend.
+        <ChartLimitNotice className="py-16" />
       ) : (
         <>
           <ChartContainer

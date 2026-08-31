@@ -8,7 +8,8 @@ import {
 import { cn } from '@/lib/utils'
 import type { HourTotal } from './types'
 import { ChartEmptyState } from './ChartEmptyState'
-import { seriesColor } from './chartUtils'
+import { ChartLimitNotice } from './ChartLimitNotice'
+import { MAX_DATA_STREAMS, seriesColor } from './chartUtils'
 
 export interface HourRadarSeries {
   key: string
@@ -30,6 +31,12 @@ export function HourRadar({
   series: HourRadarSeries[]
   className?: string
 }) {
+  // A per-channel/per-station radar with more than MAX_DATA_STREAMS series is
+  // unreadable; show an info note instead of rendering it.
+  if (series.length > MAX_DATA_STREAMS) {
+    return <ChartLimitNotice className={cn('aspect-square', className)} />
+  }
+
   // Mirror the WeekdayRadar guard: Recharts' RadarChart crashes on empty/all-zero
   // data (e.g. a window with no traffic yet), so show the shared empty state.
   const hasData = series.some((item) => item.data.some((hour) => hour.total > 0))

@@ -1402,7 +1402,10 @@ CROSS JOIN LATERAL generate_series(
     now(),
     make_interval(secs => CASE d.name WHEN 'Münster' THEN 900 WHEN 'Bonn' THEN 3600 ELSE 300 END)
 ) AS ts
-WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelder Kreuz'))
+-- Gasselstiege (6 channels) is included so the detail-page e2e can exercise the
+-- >5 data-stream chart limit (the per-channel nerd-stats charts must show the
+-- info note instead of rendering).
+WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelder Kreuz', 'Gasselstiege'))
    OR (d.name = 'Bonn'    AND s.name IN ('BN - Bröltalbahnweg', 'BN - Brühler Straße', 'BN - Estermannufer'))
    OR (d.name = 'Hamburg' AND s.name IN ('MQ1.2', 'MQ1.3', 'MQ10.1+10.2'));
 

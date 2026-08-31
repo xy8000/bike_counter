@@ -9,8 +9,13 @@ export const CHART_PALETTE = [
   'var(--color-chart-5)',
 ]
 
-/// Colour for the n-th series; wraps around when a station has more than five
-/// channels.
+/// The maximum number of data-streams (stations / channels) a chart is allowed
+/// to render. Charts that would draw more are replaced by the info note.
+export const MAX_DATA_STREAMS = 5
+
+/// Colour for the n-th series. The palette holds one token per allowed stream
+/// (charts with more than `MAX_DATA_STREAMS` are hidden), so the modulo only
+/// guards against callers ignoring the limit.
 export function seriesColor(index: number): string {
   return CHART_PALETTE[index % CHART_PALETTE.length]
 }

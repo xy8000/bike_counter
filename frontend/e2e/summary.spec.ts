@@ -134,4 +134,32 @@ test.describe('station summary', () => {
     await expect(mapMarkers(page).first()).toBeVisible()
     await expect(sidebar(page)).toBeVisible()
   })
+
+  test('the per-station nerd-stats charts show the info note for a view with more than 5 stations', async ({
+    page,
+  }) => {
+    // A bounds spanning Münster + Bonn covers the 7 stations the fixture
+    // synthesizes data for (4 Münster + 3 Bonn; Hamburg stays outside), so every
+    // per-station chart exceeds the 5-stream limit and must show the info note.
+    const params = new URLSearchParams({
+      min_lat: '50.5',
+      min_lng: '6.9',
+      max_lat: '52.1',
+      max_lng: '7.8',
+    })
+    await page.goto(`/summary?${params.toString()}`, { waitUntil: 'domcontentloaded' })
+    await waitForSummaryContent(page)
+
+    // The aggregate "Detailed statistics" section is unaffected and still draws.
+    const statsSection = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Detailed statistics' }),
+    })
+    await expect(statsSection.locator('.recharts-wrapper').first()).toBeVisible()
+
+    // The per-station nerd-stats charts are replaced by the info note.
+    const nerdSection = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Nerd stats' }),
+    })
+    await expect(nerdSection.getByText(/too many data-streams to render/).first()).toBeVisible()
+  })
 })

@@ -8,7 +8,8 @@ import {
 import { cn } from '@/lib/utils'
 import type { WeekdayTotal } from './types'
 import { ChartEmptyState } from './ChartEmptyState'
-import { seriesColor } from './chartUtils'
+import { ChartLimitNotice } from './ChartLimitNotice'
+import { MAX_DATA_STREAMS, seriesColor } from './chartUtils'
 
 export interface RadarSeries {
   key: string
@@ -30,19 +31,24 @@ const WEEKDAY_LABELS = [
 /// aggregate that is a single "Bikes" series, for the nerd stats one per channel.
 /// Missing weekdays are filled with 0 so the circle is always complete — this is
 /// a fixed 7-slot axis, not zero-filled time buckets.
-export function WeekdayRadar({
-  series,
-  className,
-}: {
-  series: RadarSeries[]
-  className?: string
-}) {
+export function WeekdayRadar({ series, className }: { series: RadarSeries[]; className?: string }) {
+  // A per-channel/per-station radar with more than MAX_DATA_STREAMS series is
+  // unreadable; show an info note instead of rendering it.
+  if (series.length > MAX_DATA_STREAMS) {
+    return <ChartLimitNotice className={cn('aspect-square', className)} />
+  }
+
   // Recharts' RadarChart crashes when a radar's data is empty (or all zero) —
   // the current window simply has no traffic yet — so fall back to the same
   // empty state the other charts use instead of feeding it empty rows.
   const hasData = series.some((item) => item.data.some((day) => day.total > 0))
   if (!hasData) {
-    return <ChartEmptyState message="No traffic for this period." className={cn('aspect-square', className)} />
+    return (
+      <ChartEmptyState
+        message="No traffic for this period."
+        className={cn('aspect-square', className)}
+      />
+    )
   }
 
   const rows = WEEKDAY_LABELS.map((label, i) => {

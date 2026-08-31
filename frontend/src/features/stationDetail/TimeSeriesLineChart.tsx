@@ -10,7 +10,8 @@ import {
 import { cn } from '@/lib/utils'
 import type { TimeBucket } from './types'
 import { ChartEmptyState } from './ChartEmptyState'
-import { seriesColor } from './chartUtils'
+import { ChartLimitNotice } from './ChartLimitNotice'
+import { MAX_DATA_STREAMS, seriesColor } from './chartUtils'
 
 export interface LineSeries {
   key: string
@@ -71,6 +72,12 @@ export function TimeSeriesLineChart({
     return <ChartEmptyState className={cn('aspect-[20/9]', className)} />
   }
 
+  // A per-channel/per-station chart with more than MAX_DATA_STREAMS lines is
+  // unreadable; show an info note instead of rendering it.
+  if (visibleSeries.length > MAX_DATA_STREAMS) {
+    return <ChartLimitNotice className={cn('aspect-[20/9]', className)} />
+  }
+
   return (
     <ChartContainer config={config} className={cn('aspect-[20/9]', className)}>
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
@@ -93,8 +100,7 @@ export function TimeSeriesLineChart({
             <ChartTooltipContent
               labelFormatter={(_, payload) => {
                 const first = payload[0]
-                const time =
-                  typeof first?.payload?.time === 'number' ? first.payload.time : NaN
+                const time = typeof first?.payload?.time === 'number' ? first.payload.time : NaN
                 return labelFor(Number.isFinite(time) ? time : Date.now())
               }}
             />
