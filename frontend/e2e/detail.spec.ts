@@ -139,10 +139,7 @@ test('back to map after an in-app detail navigation restores the previous view',
   const expectedMapUrl = page.url()
 
   // The overview's detail link navigates in-app to the station detail page.
-  await page
-    .getByRole('complementary')
-    .getByRole('link', { name: 'Open detail page' })
-    .click()
+  await page.getByRole('complementary').getByRole('link', { name: 'Open detail page' }).click()
   await expect(page).toHaveURL(/\/stations\/[0-9a-f-]+/)
 
   // Back to map restores the exact previous map URL (bounds + open station).
@@ -182,9 +179,7 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
   })
 
   // The default timeframe is "This week" (1-hour buckets).
-  await expect(
-    statsSection.getByText('1-hour buckets', { exact: true }),
-  ).toBeVisible()
+  await expect(statsSection.getByText('1-hour buckets', { exact: true })).toBeVisible()
 
   // Switch to "Last 30 days"; the main chart changes (1-day buckets). The Radix
   // Select trigger exposes the combobox role.
@@ -205,9 +200,7 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
   // domain-edge tick via its tick-visibility logic, so assert any visible
   // tick label instead of the first one.
   await expect(
-    monthlyCard
-      .locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value')
-      .first(),
+    monthlyCard.locator('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value').first(),
   ).toBeVisible()
   await expect(monthlyCard.getByRole('button').first()).toContainText('bikes')
 
@@ -243,8 +236,6 @@ test('the compare-previous checkbox overlays the previous period', async ({ page
   if ((await lastWeek.count()) > 0) {
     await expect(lastWeek).toBeVisible()
   } else {
-    await expect(
-      statsSection.getByText('No data for this period.', { exact: true }),
-    ).toHaveCount(0)
+    await expect(statsSection.getByText('No data for this period.', { exact: true })).toHaveCount(0)
   }
 })

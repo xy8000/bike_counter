@@ -1,4 +1,10 @@
-import type { DetailLinks, MonthTotal, PeriodGraphs, StationDetailPage, StationOverviewStats } from './types'
+import type {
+  DetailLinks,
+  MonthTotal,
+  PeriodGraphs,
+  StationDetailPage,
+  StationOverviewStats,
+} from './types'
 
 type RawLink = { href: string; templated?: boolean }
 

@@ -48,11 +48,16 @@ const rows = await page.evaluate(
         const b = data[i + 2]
         const max = Math.max(r, g, b)
         let c
-        if (max < 40) c = '#' // dark
-        else if (r > 210 && g > 210 && b > 210) c = '.' // near-white
-        else if (b >= r && b >= g && b - max * 0.4 > 15) c = '~' // blue-dominant (water)
-        else if (r > 150 && g > 150 && b < 210 && r > b && g > b) c = 'w' // beige/tan land
-        else if (r > g && g >= b) c = 'o' // warm
+        if (max < 40)
+          c = '#' // dark
+        else if (r > 210 && g > 210 && b > 210)
+          c = '.' // near-white
+        else if (b >= r && b >= g && b - max * 0.4 > 15)
+          c = '~' // blue-dominant (water)
+        else if (r > 150 && g > 150 && b < 210 && r > b && g > b)
+          c = 'w' // beige/tan land
+        else if (r > g && g >= b)
+          c = 'o' // warm
         else if (r > 190 && g > 190 && b > 140) c = 'w'
         else c = '+'
         line += c

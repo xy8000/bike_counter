@@ -37,9 +37,7 @@ export function useVisibleStations(bounds: Bounds | null) {
           fetchSidebarStats(shellData._links.stats)
             .then((statsData) => {
               if (cancelled) return
-              setStats(
-                new Map(statsData.items.map((item) => [item.station_id, item])),
-              )
+              setStats(new Map(statsData.items.map((item) => [item.station_id, item])))
             })
             .catch(() => {
               if (!cancelled) setStatsError(true)

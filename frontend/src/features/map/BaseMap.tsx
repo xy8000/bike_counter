@@ -1,9 +1,5 @@
 import { Map, NavigationControl } from '@vis.gl/react-maplibre'
-import type {
-  Map as MaplibreMap,
-  LngLatBoundsLike,
-  StyleSpecification,
-} from 'maplibre-gl'
+import type { Map as MaplibreMap, LngLatBoundsLike, StyleSpecification } from 'maplibre-gl'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Bounds } from '../../lib/geo'
 import { mapBounds } from '../../lib/geo'
@@ -110,10 +106,7 @@ export function BaseMap({
         // their own clicks; treat only clicks that landed outside them as a
         // "void" click.
         const target = event.originalEvent.target
-        if (
-          target instanceof Element &&
-          target.closest('.maplibregl-marker, .maplibregl-popup')
-        ) {
+        if (target instanceof Element && target.closest('.maplibregl-marker, .maplibregl-popup')) {
           return
         }
         onVoidClick?.(event.target)

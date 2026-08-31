@@ -6,9 +6,7 @@ import { formatNumber } from '../../lib/format'
 export function TotalBikesCard({ total }: { total: number }) {
   return (
     <div className="rounded-md border bg-muted/40 p-4">
-      <p className="text-sm font-medium text-muted-foreground">
-        Total bikes (all time)
-      </p>
+      <p className="text-sm font-medium text-muted-foreground">Total bikes (all time)</p>
       <p className="mt-1 text-3xl font-semibold leading-tight">
         {formatNumber(total)}
         <span className="ml-1 text-xs font-normal text-muted-foreground">bikes</span>

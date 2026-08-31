@@ -40,7 +40,12 @@ import { useStationDetailPage } from './useStationDetailPage'
 import { useStationGraphs } from './useStationGraphs'
 import { useStationMonthly } from './useStationMonthly'
 import { useStationOverviewStats } from './useStationOverviewStats'
-import { ChartsSkeleton, MonthlyBarSkeleton, OverviewSkeleton, PageShellSkeleton } from './Skeletons'
+import {
+  ChartsSkeleton,
+  MonthlyBarSkeleton,
+  OverviewSkeleton,
+  PageShellSkeleton,
+} from './Skeletons'
 
 /// Per-channel series for one timeframe: one line per channel, plus the previous
 /// period per channel when the compare checkbox is on. Channels without data in
@@ -322,10 +327,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Timeframe</span>
-              <Select
-                value={timeframe}
-                onValueChange={(value) => setTimeframe(value as Timeframe)}
-              >
+              <Select value={timeframe} onValueChange={(value) => setTimeframe(value as Timeframe)}>
                 <SelectTrigger className="w-[190px]" aria-label="Timeframe">
                   <SelectValue />
                 </SelectTrigger>
@@ -418,9 +420,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
             </div>
           </div>
         ) : graphsError ? (
-          <p className="text-sm font-semibold text-destructive">
-            Could not load the nerd stats.
-          </p>
+          <p className="text-sm font-semibold text-destructive">Could not load the nerd stats.</p>
         ) : (
           <ChartsSkeleton />
         )}

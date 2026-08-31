@@ -1,6 +1,12 @@
 /// Types for the station-summary page (BFF `stations/summary`).
 import type { StationOverviewMetric } from '../stationOverview/types'
-import type { HourTotal, MonthTotal, TimeBucket, Timeframe, WeekdayTotal } from '../stationDetail/types'
+import type {
+  HourTotal,
+  MonthTotal,
+  TimeBucket,
+  Timeframe,
+  WeekdayTotal,
+} from '../stationDetail/types'
 
 /// A positioned station inside the requested bounds (disabled ones included so
 /// the map can gray them out).

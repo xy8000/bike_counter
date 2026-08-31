@@ -1,11 +1,6 @@
 import type { Bounds } from '../../lib/geo'
 import { bboxQuery } from '../../lib/geo'
-import type {
-  SidebarShell,
-  SidebarStats,
-  StationMapList,
-  StationSearch,
-} from './types'
+import type { SidebarShell, SidebarStats, StationMapList, StationSearch } from './types'
 
 type RawLink = { href: string; templated?: boolean }
 
@@ -27,9 +22,9 @@ export async function fetchMapStations(bounds: Bounds): Promise<StationMapList['
 /// frontend only needs the `href` string to fetch the stats sub-resource.
 export async function fetchSidebarShell(bounds: Bounds): Promise<SidebarShell> {
   const query = bboxQuery(bounds)
-  const data = await getJson<
-    Omit<SidebarShell, '_links'> & { _links: Record<string, RawLink> }
-  >(`/api/bff/stations/sidebar?${query}`)
+  const data = await getJson<Omit<SidebarShell, '_links'> & { _links: Record<string, RawLink> }>(
+    `/api/bff/stations/sidebar?${query}`,
+  )
   return { ...data, _links: { stats: data._links.stats.href } }
 }
 

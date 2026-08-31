@@ -1,11 +1,5 @@
 import type { ReactNode } from 'react'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 /// A bordered card wrapping one chart plus its title, optional subtitle and an
 /// optional info note (used e.g. to explain the 30-day window).

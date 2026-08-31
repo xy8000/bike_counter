@@ -38,9 +38,7 @@ export function StationOverview({
             {page.name}
           </Link>
         ) : (
-          <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
-            Counting station
-          </h2>
+          <h2 className="min-w-0 flex-1 truncate text-base font-semibold">Counting station</h2>
         )}
         <div className="flex items-center gap-1">
           {page && (

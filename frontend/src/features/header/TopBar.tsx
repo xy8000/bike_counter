@@ -17,12 +17,7 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
         to="/"
         className="flex min-w-0 items-center gap-2 font-bold whitespace-nowrap justify-self-start"
       >
-        <img
-          src="/bike-icon.svg"
-          alt=""
-          aria-hidden="true"
-          className="h-8 w-8 shrink-0"
-        />
+        <img src="/bike-icon.svg" alt="" aria-hidden="true" className="h-8 w-8 shrink-0" />
         <span className="truncate">Bike Counter</span>
       </Link>
 

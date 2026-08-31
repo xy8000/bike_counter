@@ -33,9 +33,7 @@ export function MetricCard({ metric }: { metric: StationOverviewMetric }) {
               : `${metric.delta_percent > 0 ? '+' : ''}${metric.delta_percent}%`}
           </span>
         </div>
-        <span className="text-xs text-muted-foreground">
-          vs. {formatNumber(metric.previous)}
-        </span>
+        <span className="text-xs text-muted-foreground">vs. {formatNumber(metric.previous)}</span>
       </div>
     </div>
   )

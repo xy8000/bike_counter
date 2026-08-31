@@ -1,13 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ChartContainer,
   ChartTooltip,
@@ -43,10 +37,7 @@ const MONTH_NAMES = [
 /// dropdown.
 export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
   // Sorted distinct years that have data.
-  const years = useMemo(
-    () => [...new Set(totals.map((entry) => entry.year))].sort(),
-    [totals],
-  )
+  const years = useMemo(() => [...new Set(totals.map((entry) => entry.year))].sort(), [totals])
 
   // One row per month with a column per year; a missing year key means no data
   // for that month, so Recharts draws no bar for it.
@@ -87,9 +78,7 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
     for (const year of years) {
       totalByYear.set(
         year,
-        totals
-          .filter((entry) => entry.year === year)
-          .reduce((acc, entry) => acc + entry.total, 0),
+        totals.filter((entry) => entry.year === year).reduce((acc, entry) => acc + entry.total, 0),
       )
     }
     const latestYear = years[years.length - 1]
@@ -156,9 +145,7 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
       </CardHeader>
       <CardContent className="px-2 sm:p-6">
         {years.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            No monthly data yet.
-          </p>
+          <p className="py-6 text-center text-sm text-muted-foreground">No monthly data yet.</p>
         ) : (
           <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
             <BarChart accessibilityLayer data={data} margin={{ left: 12, right: 12 }}>
@@ -186,9 +173,7 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
                     labelFormatter={(_, payload) => {
                       const first = payload[0]
                       const month =
-                        typeof first?.payload?.month === 'string'
-                          ? first.payload.month
-                          : ''
+                        typeof first?.payload?.month === 'string' ? first.payload.month : ''
                       return `${month} ${currentYear}`.trim()
                     }}
                   />

@@ -68,7 +68,9 @@ export function SearchDialog({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ul className="list-none">
             {error && (
-              <li className="p-4 text-sm font-semibold text-destructive">Could not load stations.</li>
+              <li className="p-4 text-sm font-semibold text-destructive">
+                Could not load stations.
+              </li>
             )}
             {!error && loading && (
               <li className="p-4 text-sm text-muted-foreground">Loading stations…</li>

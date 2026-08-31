@@ -53,10 +53,7 @@ export function fetchSummaryOverview(
   return getJson(withExclude(link, exclude))
 }
 
-export function fetchSummaryGraphs(
-  link: string,
-  exclude: string[],
-): Promise<SummaryPeriodGraphs> {
+export function fetchSummaryGraphs(link: string, exclude: string[]): Promise<SummaryPeriodGraphs> {
   return getJson(withExclude(link, exclude))
 }
 

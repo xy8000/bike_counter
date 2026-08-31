@@ -7,9 +7,7 @@ import {
   waitForStations,
 } from './helpers'
 
-test('the sidebar renders only the stations visible in the current viewport', async ({
-  page,
-}) => {
+test('the sidebar renders only the stations visible in the current viewport', async ({ page }) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await waitForStations(page)
 

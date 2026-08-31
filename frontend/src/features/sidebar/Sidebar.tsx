@@ -3,11 +3,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import type {
-  SidebarShell,
-  SidebarStation,
-  SidebarStationStats,
-} from '../stations/types'
+import type { SidebarShell, SidebarStation, SidebarStationStats } from '../stations/types'
 import { SidebarListItem } from './SidebarListItem'
 
 /// Skeleton rows shown while the sidebar shell loads (the UI without content).
@@ -122,9 +118,7 @@ export function Sidebar({
           </p>
         )}
         {!error && statsError && (
-          <p className="p-4 text-sm text-muted-foreground">
-            Could not load station statistics.
-          </p>
+          <p className="p-4 text-sm text-muted-foreground">Could not load station statistics.</p>
         )}
       </ScrollArea>
       <div className="shrink-0 border-t p-3">

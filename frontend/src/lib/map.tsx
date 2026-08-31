@@ -33,12 +33,6 @@ export function stationMarkerImage(
   if (options.disabled) classes.push('station-marker--disabled')
   if (options.large) classes.push('station-marker--large')
   return (
-    <img
-      src={markerUrl}
-      alt={name}
-      title={name}
-      className={classes.join(' ')}
-      draggable={false}
-    />
+    <img src={markerUrl} alt={name} title={name} className={classes.join(' ')} draggable={false} />
   )
 }

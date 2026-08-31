@@ -395,10 +395,7 @@ function SummaryContent({
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Timeframe</span>
-              <Select
-                value={timeframe}
-                onValueChange={(value) => setTimeframe(value as Timeframe)}
-              >
+              <Select value={timeframe} onValueChange={(value) => setTimeframe(value as Timeframe)}>
                 <SelectTrigger className="w-[190px]" aria-label="Timeframe">
                   <SelectValue />
                 </SelectTrigger>
@@ -490,9 +487,7 @@ function SummaryContent({
             </div>
           </div>
         ) : graphsError ? (
-          <p className="text-sm font-semibold text-destructive">
-            Could not load the nerd stats.
-          </p>
+          <p className="text-sm font-semibold text-destructive">Could not load the nerd stats.</p>
         ) : (
           <ChartsSkeleton />
         )}

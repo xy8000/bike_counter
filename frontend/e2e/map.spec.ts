@@ -1,9 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { mapMarkers, sidebarBadge, waitForStations } from './helpers'
 
-test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({
-  page,
-}) => {
+test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({ page }) => {
   // MapLibre reads vector tiles directly out of the static archive via HTTP
   // range requests (the `pmtiles` protocol, see frontend/src/lib/map.tsx); no
   // BFF proxy or tile-server process is involved. Assert the archive nginx
@@ -38,11 +36,11 @@ test('clicking a map marker opens a popup with the station name and detail link'
   // The icon button is the explicit detail affordance; the name is also a link.
   await expect(popup.getByRole('link', { name: 'Open detail page' })).toHaveAttribute(
     'href',
-    /^\/stations\//
+    /^\/stations\//,
   )
   await expect(popup.getByRole('link', { name: stationName })).toHaveAttribute(
     'href',
-    /^\/stations\//
+    /^\/stations\//,
   )
 
   // The detail link navigates in the same tab: the URL becomes the station
@@ -74,12 +72,12 @@ test('clicking a map marker opens the overview panel and a map void click closes
   await expect(overview.getByText('Last month')).toBeVisible()
   await expect(overview.getByRole('link', { name: 'Open detail page' })).toHaveAttribute(
     'href',
-    /^\/stations\//
+    /^\/stations\//,
   )
   // The heading is clickable (to the same detail page) but not styled as a link.
   await expect(overview.getByRole('link', { name: stationName })).toHaveAttribute(
     'href',
-    /^\/stations\//
+    /^\/stations\//,
   )
   await expect(overview.locator('img')).toBeVisible()
   // The old sidebar counter is gone while the overview is open.

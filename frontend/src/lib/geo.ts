@@ -36,11 +36,7 @@ export function serializeBounds(bounds: Bounds): URLSearchParams {
 /// A small bounding box centred on a station, used by the detail page's
 /// "Find on map" action to fly the map there. `span` is the half-width in
 /// decimal degrees (~0.004° ≈ 440 m).
-export function stationBounds(
-  latitude: number,
-  longitude: number,
-  span = 0.004,
-): Bounds {
+export function stationBounds(latitude: number, longitude: number, span = 0.004): Bounds {
   return {
     min_lat: latitude - span,
     min_lng: longitude - span,

@@ -2,7 +2,10 @@
 # monorepo (backend/ = Rust crate, frontend/ = React app).
 #   make help      -> list all targets
 #   make run       -> boot the whole stack (PostgreSQL + backend + frontend) via docker compose
-#   make check     -> backend formatting + lint + security-audit gate (scripts/fmt-test.sh + scripts/audit.sh)
+#   make check     -> backend formatting + lint + frontend Prettier check + security-audit gate (scripts/fmt-test.sh + scripts/audit.sh)
+#   make fmt       -> rustfmt (backend) + Prettier (frontend)
+#   make frontend-fmt -> Prettier-write the frontend
+#   make frontend-fmt-check -> Prettier-check the frontend (CI gate)
 #   make audit     -> backend dependency security audit (scripts/audit.sh)
 #   make test-e2e  -> end-to-end docker-compose smoke test (scripts/docker-compose-test.sh)
 #   make test-playwright -> Playwright browser e2e tests against the real stack (scripts/e2e-playwright.sh)
@@ -10,7 +13,7 @@
 #   make coverage  -> backend line-coverage gate, overall >= 80% and core >= 95% (scripts/coverage.sh)
 #   make coverage-open -> open the HTML coverage report in a browser
 
-.PHONY: help build tiles tiles-update run down logs fmt check audit test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
+.PHONY: help build tiles tiles-update run down logs fmt frontend-fmt frontend-fmt-check check audit test test-rest test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -34,11 +37,19 @@ down: ## Stop and remove the docker-compose stack (keeps the database volume)
 logs: ## Follow the logs of all services
 	docker compose logs -f
 
-fmt: ## Apply rustfmt formatting to the backend
+fmt: ## Apply rustfmt to the backend and Prettier to the frontend
 	cargo fmt --manifest-path backend/Cargo.toml --quiet
+	npm run format --prefix frontend
 
-check: ## CI gate: rustfmt --check + clippy -D warnings + cargo audit (scripts/fmt-test.sh + scripts/audit.sh)
+frontend-fmt: ## Apply Prettier formatting to the frontend
+	npm run format --prefix frontend
+
+frontend-fmt-check: ## Check frontend formatting with Prettier (no writes)
+	npm run format:check --prefix frontend
+
+check: ## CI gate: rustfmt --check + clippy -D warnings + frontend Prettier check + cargo audit (scripts/fmt-test.sh + scripts/audit.sh)
 	./scripts/fmt-test.sh
+	npm run format:check --prefix frontend
 	./scripts/audit.sh
 
 audit: ## CI gate: cargo audit, fails on any advisory (scripts/audit.sh)
@@ -53,7 +64,7 @@ test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker requi
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
 	./scripts/docker-compose-test.sh
 
-test-playwright: ## Playwright browser e2e tests against the real stack with a real Münster import (requires Docker + GitHub access; scripts/e2e-playwright.sh)
+test-playwright: ## Playwright browser e2e (Münster/Hamburg/Bonn) against the real stack seeded from a SQL fixture — no provider import (scripts/e2e-playwright.sh)
 	./scripts/e2e-playwright.sh
 
 playwright-install: ## Install the Playwright Chromium browser into the frontend node_modules (once)

@@ -7,9 +7,7 @@ import fs from 'node:fs'
 const base = 'http://localhost:8081/'
 
 // Scenarios: [name, URL-bounds query]
-const scenarios = [
-  ['world0', '?min_lat=-80&min_lng=-170&max_lat=80&max_lng=170'],
-]
+const scenarios = [['world0', '?min_lat=-80&min_lng=-170&max_lat=80&max_lng=170']]
 
 const W = 200
 const H = 64
@@ -70,7 +68,9 @@ for (const [name, q] of scenarios) {
     { b64, W, H },
   )
 
-  console.log(`\n===== ${name} (map canvas ${Math.round(mapBox.width)}x${Math.round(mapBox.height)}) =====`)
+  console.log(
+    `\n===== ${name} (map canvas ${Math.round(mapBox.width)}x${Math.round(mapBox.height)}) =====`,
+  )
   console.log(rows.join('\n'))
   await page.close()
 }
