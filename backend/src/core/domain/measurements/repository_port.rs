@@ -129,6 +129,15 @@ pub struct ChannelLatest {
     pub timestamp: DateTime<Utc>,
 }
 
+/// The earliest measurement timestamp of one channel (empty when the channel has
+/// no measurements at all), used to decide whether a station was introduced
+/// before a window started (the Bike-Trends "exclude new stations" predicate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelFirst {
+    pub channel_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+}
+
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
     /// Inserts a batch idempotently and returns the number of rows actually
@@ -305,6 +314,17 @@ pub trait MeasurementRepository {
         &self,
         _channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<ChannelLatest>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    /// The earliest measurement timestamp per channel, only for channels with at
+    /// least one measurement. Used to decide whether a station was introduced
+    /// before a window started (the Bike-Trends "exclude new stations"
+    /// predicate). Defaults to empty so recency-unaware mocks need no override.
+    fn earliest_by_channel(
+        &self,
+        _channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelFirst>, DomainError> {
         Ok(Vec::new())
     }
 }

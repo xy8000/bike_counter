@@ -5,7 +5,7 @@ const STORAGE_KEY = 'bike-counter.trends.exclude_new_stations'
 
 interface TrendSettingsValue {
   /// When on, trend metrics and comparison graphs only include stations that
-  /// have data covering the whole compared period (see the backend
+  /// were already open before the compared period (see the backend
   /// `exclude_new_stations` query parameter).
   excludeNewStations: boolean
   setExcludeNewStations: (value: boolean) => void

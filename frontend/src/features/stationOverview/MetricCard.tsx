@@ -26,11 +26,11 @@ export function MetricCard({ metric }: { metric: StationOverviewMetric }) {
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5">
         {metric.is_new ? (
-          // Bike-Trends: the station has no data covering the whole compared
-          // period, so a trend arrow would be misleading — show a neutral "New".
+          // Bike-Trends: the station opened during the compared period, so a
+          // trend arrow would be misleading — show a neutral "New".
           <span
             className="text-sm font-semibold text-muted-foreground"
-            title="No data covering the whole compared period"
+            title="Opened during the compared period"
           >
             New
           </span>

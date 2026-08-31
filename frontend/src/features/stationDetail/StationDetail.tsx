@@ -370,13 +370,13 @@ function DetailContent({ page }: { page: StationDetailPage }) {
           </div>
         </div>
 
-        {/* Bike-Trends: with the setting on, a station without full-period
-            coverage reports is_new — the previous-period comparison is not
-            meaningful, so tell the user instead of drawing an empty overlay. */}
+        {/* Bike-Trends: with the setting on, a station opened during the period
+            reports is_new — the previous-period comparison is not meaningful,
+            so tell the user instead of drawing an empty overlay. */}
         {period?.is_new && (
           <p className="mb-3 text-sm text-muted-foreground">
-            This station has no data covering the whole compared period — the previous period
-            comparison is not shown.
+            This station opened during the compared period — the previous period comparison is not
+            shown.
           </p>
         )}
 

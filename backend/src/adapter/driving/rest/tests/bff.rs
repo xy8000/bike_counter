@@ -604,9 +604,12 @@ async fn bff_station_detail_overview_returns_total_and_metrics() {
 #[tokio::test]
 async fn bff_station_detail_overview_exclude_new_stations_reports_is_new() {
     let app = TestApp::new();
+    // The fixture measurement is at 2024-01-01T12:00Z; with `as_of` one day
+    // later the station's earliest measurement falls inside every metric's
+    // comparison window, so it is "new" under the Bike-Trends setting.
     let url = |exclude_new_stations: bool| {
         format!(
-            "/api/bff/station-detail/{}/overview?as_of=2024-01-11T12:00:00Z&exclude_new_stations={}",
+            "/api/bff/station-detail/{}/overview?as_of=2024-01-02T12:00:00Z&exclude_new_stations={}",
             fixtures::STATION_ID_A,
             exclude_new_stations
         )
@@ -623,8 +626,8 @@ async fn bff_station_detail_overview_exclude_new_stations_reports_is_new() {
             .all(|metric| metric["is_new"] == false)
     );
 
-    // With the setting on and no full-period coverage in the REST mock, the
-    // station is treated as "new" for every metric.
+    // With the setting on and the station introduced inside the comparison
+    // windows, it is reported as "new" for every metric.
     let (status, filtered) = app.get_json(&url(true)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(

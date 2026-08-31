@@ -9,17 +9,16 @@
 //! [`super::metrics`] (the four overview metrics) and [`super::graphs`] (the
 //! bucketed time-series graphs).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects::CountingStationId;
 use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
-use crate::core::domain::counting_stations::counting_station::local_year_start;
 use crate::core::domain::counting_stations::counting_station::previous_calendar_year;
 use crate::core::domain::counting_stations::counting_station::previous_local_day;
 use crate::core::domain::counting_stations::counting_station::previous_local_days;
@@ -37,7 +36,7 @@ use crate::core::domain::station_analytics::{
     StationsSummaryPage, SummaryPeriodGraphs, SummaryStation,
 };
 
-use super::resolution::{covers_whole_window, has_full_coverage};
+use super::resolution::introduced_after;
 use super::{graphs, metrics};
 
 pub struct StationAnalyticsService {
@@ -185,12 +184,14 @@ impl StationAnalyticsService {
             .sum_by_month(&timezone, &channel_ids, None)
     }
 
-    /// The stations among `included` that have measurements covering the whole
-    /// current year AND the whole previous calendar year (the `Year` timeframe
-    /// windows). Used by the summary monthly chart under the Bike-Trends setting,
-    /// so a newly-built station cannot skew the recent months of the monthly bar
-    /// chart. Reuses the generic full-coverage predicate, so it stays correct for
-    /// any future custom from/to window.
+    /// The stations among `included` that already existed before the previous
+    /// calendar year (their earliest-ever measurement is before the previous
+    /// year's start). Used by the summary monthly chart under the Bike-Trends
+    /// setting, so a newly-built station cannot skew the recent months of the
+    /// monthly bar chart. The running current year never gates; data loss or
+    /// outages inside the year never exclude a station. Reuses the generic
+    /// introduced-after predicate, so it stays correct for any future custom
+    /// from/to window.
     fn established_stations_for_year(
         &self,
         included: &[CountingStation],
@@ -201,8 +202,7 @@ impl StationAnalyticsService {
             return Ok(Vec::new());
         };
         let tz: Tz = first.timezone.parse()?;
-        let year_start = local_year_start(tz, now)?;
-        let (last_year_from, last_year_to) = previous_calendar_year(tz, now)?;
+        let (last_year_from, _) = previous_calendar_year(tz, now)?;
 
         let mut channel_ids: Vec<ChannelId> = Vec::new();
         let mut station_of_channel: HashMap<uuid::Uuid, uuid::Uuid> = HashMap::new();
@@ -215,45 +215,28 @@ impl StationAnalyticsService {
             }
         }
 
-        // Per-channel coverage over the union [previous year start, now], then
-        // keep a station only when one of its channels covers both windows.
-        let coverage = self.measurement_repository.resolution_coverage_by_channel(
-            last_year_from,
-            now,
-            &channel_ids,
-        )?;
-        let mut covers_current: HashSet<uuid::Uuid> = HashSet::new();
-        let mut covers_previous: HashSet<uuid::Uuid> = HashSet::new();
-        for row in &coverage {
-            let Some(&station_id) = station_of_channel.get(&row.channel_id) else {
-                continue;
-            };
-            if covers_whole_window(
-                row.resolution_seconds,
-                row.first,
-                row.last,
-                year_start,
-                now,
-                now,
-            ) {
-                covers_current.insert(station_id);
-            }
-            if covers_whole_window(
-                row.resolution_seconds,
-                row.first,
-                row.last,
-                last_year_from,
-                last_year_to,
-                now,
-            ) {
-                covers_previous.insert(station_id);
+        // Per-channel earliest-ever measurement, mapped to stations (the MIN over
+        // each station's channels), then keep a station only when it was not
+        // introduced at or after the previous year's start.
+        let mut earliest_by_station: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
+        for row in self
+            .measurement_repository
+            .earliest_by_channel(&channel_ids)?
+        {
+            if let Some(&station_id) = station_of_channel.get(&row.channel_id) {
+                let entry = earliest_by_station
+                    .entry(station_id)
+                    .or_insert(row.timestamp);
+                *entry = (*entry).min(row.timestamp);
             }
         }
 
         Ok(included
             .iter()
             .filter(|station| {
-                covers_current.contains(&station.id.0) && covers_previous.contains(&station.id.0)
+                earliest_by_station
+                    .get(&station.id.0)
+                    .is_some_and(|&earliest| !introduced_after(earliest, last_year_from))
             })
             .cloned()
             .collect())
@@ -397,20 +380,20 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             let tz = station.timezone.parse()?;
             let (from, to) = previous_local_day(tz, now)?;
             if let Some(channel_ids) = channels_by_station.get(&station.id.0) {
-                // Bike-Trends: only count stations that have data for the whole
-                // previous local day AND its comparison day (the day before), so
-                // a newly-built station cannot skew the header total.
+                // Bike-Trends: only count stations that already existed before
+                // the previous local day (the comparison day), so a newly-built
+                // station cannot skew the header total. Data loss or outages do
+                // not exclude a station.
                 if exclude_new_stations {
                     let (before_from, _) = previous_local_days(tz, now, 2)?;
-                    let comparison_to = from - Duration::microseconds(1);
-                    let coverage = self.measurement_repository.resolution_coverage(
-                        before_from,
-                        to,
-                        channel_ids,
-                    )?;
-                    if !has_full_coverage(&coverage, from, to, now)
-                        || !has_full_coverage(&coverage, before_from, comparison_to, now)
-                    {
+                    let introduced = self
+                        .measurement_repository
+                        .earliest_by_channel(channel_ids)?
+                        .into_iter()
+                        .map(|channel_first| channel_first.timestamp)
+                        .min()
+                        .is_some_and(|earliest| introduced_after(earliest, before_from));
+                    if introduced {
                         continue;
                     }
                 }

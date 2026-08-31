@@ -154,8 +154,8 @@ export function SettingsDialog({
           >
             <span className="whitespace-nowrap">Exclude new stations from trends</span>
             <span className="text-xs font-normal text-muted-foreground">
-              Only include stations with data covering the whole current (and, when comparing, the
-              whole previous) period, so newly-built stations cannot skew the trends.
+              Only include stations that were already open before the compared period, so stations
+              added during the period cannot skew the trends.
             </span>
           </Label>
         </div>

@@ -110,12 +110,12 @@ test('enabling/disabling the setting switches the example graph', async ({ page 
   const dialog = await openSettings(page)
   const toggle = dialog.getByRole('switch', { name: SETTING_LABEL })
 
-  // Off: the "All stations" graph (new station's bikes stacked on top, sudden
-  // increase) is shown.
+  // Off: the "All stations" graph (a station opens partway through the period,
+  // so the totals jump) is shown.
   await expect(toggle).not.toBeChecked()
   await expect(dialog.getByText('All stations')).toBeVisible()
   await expect(dialog.getByText('Established only')).toBeHidden()
-  await expect(dialog.getByText(/sudden increase/)).toBeVisible()
+  await expect(dialog.getByText(/totals jump/)).toBeVisible()
 
   // Enabling switches to the "Established only" graph.
   await toggle.click()

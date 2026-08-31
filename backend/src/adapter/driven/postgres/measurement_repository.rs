@@ -4,8 +4,8 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelLatest,
-    ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal,
+    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelFirst, ChannelHourTotal,
+    ChannelLatest, ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal,
     ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 
@@ -733,6 +733,37 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             });
         }
         Ok(latest)
+    }
+
+    fn earliest_by_channel(
+        &self,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelFirst>, DomainError> {
+        if channel_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, MIN(timestamp) \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                 GROUP BY channel_id",
+                &[&channel_uuids],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut earliest = Vec::with_capacity(rows.len());
+        for row in rows {
+            earliest.push(ChannelFirst {
+                channel_id: row.get(0),
+                timestamp: row.get(1),
+            });
+        }
+        Ok(earliest)
     }
 }
 
@@ -1852,6 +1883,50 @@ mod tests {
         // so an unknown channel id is fine here).
         let missing = value_objects::ChannelId(Uuid::new_v4());
         assert!(repository.latest_by_channel(&[missing]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn earliest_by_channel_returns_the_oldest_timestamp_per_channel() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let base = timestamp(5_000_000);
+        let channel = channel_id();
+        repository
+            .save_batch(vec![
+                Measurement {
+                    id: value_objects::Id(Uuid::new_v4()),
+                    value: value_objects::Value(1),
+                    channel_id: channel,
+                    timestamp: value_objects::Timestamp(base),
+                    resolution_seconds: value_objects::ResolutionSeconds(300),
+                    interval_end: None,
+                },
+                Measurement {
+                    id: value_objects::Id(Uuid::new_v4()),
+                    value: value_objects::Value(2),
+                    channel_id: channel,
+                    timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(600)),
+                    resolution_seconds: value_objects::ResolutionSeconds(300),
+                    interval_end: None,
+                },
+            ])
+            .unwrap();
+
+        let earliest = repository.earliest_by_channel(&[channel]).unwrap();
+        assert_eq!(earliest.len(), 1, "one entry per channel");
+        assert_eq!(earliest[0].channel_id, channel.0);
+        assert_eq!(earliest[0].timestamp, base, "the oldest timestamp is kept");
+
+        // Channels without measurements are not reported.
+        let missing = value_objects::ChannelId(Uuid::new_v4());
+        assert!(
+            repository
+                .earliest_by_channel(&[missing])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

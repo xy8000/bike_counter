@@ -21,9 +21,9 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::{
-    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelTotal,
-    ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal, ResolutionCoverage,
-    TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelFirst, ChannelHourTotal,
+    ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal,
+    ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
@@ -540,6 +540,28 @@ impl MeasurementRepository for MemoryMeasurementRepository {
                     count,
                 },
             )
+            .collect())
+    }
+
+    fn earliest_by_channel(
+        &self,
+        channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<ChannelFirst>, DomainError> {
+        let mut map: BTreeMap<Uuid, DateTime<Utc>> = BTreeMap::new();
+        for m in self
+            .measurements
+            .iter()
+            .filter(|m| channel_ids.iter().any(|id| id.0 == m.channel_id.0))
+        {
+            let entry = map.entry(m.channel_id.0).or_insert(m.timestamp.0);
+            *entry = (*entry).min(m.timestamp.0);
+        }
+        Ok(map
+            .into_iter()
+            .map(|(channel_id, timestamp)| ChannelFirst {
+                channel_id,
+                timestamp,
+            })
             .collect())
     }
 }
@@ -1726,8 +1748,10 @@ fn stations_summary_computes_monthly_totals_over_the_union() {
 #[test]
 fn stations_summary_monthly_excludes_new_stations() {
     let service = default_summary_service(vec![
-        // Station A is established: it covers the whole current + previous year
-        // (a measurement at the previous year's start and one at `now`).
+        // Station A is established: it already existed before the previous year
+        // (an earliest measurement in December 2022, before the year's start in
+        // Berlin) and keeps reporting through `now`.
+        measurement(CHANNEL_A1, 1, utc(2022, 12, 31, 22, 0, 0)),
         measurement(CHANNEL_A1, 10, utc(2022, 12, 31, 23, 0, 0)),
         measurement(CHANNEL_A1, 100, utc(2024, 1, 11, 12, 0, 0)),
         // Station B is new: a single mid-window measurement.
@@ -1746,6 +1770,11 @@ fn stations_summary_monthly_excludes_new_stations() {
         plain,
         vec![
             MonthTotal {
+                year: 2022,
+                month: 12,
+                total: 1
+            },
+            MonthTotal {
                 year: 2023,
                 month: 1,
                 total: 10
@@ -1761,6 +1790,11 @@ fn stations_summary_monthly_excludes_new_stations() {
     assert_eq!(
         filtered,
         vec![
+            MonthTotal {
+                year: 2022,
+                month: 12,
+                total: 1
+            },
             MonthTotal {
                 year: 2023,
                 month: 1,
@@ -1902,12 +1936,13 @@ fn detail_overview_stats_marks_a_new_station() {
 }
 
 #[test]
-fn detail_overview_stats_not_new_when_the_station_covers_the_windows() {
+fn detail_overview_stats_not_new_when_the_station_predates_the_windows() {
     let now = detail_now();
-    // Measurements at the union-window boundaries (two years back + the previous
-    // local day's end) cover every metric's current + previous window.
+    // A station that already existed before every metric's comparison window
+    // (earliest measurement before the year-before-previous start) is not "new",
+    // even though it only reports a couple of times.
     let service = promenade_service(vec![
-        measurement(CHANNEL_A1, 100, utc(2022, 1, 1, 0, 0, 0)),
+        measurement(CHANNEL_A1, 100, utc(2021, 12, 31, 22, 0, 0)),
         // 22:00 is just inside the previous local day's closed window (which ends
         // one microsecond before 23:00).
         measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)),
@@ -1916,7 +1951,7 @@ fn detail_overview_stats_not_new_when_the_station_covers_the_windows() {
     let stats = service.detail_overview_stats(id, now, true).unwrap();
     assert!(
         stats.metrics.iter().all(|metric| !metric.is_new),
-        "full-window coverage is not treated as a new station"
+        "a station introduced before the windows is not treated as new"
     );
 }
 
@@ -1954,11 +1989,13 @@ fn stations_summary_overview_excludes_new_stations_like_for_like() {
 #[test]
 fn stations_summary_graphs_exclude_new_stations() {
     let service = default_summary_service(vec![
-        // Station A covers the whole current + previous local day: boundary
-        // measurements at each day's start (23:00) and just inside each day's end
-        // (22:00, because the day window closes at 22:59:59.999999).
+        // Station A is established: it already existed before the previous local
+        // day (earliest measurement before the day's start), with data at each
+        // day's start (23:00) and just inside each day's end (22:00, because the
+        // day window closes at 22:59:59.999999).
+        measurement(CHANNEL_A1, 1, utc(2024, 1, 8, 22, 0, 0)), // earliest, establishes A
         measurement(CHANNEL_A1, 100, utc(2024, 1, 8, 23, 0, 0)), // previous day start
-        measurement(CHANNEL_A1, 50, utc(2024, 1, 9, 22, 0, 0)),  // previous day end
+        measurement(CHANNEL_A1, 50, utc(2024, 1, 9, 22, 0, 0)), // previous day end
         measurement(CHANNEL_A1, 150, utc(2024, 1, 9, 23, 0, 0)), // current day start
         measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)), // current day end
         // Station B is new: a single mid-window measurement.
@@ -2001,14 +2038,16 @@ fn established_stations_with_a_stale_last_measurement_are_not_dropped() {
     // goes stale as the wall clock moves on). Requiring a measurement within
     // one interval of `now` wrongly dropped EVERY established station and
     // emptied all the graphs; only a station that was actually built mid-window
-    // (no data at the window's start) counts as "new".
+    // (no data before the previous week's start) counts as "new".
     let service = default_summary_service(vec![
-        // A is established: it covers the whole previous week and reports from
-        // the current week's start — but its latest measurement is ~2 days old.
+        // A is established: it already existed before the previous week
+        // (earliest measurement before the week's start) and reports through
+        // the current week — but its latest measurement is ~2 days old.
+        measurement(CHANNEL_A1, 1, utc(2023, 12, 31, 22, 0, 0)), // earliest, establishes A
         measurement(CHANNEL_A1, 100, utc(2023, 12, 31, 23, 0, 0)), // prev week start
-        measurement(CHANNEL_A1, 50, utc(2024, 1, 7, 22, 0, 0)),    // prev week end
-        measurement(CHANNEL_A1, 150, utc(2024, 1, 7, 23, 0, 0)),   // current week start
-        measurement(CHANNEL_A1, 200, utc(2024, 1, 9, 12, 0, 0)),   // stale latest
+        measurement(CHANNEL_A1, 50, utc(2024, 1, 7, 22, 0, 0)),  // prev week end
+        measurement(CHANNEL_A1, 150, utc(2024, 1, 7, 23, 0, 0)), // current week start
+        measurement(CHANNEL_A1, 200, utc(2024, 1, 9, 12, 0, 0)), // stale latest
         // B is genuinely new: only mid-week data, nothing in the previous week.
         measurement(CHANNEL_B1, 500, utc(2024, 1, 9, 12, 0, 0)),
     ]);
@@ -2044,14 +2083,16 @@ fn established_stations_with_a_stale_last_measurement_are_not_dropped() {
 fn stations_summary_graphs_keep_a_station_with_no_current_week_data() {
     // The current (still-running) week may not have any data yet — e.g. the
     // import has not arrived, or a seeded stack went stale as the wall clock
-    // moved on. A station that covered the whole previous week is established,
-    // so it must not be dropped just because the incomplete current week is
-    // empty for it; only a genuinely new station (no previous-week data) is
-    // dropped.
+    // moved on. A station that already existed before the previous week is
+    // established, so it must not be dropped just because the incomplete
+    // current week is empty for it; only a genuinely new station (no data
+    // before the previous week's start) is dropped.
     let service = default_summary_service(vec![
-        // A: full previous week, nothing in the current week.
+        // A: existed before the previous week, full previous week, nothing in
+        // the current week.
+        measurement(CHANNEL_A1, 1, utc(2023, 12, 31, 22, 0, 0)), // earliest, establishes A
         measurement(CHANNEL_A1, 100, utc(2023, 12, 31, 23, 0, 0)), // prev week start
-        measurement(CHANNEL_A1, 50, utc(2024, 1, 7, 22, 0, 0)),    // prev week end
+        measurement(CHANNEL_A1, 50, utc(2024, 1, 7, 22, 0, 0)),  // prev week end
         // B: genuinely new, data only mid-current-week, no previous week.
         measurement(CHANNEL_B1, 500, utc(2024, 1, 9, 12, 0, 0)),
     ]);
@@ -2100,8 +2141,10 @@ fn global_summary_excludes_new_stations_from_the_last_day_total() {
             channel(CHANNEL_B1, STATION_B, "b1"),
         ],
         vec![
-            // A covers the whole last day + its comparison day (a measurement at
-            // each day's start and one just inside the last day's end).
+            // A is established: it already existed before the comparison day
+            // (earliest measurement before the day-before's start), with a
+            // measurement just inside the last day's end.
+            measurement(CHANNEL_A1, 1, utc(2024, 1, 8, 22, 0, 0)),
             measurement(CHANNEL_A1, 100, utc(2024, 1, 8, 23, 0, 0)),
             measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 22, 0, 0)),
             // B is new: a single mid-window measurement.
@@ -2424,9 +2467,11 @@ fn detail_custom_range_exclude_new_stations_checks_only_the_current_window() {
 #[test]
 fn stations_summary_custom_range_exclude_new_stations_filters_new_stations() {
     let now = utc(2027, 1, 1, 0, 0, 0);
-    // A covers the whole custom window (measurements at both bounds); B is new
+    // A is established: it already existed before the custom window (earliest
+    // measurement before the range's start), with data at both bounds; B is new
     // (a single mid-window measurement).
     let m: Vec<Measurement> = vec![
+        measurement(CHANNEL_A1, 1, utc(2022, 12, 31, 22, 0, 0)),
         measurement(CHANNEL_A1, 10, utc(2023, 1, 1, 0, 0, 0)),
         measurement(CHANNEL_A1, 20, utc(2023, 5, 1, 0, 0, 0)),
         measurement(CHANNEL_B1, 50, utc(2023, 3, 1, 12, 0, 0)),
@@ -2463,6 +2508,93 @@ fn stations_summary_custom_range_exclude_new_stations_filters_new_stations() {
         "the new station B is dropped"
     );
     assert_eq!(sum_buckets(&filtered.current), 30, "only A is aggregated");
+}
+
+#[test]
+fn stations_summary_graphs_keep_an_established_station_despite_data_loss_at_the_year_end() {
+    // Regression: a station that already existed before the previous year (its
+    // earliest measurement predates the year's start) is kept even when a data
+    // loss leaves a gap at the end of the previous year. The old rule required
+    // measurements through the window's end, which wrongly dropped every
+    // established station whose counter was offline for a few data points.
+    let service = default_summary_service(vec![
+        // A is established: earliest before the previous year's start, data in
+        // the previous year (but stops in October — a data loss at the year's
+        // end) and data in the current year.
+        measurement(CHANNEL_A1, 100, utc(2022, 12, 31, 22, 0, 0)),
+        measurement(CHANNEL_A1, 50, utc(2023, 10, 1, 12, 0, 0)),
+        measurement(CHANNEL_A1, 200, utc(2024, 1, 10, 12, 0, 0)),
+        // B is new: only current-year data, nothing before this year.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 10, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Year, now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Year, now, true)
+        .unwrap();
+
+    assert_eq!(
+        plain.per_station.len(),
+        2,
+        "both stations without the filter"
+    );
+    assert_eq!(
+        filtered.per_station.len(),
+        1,
+        "A is kept despite the data loss; only B is dropped"
+    );
+    assert_eq!(
+        filtered.per_station[0].station_id,
+        Uuid::from_u128(STATION_1),
+        "A is established because it predates the previous year"
+    );
+    assert_eq!(
+        sum_buckets(&filtered.current),
+        200,
+        "A's current-year series is still drawn"
+    );
+    assert_eq!(
+        sum_buckets(&filtered.previous),
+        50,
+        "A's previous-year series keeps what it has"
+    );
+}
+
+#[test]
+fn stations_summary_overview_keeps_an_established_station_despite_data_loss_at_the_year_end() {
+    // Regression for the overview "last year" metric: a station that already
+    // existed before the year-before-previous is kept even though its previous
+    // year data stops mid-year (data loss), instead of zeroing the trend.
+    let service = default_summary_service(vec![
+        // A is established for the year metric: earliest before the
+        // year-before-previous start, previous-year data stopping mid-year.
+        measurement(CHANNEL_A1, 100, utc(2021, 12, 31, 22, 0, 0)),
+        measurement(CHANNEL_A1, 50, utc(2023, 6, 1, 12, 0, 0)),
+        // B is new: only recent data.
+        measurement(CHANNEL_B1, 500, utc(2024, 1, 10, 12, 0, 0)),
+    ]);
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_overview(bounds(), &[], now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_overview(bounds(), &[], now, true)
+        .unwrap();
+
+    assert_eq!(
+        metric_of(&plain, MetricKey::LastYear).current,
+        50,
+        "A's previous-year total without the filter"
+    );
+    assert_eq!(
+        metric_of(&filtered, MetricKey::LastYear).current,
+        50,
+        "A is kept for the year-over-year trend despite the data loss; B is dropped"
+    );
 }
 
 #[test]

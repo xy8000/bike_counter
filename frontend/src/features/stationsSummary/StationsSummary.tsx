@@ -520,7 +520,7 @@ function SummaryContent({
       <section className="mt-8">
         <h2 className="mb-1 text-lg font-semibold">Bikes per month</h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          The settings are not applied to this chart — newly added counting stations may add bikes.
+          The setting applies to this chart too — stations added during the period are excluded.
         </p>
         {monthly ? (
           <MonthlyBarChart totals={monthly.monthly_totals} />

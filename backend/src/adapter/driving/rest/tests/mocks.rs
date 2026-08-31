@@ -365,6 +365,31 @@ impl MeasurementRepository for MockMeasurementRepository {
             })
             .collect())
     }
+
+    fn earliest_by_channel(
+        &self,
+        channel_ids: &[measurement_vo::ChannelId],
+    ) -> Result<Vec<crate::core::domain::measurements::repository_port::ChannelFirst>, DomainError>
+    {
+        let mut map: BTreeMap<Uuid, DateTime<Utc>> = BTreeMap::new();
+        for m in self
+            .measurements
+            .iter()
+            .filter(|m| channel_ids.iter().any(|id| id.0 == m.channel_id.0))
+        {
+            let entry = map.entry(m.channel_id.0).or_insert(m.timestamp.0);
+            *entry = (*entry).min(m.timestamp.0);
+        }
+        Ok(map
+            .into_iter()
+            .map(|(channel_id, timestamp)| {
+                crate::core::domain::measurements::repository_port::ChannelFirst {
+                    channel_id,
+                    timestamp,
+                }
+            })
+            .collect())
+    }
 }
 
 #[derive(Default)]

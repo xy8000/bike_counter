@@ -3,9 +3,9 @@ import { cn } from '@/lib/utils'
 /// Month labels under the chart (Jan–Aug).
 const MONTHS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A']
 
-/// The growth from the stations that have a full year of data (percent of the
-/// tallest bar). The single chart switches between this and the "all stations"
-/// version below.
+/// The growth from the stations that were already open before the period
+/// (percent of the tallest bar). The single chart switches between this and the
+/// "all stations" version below.
 const BASE = [12, 18, 26, 34, 42, 55, 66, 74]
 
 /// Extra bikes a newly-built station contributes once it opens (month 3
@@ -71,13 +71,13 @@ export function TrendSettingsIllustration({ excludeNewStations }: { excludeNewSt
         </div>
       ) : (
         <p className="mt-2 text-center text-[10px] text-muted-foreground">
-          only stations with a full year of data
+          only stations open since before the period
         </p>
       )}
       <p className="mt-1 text-center text-[11px] leading-snug text-muted-foreground">
         {excludeNewStations
           ? 'new station excluded — totals grow more evenly'
-          : 'a new station opens and adds bikes — sudden increase'}
+          : 'a station opens partway through the period — totals jump'}
       </p>
     </div>
   )

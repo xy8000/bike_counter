@@ -1,6 +1,6 @@
 # 80 - Detail/summary: key facts, section reorder + wording fixes
 
-Status: drafted
+Status: implemented
 
 ## Problem
 

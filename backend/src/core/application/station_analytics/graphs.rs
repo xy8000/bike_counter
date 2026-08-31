@@ -27,7 +27,7 @@ use crate::core::domain::station_analytics::{
     PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal, SummaryPeriodGraphs,
 };
 
-use super::resolution::{covers_whole_window, has_full_coverage};
+use super::resolution::introduced_after;
 
 /// Fixed bucket widths (seconds) used by the detail/summary graphs.
 const SECONDS_PER_5_MINUTES: i64 = 5 * 60;
@@ -403,11 +403,12 @@ fn fold_weekdays(by_group: &HashMap<uuid::Uuid, Vec<WeekdayTotal>>) -> Vec<Weekd
 /// is derived from the **two** per-channel bucket queries, so the heavy
 /// aggregation runs a single bucket scan per period.
 ///
-/// With `exclude_new_stations` (the Bike-Trends setting) only groups that have
-/// measurements covering the whole current **and** previous window are folded
-/// in (like-for-like), so newly-built stations no longer inflate the current
-/// period. A custom from/to range has no previous period (`previous = None`):
-/// only the current window gates, and the previous outputs stay empty.
+/// With `exclude_new_stations` (the Bike-Trends setting) only groups that
+/// already existed before the comparison window are folded in (like-for-like) —
+/// a group is dropped only when it was introduced at or after the window's
+/// start, so data loss or outages inside the window never exclude it. A custom
+/// from/to range has no previous period (`previous = None`): the current
+/// window's start is the reference, and the previous outputs stay empty.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn period_data(
     repository: &dyn MeasurementRepository,
@@ -415,70 +416,34 @@ pub(super) fn period_data(
     previous: Option<&Window>,
     timezone: &str,
     tz: Tz,
-    now: DateTime<Utc>,
+    _now: DateTime<Utc>,
     channel_ids: &[ChannelId],
     group_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
     group_order: &[uuid::Uuid],
     exclude_new_stations: bool,
 ) -> Result<PeriodData, DomainError> {
-    // Bike-Trends like-for-like filter: the set of groups that fully cover the
-    // current AND the previous window, derived from per-channel coverage. Empty
-    // (no filtering) when the setting is off.
+    // Bike-Trends like-for-like filter: the set of groups that already existed
+    // before the comparison window started — their earliest-ever measurement is
+    // before `reference_from` (the previous window's start, or the current
+    // window's start for a custom range with no previous period). A group
+    // introduced during the window (no data before its start) is dropped; data
+    // loss or outages inside the window never exclude a group. Empty (no
+    // filtering) when the setting is off.
     let established_groups: HashSet<uuid::Uuid> = if exclude_new_stations {
-        // A still-running current window (`to >= now`, e.g. the current week or
-        // year) never gates: its data may not have arrived yet, so every group
-        // qualifies for it — only the completed previous window is decisive.
-        let mut covers_current: HashSet<uuid::Uuid> = if current.to >= now {
-            group_order.iter().copied().collect()
-        } else {
-            HashSet::new()
-        };
-        if current.to < now {
-            let current_coverage =
-                repository.resolution_coverage_by_channel(current.from, current.to, channel_ids)?;
-            for row in &current_coverage {
-                if covers_whole_window(
-                    row.resolution_seconds,
-                    row.first,
-                    row.last,
-                    current.from,
-                    current.to,
-                    now,
-                ) && let Some(&group) = group_of_channel.get(&row.channel_id)
-                {
-                    covers_current.insert(group);
-                }
+        let reference_from = previous
+            .as_ref()
+            .map_or(current.from, |previous| previous.from);
+        let mut earliest_by_group: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
+        for row in repository.earliest_by_channel(channel_ids)? {
+            if let Some(&group) = group_of_channel.get(&row.channel_id) {
+                let entry = earliest_by_group.entry(group).or_insert(row.timestamp);
+                *entry = (*entry).min(row.timestamp);
             }
         }
-        let covers_previous: HashSet<uuid::Uuid> = match previous {
-            Some(previous) => {
-                let mut covers = HashSet::new();
-                let previous_coverage = repository.resolution_coverage_by_channel(
-                    previous.from,
-                    previous.to,
-                    channel_ids,
-                )?;
-                for row in &previous_coverage {
-                    if covers_whole_window(
-                        row.resolution_seconds,
-                        row.first,
-                        row.last,
-                        previous.from,
-                        previous.to,
-                        now,
-                    ) && let Some(&group) = group_of_channel.get(&row.channel_id)
-                    {
-                        covers.insert(group);
-                    }
-                }
-                covers
-            }
-            // No previous period (custom range): only the current window gates.
-            None => group_order.iter().copied().collect(),
-        };
-        covers_current
-            .intersection(&covers_previous)
-            .copied()
+        earliest_by_group
+            .into_iter()
+            .filter(|(_, earliest)| !introduced_after(*earliest, reference_from))
+            .map(|(group, _)| group)
             .collect()
     } else {
         HashSet::new()
@@ -764,9 +729,9 @@ pub(super) fn period_data(
 ///
 /// The detail page is a single station, so nothing is filtered here. With
 /// `exclude_new_stations` (the Bike-Trends setting) the station-level `is_new`
-/// flag is derived from the station's coverage of the whole current + previous
-/// window, so the UI can show a "no full-period data to compare" notice instead
-/// of a misleading trend.
+/// flag is set when the station was introduced at or after the comparison
+/// window's start, so the UI can show a "opened during the period" notice
+/// instead of a misleading trend.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn period_graphs_per_channel(
     repository: &dyn MeasurementRepository,
@@ -774,7 +739,7 @@ pub(super) fn period_graphs_per_channel(
     previous: Option<&Window>,
     timezone: &str,
     tz: Tz,
-    now: DateTime<Utc>,
+    _now: DateTime<Utc>,
     channel_ids: &[ChannelId],
     channels: &[Channel],
     exclude_new_stations: bool,
@@ -788,31 +753,33 @@ pub(super) fn period_graphs_per_channel(
         previous,
         timezone,
         tz,
-        now,
+        _now,
         channel_ids,
         &group_of_channel,
         &group_order,
         false,
     )?;
 
-    // Station-level "new" flag (Bike-Trends): the station does not have
-    // measurements covering the whole current or previous window, so there is no
-    // like-for-like comparison. Computed over the station's channels in
-    // aggregate coverage queries. A custom range has no previous period, so
-    // only the current window is checked.
+    // Station-level "new" flag (Bike-Trends): the station was introduced at or
+    // after the comparison window's start (its earliest-ever measurement is not
+    // before the previous window's start, or the current window's start for a
+    // custom range), so there is no like-for-like baseline. Computed over the
+    // station's channels in one aggregate earliest query. Data loss or outages
+    // inside the window never flag the station as new.
     let is_new = if exclude_new_stations {
-        let current_coverage =
-            repository.resolution_coverage(current.from, current.to, channel_ids)?;
-        let current_ok = has_full_coverage(&current_coverage, current.from, current.to, now);
-        let previous_ok = match previous {
-            Some(previous) => {
-                let previous_coverage =
-                    repository.resolution_coverage(previous.from, previous.to, channel_ids)?;
-                has_full_coverage(&previous_coverage, previous.from, previous.to, now)
-            }
+        let reference_from = previous
+            .as_ref()
+            .map_or(current.from, |previous| previous.from);
+        match repository
+            .earliest_by_channel(channel_ids)?
+            .into_iter()
+            .map(|channel_first| channel_first.timestamp)
+            .min()
+        {
+            // Introduced inside the window, or no data at all -> new.
+            Some(earliest) => introduced_after(earliest, reference_from),
             None => true,
-        };
-        !current_ok || !previous_ok
+        }
     } else {
         false
     };
@@ -854,8 +821,8 @@ pub(super) fn period_graphs_per_channel(
 }
 
 /// The per-station summary graphs for one timeframe (nerd stats per station).
-/// With `exclude_new_stations` only stations with full coverage of the current
-/// AND previous window are aggregated (like-for-like).
+/// With `exclude_new_stations` only stations that already existed before the
+/// comparison window are aggregated (like-for-like).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn period_graphs_per_station(
     repository: &dyn MeasurementRepository,

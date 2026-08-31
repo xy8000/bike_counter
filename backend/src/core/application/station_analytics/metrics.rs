@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 
-use super::resolution::has_full_coverage;
+use super::resolution::introduced_after;
 use crate::core::application::data_source_update_service::DATA_SOURCE_UPDATE_JOB_TYPE;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
@@ -67,15 +67,17 @@ pub(super) fn last_update(
 /// With a single station this yields the overview-page metrics.
 ///
 /// When `exclude_new_stations` is on (the Bike-Trends setting):
-/// - **multi-station** (summary): a station is skipped for a metric unless it
-///   has measurements covering the whole current **and** previous window of that
-///   metric (like-for-like — the "new station skew" disappears);
+/// - **multi-station** (summary): a station is skipped for a metric when it was
+///   introduced during that metric's comparison window — its earliest-ever
+///   measurement is not before the previous window's start. A station that
+///   already existed before the window stays even with data loss or outages
+///   (like-for-like — the "new station skew" disappears);
 /// - **single-station** (detail): the totals are kept but `is_new` is set when
-///   the station lacks that full coverage, so the UI can show a neutral "New"
-///   indicator instead of a misleading trend arrow.
+///   the station was introduced inside the window, so the UI can show a neutral
+///   "New" indicator instead of a misleading trend arrow.
 ///
-/// The coverage check is generic over any `(from, to)` window (see
-/// [`has_full_coverage`]), so a future custom from/to date picker reuses it
+/// The predicate is generic over any `(from, to)` window (see
+/// [`introduced_after`]), so a future custom from/to date picker reuses it
 /// unchanged.
 pub(super) fn metric_windows(
     repository: &dyn MeasurementRepository,
@@ -112,16 +114,20 @@ pub(super) fn metric_windows(
         let (before_year_from, _) = calendar_year_window(tz, now, 2)?;
         let year_previous_to = year_from - Duration::microseconds(1);
 
-        // One coverage query over the union of all eight windows, so every
-        // metric's current + previous window can be checked in one pass (the
-        // earliest `from` is the year-before-previous start, the latest `to` is
-        // the most recent local day end). Skipped entirely unless the setting is
-        // on, keeping the default path free of extra queries.
-        let coverage = if exclude_new_stations {
-            let union_to = day_to.max(week_to).max(month_to).max(year_to);
-            repository.resolution_coverage(before_year_from, union_to, &channel_ids)?
+        // The earliest-ever measurement of the station's channels (the MIN over
+        // all of them). Under the Bike-Trends setting a station is "new" for a
+        // metric when this earliest is not before that metric's previous-window
+        // start — it had no data at all before the comparison period. Data loss
+        // or outages inside the window never exclude it. Skipped entirely unless
+        // the setting is on, keeping the default path free of extra queries.
+        let earliest = if exclude_new_stations {
+            repository
+                .earliest_by_channel(&channel_ids)?
+                .into_iter()
+                .map(|channel_first| channel_first.timestamp)
+                .min()
         } else {
-            Vec::new()
+            None
         };
 
         // The (current, previous) window pair of each metric, in MetricKey order.
@@ -136,14 +142,14 @@ pub(super) fn metric_windows(
         ];
 
         for (idx, ((c_from, c_to), (p_from, p_to))) in windows.into_iter().enumerate() {
-            if exclude_new_stations {
-                let covers_current = has_full_coverage(&coverage, c_from, c_to, now);
-                let covers_previous = has_full_coverage(&coverage, p_from, p_to, now);
+            // No earliest (the station has no measurements at all) is treated as
+            // "new": there is no baseline to compare against.
+            if exclude_new_stations
+                && earliest.is_none_or(|earliest| introduced_after(earliest, p_from))
+            {
                 if single_station {
-                    if !covers_current || !covers_previous {
-                        is_new[idx] = true;
-                    }
-                } else if !covers_current || !covers_previous {
+                    is_new[idx] = true;
+                } else {
                     continue;
                 }
             }

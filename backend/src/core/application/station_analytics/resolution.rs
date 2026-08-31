@@ -39,9 +39,9 @@ pub fn select_resolution(
 /// window) covers the whole `[from, to]` window when its earliest is within one
 /// interval of `from` and its latest within one interval of `to`.
 ///
-/// The primitive shared by [`covers`], [`has_full_coverage`] and the per-channel
-/// coverage rows (`ChannelCoverage`), so the tolerance logic lives in one place
-/// and stays generic over any window.
+/// The primitive shared by [`covers`] and the per-channel coverage rows
+/// (`ChannelCoverage`), so the tolerance logic lives in one place and stays
+/// generic over any window.
 pub fn covers_window(
     resolution_seconds: i64,
     first: DateTime<Utc>,
@@ -53,67 +53,25 @@ pub fn covers_window(
     first <= from + r && last >= to - r
 }
 
-/// Whether a station "has data for the whole" `[from, to]` window — the
-/// Bike-Trends like-for-like predicate shared by the summary filter and the
-/// detail `is_new` flag. Generic over any window (a future custom from/to date
-/// picker reuses it unchanged).
+/// Whether a station/group counts as "new" for a window: it was introduced at or
+/// after the window's `from` — that is, its **earliest-ever** measurement is not
+/// before the window start. This is the Bike-Trends like-for-like predicate: a
+/// station that already existed before the window began has a fair baseline even
+/// when it had a data loss or an outage inside the window, so it is never
+/// excluded; only a station introduced during the window (no data at all before
+/// its start) is dropped.
 ///
-/// A still-running window (`to >= now`, e.g. the current week or year whose end
-/// is the reference time) is never complete: data for it may not have arrived
-/// yet (incomplete week, import lag, a seed that went stale), so no station can
-/// be required to "have data for the whole" of it — gating on it would drop
-/// every station as soon as the current period is empty. It therefore never
-/// excludes a station.
-///
-/// Only a window that has **finished** (`to < now`) demands full coverage: the
-/// station must report from within one interval of `from` (so it existed at the
-/// window's start — the discriminator for a newly-built station) and through
-/// within one interval of `to`. This keeps the like-for-like comparison strict
-/// on the completed (previous) period, which is exactly what excludes new
-/// stations: a station built recently has no previous-period data at all.
-pub fn covers_whole_window(
-    resolution_seconds: i64,
-    first: DateTime<Utc>,
-    last: DateTime<Utc>,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-    now: DateTime<Utc>,
-) -> bool {
-    if to >= now {
-        return true;
-    }
-    let r = Duration::seconds(resolution_seconds);
-    first <= from + r && last >= to - r
+/// Unlike the retired full-coverage check there is no per-resolution tolerance:
+/// `earliest` is the global minimum timestamp, not an in-window minimum, so a
+/// gap at either edge of the window no longer matters.
+pub fn introduced_after(earliest: DateTime<Utc>, from: DateTime<Utc>) -> bool {
+    earliest >= from
 }
 
 /// A resolution `r` covers the window when its earliest measurement is within
 /// one interval of `from` and its latest within one interval of `to`.
 fn covers(c: &ResolutionCoverage, from: DateTime<Utc>, to: DateTime<Utc>) -> bool {
     covers_window(c.resolution_seconds, c.first, c.last, from, to)
-}
-
-/// Whether any resolution's coverage spans the **whole** `[from, to]` window.
-/// Generic over any window — a future custom from/to date picker reuses this
-/// unchanged.
-///
-/// This is the Bike-Trends like-for-like predicate: a station "has data for the
-/// whole graph" only when this returns true for the current window (and, when
-/// the previous period is part of the comparison, for the previous window too).
-/// `now` lets the predicate treat a still-running window (`to >= now`) as
-/// open-ended — it never gates, even when the station has no measurements in
-/// the running period yet, see [`covers_whole_window`].
-pub fn has_full_coverage(
-    coverage: &[ResolutionCoverage],
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-    now: DateTime<Utc>,
-) -> bool {
-    if to >= now {
-        return true;
-    }
-    coverage
-        .iter()
-        .any(|c| covers_whole_window(c.resolution_seconds, c.first, c.last, from, to, now))
 }
 
 #[cfg(test)]
@@ -198,98 +156,22 @@ mod tests {
     }
 
     #[test]
-    fn has_full_coverage_is_true_when_a_resolution_spans_the_whole_window() {
+    fn introduced_after_is_true_when_earliest_is_at_or_after_the_window_start() {
         let from = utc(2026, 1, 1, 0, 0, 0);
-        let to = utc(2026, 12, 31, 23, 59, 59);
-        let now = utc(2027, 1, 1, 0, 0, 0);
-        let coverage = vec![
-            cov(
-                300,
-                utc(2026, 11, 1, 0, 0, 0),
-                utc(2026, 12, 31, 23, 59, 59),
-            ),
-            cov(
-                86400,
-                utc(2026, 1, 1, 0, 0, 0),
-                utc(2026, 12, 31, 23, 59, 59),
-            ),
-        ];
-        assert!(has_full_coverage(&coverage, from, to, now));
+        // Earliest exactly at the start -> introduced in the window.
+        assert!(introduced_after(utc(2026, 1, 1, 0, 0, 0), from));
+        // Earliest after the start -> introduced in the window.
+        assert!(introduced_after(utc(2026, 3, 15, 0, 0, 0), from));
     }
 
     #[test]
-    fn has_full_coverage_is_false_when_no_resolution_spans_the_whole_window() {
+    fn introduced_after_is_false_when_earliest_predates_the_window_start() {
         let from = utc(2026, 1, 1, 0, 0, 0);
-        let to = utc(2026, 12, 31, 23, 59, 59);
-        let now = utc(2027, 1, 1, 0, 0, 0);
-        // Fine data only covers the last two months, coarse only the middle.
-        let coverage = vec![
-            cov(300, utc(2026, 11, 1, 0, 0, 0), utc(2026, 12, 1, 0, 0, 0)),
-            cov(86400, utc(2026, 6, 1, 0, 0, 0), utc(2026, 7, 1, 0, 0, 0)),
-        ];
-        assert!(!has_full_coverage(&coverage, from, to, now));
-    }
-
-    #[test]
-    fn has_full_coverage_is_false_for_empty_coverage() {
-        let from = utc(2026, 1, 1, 0, 0, 0);
-        let to = utc(2026, 1, 2, 0, 0, 0);
-        let now = utc(2026, 1, 3, 0, 0, 0);
-        assert!(!has_full_coverage(&[], from, to, now));
-    }
-
-    #[test]
-    fn covers_whole_window_treats_a_running_window_as_open_ended() {
-        // The current week/year window ends at `now` and may not have any data
-        // yet (the week is incomplete, or the import has not arrived). No
-        // station can be required to "have data for the whole" of it, so it
-        // never excludes — a station with zero data in the running period, or
-        // one whose latest measurement lags `now`, both pass.
-        let from = utc(2026, 8, 24, 0, 0, 0); // week start
-        let now = utc(2026, 8, 31, 12, 0, 0);
-        assert!(covers_whole_window(
-            900,
-            from,
-            now - Duration::days(1),
-            from,
-            now,
-            now,
-        ));
-        assert!(covers_whole_window(
-            900,
-            from + Duration::days(2),
-            now,
-            from,
-            now,
-            now,
-        ));
-        // A running window never gates even with empty coverage (a station with
-        // no measurements in the current period yet).
-        assert!(has_full_coverage(&[], from, now, now));
-
-        // A finished window (the previous week) still demands full coverage:
-        // data from its start through its end. A station that only started
-        // mid-window, or whose data stops early, is dropped.
-        let prev_from = from - Duration::days(7);
-        let prev_to = from - Duration::microseconds(1);
-        assert!(covers_whole_window(
-            900, prev_from, prev_to, prev_from, prev_to, now
-        ));
-        assert!(!covers_whole_window(
-            900,
-            prev_from + Duration::days(2),
-            prev_to,
-            prev_from,
-            prev_to,
-            now,
-        ));
-        assert!(!covers_whole_window(
-            900,
-            prev_from,
-            prev_to - Duration::days(1),
-            prev_from,
-            prev_to,
-            now,
-        ));
+        // Earliest just before the start -> established.
+        assert!(!introduced_after(utc(2025, 12, 31, 23, 0, 0), from));
+        // Earliest years before the start -> established, regardless of any
+        // data loss or outage inside the window (only the global earliest
+        // matters).
+        assert!(!introduced_after(utc(2014, 6, 1, 0, 0, 0), from));
     }
 }
