@@ -12,10 +12,11 @@
 # providers either, and the committed tiles/map.pmtiles archive means no
 # Protomaps download is needed.
 #
-# NOTE: the e2e uses a fresh database volume (`docker compose down -v`), so the
-# local `postgres_data`/`minio_data` volumes are reset and re-seeded from the
-# fixture. Dev data in those volumes is not preserved — regenerate the fixture
-# first with scripts/dump-e2e-fixture.sh if needed.
+# NOTE: the e2e is fully isolated from development data. It uses the dedicated
+# `postgres_data_e2e`/`minio_data_e2e` volumes (see docker-compose.e2e.yml); the
+# `down -v` in this script drops those e2e volumes only, so the development
+# `postgres_data`/`minio_data` volumes are never touched and survive every run.
+# The e2e volume is re-seeded from the fixture on each run.
 #
 # Requirements: Docker, Docker Compose v2 (`docker compose`), Node.js + npm
 # (frontend dependencies).
@@ -143,7 +144,7 @@ cache_duration = "300"
 include_legacy = "true"
 EOF
 
-echo "--- Clearing any leftover containers and volumes from a previous run"
+echo "--- Clearing any leftover e2e containers and volumes from a previous run"
 docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE}" down -v --remove-orphans >/dev/null 2>&1 || true
 
 echo "--- Building and starting the stack (this builds the release binary)"
@@ -155,9 +156,10 @@ if ! docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE}" up -d --build 
 fi
 echo "--- Stack built."
 
-# The db container seeds the fixture on its fresh volume (docker-entrypoint-initdb.d)
-# and the backend healthcheck (overridden in docker-compose.e2e.yml) is /health/live,
-# so this wait never touches the data providers. Allow up to 5 minutes.
+# The db container seeds the fixture on its fresh e2e volume
+# (docker-entrypoint-initdb.d) and the backend healthcheck (overridden in
+# docker-compose.e2e.yml) is /health/live, so this wait never touches the data
+# providers. Allow up to 5 minutes.
 echo "--- Waiting for ${APP_URL}/health/live"
 READY=0
 for _ in $(seq 1 60); do

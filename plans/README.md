@@ -12,6 +12,7 @@ order. Statuses:
 
 | Status | Plan | File | Summary |
 |---|---|---|---|
+| [x] | Isolate Playwright e2e from dev data | [`74_playwright_e2e_isolated_volumes_plan.md`](74_playwright_e2e_isolated_volumes_plan.md) | Moves the Playwright e2e `db`/`minio` onto dedicated `postgres_data_e2e`/`minio_data_e2e` volumes (and resets the dev volumes out of the merged config), so `docker compose down -v` in the e2e script can no longer wipe the development `postgres_data`/`minio_data` volumes. |
 | [x] | Frontend chart data-stream limit | [`73_frontend_chart_stream_limit_plan.md`](73_frontend_chart_stream_limit_plan.md) | Hides any per-station/per-channel chart that would draw more than 5 data-streams (line, weekday radar, hour radar, share pie) and shows an info-note instead, on both the summary and detail pages; adds Playwright e2e coverage. |
 | [x] | Startup migration logging | [`72_startup_migration_logging_plan.md`](72_startup_migration_logging_plan.md) | Concise `Starting DB-Migrations` / applied-list / `not necessary` output during backend startup. |
 | [x] | Multi-city Playwright map/overview/detail tests | [`71_multicity_playwright_e2e_plan.md`](71_multicity_playwright_e2e_plan.md) | Single-boot Playwright run over a committed SQL fixture seeded from the current DB (Münster, Bonn, Hamburg), avoiding live provider imports; exercises map → overview → detail per city. |
