@@ -21,8 +21,9 @@ export interface HourRadarSeries {
 const HOUR_LABELS = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'))
 
 /// Radar over the 24 local hours (0 = midnight .. 23 = 23:00). One radar per
-/// series: for the aggregate that is a single "Bikes" series, for the nerd stats
-/// one per channel/station. Missing hours are filled with 0 so the circle is
+/// series: for the aggregate that is a single "Bikes" series, for the detailed
+/// stats one per channel/station. Missing hours are filled with 0 so the circle
+/// is
 /// always complete — a fixed 24-slot axis, not zero-filled time buckets.
 export function HourRadar({
   series,

@@ -69,8 +69,8 @@ function ChartCardSkeleton() {
   )
 }
 
-/// The "Detailed statistics" / "Nerd stats" skeleton: a full-width line-chart
-/// card + two radar cards, matching the rendered chart grid.
+/// The "Detailed statistics" / "Detailed stats" skeleton: a full-width
+/// line-chart card + two radar cards, matching the rendered chart grid.
 export function ChartsSkeleton() {
   return (
     <div className="flex flex-col gap-4">
@@ -83,19 +83,41 @@ export function ChartsSkeleton() {
   )
 }
 
-/// The monthly bar chart skeleton: a card with a header line + year-button +
-/// bar-shaped block, matching `MonthlyBarChart`.
+/// The key-facts row skeleton: four bordered boxes (label + large value +
+/// detail line) matching the rendered `KeyFacts` grid, shown while the graphs
+/// card that the facts are derived from is still loading.
+export function KeyFactsSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {[0, 1, 2, 3].map((index) => (
+        <div key={index} className="rounded-md border p-3">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="mt-2 h-7 w-20" />
+          <Skeleton className="mt-2 h-3 w-16" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/// The monthly bar chart skeleton: a card with a year-button row (matching the
+/// interactive year selector) + a bar-shaped block, matching `MonthlyBarChart`.
 export function MonthlyBarSkeleton() {
   return (
     <Card className="py-0">
-      <CardHeader className="border-b p-0">
-        <div className="flex flex-col justify-center gap-1 px-6 pt-4 pb-3">
-          <Skeleton className="h-5 w-36" />
-          <Skeleton className="h-3 w-56" />
-        </div>
+      <CardHeader className="flex flex-wrap items-stretch border-b p-0">
+        {[0, 1].map((index) => (
+          <div
+            key={index}
+            className="flex flex-1 flex-col justify-center gap-1 px-4 py-3 sm:px-6 sm:py-4"
+          >
+            <Skeleton className="h-3 w-10" />
+            <Skeleton className="h-6 w-20" />
+            <Skeleton className="h-3 w-12" />
+          </div>
+        ))}
       </CardHeader>
       <CardContent className="flex flex-col gap-2 px-6 py-4">
-        <Skeleton className="h-8 w-28" />
         <Skeleton className="h-40 w-full" />
       </CardContent>
     </Card>

@@ -8,6 +8,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
+import { formatNumber } from '../../lib/format'
 import type { TimeBucket } from './types'
 import { ChartEmptyState } from './ChartEmptyState'
 import { ChartLimitNotice } from './ChartLimitNotice'
@@ -93,7 +94,14 @@ export function TimeSeriesLineChart({
           tickFormatter={xFormatter}
           minTickGap={24}
         />
-        <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} />
+        <YAxis
+          tickLine={false}
+          axisLine={false}
+          width={68}
+          tickMargin={8}
+          allowDecimals={false}
+          tickFormatter={(value) => formatNumber(Number(value))}
+        />
         <ChartTooltip
           cursor={false}
           content={

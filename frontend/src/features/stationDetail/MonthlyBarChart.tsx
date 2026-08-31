@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import {
   ChartContainer,
   ChartTooltip,
@@ -102,46 +102,43 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
 
   return (
     <Card className="py-0">
-      <CardHeader className="flex flex-col items-stretch border-b p-0 sm:flex-row">
-        <div className="flex flex-1 flex-col justify-center gap-1 px-6 pt-4 pb-3 sm:py-4">
-          <CardTitle>Bikes per month</CardTitle>
-          <CardDescription>All available months, grouped by year</CardDescription>
-        </div>
-        <div className="flex flex-wrap border-t sm:border-t-0 sm:border-l">
-          {yearlyTotals.map(({ year, total, deltaPercent, trend }) => (
-            <button
-              key={year}
-              type="button"
-              data-active={currentYear === String(year)}
-              className={cn(
-                'flex flex-1 flex-col justify-center gap-1 px-4 py-3 text-left data-[active=true]:bg-muted/50 sm:px-6 sm:py-4',
-              )}
-              onClick={() => setActiveYear(String(year))}
-            >
-              <span className="text-xs text-muted-foreground">{year}</span>
-              <span className="text-lg leading-none font-bold sm:text-2xl">
-                {formatNumber(total)}
-                <span className="ml-1 text-xs font-normal text-muted-foreground">bikes</span>
+      {/* The year selector (one button per year) is the card's header; the
+          section above provides the "Bikes per month" heading + remark, so the
+          card itself carries no duplicate title/description. */}
+      <CardHeader className="flex flex-wrap items-stretch border-b p-0">
+        {yearlyTotals.map(({ year, total, deltaPercent, trend }) => (
+          <button
+            key={year}
+            type="button"
+            data-active={currentYear === String(year)}
+            className={cn(
+              'flex flex-1 flex-col justify-center gap-1 px-4 py-3 text-left data-[active=true]:bg-muted/50 sm:px-6 sm:py-4',
+            )}
+            onClick={() => setActiveYear(String(year))}
+          >
+            <span className="text-xs text-muted-foreground">{year}</span>
+            <span className="text-lg leading-none font-bold sm:text-2xl">
+              {formatNumber(total)}
+              <span className="ml-1 text-xs font-normal text-muted-foreground">bikes</span>
+            </span>
+            <span className="flex items-center gap-1 text-xs font-semibold">
+              {trend && <TrendIcon trend={trend} />}
+              <span
+                className={
+                  trend === 'up'
+                    ? 'text-emerald-600'
+                    : trend === 'down'
+                      ? 'text-rose-600'
+                      : 'text-muted-foreground'
+                }
+              >
+                {deltaPercent === null
+                  ? '–'
+                  : `${deltaPercent > 0 ? '+' : ''}${formatNumber(deltaPercent)}%`}
               </span>
-              <span className="flex items-center gap-1 text-xs font-semibold">
-                {trend && <TrendIcon trend={trend} />}
-                <span
-                  className={
-                    trend === 'up'
-                      ? 'text-emerald-600'
-                      : trend === 'down'
-                        ? 'text-rose-600'
-                        : 'text-muted-foreground'
-                  }
-                >
-                  {deltaPercent === null
-                    ? '–'
-                    : `${deltaPercent > 0 ? '+' : ''}${formatNumber(deltaPercent)}%`}
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
+            </span>
+          </button>
+        ))}
       </CardHeader>
       <CardContent className="px-2 sm:p-6">
         {years.length === 0 ? (
@@ -155,13 +152,15 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
+                height={32}
                 minTickGap={16}
               />
               <YAxis
                 orientation="left"
                 tickLine={false}
                 axisLine={false}
-                width={40}
+                width={68}
+                tickMargin={8}
                 allowDecimals={false}
                 tickFormatter={(value) => formatNumber(Number(value))}
               />

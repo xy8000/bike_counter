@@ -70,13 +70,23 @@ test.describe('station summary', () => {
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
     await expect(page.getByText('Total bikes (all time)')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Detailed statistics' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Nerd stats' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Detailed stats' })).toBeVisible()
+    // The timeframe-derived key facts render inside "Detailed statistics".
+    await expect(
+      page
+        .locator('section')
+        .filter({ has: page.getByRole('heading', { name: 'Detailed statistics' }) })
+        .getByText('Total bikes in selection', { exact: true }),
+    ).toBeVisible()
     // The hour-of-day radar sits next to the Weekdays radar (split half).
     await expect(
       page.locator('[data-slot="card"]').filter({ hasText: 'Hours' }).first(),
     ).toBeVisible()
-    const monthlyCard = page.locator('[data-slot="card"]').filter({ hasText: 'Bikes per month' })
-    await expect(monthlyCard).toBeVisible()
+    const monthlySection = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Bikes per month' }),
+    })
+    await expect(monthlySection).toBeVisible()
+    await expect(monthlySection.locator('[data-slot="card"]')).toBeVisible()
     // Recharts draws at least one chart.
     await expect(page.locator('.recharts-wrapper').first()).toBeVisible()
   })
@@ -156,10 +166,10 @@ test.describe('station summary', () => {
     })
     await expect(statsSection.locator('.recharts-wrapper').first()).toBeVisible()
 
-    // The per-station nerd-stats charts are replaced by the info note.
-    const nerdSection = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Nerd stats' }),
+    // The per-station detailed-stats charts are replaced by the info note.
+    const detailedSection = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Detailed stats' }),
     })
-    await expect(nerdSection.getByText(/too many data-streams to render/).first()).toBeVisible()
+    await expect(detailedSection.getByText(/too many data-streams to render/).first()).toBeVisible()
   })
 })

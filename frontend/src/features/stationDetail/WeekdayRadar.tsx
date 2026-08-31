@@ -28,7 +28,8 @@ const WEEKDAY_LABELS = [
 ]
 
 /// Radar over the seven weekdays (ISO 1 = Monday). One radar per series: for the
-/// aggregate that is a single "Bikes" series, for the nerd stats one per channel.
+/// aggregate that is a single "Bikes" series, for the detailed stats one per
+/// channel.
 /// Missing weekdays are filled with 0 so the circle is always complete — this is
 /// a fixed 7-slot axis, not zero-filled time buckets.
 export function WeekdayRadar({ series, className }: { series: RadarSeries[]; className?: string }) {

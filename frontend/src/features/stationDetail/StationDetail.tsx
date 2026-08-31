@@ -1,17 +1,8 @@
-import { useState } from 'react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { formatNumber, formatTimestamp } from '../../lib/format'
 import { serializeBounds, stationBounds } from '../../lib/geo'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
@@ -19,14 +10,17 @@ import { SearchableHeader } from '../header/SearchableHeader'
 import type { StationSummary } from '../stations/types'
 import { useTrendSettings } from '../settings/TrendSettingsContext'
 import { SettingsDialog } from '../settings/SettingsDialog'
+import { TimeframeSettingsLabel } from '../settings/TimeframeSettingsLabel'
+import { useTimeframeSettings, withCustomRange } from '../settings/useTimeframeSettings'
 import { MetricCard } from '../stationOverview/MetricCard'
 import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
-import type { ChannelRef, PeriodGraphs, StationDetailPage, Timeframe } from './types'
+import type { ChannelRef, FixedTimeframe, PeriodGraphs, StationDetailPage } from './types'
 import { GRAPH_LINK_KEYS } from './types'
 import {
   TIMEFRAMES,
-  TIMEFRAME_ORDER,
   alignSeries,
+  customTimeframeConfig,
+  dateFromInput,
   timeframeDomain,
   timeframeSeries,
   type TimeframeConfig,
@@ -35,6 +29,7 @@ import { ChartCard } from './ChartCard'
 import { ChannelPie } from './ChannelPie'
 import { DetailMap } from './DetailMap'
 import { HourRadar, type HourRadarSeries } from './HourRadar'
+import { KeyFacts, computeKeyFacts } from './KeyFacts'
 import { MonthlyBarChart } from './MonthlyBarChart'
 import { TimeSeriesLineChart, type LineSeries } from './TimeSeriesLineChart'
 import { WeekdayRadar, type RadarSeries } from './WeekdayRadar'
@@ -44,6 +39,7 @@ import { useStationMonthly } from './useStationMonthly'
 import { useStationOverviewStats } from './useStationOverviewStats'
 import {
   ChartsSkeleton,
+  KeyFactsSkeleton,
   MonthlyBarSkeleton,
   OverviewSkeleton,
   PageShellSkeleton,
@@ -107,8 +103,8 @@ function aggregateHourRadar(
   return series
 }
 
-/// Per-channel weekday radar for one timeframe (nerd stats). Each channel with
-/// traffic contributes a current radar and, when compare is on, a previous
+/// Per-channel weekday radar for one timeframe (detailed stats). Each channel
+/// with traffic contributes a current radar and, when compare is on, a previous
 /// period radar.
 function channelRadar(
   period: PeriodGraphs,
@@ -137,7 +133,7 @@ function channelRadar(
   })
 }
 
-/// Per-channel hour-of-day radar for one timeframe (nerd stats).
+/// Per-channel hour-of-day radar for one timeframe (detailed stats).
 function channelHourRadar(
   period: PeriodGraphs,
   channels: ChannelRef[],
@@ -240,14 +236,37 @@ export function StationDetail() {
 
 function DetailContent({ page }: { page: StationDetailPage }) {
   const { channels } = page
-  // Default to the week timeframe ("This week"): the 24-hour window is not
-  // always populated (e.g. a still-importing dataset), so a full week is the
-  // safe default view.
-  const [timeframe, setTimeframe] = useState<Timeframe>('week')
-  const [comparePrevious, setComparePrevious] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const cfg = TIMEFRAMES[timeframe]
-  const { excludeNewStations } = useTrendSettings()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const settings = useTimeframeSettings(searchParams, setSearchParams)
+  const { timeframe, from, to, compare, isIndividual } = settings
+  const { excludeNewStations, setExcludeNewStations } = useTrendSettings()
+
+  // A shared link carries the Bike-Trends flag (`exclude_new_stations=1`); sync
+  // it into the app-global context so the header and every stats card agree with
+  // the link. When the param is absent the localStorage value is left untouched.
+  const urlExclude = searchParams.has('exclude_new_stations')
+    ? searchParams.get('exclude_new_stations') === '1'
+    : null
+  useEffect(() => {
+    if (urlExclude !== null) setExcludeNewStations(urlExclude)
+  }, [urlExclude, setExcludeNewStations])
+
+  // The fixed timeframes use their HATEOAS link and static config; the
+  // individual range builds its own link (from/to appended to the `graphs_day`
+  // base) and derives its config (labels/axis) from the selected range. Compare
+  // is disabled for a custom range.
+  const cfg: TimeframeConfig = !isIndividual
+    ? TIMEFRAMES[timeframe as FixedTimeframe]
+    : from && to
+      ? customTimeframeConfig(dateFromInput(from), dateFromInput(to))
+      : TIMEFRAMES.week
+  const graphLink = !isIndividual
+    ? page._links[GRAPH_LINK_KEYS[timeframe as FixedTimeframe]]
+    : from && to
+      ? withCustomRange(page._links.graphs_day, from, to)
+      : page._links.graphs_week
+  const comparePrevious = compare && !isIndividual
 
   // Each stats card fetches its own sub-resource through the shell's links
   // (which carry the `as_of` reference), so cards load and fail independently.
@@ -256,10 +275,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
     page._links.overview,
     excludeNewStations,
   )
-  const { data: graphs, error: graphsError } = useStationGraphs(
-    page._links[GRAPH_LINK_KEYS[timeframe]],
-    excludeNewStations,
-  )
+  const { data: graphs, error: graphsError } = useStationGraphs(graphLink, excludeNewStations)
   const { data: monthly, error: monthlyError } = useStationMonthly(page._links.monthly)
 
   const period = graphs
@@ -334,29 +350,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Detailed statistics</h2>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Timeframe</span>
-              <Select value={timeframe} onValueChange={(value) => setTimeframe(value as Timeframe)}>
-                <SelectTrigger className="w-[190px]" aria-label="Timeframe">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TIMEFRAME_ORDER.map((key) => (
-                    <SelectItem key={key} value={key}>
-                      {TIMEFRAMES[key].label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="compare-previous"
-                checked={comparePrevious}
-                onCheckedChange={(checked) => setComparePrevious(checked === true)}
-              />
-              <Label htmlFor="compare-previous">Compare previous period</Label>
-            </div>
+            <TimeframeSettingsLabel settings={settings} />
             <Button
               type="button"
               variant="outline"
@@ -368,7 +362,11 @@ function DetailContent({ page }: { page: StationDetailPage }) {
               <SlidersHorizontal />
               Settings
             </Button>
-            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+            <SettingsDialog
+              open={settingsOpen}
+              onOpenChange={setSettingsOpen}
+              settings={settings}
+            />
           </div>
         </div>
 
@@ -384,12 +382,16 @@ function DetailContent({ page }: { page: StationDetailPage }) {
 
         {period ? (
           <div className="grid grid-cols-1 gap-4">
+            {/* Key facts for the selected timeframe, in the overview's
+                metric-box theme. */}
+            <KeyFacts facts={computeKeyFacts(period)} />
             <ChartCard title={cfg.title} subtitle={cfg.subtitle}>
               <TimeSeriesLineChart
                 series={mainSeries}
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
                 xDomain={domain}
+                className="aspect-[20/7.65]"
               />
             </ChartCard>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -404,28 +406,19 @@ function DetailContent({ page }: { page: StationDetailPage }) {
         ) : graphsError ? (
           <p className="text-sm font-semibold text-destructive">Could not load the statistics.</p>
         ) : (
-          <ChartsSkeleton />
+          <div className="flex flex-col gap-4">
+            {/* The key facts are derived from the graphs card, so their boxes
+                load (and fail) together with the charts. */}
+            <KeyFactsSkeleton />
+            <ChartsSkeleton />
+          </div>
         )}
       </section>
 
-      {/* Monthly bar chart card: all available months, standalone (not driven by
-          the timeframe dropdown). */}
+      {/* Detailed stats card: the same graphs per channel, all driven by the
+          shared timeframe selector + compare checkbox. */}
       <section className="mt-8">
-        {monthly ? (
-          <MonthlyBarChart totals={monthly.monthly_totals} />
-        ) : monthlyError ? (
-          <p className="text-sm font-semibold text-destructive">
-            Could not load the monthly totals.
-          </p>
-        ) : (
-          <MonthlyBarSkeleton />
-        )}
-      </section>
-
-      {/* Nerd stats card: the same graphs per channel, all driven by the shared
-          timeframe selector + compare checkbox. */}
-      <section className="mt-8">
-        <h2 className="mb-1 text-lg font-semibold">Nerd stats</h2>
+        <h2 className="mb-1 text-lg font-semibold">Detailed stats</h2>
         <p className="mb-3 text-sm text-muted-foreground">The same graphs, drawn per channel.</p>
         {period ? (
           <div className="grid grid-cols-1 gap-4">
@@ -453,9 +446,29 @@ function DetailContent({ page }: { page: StationDetailPage }) {
             </ChartCard>
           </div>
         ) : graphsError ? (
-          <p className="text-sm font-semibold text-destructive">Could not load the nerd stats.</p>
+          <p className="text-sm font-semibold text-destructive">
+            Could not load the detailed stats.
+          </p>
         ) : (
           <ChartsSkeleton />
+        )}
+      </section>
+
+      {/* Monthly bar chart card: all available months, standalone (not driven by
+          the timeframe dropdown), shown at the very bottom. */}
+      <section className="mt-8">
+        <h2 className="mb-1 text-lg font-semibold">Bikes per month</h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          The settings are not applied to this chart — newly added counting stations may add bikes.
+        </p>
+        {monthly ? (
+          <MonthlyBarChart totals={monthly.monthly_totals} />
+        ) : monthlyError ? (
+          <p className="text-sm font-semibold text-destructive">
+            Could not load the monthly totals.
+          </p>
+        ) : (
+          <MonthlyBarSkeleton />
         )}
       </section>
     </>

@@ -33,7 +33,7 @@ test('the shared detail page renders the station content and a highlighted map p
   await expect(overviewSection.getByText('Last year', { exact: true })).toBeVisible()
   // The graph sections.
   await expect(page.getByRole('heading', { name: 'Detailed statistics' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Nerd stats' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Detailed stats' })).toBeVisible()
   // Recharts renders at least one chart.
   await expect(page.locator('.recharts-wrapper').first()).toBeVisible()
   // Exactly one map: the highlighted detail preview (the map view has markers +
@@ -102,10 +102,48 @@ test('the hour-of-day radar renders next to the Weekdays radar', async ({ page }
     await expect(wrapper).toBeVisible()
   }
 
-  // The nerd-stats variant exists too.
+  // The detailed-stats variant exists too.
   await expect(
     page.locator('[data-slot="card"]').filter({ hasText: 'Hours by channel' }),
   ).toBeVisible()
+})
+
+test('the detailed statistics section shows key facts for the selected timeframe', async ({
+  page,
+}) => {
+  const stationId = await openFirstStation(page)
+  await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
+
+  const statsSection = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Detailed statistics' }),
+  })
+
+  // The key facts are derived from the selected timeframe's graph data (default
+  // "This week") and use the overview's metric-box theme.
+  await expect(statsSection.getByText('Total bikes in selection', { exact: true })).toBeVisible()
+  await expect(statsSection.getByText('Busiest day in range', { exact: true })).toBeVisible()
+  await expect(statsSection.getByText('Busiest hour', { exact: true })).toBeVisible()
+  await expect(statsSection.getByText('Busiest weekday', { exact: true })).toBeVisible()
+})
+
+test('the bikes-per-month chart is the last section and shows the settings hint', async ({
+  page,
+}) => {
+  const stationId = await openFirstStation(page)
+  await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
+
+  // The monthly chart moved below "Detailed stats", so it is the last section.
+  const monthlySection = page.locator('main section').filter({
+    has: page.getByRole('heading', { name: 'Bikes per month' }),
+  })
+  await expect(monthlySection).toBeVisible()
+  await expect(page.locator('main section').last()).toContainText('Bikes per month')
+
+  // The section carries its own heading (the card itself has no duplicate
+  // title) and the remark underneath explains that the settings are not applied
+  // to this chart, because newly added counting stations may add bikes.
+  await expect(monthlySection.getByText(/settings are not applied to this chart/i)).toBeVisible()
+  await expect(monthlySection.locator('[data-slot="card"]')).toBeVisible()
 })
 
 // Gasselstiege (Münster) has 6 channels; the e2e fixture synthesizes data for
@@ -196,7 +234,7 @@ test('clicking the map preview opens the map view at the preview bounds', async 
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
 })
 
-test('the shared timeframe selector drives the main chart and the monthly bar chart renders', async ({
+test('the settings timeframe drives the main chart and the monthly bar chart renders', async ({
   page,
 }) => {
   const stationId = await openFirstStation(page)
@@ -209,15 +247,21 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
   // The default timeframe is "This week" (1-hour buckets).
   await expect(statsSection.getByText('1-hour buckets', { exact: true })).toBeVisible()
 
-  // Switch to "Last 30 days"; the main chart changes (1-day buckets). The Radix
-  // Select trigger exposes the combobox role.
-  await statsSection.getByRole('combobox', { name: /Timeframe/ }).click()
-  await page.getByRole('option', { name: 'Last 30 days' }).click()
+  // Switch to "Last 30 days" via the settings dialogue (one-click option); the
+  // main chart changes (1-day buckets) and the setting lands in the URL.
+  await page.getByRole('button', { name: 'Calculation settings' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Last 30 days', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
   await expect(statsSection.getByText('1-day buckets', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/[?&]timeframe=last_30_days/)
 
   // The standalone monthly bar chart renders with a year selector: one clickable
   // button per year in the header (the grand total is gone — totals are per year).
-  const monthlyCard = page.locator('[data-slot="card"]').filter({ hasText: 'Bikes per month' })
+  const monthlyCard = page
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: 'Bikes per month' }) })
+    .locator('[data-slot="card"]')
   await expect(monthlyCard).toBeVisible()
   await expect(monthlyCard.getByRole('button').first()).toBeVisible()
 
@@ -240,14 +284,17 @@ test('the shared timeframe selector drives the main chart and the monthly bar ch
   await expect(latestYearButton).not.toContainText('%')
 })
 
-test('the compare-previous checkbox overlays the previous period', async ({ page }) => {
+test('the settings compare-previous checkbox overlays the previous period', async ({ page }) => {
   const stationId = await openFirstStation(page)
   await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
 
   const statsSection = page.locator('section').filter({
     has: page.getByRole('heading', { name: 'Detailed statistics' }),
   })
-  const compare = page.getByRole('checkbox', { name: 'Compare previous period' })
+
+  await page.getByRole('button', { name: 'Calculation settings' }).click()
+  const dialog = page.getByRole('dialog')
+  const compare = dialog.getByRole('checkbox', { name: 'Compare previous period' })
   await expect(compare).toBeVisible()
 
   // Default week chart is single-series, so no "Last week" legend entry.
@@ -258,8 +305,11 @@ test('the compare-previous checkbox overlays the previous period', async ({ page
   // still-importing/older dataset can leave the current week empty, in which
   // case the previous period draws as the single series (and the legend is
   // intentionally hidden for a single series), so the chart must not stay
-  // empty.
-  await compare.check()
+  // empty. The checkbox is controlled by the URL; `.click()` + an explicit
+  // wait is more robust than `.check()` against the URL round-trip re-render.
+  await compare.click()
+  await expect(compare).toBeChecked()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
   const lastWeek = statsSection.getByText('Last week', { exact: true }).first()
   if ((await lastWeek.count()) > 0) {
     await expect(lastWeek).toBeVisible()

@@ -77,7 +77,7 @@ export function TrendSettingsIllustration({ excludeNewStations }: { excludeNewSt
       <p className="mt-1 text-center text-[11px] leading-snug text-muted-foreground">
         {excludeNewStations
           ? 'new station excluded — totals grow more evenly'
-          : 'a new station opens and adds bikes — recent months jump'}
+          : 'a new station opens and adds bikes — sudden increase'}
       </p>
     </div>
   )
