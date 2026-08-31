@@ -47,8 +47,8 @@ export async function waitForStations(page: Page): Promise<void> {
 }
 
 /// A bounding box per city covering every seeded counting station (see
-/// scripts/e2e-seed.sql). Used by the multi-city specs to fly the map to each
-/// city. The BFF returns stations name-ordered and the seed guarantees the
+/// e2e-seed.sql in this folder). Used by the multi-city specs to fly the map to
+/// each city. The BFF returns stations name-ordered and the seed guarantees the
 /// alphabetically-first station per city has measurements, so the specs' "first
 /// marker" per city always renders its charts.
 export const CITY_BOUNDS = {

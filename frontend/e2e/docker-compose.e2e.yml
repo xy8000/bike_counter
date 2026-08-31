@@ -1,8 +1,9 @@
 # Compose override used only by the Playwright e2e run (`make test-playwright` via
-# scripts/e2e-playwright.sh). It is layered on top of docker-compose.yml:
+# ../scripts/e2e-playwright.sh). It is layered on top of the repository's
+# docker-compose.yml:
 #
-#   * mounts the committed SQL fixture so the database is seeded on its fresh
-#     volume (Postgres runs it from docker-entrypoint-initdb.d),
+#   * mounts the committed SQL fixture (./e2e-seed.sql) so the database is seeded
+#     on its fresh volume (Postgres runs it from docker-entrypoint-initdb.d),
 #   * points the backend healthcheck at `/health/live` so readiness never pings
 #     the data providers — the e2e run is fully offline (data comes from the seed;
 #     the HTTP server only binds after migrations + tiles + startup sync, so a
@@ -11,14 +12,17 @@
 # The e2e run is isolated from the development data: `db` and `minio` use the
 # dedicated `postgres_data_e2e` / `minio_data_e2e` volumes instead of the dev
 # `postgres_data` / `minio_data`, and the dev volumes are removed from the merged
-# config. `scripts/e2e-playwright.sh` drops the e2e volumes with `down -v` before
-# and after the run, so a fresh seeded database is guaranteed every time — while
-# the development `postgres_data` / `minio_data` volumes are never touched.
+# config. `../scripts/e2e-playwright.sh` drops the e2e volumes with `down -v`
+# before and after the run, so a fresh seeded database is guaranteed every time —
+# while the development `postgres_data` / `minio_data` volumes are never touched.
 services:
   db:
     volumes:
       - postgres_data_e2e:/var/lib/postgresql
-      - ./scripts/e2e-seed.sql:/docker-entrypoint-initdb.d/e2e-seed.sql:ro
+      # Relative bind-mount paths resolve against the compose project directory
+      # (the first compose file's folder, i.e. the repo root), not the override's
+      # own folder, so the seed is referenced from the root.
+      - ./frontend/e2e/e2e-seed.sql:/docker-entrypoint-initdb.d/e2e-seed.sql:ro
 
   minio:
     volumes:
@@ -26,7 +30,7 @@ services:
 
   backend:
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:8080/health/live']
       interval: 5s
       timeout: 5s
       start_period: 10s

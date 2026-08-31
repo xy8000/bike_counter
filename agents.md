@@ -26,11 +26,11 @@ this repository. **Read this file before making any change.**
 
 | Command | Purpose |
 |---|---|
-| `make check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo audit` (fails on any advisory; [`scripts/audit.sh`](scripts/audit.sh)) |
+| `make check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + frontend `prettier --check` + `cargo audit` (fails on any advisory; [`scripts/audit.sh`](scripts/audit.sh)) |
 | `make test` | Full test suite (Postgres repository tests spin up a Docker test container) |
 | `make test-rest` | REST endpoint tests only (in-memory mocks, no Docker required) |
 | `make coverage` | **Coverage gate — fails when overall *production* line coverage is below `COVERAGE_THRESHOLD` (default 80%) or the core (`src/core/`) is below `CORE_COVERAGE_THRESHOLD` (default 95%)** |
-| `make test-playwright` | **Frontend browser e2e — Playwright against the real Docker Compose stack with a real Münster import (requires Docker + GitHub; see [Frontend e2e](#frontend-e2e-playwright) below)** |
+| `make test-playwright` | **Frontend browser e2e — Playwright against the real Docker Compose stack seeded from a committed SQL fixture (Münster, Bonn, Hamburg; no provider import — see [Frontend e2e](#frontend-e2e-playwright) below)** |
 
 ### Coverage
 
@@ -68,25 +68,35 @@ Notes:
 ### Frontend e2e (Playwright)
 
 `make test-playwright` runs the browser e2e suite against the **real** Docker
-Compose stack with a real Münster import (nginx → backend BFF → Postgres). The
-specs live in [`frontend/e2e/`](frontend/e2e) with the config in
+Compose stack (nginx → backend BFF → Postgres) seeded from the committed
+[`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) fixture (schema + refinery
+migration history + all counting stations/channels + synthesized recent
+measurements + pre-finished jobs). The run is **fully offline**: no provider
+import, no Protomaps/tile download, and the backend healthcheck is overridden to
+`/health/live` so readiness never pings the providers. The specs live in
+[`frontend/e2e/`](frontend/e2e) with the config in
 [`frontend/playwright.config.ts`](frontend/playwright.config.ts); the
 [`scripts/e2e-playwright.sh`](scripts/e2e-playwright.sh) orchestrator boots the
-stack, waits for readiness and the counting-station import, runs
+stack via the [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml) override (seed
+mount + healthcheck), waits for readiness and the seeded stations per city, runs
 `npx playwright test`, then tears everything down (a pre-existing `config.toml`
 is backed up and restored).
 
-- **Run**: `make test-playwright` (needs Docker + GitHub access; first run also
-  installs the Chromium browser via `npx playwright install chromium`, or run
-  `make playwright-install` once).
+- **Run**: `make test-playwright` (needs Docker; first run also installs the
+  Chromium browser via `npx playwright install chromium`, or run
+  `make playwright-install` once). **Note**: the run is isolated from your
+  development data — it uses dedicated `postgres_data_e2e`/`minio_data_e2e`
+  volumes (see [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml)) that are
+  dropped and re-seeded from the fixture on every run, so the dev
+  `postgres_data`/`minio_data` volumes are never cleared.
+- **Regenerate the fixture**: [`scripts/dump-e2e-fixture.sh`](scripts/dump-e2e-fixture.sh)
+  re-creates [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) from a running stack
+  (e.g. after a schema change).
 - **Requirements**: Docker Compose v2, Node.js/npm with the frontend deps
-  installed (`npm ci` in [`frontend/`](frontend)), and network access to GitHub
-  (the Münster archive). The CARTO map tiles may be blocked without breaking the
-  tests (markers/popups render independently of the tile layer).
+  installed (`npm ci` in [`frontend/`](frontend)).
 - **Update**: add/change specs in [`frontend/e2e/`](frontend/e2e) and re-run
-  `make test-playwright`. Keep assertions robust to a still-importing dataset
-  (the station phase finishes before the multi-year measurements import). The
-  map markers expose the station name via `alt`/`title` for locators.
+  `make test-playwright`. The map markers expose the station name via
+  `alt`/`title` for locators.
 - **Target**: point Playwright at another frontend with `FRONTEND_URL`
   (default `http://localhost:8081`).
 

@@ -3,18 +3,18 @@
 # a committed SQL fixture instead of a live provider import.
 #
 # Boots PostgreSQL + backend + frontend with all three data sources configured
-# (Münster, Bonn, Hamburg) but SEEDS the database from scripts/e2e-seed.sql
-# (docker-entrypoint-initdb.d via docker-compose.e2e.yml). The seed contains the
-# schema, the refinery history, every counting station/channel and synthesized
-# recent measurements, plus pre-finished jobs so the backend skips the startup
-# import — the run is fully offline w.r.t. the open-data providers. The backend
-# healthcheck is overridden to /health/live so readiness never pings the
-# providers either, and the committed tiles/map.pmtiles archive means no
+# (Münster, Bonn, Hamburg) but SEEDS the database from frontend/e2e/e2e-seed.sql
+# (docker-entrypoint-initdb.d via frontend/e2e/docker-compose.e2e.yml). The seed
+# contains the schema, the refinery history, every counting station/channel and
+# synthesized recent measurements, plus pre-finished jobs so the backend skips
+# the startup import — the run is fully offline w.r.t. the open-data providers.
+# The backend healthcheck is overridden to /health/live so readiness never pings
+# the providers either, and the committed tiles/map.pmtiles archive means no
 # Protomaps download is needed.
 #
 # NOTE: the e2e is fully isolated from development data. It uses the dedicated
-# `postgres_data_e2e`/`minio_data_e2e` volumes (see docker-compose.e2e.yml); the
-# `down -v` in this script drops those e2e volumes only, so the development
+# `postgres_data_e2e`/`minio_data_e2e` volumes (see frontend/e2e/docker-compose.e2e.yml);
+# the `down -v` in this script drops those e2e volumes only, so the development
 # `postgres_data`/`minio_data` volumes are never touched and survive every run.
 # The e2e volume is re-seeded from the fixture on each run.
 #
@@ -31,7 +31,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
-COMPOSE_OVERRIDE="${PROJECT_ROOT}/docker-compose.e2e.yml"
+COMPOSE_OVERRIDE="${PROJECT_ROOT}/frontend/e2e/docker-compose.e2e.yml"
 CONFIG_FILE="${PROJECT_ROOT}/config.toml"
 CONFIG_BACKUP="$(mktemp)"
 
@@ -158,8 +158,8 @@ echo "--- Stack built."
 
 # The db container seeds the fixture on its fresh e2e volume
 # (docker-entrypoint-initdb.d) and the backend healthcheck (overridden in
-# docker-compose.e2e.yml) is /health/live, so this wait never touches the data
-# providers. Allow up to 5 minutes.
+# frontend/e2e/docker-compose.e2e.yml) is /health/live, so this wait never
+# touches the data providers. Allow up to 5 minutes.
 echo "--- Waiting for ${APP_URL}/health/live"
 READY=0
 for _ in $(seq 1 60); do

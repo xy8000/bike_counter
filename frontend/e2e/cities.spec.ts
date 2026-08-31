@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { CITY_BOUNDS, CITY_TARGET, cityUrl, mapMarkers } from './helpers'
 
 /// Multi-city map → overview → detail flow, exercised once per seeded city. The
-/// e2e stack is seeded from scripts/e2e-seed.sql (no live provider import).
+/// e2e stack is seeded from e2e-seed.sql in this folder (no live provider import).
 ///
 /// The overview opens through the app's own shared-link `station` URL param: the
 /// map fits the city bounds and opens the selected station's panel. This is
