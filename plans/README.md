@@ -12,6 +12,7 @@ order. Statuses:
 
 | Status | Plan | File | Summary |
 |---|---|---|---|
+| [x] | Multi-city Playwright map/overview/detail tests | [`71_multicity_playwright_e2e_plan.md`](71_multicity_playwright_e2e_plan.md) | Single-boot Playwright run over a committed SQL fixture seeded from the current DB (Münster, Bonn, Hamburg), avoiding live provider imports; exercises map → overview → detail per city. |
 | [x] | Frontend Prettier formatting | [`70_frontend_prettier_fmt_plan.md`](70_frontend_prettier_fmt_plan.md) | Adds Prettier as the single frontend formatter and wires it into `make fmt` (write) + `make check` (CI check); no linting. |
 | [x] | Back to map preserves the previous view | [`67_back_to_map_preserves_view_plan.md`](67_back_to_map_preserves_view_plan.md) | Fixes the summary + detail "Back to map" links so they restore the prior map view: the summary link rebuilds `/?<bounds>` from the `/summary` URL, and the detail link history-backs when reached in-app (with a `/` fallback for deep links). |
 | [x] | Dependency, base-image upgrade + cargo audit | [`68_dependency_upgrade_and_cargo_audit_plan.md`](68_dependency_upgrade_and_cargo_audit_plan.md) | Upgrades frontend npm deps, backend Rust crates (latest stable majors, refactored for breaking changes), Docker base images and the pinned `go_pmtiles`/Protomaps versions; adds a `cargo audit` gate (scripts/audit.sh + `make audit`, wired into `make check`). |

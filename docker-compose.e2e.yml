@@ -1,0 +1,21 @@
+# Compose override used only by the Playwright e2e run (`make test-playwright` via
+# scripts/e2e-playwright.sh). It is layered on top of docker-compose.yml:
+#
+#   * mounts the committed SQL fixture so the database is seeded on its fresh
+#     volume (Postgres runs it from docker-entrypoint-initdb.d),
+#   * points the backend healthcheck at `/health/live` so readiness never pings
+#     the data providers — the e2e run is fully offline (data comes from the seed;
+#     the HTTP server only binds after migrations + tiles + startup sync, so a
+#     healthy `/health/live` already implies those are done).
+services:
+  db:
+    volumes:
+      - ./scripts/e2e-seed.sql:/docker-entrypoint-initdb.d/e2e-seed.sql:ro
+
+  backend:
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 60

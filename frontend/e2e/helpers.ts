@@ -45,3 +45,40 @@ export async function waitForStations(page: Page): Promise<void> {
   await expect(mapMarkers(page).first()).toBeVisible()
   await expect(sidebarBadge(page)).toBeVisible()
 }
+
+/// A bounding box per city covering every seeded counting station (see
+/// scripts/e2e-seed.sql). Used by the multi-city specs to fly the map to each
+/// city. The BFF returns stations name-ordered and the seed guarantees the
+/// alphabetically-first station per city has measurements, so the specs' "first
+/// marker" per city always renders its charts.
+export const CITY_BOUNDS = {
+  Münster: { min_lat: 51.8, min_lng: 7.4, max_lat: 52.1, max_lng: 7.9 },
+  Bonn: { min_lat: 50.6, min_lng: 7.0, max_lat: 50.8, max_lng: 7.3 },
+  Hamburg: { min_lat: 53.4, min_lng: 9.8, max_lat: 53.7, max_lng: 10.2 },
+} as const
+
+export type CityName = keyof typeof CITY_BOUNDS
+
+/// The seeded station per city whose marker is isolated enough to click
+/// reliably. Some alphabetically-first stations sit a few metres apart (e.g.
+/// Hamburg MQ1.2/MQ1.3), where overlapping markers intercept pointer events, so
+/// each city targets a marker that is clear of its neighbours. The name matches
+/// the marker's `alt`/`title` (see frontend/src/lib/map.tsx stationMarkerImage).
+export const CITY_TARGET: Record<CityName, string> = {
+  Münster: 'Bismarckallee',
+  Bonn: 'BN - Bröltalbahnweg',
+  Hamburg: 'MQ10.1+10.2',
+}
+
+/// The map-view URL that centres the map on `city` (the map reads the four
+/// bounds params from the URL, see frontend/src/lib/geo.ts parseBoundsQuery).
+export function cityUrl(city: CityName): string {
+  const bounds = CITY_BOUNDS[city]
+  const params = new URLSearchParams({
+    min_lat: String(bounds.min_lat),
+    min_lng: String(bounds.min_lng),
+    max_lat: String(bounds.max_lat),
+    max_lng: String(bounds.max_lng),
+  })
+  return `/?${params.toString()}`
+}
