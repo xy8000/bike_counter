@@ -2,7 +2,7 @@
 //! external data sources. The runtime trigger (CLI / scheduling) is a separate,
 //! deferred feature; the capability itself is built and tested here.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -57,6 +57,11 @@ pub struct DataSourceUpdate {
     pub last_measurement_timestamp: Option<DateTime<Utc>>,
 }
 
+/// A station is considered to still produce data when at least one of its
+/// channels has a measurement within this many hours of `now`; otherwise it is
+/// "not current" and is marked inactive after an import.
+const STALE_STATION_AFTER_HOURS: i64 = 48;
+
 pub struct DataImportService {
     counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
     channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
@@ -108,6 +113,9 @@ impl DataImportService {
             for channel in &channels {
                 self.import_measurements(runtime, channel, from, to, &mut summary)?;
             }
+            // Only after the measurements of this source were (successfully)
+            // imported: stations without current data are decommissioned.
+            self.mark_stale_stations_inactive(runtime, Utc::now())?;
         }
 
         Ok(summary)
@@ -158,6 +166,10 @@ impl DataImportService {
                         description: station_vo::Description(record.description.clone()),
                         coordinates,
                         timezone: station_vo::Timezone(record.timezone.clone()),
+                        // The provider still serves the station: reactivate it
+                        // (it may have been marked inactive when it briefly
+                        // disappeared from a previous provider output).
+                        status: station_vo::Status::Active,
                         ..existing.clone()
                     };
                     if let (Some(asset_service), Some(default_asset)) =
@@ -176,7 +188,8 @@ impl DataImportService {
                         || updated.coordinates != existing.coordinates
                         || updated.timezone != existing.timezone
                         || updated.image_asset_id != existing.image_asset_id
-                        || updated.image_sha256 != existing.image_sha256;
+                        || updated.image_sha256 != existing.image_sha256
+                        || updated.status != existing.status;
                     if changed {
                         self.counting_station_repository.update(updated.clone())?;
                     }
@@ -193,6 +206,7 @@ impl DataImportService {
                         timezone: station_vo::Timezone(record.timezone.clone()),
                         image_asset_id: None,
                         image_sha256: None,
+                        status: station_vo::Status::Active,
                     };
                     if let (Some(asset_service), Some(default_asset)) =
                         (&self.asset_service, default_asset.as_ref())
@@ -211,6 +225,26 @@ impl DataImportService {
                 }
             };
             external_to_id.insert(record.external_id, station.id.0);
+        }
+
+        // The provider's current station set is exactly the `external_to_id`
+        // keys (new + refreshed above). Mark any station of this data source
+        // that the provider no longer includes as inactive — it may still have
+        // history, but it is not imported/refreshed anymore.
+        let seen: HashSet<String> = external_to_id.keys().cloned().collect();
+        for station in self.counting_station_repository.find_all()? {
+            let is_this_source = station
+                .data_source_id
+                .is_some_and(|id| id == station_vo::DataSourceId(runtime.data_source_id.0));
+            let missing = station
+                .external_datasource_id
+                .as_ref()
+                .is_some_and(|external_id| !seen.contains(&external_id.0));
+            if is_this_source && missing && station.status != station_vo::Status::Inactive {
+                let mut updated = station;
+                updated.status = station_vo::Status::Inactive;
+                self.counting_station_repository.update(updated)?;
+            }
         }
 
         Ok(external_to_id)
@@ -428,11 +462,82 @@ impl DataImportService {
             }
         }
 
+        // Only after the measurements of this source were (successfully)
+        // imported: stations without current data are decommissioned.
+        self.mark_stale_stations_inactive(runtime, Utc::now())?;
+
         Ok(DataSourceUpdate {
             processed_measurements: processed,
             added_measurements: added,
             last_measurement_timestamp,
         })
+    }
+
+    /// Marks a station of the data source inactive when it no longer has
+    /// "current" data — none of its channels has a measurement newer than
+    /// [`STALE_STATION_AFTER_HOURS`] before `now`. Only ever marks INACTIVE
+    /// (never reactivates here): stations the provider still serves are set back
+    /// to Active at the start of the next import by [`Self::sync_counting_stations`]
+    /// and only stay active when the stale check finds current data again.
+    fn mark_stale_stations_inactive(
+        &self,
+        runtime: &DataSourceRuntime,
+        now: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        let cutoff = now - chrono::Duration::hours(STALE_STATION_AFTER_HOURS);
+        let stations: Vec<CountingStation> = self
+            .counting_station_repository
+            .find_all()?
+            .into_iter()
+            .filter(|station| {
+                station
+                    .data_source_id
+                    .is_some_and(|id| id == station_vo::DataSourceId(runtime.data_source_id.0))
+            })
+            .collect();
+
+        // Gather every channel of the data source, keyed by its station id, so
+        // the "latest measurement" check can be done per station in one query.
+        let mut channels_by_station: HashMap<Uuid, Vec<measurement_vo::ChannelId>> = HashMap::new();
+        let mut all_channel_ids: Vec<measurement_vo::ChannelId> = Vec::new();
+        for station in &stations {
+            let channels = self
+                .channel_repository
+                .find_by_counting_station_id(channel_vo::CountingStationId(station.id.0))?;
+            let channel_ids: Vec<measurement_vo::ChannelId> = channels
+                .iter()
+                .map(|channel| measurement_vo::ChannelId(channel.id.0))
+                .collect();
+            all_channel_ids.extend(channel_ids.iter().copied());
+            channels_by_station.insert(station.id.0, channel_ids);
+        }
+
+        let latest = self
+            .measurement_repository
+            .latest_by_channel(&all_channel_ids)?;
+        let latest_by_channel: HashMap<Uuid, DateTime<Utc>> = latest
+            .into_iter()
+            .map(|entry| (entry.channel_id, entry.timestamp))
+            .collect();
+
+        for station in stations {
+            let has_current_data =
+                channels_by_station
+                    .get(&station.id.0)
+                    .is_some_and(|channel_ids| {
+                        channel_ids.iter().any(|channel_id| {
+                            latest_by_channel
+                                .get(&channel_id.0)
+                                .is_some_and(|timestamp| *timestamp >= cutoff)
+                        })
+                    });
+            if !has_current_data && station.status != station_vo::Status::Inactive {
+                let mut updated = station;
+                updated.status = station_vo::Status::Inactive;
+                self.counting_station_repository.update(updated)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -494,6 +599,7 @@ mod tests {
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
             image_asset_id: None,
             image_sha256: None,
+            status: station_vo::Status::Active,
         }
     }
 
@@ -1021,6 +1127,33 @@ mod tests {
         {
             Ok(Vec::new())
         }
+
+        fn latest_by_channel(
+            &self,
+            channel_ids: &[measurement_vo::ChannelId],
+        ) -> Result<
+            Vec<crate::core::domain::measurements::repository_port::ChannelLatest>,
+            DomainError,
+        > {
+            let measurements = self.measurements.lock().unwrap();
+            let mut latest = Vec::new();
+            for channel_id in channel_ids {
+                if let Some(timestamp) = measurements
+                    .iter()
+                    .filter(|m| m.channel_id == *channel_id)
+                    .map(|m| m.timestamp.0)
+                    .max()
+                {
+                    latest.push(
+                        crate::core::domain::measurements::repository_port::ChannelLatest {
+                            channel_id: channel_id.0,
+                            timestamp,
+                        },
+                    );
+                }
+            }
+            Ok(latest)
+        }
     }
 
     #[test]
@@ -1238,6 +1371,7 @@ mod tests {
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
             image_asset_id: None,
             image_sha256: None,
+            status: station_vo::Status::Inactive,
         };
         let station_repo = Arc::new(MockCountingStationRepository {
             stations: Mutex::new(vec![existing]),
@@ -1282,6 +1416,178 @@ mod tests {
                 latitude: 51.96,
                 longitude: 7.63,
             })
+        );
+        // The station reappeared in the provider output, so it is reactivated.
+        assert_eq!(stations[0].status, station_vo::Status::Active);
+    }
+
+    #[test]
+    fn marks_stations_missing_from_the_provider_output_as_inactive() {
+        // "station-1" is already known and linked to the Münster data source,
+        // but the provider's current output only contains "station-2".
+        let source_id = DataSource::id_from_name("Münster");
+        let existing = CountingStation {
+            id: station_vo::Id(Uuid::from_u128(0x51)),
+            name: station_vo::Name("Station 1".to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId("station-1".to_string())),
+            data_source_id: Some(station_vo::DataSourceId(source_id)),
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        };
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing]),
+        });
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-2")],
+            channels: Vec::new(),
+            measurement_pages: Mutex::new(VecDeque::new()),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime(provider)],
+        );
+
+        service.import(None, None).expect("import should succeed");
+
+        let stations = station_repo.stations.lock().unwrap();
+        assert_eq!(stations.len(), 2);
+        let station_1 = stations
+            .iter()
+            .find(|s| s.external_datasource_id.as_ref().map(|e| e.0.as_str()) == Some("station-1"))
+            .unwrap();
+        assert_eq!(
+            station_1.status,
+            station_vo::Status::Inactive,
+            "a station the provider no longer serves must be marked inactive"
+        );
+        let station_2 = stations
+            .iter()
+            .find(|s| s.external_datasource_id.as_ref().map(|e| e.0.as_str()) == Some("station-2"))
+            .unwrap();
+        // Station 2 is newly imported but has no current data (the provider
+        // serves no measurements), so the stale check marks it inactive too.
+        assert_eq!(station_2.status, station_vo::Status::Inactive);
+    }
+
+    #[test]
+    fn reactivates_a_station_that_reappears_in_the_provider_output() {
+        // The station was inactive but the provider serves it again AND it has
+        // current data — only then does it become active again.
+        let source_id = DataSource::id_from_name("Münster");
+        let existing = CountingStation {
+            id: station_vo::Id(Uuid::from_u128(0x52)),
+            name: station_vo::Name("Old Name".to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId("station-1".to_string())),
+            data_source_id: Some(station_vo::DataSourceId(source_id)),
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Inactive,
+        };
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing]),
+        });
+        let current = chrono::Utc::now() - chrono::Duration::hours(1);
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
+                measurements: vec![measurement_record(1, current)],
+                last_measurement_datetime: Some(current),
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            }])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime(provider)],
+        );
+
+        service.import(None, None).expect("import should succeed");
+
+        let stations = station_repo.stations.lock().unwrap();
+        assert_eq!(stations.len(), 1);
+        assert_eq!(
+            stations[0].status,
+            station_vo::Status::Active,
+            "a station that reappears with current data is reactivated"
+        );
+    }
+
+    #[test]
+    fn marks_a_station_inactive_when_it_has_no_current_data() {
+        // The provider still serves the station, but its latest measurement is
+        // older than the staleness window — the station is decommissioned.
+        let source_id = DataSource::id_from_name("Münster");
+        let existing = CountingStation {
+            id: station_vo::Id(Uuid::from_u128(0x53)),
+            name: station_vo::Name("Station 1".to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId("station-1".to_string())),
+            data_source_id: Some(station_vo::DataSourceId(source_id)),
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        };
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing]),
+        });
+        let stale = timestamp("2024-01-01T00:00:00Z");
+        let provider = Arc::new(MockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            measurement_pages: Mutex::new(VecDeque::from([MeasurementBatch {
+                measurements: vec![measurement_record(1, stale)],
+                last_measurement_datetime: Some(stale),
+                batch_size_limit_reached: false,
+                timeframe_limit_reached: false,
+            }])),
+            recorded_queries: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            vec![runtime(provider)],
+        );
+
+        service.import(None, None).expect("import should succeed");
+
+        let stations = station_repo.stations.lock().unwrap();
+        assert_eq!(stations.len(), 1);
+        assert_eq!(
+            stations[0].status,
+            station_vo::Status::Inactive,
+            "a served station without current data is marked inactive"
         );
     }
 
@@ -1629,10 +1935,12 @@ mod tests {
         assert_eq!(update.added_measurements, 2);
         assert_eq!(update.last_measurement_timestamp, Some(t0));
 
-        // Strict order per data source: stations first, then channels, then measurements.
+        // Strict order per data source: stations first, then channels, then
+        // measurements — followed by the post-import stale check, which marks
+        // the (data-less) station inactive.
         assert_eq!(
             *log.lock().unwrap(),
-            vec!["station", "channel", "measurements"]
+            vec!["station", "channel", "measurements", "station-update"]
         );
     }
 

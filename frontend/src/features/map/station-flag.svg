@@ -3,10 +3,10 @@
      width="32"
      height="40">
 
-  <!-- Emerald (#059669) teardrop pin with a bike inside, matching the header
-       brand. Relocated from backend/assets/ so editing this file updates the
-       Leaflet markers automatically (Vite-imported in
-       frontend/src/lib/leaflet.ts). -->
+  <!-- Emerald (#059669) teardrop pin with a bike inside. This is the ACTIVE
+       marker flag used for every station the provider still serves. Editing
+       this file updates the markers automatically (Vite-imported in
+       frontend/src/lib/map.tsx). -->
   <path
     d="M16 1.5
        C8.82 1.5 3 7.32 3 14.5

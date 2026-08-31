@@ -36,6 +36,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::adapter::driving::rest::RestApiAdapter;
+use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::station_analytics::StationAnalyticsService;
@@ -149,6 +150,28 @@ impl TestApp {
             sample_persistent_state_service(),
             sample_provider_message_service(),
             station_analytics_service,
+            sample_asset_service(),
+            sample_asset_storage(),
+        )
+        .router();
+        Self { router }
+    }
+
+    /// Builds a router with a custom counting-station service (used by the BFF
+    /// map-marker tests that need a specific station `status`).
+    pub fn with_counting_station_service(
+        counting_station_service: Arc<CountingStationService>,
+    ) -> Self {
+        let router = RestApiAdapter::new(
+            counting_station_service,
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(MockDataSourceRepository::default()),
+            sample_job_service(sample_job_repository()),
+            mock_health_service(HealthStatus::Up),
+            sample_persistent_state_service(),
+            sample_provider_message_service(),
+            sample_station_analytics_service(),
             sample_asset_service(),
             sample_asset_storage(),
         )

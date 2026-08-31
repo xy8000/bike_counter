@@ -5,7 +5,7 @@ use crate::core::domain::error::DomainError;
 use super::pool::PgPool;
 
 /// Shared column list for every counting-station read.
-const STATION_COLUMNS: &str = "id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256";
+const STATION_COLUMNS: &str = "id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256, status";
 
 pub struct PostgresCountingStationRepository {
     pool: PgPool,
@@ -39,6 +39,9 @@ impl PostgresCountingStationRepository {
                 .get::<_, Option<uuid::Uuid>>(8)
                 .map(crate::core::domain::assets::asset::value_objects::AssetId),
             image_sha256: row.get::<_, Option<String>>(9),
+            // The DB CHECK constraint guarantees `active`/`inactive`; an unknown
+            // value is treated as `Active` (defensive, never expected).
+            status: value_objects::Status::parse(&row.get::<_, String>(10)).unwrap_or_default(),
         }
     }
 }
@@ -51,8 +54,8 @@ impl CountingStationRepository for PostgresCountingStationRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         client
             .execute(
-                "INSERT INTO counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                "INSERT INTO counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[
                     &station.id.0,
                     &station.name.0,
@@ -67,6 +70,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     &station.timezone.0.as_str(),
                     &station.image_asset_id.map(|id| id.0),
                     &station.image_sha256,
+                    &station.status.as_str(),
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -83,7 +87,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                 "UPDATE counting_stations
                  SET name = $2, description = $3, external_datasource_id = $4,
                      data_source_id = $5, latitude = $6, longitude = $7, timezone = $8,
-                     image_asset_id = $9, image_sha256 = $10
+                     image_asset_id = $9, image_sha256 = $10, status = $11
                  WHERE id = $1",
                 &[
                     &station.id.0,
@@ -99,6 +103,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     &station.timezone.0.as_str(),
                     &station.image_asset_id.map(|id| id.0),
                     &station.image_sha256,
+                    &station.status.as_str(),
                 ],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -273,6 +278,7 @@ mod tests {
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
             image_asset_id: None,
             image_sha256: None,
+            status: station_vo::Status::Active,
         };
         db.repository.save(station.clone()).unwrap();
 
@@ -321,6 +327,7 @@ mod tests {
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
             image_asset_id: None,
             image_sha256: None,
+            status: station_vo::Status::Active,
         };
         db.repository.save(station.clone()).unwrap();
 

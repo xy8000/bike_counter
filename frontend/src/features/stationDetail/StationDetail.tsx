@@ -445,10 +445,12 @@ function DetailContent({ page }: { page: StationDetailPage }) {
               <ChartCard title="Hours by channel" subtitle={cfg.radarSubtitle}>
                 <HourRadar series={channelHourRadar(period, channels, cfg, comparePrevious)} />
               </ChartCard>
-              <ChartCard title="Share by channel" subtitle={cfg.pieSubtitle}>
-                <ChannelPie totals={period.channel_pie} channels={channels} />
-              </ChartCard>
             </div>
+            {/* The share pie spans the full width so the donut + legend do not
+                waste the second column of the two-radar row above. */}
+            <ChartCard title="Share by channel" subtitle={cfg.pieSubtitle}>
+              <ChannelPie totals={period.channel_pie} channels={channels} />
+            </ChartCard>
           </div>
         ) : graphsError ? (
           <p className="text-sm font-semibold text-destructive">Could not load the nerd stats.</p>

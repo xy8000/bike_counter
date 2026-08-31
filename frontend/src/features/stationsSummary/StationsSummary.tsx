@@ -500,10 +500,12 @@ function SummaryContent({
               <ChartCard title="Hours by station" subtitle={cfg.radarSubtitle}>
                 <HourRadar series={stationHourRadar(period, stations, cfg, comparePrevious)} />
               </ChartCard>
-              <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
-                <SharePie slices={stationSlices(period, stations)} />
-              </ChartCard>
             </div>
+            {/* The share pie spans the full width so the donut + legend do not
+                waste the second column of the two-radar row above. */}
+            <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
+              <SharePie slices={stationSlices(period, stations)} />
+            </ChartCard>
           </div>
         ) : graphsError ? (
           <p className="text-sm font-semibold text-destructive">Could not load the nerd stats.</p>

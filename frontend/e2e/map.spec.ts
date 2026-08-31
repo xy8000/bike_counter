@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mapMarkers, sidebarBadge, waitForStations } from './helpers'
+import { cityUrl, mapMarkers, sidebarBadge, waitForStations } from './helpers'
 
 test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({ page }) => {
   // MapLibre reads vector tiles directly out of the static archive via HTTP
@@ -42,6 +42,9 @@ test('clicking a map marker opens a popup with the station name and detail link'
     'href',
     /^\/stations\//,
   )
+  // The popup shows the station image icon and the channel count.
+  await expect(popup.locator('img')).toBeVisible()
+  await expect(popup.getByText(/\d+ channels?/)).toBeVisible()
 
   // The detail link navigates in the same tab: the URL becomes the station
   // detail page and the browser context still holds exactly one page.
@@ -79,7 +82,8 @@ test('clicking a map marker opens the overview panel and a map void click closes
     'href',
     /^\/stations\//,
   )
-  await expect(overview.locator('img')).toBeVisible()
+  // The large station image (the banner also carries a small icon thumbnail).
+  await expect(overview.getByAltText(`${stationName} image`)).toBeVisible()
   // The old sidebar counter is gone while the overview is open.
   await expect(sidebarBadge(page)).toHaveCount(0)
 
@@ -137,4 +141,20 @@ test('the overview detail link navigates in the same tab', async ({ page }) => {
   await expect(page).toHaveURL(/\/stations\/[0-9a-f-]+/)
   await expect(page.context().pages()).toHaveLength(1)
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
+})
+
+test('the overview banner shows the name, description and channel count', async ({ page }) => {
+  // A Hamburg station whose seed row carries a description (the Münster rows
+  // have none), so every banner field is assertable.
+  await page.goto(cityUrl('Hamburg'), { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  const marker = page.getByAltText('MQ10.1+10.2')
+  await expect(marker).toBeVisible()
+  await marker.click()
+
+  const overview = page.getByRole('complementary')
+  await expect(overview.getByText('MQ10.1+10.2', { exact: true })).toBeVisible()
+  await expect(overview.getByText('Messquerschnitt (Zählfeld-Gruppe) MQ10.1+10.2')).toBeVisible()
+  await expect(overview.getByText(/\d+ channels?/)).toBeVisible()
 })

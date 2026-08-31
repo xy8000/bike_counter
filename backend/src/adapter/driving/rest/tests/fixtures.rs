@@ -22,6 +22,7 @@ use crate::core::domain::measurements::measurement::value_objects as measurement
 
 pub const STATION_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0001);
 pub const STATION_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0002);
+pub const STATION_ID_C: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0003);
 pub const CHANNEL_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0011);
 pub const CHANNEL_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0012);
 pub const MEASUREMENT_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0021);
@@ -54,6 +55,7 @@ pub fn station_a() -> CountingStation {
         timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         image_asset_id: None,
         image_sha256: None,
+        status: station_vo::Status::Active,
     }
 }
 
@@ -68,6 +70,7 @@ pub fn station_b() -> CountingStation {
         timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         image_asset_id: None,
         image_sha256: None,
+        status: station_vo::Status::Active,
     }
 }
 
@@ -84,6 +87,27 @@ pub fn station_linked_to_data_source_a() -> CountingStation {
         timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         image_asset_id: None,
         image_sha256: None,
+        status: station_vo::Status::Active,
+    }
+}
+
+/// A positioned, INACTIVE station inside the Münster bounds (exercises the BFF
+/// `status` reporting for stations the provider no longer serves).
+pub fn station_inactive() -> CountingStation {
+    CountingStation {
+        id: station_vo::Id(STATION_ID_C),
+        name: station_vo::Name("Station C".to_string()),
+        description: station_vo::Description("Retired station".to_string()),
+        external_datasource_id: Some(station_vo::ExternalDatasourceId("300000000".to_string())),
+        data_source_id: Some(station_vo::DataSourceId(DATA_SOURCE_ID_A)),
+        coordinates: Some(station_vo::GeoCoordinates {
+            latitude: 51.95,
+            longitude: 7.6,
+        }),
+        timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+        image_asset_id: None,
+        image_sha256: None,
+        status: station_vo::Status::Inactive,
     }
 }
 

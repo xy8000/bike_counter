@@ -12,7 +12,10 @@ export default defineConfig({
   // importing Docker stack.
   fullyParallel: false,
   workers: 1,
+  // Upper bounds so the suite can never wait forever on a hung step: generous,
+  // not tight, so healthy runs are unaffected.
   timeout: 90_000,
+  globalTimeout: 20 * 60 * 1000,
   expect: {
     timeout: 20_000,
   },
@@ -24,6 +27,8 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    actionTimeout: 30_000,
+    navigationTimeout: 30_000,
   },
   projects: [{ name: 'chromium' }],
 })

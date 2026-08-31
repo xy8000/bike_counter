@@ -227,6 +227,7 @@ pub async fn list_bff_stations(
                 name: station.name.0,
                 latitude: coords.latitude,
                 longitude: coords.longitude,
+                status: station.status.into(),
             }
         })
         .collect();

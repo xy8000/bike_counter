@@ -55,6 +55,7 @@ fn station(id: u128, name: &str, coordinates: Option<(f64, f64)>) -> CountingSta
         timezone: station_vo::Timezone("Europe/Berlin".to_string()),
         image_asset_id: None,
         image_sha256: None,
+        status: station_vo::Status::Active,
     }
 }
 

@@ -26,6 +26,9 @@ pub struct CountingStation {
     /// Persisted provider image hash used for hash-based change detection during
     /// import. `None` when the provider reports no image (built-in default).
     pub image_sha256: Option<String>,
+    /// Lifecycle status: `Active` while the provider still serves the station,
+    /// `Inactive` when a provider update stopped including it.
+    pub status: value_objects::Status,
 }
 
 pub mod value_objects {
@@ -53,6 +56,38 @@ pub mod value_objects {
     /// IANA timezone name (e.g. `Europe/Berlin`).
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Timezone(pub String);
+
+    /// Lifecycle status of a counting station. `Active` is the default; a
+    /// station becomes `Inactive` when a provider update stops including it in
+    /// its station output.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub enum Status {
+        #[default]
+        Active,
+        Inactive,
+    }
+
+    impl Status {
+        /// The persisted/lowercase form used in the database and the BFF.
+        pub fn as_str(&self) -> &'static str {
+            match self {
+                Status::Active => "active",
+                Status::Inactive => "inactive",
+            }
+        }
+
+        /// Parses the persisted lowercase form. Unknown values are rejected so
+        /// the DB CHECK constraint and this enum can never drift silently.
+        pub fn parse(value: &str) -> Result<Self, DomainError> {
+            match value {
+                "active" => Ok(Status::Active),
+                "inactive" => Ok(Status::Inactive),
+                _ => Err(DomainError::InvalidQuery(format!(
+                    "unknown station status '{value}'"
+                ))),
+            }
+        }
+    }
 
     impl Timezone {
         /// Resolves the IANA name to a `chrono_tz::Tz`, or `DomainError` when it

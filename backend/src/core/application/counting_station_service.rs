@@ -128,6 +128,7 @@ mod tests {
             timezone: station_vo::Timezone("Europe/Berlin".to_string()),
             image_asset_id: None,
             image_sha256: None,
+            status: station_vo::Status::Active,
         }
     }
 

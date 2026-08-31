@@ -26,44 +26,59 @@ export function StationOverview({
 
   return (
     <>
-      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        {page ? (
-          // The station name opens the detail page without looking like a link
-          // (heading styling) and stays in the same tab; the icon button is the
-          // explicit affordance.
-          <Link
-            to={page.detail_url}
-            className="min-w-0 flex-1 truncate text-base font-semibold text-foreground hover:no-underline"
-          >
-            {page.name}
-          </Link>
-        ) : (
-          <h2 className="min-w-0 flex-1 truncate text-base font-semibold">Counting station</h2>
-        )}
-        <div className="flex items-center gap-1">
-          {page && (
+      <div className="border-b px-4 py-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            {page ? (
+              // The station name opens the detail page without looking like a
+              // link (heading styling) and stays in the same tab; the icon
+              // button is the explicit affordance.
+              <Link
+                to={page.detail_url}
+                className="block min-w-0 truncate text-base font-semibold text-foreground hover:no-underline"
+              >
+                {page.name}
+              </Link>
+            ) : (
+              <h2 className="min-w-0 truncate text-base font-semibold">Counting station</h2>
+            )}
+            {page && (
+              <>
+                {page.description && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">{page.description}</p>
+                )}
+                <Badge variant="secondary" className="mt-1">
+                  {formatNumber(page.channel_count)} channel
+                  {page.channel_count === 1 ? '' : 's'}
+                </Badge>
+              </>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {page && (
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                title="Open detail page"
+                aria-label="Open detail page"
+              >
+                <Link to={page.detail_url}>
+                  <ExternalLink />
+                </Link>
+              </Button>
+            )}
             <Button
-              asChild
+              type="button"
               variant="ghost"
               size="icon"
-              title="Open detail page"
-              aria-label="Open detail page"
+              onClick={onClose}
+              title="Close overview (click the map)"
+              aria-label="Close station overview"
             >
-              <Link to={page.detail_url}>
-                <ExternalLink />
-              </Link>
+              <X />
             </Button>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            title="Close overview (click the map)"
-            aria-label="Close station overview"
-          >
-            <X />
-          </Button>
+          </div>
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
@@ -91,14 +106,7 @@ export function StationOverview({
               alt={`${page.name} image`}
               className="h-40 w-full rounded-md border object-cover"
             />
-            {page.description && (
-              <p className="text-sm text-muted-foreground">{page.description}</p>
-            )}
-            <div className="flex items-center justify-between gap-2">
-              <Badge variant="secondary">
-                {formatNumber(page.channel_count)} channel
-                {page.channel_count === 1 ? '' : 's'}
-              </Badge>
+            <div className="flex items-center justify-end">
               <span className="text-xs text-muted-foreground">
                 Updated {formatTimestamp(page.last_update)}
               </span>

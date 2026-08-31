@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { Map as MaplibreMap } from 'maplibre-gl'
 import type { Bounds } from '../../lib/geo'
@@ -7,7 +7,7 @@ import { useVisibleStations } from '../stations/useVisibleStations'
 import { SearchableHeader } from '../header/SearchableHeader'
 import { LeftPanel } from '../sidebar/LeftPanel'
 import { Sidebar } from '../sidebar/Sidebar'
-import { MapView } from './MapView'
+import { MapView, type PopupStationInfo } from './MapView'
 import { StationOverview } from '../stationOverview/StationOverview'
 
 /// The minimal station location needed to focus the map on a selection. Both the
@@ -43,6 +43,25 @@ export default function MapPage() {
     error: stationsError,
     statsError,
   } = useVisibleStations(bounds)
+
+  // Enriched popup identity per station, derived from the sidebar shell
+  // (image + description) + the per-station stats (channel count). The map
+  // popup shows the same data as the sidebar, just smaller.
+  const stationDetails = useMemo(() => {
+    const details = new Map<string, PopupStationInfo>()
+    for (const item of shell?.items ?? []) {
+      details.set(item.id, {
+        imageUrl: item.image_url,
+        description: item.description,
+        channelCount: null,
+      })
+    }
+    for (const [stationId, stat] of stats ?? []) {
+      const entry = details.get(stationId)
+      if (entry) entry.channelCount = stat.channel_count
+    }
+    return details
+  }, [shell, stats])
 
   // Keyboard shortcut: H collapses/expands the sidebar (Esc is handled by the
   // searchable header, which owns the search dialog).
@@ -145,6 +164,8 @@ export default function MapPage() {
             }}
             onSelectStation={selectStation}
             onDeselect={() => setSelectedStationId(null)}
+            selectedStationId={selectedStationId}
+            stationDetails={stationDetails}
           />
         </main>
       </div>

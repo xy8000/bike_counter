@@ -1,9 +1,15 @@
+/// Lifecycle status reported by the BFF (persisted backend status). The
+/// `selected` flag is NOT part of this — the frontend derives it from the URL's
+/// `station` param.
+export type StationStatus = 'active' | 'inactive'
+
 /// Minimal map marker: only what the map needs (from GET /api/bff/stations).
 export interface StationMap {
   id: string
   name: string
   latitude: number
   longitude: number
+  status: StationStatus
 }
 
 export interface StationMapList {

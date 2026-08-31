@@ -57,15 +57,46 @@ impl From<StationSummary> for StationSummaryDto {
     }
 }
 
+/// Lifecycle status of a counting station, reported by the BFF from the
+/// persisted backend status. `Selected` is NOT part of this enum: that is a
+/// transient UI state the frontend derives from the selected station id in the
+/// URL.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StationStatusDto {
+    Active,
+    Inactive,
+}
+
+impl From<crate::core::domain::counting_stations::counting_station::value_objects::Status>
+    for StationStatusDto
+{
+    fn from(
+        status: crate::core::domain::counting_stations::counting_station::value_objects::Status,
+    ) -> Self {
+        match status {
+            crate::core::domain::counting_stations::counting_station::value_objects::Status::Active => {
+                StationStatusDto::Active
+            }
+            crate::core::domain::counting_stations::counting_station::value_objects::Status::Inactive => {
+                StationStatusDto::Inactive
+            }
+        }
+    }
+}
+
 /// A minimal counting station for the map markers: only the fields the map
 /// needs. The BFF map handler only returns positioned stations, so the
-/// coordinates are non-optional.
+/// coordinates are non-optional. `status` lets the frontend choose the marker
+/// flag (active vs inactive); the selected flag is derived client-side from the
+/// URL.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct StationMapDto {
     pub id: Uuid,
     pub name: String,
     pub latitude: f64,
     pub longitude: f64,
+    pub status: StationStatusDto,
 }
 
 /// The list of map markers returned by `GET /api/bff/stations`.

@@ -261,10 +261,12 @@ station↔asset link; the binary bytes never touch the database.
     icon (favicon + header) lives separately in `frontend/public/bike-icon.svg`
     and is never streamed through the BFF; frontend brand assets belong in
     `frontend/public/`, backend builtin assets in `backend/assets/`. The MapLibre
-    map marker (the emerald pin + bike, also never streamed) lives in the map
-    feature as `frontend/src/features/map/map-flag-counting-station.svg` and is
-    imported by `frontend/src/lib/map.tsx` via Vite, so editing that SVG file
-    restyles both the map and the detail-preview markers without a code change.
+    map markers (also never streamed) live in the map feature as three Vite
+    assets imported by `frontend/src/lib/map.tsx`: `station-flag.svg` (active,
+    the emerald pin + bike), `station-flag-selected.svg` (amber, the currently
+    selected station) and `station-flag-inactive.svg` (gray, a station the
+    provider no longer serves). Editing those SVGs restyles the map and
+    detail-preview markers without a code change.
 - The **BFF streams** image bytes to the browser
   (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend
   (private `asset_network`) and never exposed to the browser.
@@ -525,7 +527,9 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
 - `GET /api/bff/stations` – map markers for the current viewport. Requires the
   `min_lat`/`min_lng`/`max_lat`/`max_lng` bounding-box query and returns only the
   **positioned** stations inside it. Each item carries only what the map needs:
-  `id`, `name`, `latitude`, `longitude`.
+  `id`, `name`, `latitude`, `longitude`, `status` (`active` when the provider
+  still serves the station, `inactive` when it stopped including it). The
+  frontend derives the `selected` flag from the URL `station` param.
 - `GET /api/bff/stations/sidebar` – the **sidebar shell** for the current
   viewport (same required bounding box): the station **identity** — `id`, `name`,
   `description`, `latitude`, `longitude`, `image_url` (the station's image or the

@@ -18,6 +18,7 @@ use crate::adapter::driving::rest::tests::mocks::{
     MockChannelRepository, MockCountingStationRepository, MockDataSourceRepository,
     MockMeasurementRepository,
 };
+use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
@@ -53,6 +54,7 @@ async fn bff_map_returns_only_positioned_stations_inside_the_bounds() {
     assert_eq!(item["name"], "Station A");
     assert_eq!(item["latitude"], 51.9565);
     assert_eq!(item["longitude"], 7.6152);
+    assert_eq!(item["status"], "active");
     // The map DTO is minimal: no summary-only fields.
     assert!(item.get("description").is_none());
     assert!(item.get("channel_count").is_none());
@@ -96,6 +98,25 @@ async fn bff_map_rejects_inverted_bounds() {
         .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn bff_map_reports_inactive_status_for_retired_stations() {
+    // A station the provider no longer serves is persisted as `inactive`; the
+    // map marker must report it so the frontend renders the inactive flag.
+    let service = Arc::new(CountingStationService::new(Arc::new(
+        MockCountingStationRepository::new(vec![fixtures::station_inactive()]),
+    )));
+    let app = TestApp::with_counting_station_service(service);
+    let (status, body) = app
+        .get_json(&format!("/api/bff/stations{STATIONS_BBOX}"))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items should be an array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], fixtures::STATION_ID_C.to_string());
+    assert_eq!(items[0]["status"], "inactive");
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +193,7 @@ async fn bff_sidebar_stats_counts_bikes_on_the_last_day() {
         timezone: station_vo::Timezone("UTC".to_string()),
         image_asset_id: None,
         image_sha256: None,
+        status: station_vo::Status::Active,
     };
     let channel = Channel {
         id: channel_vo::Id(fixtures::CHANNEL_ID_A),
@@ -952,6 +974,7 @@ async fn bff_station_summary_aggregates_per_station_data() {
         timezone: station_vo::Timezone("UTC".to_string()),
         image_asset_id: None,
         image_sha256: None,
+        status: station_vo::Status::Active,
     };
     let channel = Channel {
         id: channel_vo::Id(fixtures::CHANNEL_ID_A),

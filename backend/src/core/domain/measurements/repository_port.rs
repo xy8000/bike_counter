@@ -91,6 +91,15 @@ pub struct ChannelCoverage {
     pub count: i64,
 }
 
+/// The latest measurement timestamp of one channel (empty when the channel has
+/// no measurements at all), used to decide whether a station still has "current"
+/// data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelLatest {
+    pub channel_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+}
+
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
     /// Inserts a batch idempotently and returns the number of rows actually
@@ -239,6 +248,17 @@ pub trait MeasurementRepository {
         _to: DateTime<Utc>,
         _channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<ChannelCoverage>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    /// The latest measurement timestamp per channel, only for channels with at
+    /// least one measurement. Used to decide whether a station still has
+    /// "current" data. Defaults to empty so recency-unaware mocks need no
+    /// override.
+    fn latest_by_channel(
+        &self,
+        _channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelLatest>, DomainError> {
         Ok(Vec::new())
     }
 }

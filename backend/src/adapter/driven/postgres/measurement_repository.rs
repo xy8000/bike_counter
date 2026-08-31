@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelTotal, HourTotal,
+    ChannelBucket, ChannelCoverage, ChannelHourTotal, ChannelLatest, ChannelTotal, HourTotal,
     MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket, WeekdayTotal,
 };
 
@@ -588,6 +588,37 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             });
         }
         Ok(coverage)
+    }
+
+    fn latest_by_channel(
+        &self,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelLatest>, DomainError> {
+        if channel_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT DISTINCT ON (channel_id) channel_id, timestamp \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                 ORDER BY channel_id, timestamp DESC",
+                &[&channel_uuids],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut latest = Vec::with_capacity(rows.len());
+        for row in rows {
+            latest.push(ChannelLatest {
+                channel_id: row.get(0),
+                timestamp: row.get(1),
+            });
+        }
+        Ok(latest)
     }
 }
 
@@ -1525,6 +1556,46 @@ mod tests {
             .sum(base, window_to, &[channel_id()], Some(300))
             .unwrap();
         assert_eq!(only_5min, 5);
+    }
+
+    #[test]
+    fn latest_by_channel_returns_the_newest_timestamp_per_channel() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let base = timestamp(5_000_000);
+        let channel = channel_id();
+        repository
+            .save_batch(vec![
+                Measurement {
+                    id: value_objects::Id(Uuid::new_v4()),
+                    value: value_objects::Value(1),
+                    channel_id: channel,
+                    timestamp: value_objects::Timestamp(base),
+                    resolution_seconds: value_objects::ResolutionSeconds(300),
+                    interval_end: None,
+                },
+                Measurement {
+                    id: value_objects::Id(Uuid::new_v4()),
+                    value: value_objects::Value(2),
+                    channel_id: channel,
+                    timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(600)),
+                    resolution_seconds: value_objects::ResolutionSeconds(300),
+                    interval_end: None,
+                },
+            ])
+            .unwrap();
+
+        let latest = repository.latest_by_channel(&[channel]).unwrap();
+        assert_eq!(latest.len(), 1, "one entry per channel");
+        assert_eq!(latest[0].channel_id, channel.0);
+        assert_eq!(latest[0].timestamp, base + chrono::Duration::seconds(600));
+
+        // Channels without measurements are not reported (the query only reads,
+        // so an unknown channel id is fine here).
+        let missing = value_objects::ChannelId(Uuid::new_v4());
+        assert!(repository.latest_by_channel(&[missing]).unwrap().is_empty());
     }
 
     #[test]

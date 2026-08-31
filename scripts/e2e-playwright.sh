@@ -176,6 +176,15 @@ if [ "${READY}" -ne 1 ]; then
 fi
 echo "--- Stack started (app ready)."
 
+# The backend applies V17 (the counting_stations `status` column) during
+# startup, before the health endpoint is ready. Mark one seeded Münster station
+# inactive so the e2e suite can assert the inactive flag (status = inactive).
+# The seed itself can not do this: at initdb time the column does not exist yet.
+echo "--- Marking one seeded Münster station inactive (inactive-flag e2e test)"
+docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE}" exec -T db psql -U postgres -d bike_counter \
+  -c "UPDATE counting_stations SET status = 'inactive' WHERE name = 'Gartenstraße';" >/dev/null 2>&1 \
+  || echo "warning: could not mark Gartenstraße inactive"
+
 echo "--- Waiting for the seeded counting stations per city"
 for city in "${!CITY_BBOX[@]}"; do
   IMPORTED=0

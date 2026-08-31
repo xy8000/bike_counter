@@ -7,10 +7,11 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { addProtocol, setWorkerUrl } from 'maplibre-gl'
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Protocol } from 'pmtiles'
-// The brand emerald (--primary, emerald-600 #059669) pin-with-bike marker,
-// imported as a Vite asset so editing the SVG file in the map feature updates
-// the markers on rebuild/HMR without a code change.
-import markerUrl from '../features/map/map-flag-counting-station.svg'
+// The three station flags, imported as Vite assets so editing the SVG files in
+// the map feature updates the markers on rebuild/HMR without a code change.
+import activeFlagUrl from '../features/map/station-flag.svg'
+import selectedFlagUrl from '../features/map/station-flag-selected.svg'
+import inactiveFlagUrl from '../features/map/station-flag-inactive.svg'
 
 setWorkerUrl(maplibreWorkerUrl)
 
@@ -19,20 +20,46 @@ setWorkerUrl(maplibreWorkerUrl)
 // process (see frontend/public/styles/basemap.json and tiles/README.md).
 addProtocol('pmtiles', new Protocol().tile)
 
-export { markerUrl }
+export { activeFlagUrl, selectedFlagUrl, inactiveFlagUrl }
+
+/// The flag a station marker renders. `selected` is derived from the URL's
+/// `station` param (which station the user opened); `active`/`inactive` come
+/// from the BFF-reported station status.
+export type StationMarkerState = 'active' | 'selected' | 'inactive'
+
+function flagUrl(state: StationMarkerState): string {
+  switch (state) {
+    case 'selected':
+      return selectedFlagUrl
+    case 'inactive':
+      return inactiveFlagUrl
+    default:
+      return activeFlagUrl
+  }
+}
 
 /// Builds the DOM marker image used by the MapLibre markers on all three maps.
 /// `alt`/`title` carry the station name: the Playwright e2e tests locate a
 /// marker and read its name from `alt`, and it improves accessibility. The
-/// disabled variant (station-summary page) gets the grayscale silhouette class.
+/// state classes let the e2e tests assert the active/selected/inactive flag;
+/// the disabled variant (station-summary page) gets the grayscale silhouette.
 export function stationMarkerImage(
   name: string,
-  options: { disabled?: boolean; large?: boolean } = {},
+  options: { state?: StationMarkerState; disabled?: boolean; large?: boolean } = {},
 ) {
+  const state = options.state ?? 'active'
   const classes = ['station-marker']
+  if (state === 'selected') classes.push('station-marker--selected')
+  if (state === 'inactive') classes.push('station-marker--inactive')
   if (options.disabled) classes.push('station-marker--disabled')
   if (options.large) classes.push('station-marker--large')
   return (
-    <img src={markerUrl} alt={name} title={name} className={classes.join(' ')} draggable={false} />
+    <img
+      src={flagUrl(state)}
+      alt={name}
+      title={name}
+      className={classes.join(' ')}
+      draggable={false}
+    />
   )
 }
