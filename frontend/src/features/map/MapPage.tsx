@@ -100,11 +100,13 @@ export default function MapPage() {
   }, [bounds, selectedStationId, searchParams, setSearchParams])
 
   // Single entry point for selecting a station (map marker, sidebar item or
-  // search result): fly to it and open the same overview panel.
+  // search result): fly to it and open the same overview panel. The `flyTo`
+  // duration is left to MapLibre, which scales it with the flight distance, so
+  // the view zooms smoothly to the station instead of jumping there.
   const selectStation = ({ id, latitude, longitude }: StationLocation) => {
     const map = mapRef.current
     if (map && latitude !== null && longitude !== null) {
-      map.flyTo({ center: [longitude, latitude], zoom: 15, duration: 0.8 })
+      map.flyTo({ center: [longitude, latitude], zoom: 15 })
     }
     setSelectedStationId(id)
   }

@@ -198,10 +198,21 @@ test('back to map after an in-app detail navigation restores the previous view',
   await waitForStations(page)
 
   // Open the overview via a marker (this flies to the station and puts the id
-  // in the URL), then let the fly-to settle so the URL holds the final bounds.
+  // in the URL). The fly-to duration scales with the flight distance, so wait
+  // for the URL to stabilise (the moveend-driven bounds write) rather than a
+  // fixed timeout before capturing the final bounds.
   await mapMarkers(page).first().click()
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
-  await page.waitForTimeout(1200)
+  await expect
+    .poll(
+      async () => {
+        const before = page.url()
+        await page.waitForTimeout(250)
+        return page.url() === before
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true)
   const expectedMapUrl = page.url()
 
   // The overview's detail link navigates in-app to the station detail page.
