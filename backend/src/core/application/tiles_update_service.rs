@@ -462,10 +462,12 @@ mod tests {
     #[test]
     fn does_not_run_when_the_last_run_is_recent() {
         let now = Utc::now();
-        // Finished a day ago: the bi-monthly cron is not due.
-        let repo = Arc::new(MemoryJobRepository::new(vec![finished_job(
-            now - Duration::days(1),
-        )]));
+        // A run finished "just now" is deterministically recent: the next
+        // scheduled bi-monthly trigger (the 1st of an odd month at 03:00) can
+        // never be at or before the run time. (The previous version anchored a
+        // day in the past, so on a cron-fire day — the 1st of an odd month —
+        // that day-old run was considered overdue and the test flaked.)
+        let repo = Arc::new(MemoryJobRepository::new(vec![finished_job(now)]));
         let provisioning = Arc::new(MockTilesProvisioning::new(false));
 
         let service = TilesUpdateService::new(repo.clone(), provisioning.clone(), configuration());
