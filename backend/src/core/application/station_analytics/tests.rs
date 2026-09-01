@@ -1936,6 +1936,48 @@ fn detail_overview_stats_marks_a_new_station() {
 }
 
 #[test]
+fn detail_overview_stats_marks_a_station_without_any_measurements_as_new() {
+    let now = detail_now();
+    // A station that exists (with channels) but has never reported a single
+    // measurement: there is no baseline at all (earliest = None), so every
+    // metric is flagged "new" and the totals stay zero with the setting on.
+    let service = promenade_service(Vec::new());
+    let id = station_vo::Id(Uuid::from_u128(STATION_1));
+
+    let plain = service.detail_overview_stats(id, now, false).unwrap();
+    assert!(plain.metrics.iter().all(|metric| !metric.is_new));
+    assert!(plain.metrics.iter().all(|metric| metric.current == 0));
+
+    let filtered = service.detail_overview_stats(id, now, true).unwrap();
+    assert!(
+        filtered.metrics.iter().all(|metric| metric.is_new),
+        "a station with no measurements at all has no like-for-like baseline"
+    );
+    assert!(filtered.metrics.iter().all(|metric| metric.current == 0));
+}
+
+#[test]
+fn stations_summary_overview_skips_stations_without_any_measurements() {
+    // Stations A and B (both inside the bounds) have channels but zero
+    // measurements: with the setting on there is no baseline, so both are
+    // skipped and every metric stays at zero.
+    let service = default_summary_service(Vec::new());
+    let now = summary_now();
+
+    let plain = service
+        .stations_summary_overview(bounds(), &[], now, false)
+        .unwrap();
+    let filtered = service
+        .stations_summary_overview(bounds(), &[], now, true)
+        .unwrap();
+
+    for key in MetricKey::ALL {
+        assert_eq!(metric_of(&plain, key).current, 0);
+        assert_eq!(metric_of(&filtered, key).current, 0);
+    }
+}
+
+#[test]
 fn detail_overview_stats_not_new_when_the_station_predates_the_windows() {
     let now = detail_now();
     // A station that already existed before every metric's comparison window

@@ -174,4 +174,63 @@ mod tests {
         // matters).
         assert!(!introduced_after(utc(2014, 6, 1, 0, 0, 0), from));
     }
+
+    #[test]
+    fn covers_window_accepts_exactly_one_interval_of_tolerance() {
+        // A 24-hour window with hourly resolution: `from + r` is 01:00 and
+        // `to - r` is 23:00 on the same day.
+        let from = utc(2026, 1, 1, 0, 0, 0);
+        let to = utc(2026, 1, 2, 0, 0, 0);
+        let r = 3600;
+        // Anchor values that satisfy the *other* bound, so each check isolates
+        // the boundary under test: `last` at the window end, `first` at the
+        // window start.
+        let last_at_end = utc(2026, 1, 2, 0, 0, 0);
+        let first_at_start = utc(2026, 1, 1, 0, 0, 0);
+
+        // Earliest bound: `first` must be <= `from + r`.
+        // Exactly at `from + r` (one interval past the start) still covers.
+        assert!(covers_window(
+            r,
+            utc(2026, 1, 1, 1, 0, 0),
+            last_at_end,
+            from,
+            to
+        ));
+        // One second past `from + r` no longer covers.
+        assert!(!covers_window(
+            r,
+            utc(2026, 1, 1, 1, 0, 1),
+            last_at_end,
+            from,
+            to
+        ));
+
+        // Latest bound: `last` must be >= `to - r`.
+        // Exactly at `to - r` (one interval before the end) still covers.
+        assert!(covers_window(
+            r,
+            first_at_start,
+            utc(2026, 1, 1, 23, 0, 0),
+            from,
+            to
+        ));
+        // One second before `to - r` no longer covers.
+        assert!(!covers_window(
+            r,
+            first_at_start,
+            utc(2026, 1, 1, 22, 59, 59),
+            from,
+            to
+        ));
+
+        // Both bounds exactly at the tolerance still cover the whole window.
+        assert!(covers_window(
+            r,
+            utc(2026, 1, 1, 1, 0, 0),
+            utc(2026, 1, 1, 23, 0, 0),
+            from,
+            to
+        ));
+    }
 }

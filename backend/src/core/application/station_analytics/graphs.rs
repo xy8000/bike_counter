@@ -883,3 +883,327 @@ pub(super) fn period_graphs_per_station(
         per_station,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use chrono::{DateTime, Duration, TimeZone, Timelike, Utc};
+    use chrono_tz::Tz;
+
+    use super::*;
+    use crate::core::domain::measurements::repository_port::BucketGranularity;
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+    }
+
+    fn berlin() -> Tz {
+        "Europe/Berlin".parse().unwrap()
+    }
+
+    fn bucket(start: DateTime<Utc>, total: i64) -> TimeBucket {
+        TimeBucket { start, total }
+    }
+
+    #[test]
+    fn custom_granularity_selects_each_tier_and_boundaries() {
+        // `<= 24h` -> 15 minutes.
+        assert_eq!(
+            custom_granularity(Duration::hours(24)),
+            BucketGranularity::Fixed { seconds: 15 * 60 }
+        );
+        assert_eq!(
+            custom_granularity(Duration::hours(25)),
+            BucketGranularity::Fixed { seconds: 3600 }
+        );
+        // `<= 48h` -> 1 hour.
+        assert_eq!(
+            custom_granularity(Duration::hours(48)),
+            BucketGranularity::Fixed { seconds: 3600 }
+        );
+        // `<= 30d` -> 1 day.
+        assert_eq!(
+            custom_granularity(Duration::hours(49)),
+            BucketGranularity::Day
+        );
+        assert_eq!(
+            custom_granularity(Duration::days(30)),
+            BucketGranularity::Day
+        );
+        // `<= 90d` -> 1 week.
+        assert_eq!(
+            custom_granularity(Duration::days(31)),
+            BucketGranularity::Week
+        );
+        assert_eq!(
+            custom_granularity(Duration::days(90)),
+            BucketGranularity::Week
+        );
+        // `<= 2y` (730d) -> 1 month.
+        assert_eq!(
+            custom_granularity(Duration::days(91)),
+            BucketGranularity::Month
+        );
+        assert_eq!(
+            custom_granularity(Duration::days(730)),
+            BucketGranularity::Month
+        );
+        // `> 2y` -> 1 quarter.
+        assert_eq!(
+            custom_granularity(Duration::days(731)),
+            BucketGranularity::Quarter
+        );
+    }
+
+    #[test]
+    fn is_daily_or_finer_flags_only_daily_and_finer_buckets() {
+        assert!(is_daily_or_finer(BucketGranularity::Fixed {
+            seconds: 5 * 60
+        }));
+        assert!(is_daily_or_finer(BucketGranularity::Fixed {
+            seconds: 60 * 60
+        }));
+        assert!(is_daily_or_finer(BucketGranularity::Fixed {
+            seconds: 24 * 60 * 60
+        }));
+        assert!(!is_daily_or_finer(BucketGranularity::Fixed {
+            seconds: 48 * 60 * 60
+        }));
+        assert!(is_daily_or_finer(BucketGranularity::Day));
+        assert!(!is_daily_or_finer(BucketGranularity::Week));
+        assert!(!is_daily_or_finer(BucketGranularity::Month));
+        assert!(!is_daily_or_finer(BucketGranularity::Quarter));
+    }
+
+    #[test]
+    fn calendar_bucket_start_anchors_each_granularity_in_the_local_timezone() {
+        // 2024-01-10 13:00 Berlin (CET, UTC+1).
+        let time = utc(2024, 1, 10, 12, 0, 0);
+        assert_eq!(
+            calendar_bucket_start(time, berlin(), BucketGranularity::Day),
+            utc(2024, 1, 9, 23, 0, 0)
+        );
+        // Wednesday -> the local Monday (Jan 8).
+        assert_eq!(
+            calendar_bucket_start(time, berlin(), BucketGranularity::Week),
+            utc(2024, 1, 7, 23, 0, 0)
+        );
+        // Month -> Jan 1 00:00 Berlin.
+        assert_eq!(
+            calendar_bucket_start(time, berlin(), BucketGranularity::Month),
+            utc(2023, 12, 31, 23, 0, 0)
+        );
+        // Quarter (Q1) -> Jan 1 00:00 Berlin, same as the month for January.
+        assert_eq!(
+            calendar_bucket_start(time, berlin(), BucketGranularity::Quarter),
+            utc(2023, 12, 31, 23, 0, 0)
+        );
+        // A mid-quarter date anchors to the quarter's first month.
+        let april = utc(2024, 4, 15, 12, 0, 0);
+        assert_eq!(
+            calendar_bucket_start(april, berlin(), BucketGranularity::Quarter),
+            utc(2024, 3, 31, 22, 0, 0)
+        );
+    }
+
+    #[test]
+    fn add_local_months_preserves_the_local_clock_across_a_dst_transition() {
+        // 2024-09-30 14:00 Berlin CEST, one month later is 2024-10-30 14:00 CET:
+        // the local clock time survives the CEST -> CET switch (Oct 27, 2024).
+        let start = utc(2024, 9, 30, 12, 0, 0);
+        let next = add_local_months(start, berlin(), 1).with_timezone(&berlin());
+        assert_eq!(
+            (next.month(), next.day(), next.hour(), next.minute()),
+            (10, 30, 14, 0)
+        );
+    }
+
+    #[test]
+    fn add_local_months_clamps_to_the_last_day_of_a_shorter_month() {
+        // 2024-01-31 + 1 local month -> 2024-02-29 (leap year).
+        let start = utc(2024, 1, 31, 12, 0, 0);
+        let next = add_local_months(start, berlin(), 1).with_timezone(&berlin());
+        assert_eq!((next.month(), next.day()), (2, 29));
+    }
+
+    #[test]
+    fn bucket_starts_fixed_grid_is_half_open_and_stops_before_to() {
+        let from = utc(2024, 1, 10, 0, 0, 0);
+        let to = utc(2024, 1, 10, 3, 0, 0);
+        let starts = bucket_starts(
+            BucketGranularity::Fixed { seconds: 3600 },
+            from,
+            to,
+            from,
+            berlin(),
+        );
+        assert_eq!(
+            starts,
+            vec![
+                utc(2024, 1, 10, 0, 0, 0),
+                utc(2024, 1, 10, 1, 0, 0),
+                utc(2024, 1, 10, 2, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn bucket_starts_month_grid_steps_local_calendar_months() {
+        // Jan 10 2024 .. Mar 1 2024 (Berlin): the local-month buckets are
+        // Jan 1, Feb 1 and Mar 1 00:00 Berlin.
+        let from = utc(2024, 1, 10, 0, 0, 0);
+        let to = utc(2024, 3, 1, 0, 0, 0);
+        let starts = bucket_starts(BucketGranularity::Month, from, to, from, berlin());
+        assert_eq!(
+            starts,
+            vec![
+                utc(2023, 12, 31, 23, 0, 0),
+                utc(2024, 1, 31, 23, 0, 0),
+                utc(2024, 2, 29, 23, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn bucket_starts_quarter_grid_steps_three_local_months() {
+        // Jan 10 2024 .. Jul 1 2024 (Berlin): Q1 (Jan 1), Q2 (Apr 1) and
+        // Q3 (Jul 1) local-quarter starts.
+        let from = utc(2024, 1, 10, 0, 0, 0);
+        let to = utc(2024, 7, 1, 0, 0, 0);
+        let starts = bucket_starts(BucketGranularity::Quarter, from, to, from, berlin());
+        assert_eq!(
+            starts,
+            vec![
+                utc(2023, 12, 31, 23, 0, 0),
+                utc(2024, 3, 31, 22, 0, 0),
+                utc(2024, 6, 30, 22, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn zero_fill_buckets_keeps_totals_and_fills_gaps_with_zero() {
+        let series = vec![bucket(utc(2024, 1, 10, 1, 0, 0), 5)];
+        let from = utc(2024, 1, 10, 0, 0, 0);
+        let to = utc(2024, 1, 10, 3, 0, 0);
+        let filled = zero_fill_buckets(
+            series,
+            BucketGranularity::Fixed { seconds: 3600 },
+            from,
+            to,
+            from,
+            berlin(),
+        );
+        assert_eq!(
+            filled,
+            vec![
+                bucket(utc(2024, 1, 10, 0, 0, 0), 0),
+                bucket(utc(2024, 1, 10, 1, 0, 0), 5),
+                bucket(utc(2024, 1, 10, 2, 0, 0), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn zero_fill_buckets_empty_series_fills_the_whole_window() {
+        let from = utc(2024, 1, 10, 0, 0, 0);
+        let to = utc(2024, 1, 10, 2, 0, 0);
+        let filled = zero_fill_buckets(
+            Vec::new(),
+            BucketGranularity::Fixed { seconds: 3600 },
+            from,
+            to,
+            from,
+            berlin(),
+        );
+        assert_eq!(
+            filled,
+            vec![
+                bucket(utc(2024, 1, 10, 0, 0, 0), 0),
+                bucket(utc(2024, 1, 10, 1, 0, 0), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn weekday_totals_sums_by_local_weekday_and_omits_quiet_weekdays() {
+        // Jan 8 2024 is a Monday, Jan 12 2024 is a Friday (in Berlin).
+        let buckets = vec![
+            bucket(utc(2024, 1, 8, 0, 0, 0), 10),
+            bucket(utc(2024, 1, 8, 1, 0, 0), 5),
+            bucket(utc(2024, 1, 12, 0, 0, 0), 7),
+        ];
+        assert_eq!(
+            weekday_totals(&buckets, berlin()),
+            vec![
+                WeekdayTotal {
+                    weekday: 1,
+                    total: 15
+                },
+                WeekdayTotal {
+                    weekday: 5,
+                    total: 7
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn weekday_totals_empty_series_is_empty() {
+        assert_eq!(weekday_totals(&[], berlin()), Vec::new());
+    }
+
+    #[test]
+    fn fold_weekdays_aggregates_across_groups_and_drops_zeroes() {
+        let mut by_group = HashMap::new();
+        by_group.insert(
+            uuid::Uuid::from_u128(0x1),
+            vec![
+                WeekdayTotal {
+                    weekday: 1,
+                    total: 10,
+                },
+                WeekdayTotal {
+                    weekday: 5,
+                    total: 7,
+                },
+            ],
+        );
+        by_group.insert(
+            uuid::Uuid::from_u128(0x2),
+            vec![
+                WeekdayTotal {
+                    weekday: 1,
+                    total: 3,
+                },
+                WeekdayTotal {
+                    weekday: 3,
+                    total: 2,
+                },
+            ],
+        );
+        assert_eq!(
+            fold_weekdays(&by_group),
+            vec![
+                WeekdayTotal {
+                    weekday: 1,
+                    total: 13
+                },
+                WeekdayTotal {
+                    weekday: 3,
+                    total: 2
+                },
+                WeekdayTotal {
+                    weekday: 5,
+                    total: 7
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn fold_weekdays_empty_input_is_empty() {
+        assert_eq!(fold_weekdays(&HashMap::new()), Vec::new());
+    }
+}

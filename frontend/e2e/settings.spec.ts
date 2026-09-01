@@ -207,3 +207,60 @@ test('the settings are restored from the cookie on a bare URL and re-shared', as
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
   await expect(page).toHaveURL(/[?&]timeframe=year/)
 })
+
+test('the exclude-new-stations setting applies to real station data on the detail page', async ({
+  page,
+}) => {
+  await openDetailPage(page)
+
+  // With the setting off, every overview metric reports a trend — no "New"
+  // indicator anywhere.
+  await expect(page.getByTitle('Opened during the compared period')).toBeHidden()
+
+  const dialog = await openSettings(page)
+  const toggle = dialog.getByRole('switch', { name: SETTING_LABEL })
+  await toggle.click()
+  await expect(toggle).toBeChecked()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
+
+  // The seeded station only has ~45 days of history, so with the setting on the
+  // month and year metrics have no like-for-like baseline and are flagged "New"
+  // (the day/week metrics keep their trends because the station already existed
+  // in their comparison windows).
+  await expect(page.getByTitle('Opened during the compared period').first()).toBeVisible()
+})
+
+test('the individual range renders real buckets without a previous-period overlay', async ({
+  page,
+}) => {
+  await openDetailPage(page)
+  const statsSection = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Detailed statistics' }),
+  })
+
+  // The custom range (2026-08-25..31) overlaps the seeded rolling data, so the
+  // chart draws real day buckets for it. Capture the request to prove the
+  // individual range is fetched without a compare (previous period) parameter.
+  const individualRequest = page.waitForRequest(
+    (request) =>
+      request.url().includes('/api/bff/station-detail/') &&
+      request.url().includes('/graphs/day') &&
+      request.url().includes('from=') &&
+      request.url().includes('to=') &&
+      !request.url().includes('compare'),
+  )
+  const dialog = await openSettings(page)
+  await dialog.getByRole('button', { name: 'Individual', exact: true }).click()
+  await dialog.getByLabel('From', { exact: true }).fill('2026-08-25')
+  await expect(page).toHaveURL(/[?&]from=2026-08-25/)
+  await dialog.getByLabel('To', { exact: true }).fill('2026-08-31')
+  await expect(page).toHaveURL(/[?&]to=2026-08-31/)
+  await expect(individualRequest).resolves.toBeTruthy()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
+
+  // The chart card switches to the individual range and renders the day-bucket
+  // series (not just the URL round-trip).
+  await expect(statsSection.getByText('Individual range', { exact: true })).toBeVisible()
+  await expect(statsSection.getByText('1-day buckets', { exact: true })).toBeVisible()
+  await expect(statsSection.locator('.recharts-wrapper').first()).toBeVisible()
+})

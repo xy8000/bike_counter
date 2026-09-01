@@ -374,3 +374,111 @@ impl GeoBounds {
 }
 
 pub mod service_port;
+
+#[cfg(test)]
+mod tests {
+    use crate::core::domain::counting_stations::counting_station::value_objects::GeoCoordinates;
+
+    use super::*;
+
+    #[test]
+    fn graph_timeframe_from_key_parses_every_stable_key() {
+        for timeframe in GraphTimeframe::ALL {
+            assert_eq!(
+                GraphTimeframe::from_key(timeframe.as_str()),
+                Some(timeframe),
+                "{} should parse back to its timeframe",
+                timeframe.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn graph_timeframe_from_key_rejects_unknown_keys() {
+        assert_eq!(GraphTimeframe::from_key("bogus"), None);
+        assert_eq!(GraphTimeframe::from_key(""), None);
+        // The "individual" custom range is not one of the fixed timeframes.
+        assert_eq!(GraphTimeframe::from_key("individual"), None);
+    }
+
+    #[test]
+    fn geo_bounds_is_valid_requires_both_axes_non_negative() {
+        let valid = GeoBounds {
+            min_latitude: 51.0,
+            min_longitude: 7.0,
+            max_latitude: 52.0,
+            max_longitude: 8.0,
+        };
+        assert!(valid.is_valid());
+
+        // A degenerate zero-span box is still valid.
+        let zero = GeoBounds {
+            min_latitude: 51.5,
+            min_longitude: 7.5,
+            max_latitude: 51.5,
+            max_longitude: 7.5,
+        };
+        assert!(zero.is_valid());
+
+        let inverted_lat = GeoBounds {
+            min_latitude: 52.0,
+            min_longitude: 7.0,
+            max_latitude: 51.0,
+            max_longitude: 8.0,
+        };
+        assert!(!inverted_lat.is_valid());
+
+        let inverted_lng = GeoBounds {
+            min_latitude: 51.0,
+            min_longitude: 8.0,
+            max_latitude: 52.0,
+            max_longitude: 7.0,
+        };
+        assert!(!inverted_lng.is_valid());
+    }
+
+    #[test]
+    fn geo_bounds_contains_uses_inclusive_bounds() {
+        let bounds = GeoBounds {
+            min_latitude: 51.0,
+            min_longitude: 7.0,
+            max_latitude: 52.0,
+            max_longitude: 8.0,
+        };
+
+        let inside = GeoCoordinates {
+            latitude: 51.5,
+            longitude: 7.5,
+        };
+        assert!(bounds.contains(inside));
+
+        // The edges are inclusive.
+        let on_min_edge = GeoCoordinates {
+            latitude: 51.0,
+            longitude: 7.0,
+        };
+        assert!(bounds.contains(on_min_edge));
+        let on_max_edge = GeoCoordinates {
+            latitude: 52.0,
+            longitude: 8.0,
+        };
+        assert!(bounds.contains(on_max_edge));
+
+        // Just outside either axis is rejected.
+        let below_lat = GeoCoordinates {
+            latitude: 50.9999,
+            longitude: 7.5,
+        };
+        assert!(!bounds.contains(below_lat));
+        let above_lat = GeoCoordinates {
+            latitude: 52.0001,
+            longitude: 7.5,
+        };
+        assert!(!bounds.contains(above_lat));
+        let past_lng = GeoCoordinates {
+            latitude: 51.5,
+            longitude: 8.0001,
+        };
+        assert!(!bounds.contains(past_lng));
+    }
+}

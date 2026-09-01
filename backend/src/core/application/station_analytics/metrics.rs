@@ -185,3 +185,179 @@ pub(super) fn metric_windows(
         },
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chrono::{DateTime, TimeZone, Utc};
+    use serde_json::Value;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::core::domain::data_source::data_source::DataSource;
+    use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+    use crate::core::domain::data_source::repository_port::DataSourceRepository;
+    use crate::core::domain::jobs::job::{Job, JobStatus};
+    use crate::core::domain::jobs::repository_port::JobRepository;
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+    }
+
+    fn finished_job(finished_at: DateTime<Utc>) -> Job {
+        let mut job = Job::new(
+            Uuid::new_v4(),
+            "Data source update".to_string(),
+            DATA_SOURCE_UPDATE_JOB_TYPE.to_string(),
+            finished_at + chrono::Duration::hours(1),
+        );
+        job.status = JobStatus::Finished;
+        job.started_at = Some(finished_at - chrono::Duration::minutes(5));
+        job.finished_at = Some(finished_at);
+        job
+    }
+
+    struct MemoryDataSourceRepository {
+        data_sources: Vec<DataSource>,
+    }
+
+    impl DataSourceRepository for MemoryDataSourceRepository {
+        fn upsert(&self, _data_source: DataSource) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn find_by_id(&self, _id: data_source_vo::Id) -> Result<Option<DataSource>, DomainError> {
+            unimplemented!()
+        }
+        fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
+            unimplemented!()
+        }
+        fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
+            Ok(self.data_sources.clone())
+        }
+        fn delete(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn update_imported_until(
+            &self,
+            _id: data_source_vo::Id,
+            _timestamp: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn clear_imported_until(&self, _id: data_source_vo::Id) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn update_last_updated(
+            &self,
+            _id: data_source_vo::Id,
+            _timestamp: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+    }
+
+    struct MemoryJobRepository {
+        finished: Option<Job>,
+    }
+
+    impl JobRepository for MemoryJobRepository {
+        fn insert(&self, _job: Job) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn set_running(&self, _id: Uuid, _started_at: DateTime<Utc>) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn set_finished(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn set_failed(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+            _message: &str,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn update_metadata(&self, _id: Uuid, _key: &str, _value: Value) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn find_by_id(&self, _id: Uuid) -> Result<Option<Job>, DomainError> {
+            unimplemented!()
+        }
+        fn find_all(
+            &self,
+            _job_type: Option<&str>,
+            _status: Option<JobStatus>,
+        ) -> Result<Vec<Job>, DomainError> {
+            unimplemented!()
+        }
+        fn find_running_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
+            unimplemented!()
+        }
+        fn find_last_finished_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
+            Ok(self.finished.clone())
+        }
+        fn expire_running_jobs(
+            &self,
+            _job_type: &str,
+            _now: DateTime<Utc>,
+        ) -> Result<u64, DomainError> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn last_update_prefers_the_newest_per_source_timestamp() {
+        let mut older = DataSource::new("Münster".to_string(), "muenster".to_string());
+        older.last_updated_at = Some(utc(2024, 1, 10, 9, 0, 0));
+        let mut newer = DataSource::new("Bonn".to_string(), "bonn".to_string());
+        newer.last_updated_at = Some(utc(2024, 1, 10, 11, 0, 0));
+
+        let sources = Arc::new(MemoryDataSourceRepository {
+            data_sources: vec![older, newer],
+        });
+        let jobs = Arc::new(MemoryJobRepository {
+            finished: Some(finished_job(utc(2024, 1, 10, 10, 0, 0))),
+        });
+
+        // The newer per-source marker (11:00) outranks the finished job (10:00).
+        assert_eq!(
+            last_update(&*jobs, &*sources).unwrap(),
+            Some(utc(2024, 1, 10, 11, 0, 0))
+        );
+    }
+
+    #[test]
+    fn last_update_falls_back_to_the_newest_finished_job_without_per_source() {
+        // Legacy/seed data: no per-source `last_updated_at`, so the newest
+        // finished update job's `finished_at` is reported.
+        let mut source = DataSource::new("Münster".to_string(), "muenster".to_string());
+        source.last_updated_at = None;
+
+        let sources = Arc::new(MemoryDataSourceRepository {
+            data_sources: vec![source],
+        });
+        let jobs = Arc::new(MemoryJobRepository {
+            finished: Some(finished_job(utc(2024, 1, 10, 6, 0, 0))),
+        });
+
+        assert_eq!(
+            last_update(&*jobs, &*sources).unwrap(),
+            Some(utc(2024, 1, 10, 6, 0, 0))
+        );
+    }
+
+    #[test]
+    fn last_update_is_none_when_neither_per_source_nor_job_exist() {
+        let sources = Arc::new(MemoryDataSourceRepository {
+            data_sources: vec![DataSource::new(
+                "Münster".to_string(),
+                "muenster".to_string(),
+            )],
+        });
+        let jobs = Arc::new(MemoryJobRepository { finished: None });
+
+        assert_eq!(last_update(&*jobs, &*sources).unwrap(), None);
+    }
+}
