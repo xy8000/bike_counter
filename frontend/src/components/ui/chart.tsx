@@ -6,8 +6,10 @@ import type { DefaultLegendContentProps, TooltipContentProps } from 'recharts'
 
 import { cn } from '@/lib/utils'
 
-// Format: { THEME_NAME: CSS_SELECTOR }
-const THEMES = { light: '', dark: '.dark' } as const
+// Format: { THEME_NAME: CSS_SELECTOR }. The dark rules are emitted inside a
+// `prefers-color-scheme` media query (see ChartStyle below), because the app
+// follows the operating-system theme instead of a `.dark` class.
+const THEMES = { light: '', dark: '@media (prefers-color-scheme: dark)' } as const
 
 export type ChartConfig = {
   [k in string]: {
@@ -75,18 +77,20 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     <style
       dangerouslySetInnerHTML={{
         __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
+          .map(([theme, wrapper]) => {
+            // The bare selector rule; `wrapper` is the `@media
+            // (prefers-color-scheme: dark)` block for the dark theme or empty for
+            // light, so the chart colours switch with the OS theme.
+            const rule = `[data-chart=${id}] {
 ${colorConfig
   .map(([key, itemConfig]) => {
     const color = itemConfig.theme?.[theme as keyof typeof itemConfig.theme] || itemConfig.color
     return color ? `  --color-${key}: ${color};` : null
   })
   .join('\n')}
-}
-`,
-          )
+}`
+            return wrapper ? `${wrapper} {\n${rule}\n}` : rule
+          })
           .join('\n'),
       }}
     />

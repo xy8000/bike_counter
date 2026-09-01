@@ -1,9 +1,15 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
-@custom-variant dark (&:is(.dark *));
+/* The dark variant follows the operating system (`prefers-color-scheme`), not a
+   `.dark` class: there is deliberately no manual theme toggle. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 :root {
+  /* `light dark` lets the browser colour native controls (scrollbars, date
+     inputs, the page backdrop) to match the OS preference, so there is no
+     light flash on a dark system. */
+  color-scheme: light dark;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.129 0.042 264.695);
@@ -30,30 +36,33 @@
   --chart-5: oklch(0.769 0.188 70.08);
 }
 
-.dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.208 0.042 265.755);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.718 0.202 162.874); /* emerald-400 */
-  --primary-foreground: oklch(0.129 0.042 264.695);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.718 0.202 162.874);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+/* The same shadcn dark palette, applied only when the OS asks for dark. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.129 0.042 264.695);
+    --foreground: oklch(0.984 0.003 247.858);
+    --card: oklch(0.208 0.042 265.755);
+    --card-foreground: oklch(0.984 0.003 247.858);
+    --popover: oklch(0.208 0.042 265.755);
+    --popover-foreground: oklch(0.984 0.003 247.858);
+    --primary: oklch(0.718 0.202 162.874); /* emerald-400 */
+    --primary-foreground: oklch(0.129 0.042 264.695);
+    --secondary: oklch(0.279 0.041 260.031);
+    --secondary-foreground: oklch(0.984 0.003 247.858);
+    --muted: oklch(0.279 0.041 260.031);
+    --muted-foreground: oklch(0.704 0.04 256.788);
+    --accent: oklch(0.279 0.041 260.031);
+    --accent-foreground: oklch(0.984 0.003 247.858);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.718 0.202 162.874);
+    --chart-1: oklch(0.488 0.243 264.376);
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+    --chart-4: oklch(0.627 0.265 303.9);
+    --chart-5: oklch(0.645 0.246 16.439);
+  }
 }
 
 @theme inline {
@@ -109,4 +118,43 @@
   .station-marker--disabled {
     filter: grayscale(1) opacity(0.55);
   }
+}
+
+/* MapLibre overlays follow the app theme: the popup and the navigation /
+   attribution controls would otherwise stay light islands on the dark basemap.
+   The colours come from the same CSS tokens as the rest of the UI, so they
+   switch with the OS preference automatically.
+
+   These rules are deliberately unlayered and use `!important`: maplibre-gl.css
+   is imported unlayered, and unlayered styles beat any `@layer` rule regardless
+   of source order — so without `!important` the popup would keep maplibre's
+   hard-coded white background, which hides the light-on-white station name in
+   dark mode. */
+.maplibregl-popup-content {
+  background: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.35) !important;
+}
+.maplibregl-popup-tip {
+  border-top-color: var(--popover) !important;
+  border-bottom-color: var(--popover) !important;
+}
+.maplibregl-ctrl-group {
+  background: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+}
+.maplibregl-ctrl-group button {
+  background: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+}
+.maplibregl-ctrl-group button + button {
+  border-top-color: var(--border) !important;
+}
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib a {
+  background: var(--popover) !important;
+  color: var(--muted-foreground) !important;
+}
+.maplibregl-ctrl-attrib a:hover {
+  color: var(--popover-foreground) !important;
 }

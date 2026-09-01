@@ -7,8 +7,25 @@ import { mapBounds } from '../../lib/geo'
 /// The self-hosted vector basemap style (served by nginx as a static asset).
 /// Its single vector source reads `/tiles/map.pmtiles` directly via HTTP range
 /// requests (the `pmtiles` protocol registered in `lib/map.tsx`) — no tile
-/// server and no BFF proxy involved.
+/// server and no BFF proxy involved. A dark variant follows the OS colour
+/// scheme (see `useBasemapStyle` below).
 export const MAP_STYLE = '/styles/basemap.json'
+export const MAP_STYLE_DARK = '/styles/basemap-dark.json'
+
+/// Returns the basemap style URL for the current OS colour scheme. The initial
+/// read is from `prefers-color-scheme` and a `change` listener re-renders when
+/// the OS switches, so the map swaps basemaps automatically — there is no manual
+/// theme toggle.
+function useBasemapStyle(): string {
+  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (event: MediaQueryListEvent) => setDark(event.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+  return dark ? MAP_STYLE_DARK : MAP_STYLE
+}
 
 /// The default Münster view, used when a map has no explicit bounds (the map
 /// starts centred on Münster, matching the previous Leaflet default).
@@ -55,10 +72,11 @@ export function BaseMap({
   // gets past the initial TileJSON fetch. The committed style keeps a
   // placeholder so it works from any origin; it is resolved to this page's
   // origin at runtime.
+  const styleUrl = useBasemapStyle()
   const [style, setStyle] = useState<StyleSpecification | string | null>(null)
   useEffect(() => {
     let cancelled = false
-    fetch(MAP_STYLE)
+    fetch(styleUrl)
       .then((response) => response.json())
       .then((raw: StyleSpecification) => {
         if (cancelled) return
@@ -71,12 +89,12 @@ export function BaseMap({
       })
       .catch((error) => {
         console.error('failed to load the self-hosted map style', error)
-        if (!cancelled) setStyle(MAP_STYLE)
+        if (!cancelled) setStyle(styleUrl)
       })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [styleUrl])
 
   if (style === null) return null
 
