@@ -36,6 +36,7 @@ use crate::core::domain::counting_stations::service_port::CountingStationService
 use crate::core::domain::data_source::service_port::DataSourceServicePort;
 use crate::core::domain::data_source::service_port::PersistentStateServicePort;
 use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
+use crate::core::domain::data_source_analytics::DataSourceAnalyticsServicePort;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
@@ -53,6 +54,7 @@ pub struct AppState {
     pub persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
     pub provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
     pub station_analytics_service: Arc<dyn StationAnalyticsServicePort + Send + Sync>,
+    pub data_source_analytics_service: Arc<dyn DataSourceAnalyticsServicePort + Send + Sync>,
     pub asset_service: Arc<dyn AssetServicePort>,
     pub asset_storage: Arc<dyn AssetStorage>,
 }

@@ -158,6 +158,28 @@ impl ChannelRepository for PostgresChannelRepository {
         };
         Ok(rows.iter().map(Self::map_row).collect())
     }
+
+    fn channel_ids_by_data_source_id(
+        &self,
+        data_source_id: crate::core::domain::counting_stations::counting_station::value_objects::DataSourceId,
+    ) -> Result<Vec<value_objects::Id>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT c.id FROM channels c \
+                 JOIN counting_stations s ON c.counting_station_id = s.id \
+                 WHERE s.data_source_id = $1 ORDER BY c.name ASC",
+                &[&data_source_id.0],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows
+            .iter()
+            .map(|row| value_objects::Id(row.get::<_, uuid::Uuid>(0)))
+            .collect())
+    }
 }
 
 /// Escapes `LIKE`/`ILIKE` wildcards in a user-supplied substring so it is

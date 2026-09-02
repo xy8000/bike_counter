@@ -10,8 +10,8 @@ use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
 use crate::adapter::driven::minio_asset_storage::MinioAssetStorage;
 use crate::adapter::driven::postgres::{
     PostgresAssetRepository, PostgresChannelRepository, PostgresCountingStationRepository,
-    PostgresDataSourceRepository, PostgresHealthCheck, PostgresJobRepository,
-    PostgresMeasurementRepository, PostgresPersistentStateRepository,
+    PostgresDataSourceRepository, PostgresHealthCheck, PostgresImportRunRepository,
+    PostgresJobRepository, PostgresMeasurementRepository, PostgresPersistentStateRepository,
     PostgresProviderMessageRepository, create_pool,
 };
 use crate::adapter::driven::provider_handles::ProviderHandles;
@@ -23,6 +23,7 @@ use crate::core::application::asset_service::AssetService;
 use crate::core::application::channel_service::ChannelService;
 use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_import_service::DataImportService;
+use crate::core::application::data_source_analytics_service::DataSourceAnalyticsService;
 use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
 use crate::core::application::job_service::JobService;
@@ -146,6 +147,7 @@ fn main() {
     let job_repo = Arc::new(PostgresJobRepository::new(&pool));
     let persistent_state_repo = Arc::new(PostgresPersistentStateRepository::new(&pool));
     let provider_message_repo = Arc::new(PostgresProviderMessageRepository::new(&pool));
+    let import_run_repo = Arc::new(PostgresImportRunRepository::new(&pool));
 
     // Opaque per-data-source persistent state, exposed through the core and
     // handed (scoped) to each provider at startup.
@@ -226,6 +228,7 @@ fn main() {
     let data_source_update_service = Arc::new(DataSourceUpdateService::new(
         job_repo.clone(),
         data_source_repo.clone(),
+        import_run_repo.clone(),
         data_import_service,
         configuration.clone(),
         startup.data_source_runtimes,
@@ -240,6 +243,16 @@ fn main() {
         measurement_repo.clone(),
         job_repo.clone(),
         data_source_repo.clone(),
+    ));
+
+    // Per-data-source analytics backing the BFF data-sources pages.
+    let data_source_analytics_service = Arc::new(DataSourceAnalyticsService::new(
+        data_source_repo.clone(),
+        counting_station_repo.clone(),
+        channel_repo.clone(),
+        measurement_repo.clone(),
+        import_run_repo,
+        provider_message_repo.clone(),
     ));
 
     // Scheduled cleanup of orphaned objects in the asset storage bucket.
@@ -279,6 +292,7 @@ fn main() {
         persistent_state_service,
         provider_message_service,
         station_analytics_service,
+        data_source_analytics_service,
         asset_service,
         asset_storage,
     );

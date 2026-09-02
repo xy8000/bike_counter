@@ -217,6 +217,43 @@ impl CountingStationRepository for PostgresCountingStationRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(row.get::<_, i64>(0) as usize)
     }
+
+    fn find_by_data_source_id(
+        &self,
+        data_source_id: value_objects::DataSourceId,
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                &format!(
+                    "SELECT {STATION_COLUMNS} FROM counting_stations \
+                     WHERE data_source_id = $1 ORDER BY name ASC"
+                ),
+                &[&data_source_id.0],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows.iter().map(Self::map_row).collect())
+    }
+
+    fn count_by_data_source_id(
+        &self,
+        data_source_id: value_objects::DataSourceId,
+    ) -> Result<usize, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = client
+            .query_one(
+                "SELECT count(*)::bigint FROM counting_stations WHERE data_source_id = $1",
+                &[&data_source_id.0],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.get::<_, i64>(0) as usize)
+    }
 }
 
 /// Escapes `LIKE`/`ILIKE` wildcards in a user-supplied substring so it is

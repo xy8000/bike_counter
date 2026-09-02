@@ -160,6 +160,8 @@ pub fn data_source_a() -> DataSource {
         provider_type: data_source_vo::ProviderType("münster_opendata_github_provider".to_string()),
         imported_until: None,
         last_updated_at: None,
+        logo_asset_id: None,
+        logo_sha256: None,
     }
 }
 

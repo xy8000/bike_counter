@@ -637,6 +637,38 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(months)
     }
 
+    fn has_measurements_in_windows(
+        &self,
+        data_source_id: crate::core::domain::counting_stations::counting_station::value_objects::DataSourceId,
+        windows: &[(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)],
+    ) -> Result<Vec<bool>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut present = Vec::with_capacity(windows.len());
+        for (from, to) in windows {
+            // Source-scoped existence probe: drive s -> c -> m over the per-channel
+            // index and let `EXISTS` stop at the first hit, so a whole calendar
+            // month costs an index seek instead of a full scan.
+            let row = client
+                .query_one(
+                    "SELECT EXISTS ( \
+                         SELECT 1 \
+                         FROM measurements m \
+                         JOIN channels c ON m.channel_id = c.id \
+                         JOIN counting_stations s ON c.counting_station_id = s.id \
+                         WHERE s.data_source_id = $1 \
+                           AND m.timestamp >= $2 AND m.timestamp < $3 \
+                     )",
+                    &[&data_source_id.0, from, to],
+                )
+                .map_err(|error| DomainError::Database(error.to_string()))?;
+            present.push(row.get(0));
+        }
+        Ok(present)
+    }
+
     fn resolution_coverage(
         &self,
         from: chrono::DateTime<chrono::Utc>,
@@ -749,10 +781,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
-                "SELECT channel_id, MIN(timestamp) \
+                "SELECT DISTINCT ON (channel_id) channel_id, timestamp \
                  FROM measurements \
                  WHERE channel_id = ANY($1::uuid[]) \
-                 GROUP BY channel_id",
+                 ORDER BY channel_id, timestamp ASC",
                 &[&channel_uuids],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;

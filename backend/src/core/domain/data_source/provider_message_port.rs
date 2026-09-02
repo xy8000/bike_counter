@@ -8,6 +8,8 @@
 //! The [`ProviderMessage`] model and [`ProviderMessageSeverity`] live in the
 //! sibling `provider_message.rs`.
 
+use chrono::{DateTime, Utc};
+
 use super::data_source::value_objects::Id;
 use super::provider_message::ProviderMessage;
 use super::provider_message::ProviderMessageSeverity;
@@ -26,4 +28,18 @@ pub trait ProviderMessageStore: Send + Sync {
 
     /// Returns all messages for a data source, ordered newest first.
     fn find_by_data_source(&self, data_source_id: Id) -> Result<Vec<ProviderMessage>, DomainError>;
+
+    /// Counts the persisted messages of one severity recorded at or after
+    /// `since`. The data-sources UI uses this to show how many warnings/errors
+    /// the last import produced (a run is the only writer of its source at any
+    /// moment). The default returns 0 so in-memory doubles that never exercise
+    /// this need no change; the Postgres adapter pushes the filter into SQL.
+    fn count_since(
+        &self,
+        _data_source_id: Id,
+        _severity: ProviderMessageSeverity,
+        _since: DateTime<Utc>,
+    ) -> Result<i64, DomainError> {
+        Ok(0)
+    }
 }

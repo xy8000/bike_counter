@@ -22,10 +22,12 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::adapter::driving::bff::dto::{
-    ActionDto, AsOfQueryParams, BffStationQueryParams, BffStationSummaryQueryParams, ChannelRefDto,
-    GlobalSummaryDto, GlobalSummaryQueryParams, MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto,
-    SidebarStationDto, SidebarStatsDto, StationDetailPageDto, StationMapDto, StationMapListDto,
-    StationOverviewDto, StationOverviewStatsDto, StationSearchDto, StationSummaryDto,
+    ActionDto, AsOfQueryParams, BffDataSourceDetailDto, BffDataSourceImportDto,
+    BffDataSourceListDto, BffDataSourceListItemDto, BffStationQueryParams,
+    BffStationSummaryQueryParams, ChannelRefDto, GlobalSummaryDto, GlobalSummaryQueryParams,
+    MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto, SidebarStationDto, SidebarStatsDto,
+    StationDetailPageDto, StationMapDto, StationMapListDto, StationOverviewDto,
+    StationOverviewStatsDto, StationSearchDto, StationStatusDto, StationSummaryDto,
     StationsSummaryOverviewDto, StationsSummaryPageDto, SummaryPeriodGraphsDto,
 };
 use crate::adapter::driving::rest::dto::{ErrorResponseDto, LinkDto};
@@ -34,6 +36,8 @@ use crate::core::domain::assets::asset::AssetOrigin;
 use crate::core::domain::assets::asset::value_objects::AssetId;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
+use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+use crate::core::domain::data_source::import_run::DataImportRun;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::station_analytics::{GeoBounds, GraphTimeframe};
 
@@ -999,4 +1003,143 @@ pub async fn get_bff_asset_content(
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
     Ok(response)
+}
+
+// -- Data-sources pages ------------------------------------------------------
+
+/// Resolves a data source's logo URL from its linked asset. Empty when there is
+/// no logo (the source's provider serves none), so the frontend falls back to
+/// the bundled data-source SVG.
+async fn data_source_image_url(
+    state: &AppState,
+    logo_asset_id: Option<AssetId>,
+) -> Result<String, (StatusCode, Json<ErrorResponseDto>)> {
+    let Some(asset_id) = logo_asset_id else {
+        return Ok(String::new());
+    };
+    let service = state.asset_service.clone();
+    let asset = blocking(move || service.find_by_id(asset_id))
+        .await
+        .map_err(map_domain_error)?;
+    Ok(asset.map_or_else(String::new, |asset| {
+        format!("/api/bff/assets/{}/content", asset.id.0)
+    }))
+}
+
+/// Maps a per-source import run to its DTO. The list view only needs the status
+/// (so its warning/error counters are 0); the detail passes the real counters.
+fn import_run_dto(run: DataImportRun, warnings: i64, errors: i64) -> BffDataSourceImportDto {
+    BffDataSourceImportDto {
+        status: run.status.as_str().to_string(),
+        started_at: run.started_at,
+        finished_at: run.finished_at,
+        duration_seconds: run.duration_seconds(),
+        failure_message: run.failure_message,
+        warning_count: warnings,
+        error_count: errors,
+    }
+}
+
+/// The data-sources overview (`GET /api/bff/data-sources`): one row per
+/// configured data source with its station/channel counts and last successful
+/// import.
+#[utoipa::path(
+    get,
+    path = "/api/bff/data-sources",
+    tag = "BFF API",
+    responses(
+        (status = 200, description = "Data-sources overview (one row per provider)", body = BffDataSourceListDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_bff_data_sources(
+    State(state): State<AppState>,
+) -> Result<Json<BffDataSourceListDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.data_source_analytics_service.clone();
+    let overview = blocking(move || service.overview())
+        .await
+        .map_err(map_domain_error)?;
+
+    let mut items = Vec::with_capacity(overview.len());
+    for row in overview {
+        let image_url = data_source_image_url(&state, row.logo_asset_id).await?;
+        items.push(BffDataSourceListItemDto {
+            id: row.id,
+            name: row.name,
+            provider_type: row.provider_type,
+            last_updated_at: row.last_updated_at,
+            station_count: row.station_count,
+            channel_count: row.channel_count,
+            image_url,
+            last_import: row.last_import.map(|run| import_run_dto(run, 0, 0)),
+        });
+    }
+    Ok(Json(BffDataSourceListDto { items }))
+}
+
+/// The data-source detail page (`GET /api/bff/data-sources/{id}`): the large
+/// logo URL, the source's positioned stations (map), the Data-Overview facts and
+/// the feature badges.
+#[utoipa::path(
+    get,
+    path = "/api/bff/data-sources/{id}",
+    tag = "BFF API",
+    params(
+        ("id" = Uuid, Path, description = "Data source UUID")
+    ),
+    responses(
+        (status = 200, description = "Data-source detail", body = BffDataSourceDetailDto),
+        (status = 404, description = "Data source not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_bff_data_source_detail(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<BffDataSourceDetailDto>, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.data_source_analytics_service.clone();
+    let data_source_id = data_source_vo::Id(id);
+    let detail = blocking(move || service.detail(data_source_id))
+        .await
+        .map_err(map_domain_error)?;
+
+    let image_url = data_source_image_url(&state, detail.data_source.logo_asset_id).await?;
+
+    // Only positioned stations can be placed on the detail map.
+    let stations = detail
+        .stations
+        .iter()
+        .filter_map(|station| {
+            station.coordinates.map(|coords| StationMapDto {
+                id: station.id.0,
+                name: station.name.0.clone(),
+                latitude: coords.latitude,
+                longitude: coords.longitude,
+                status: StationStatusDto::from(station.status),
+            })
+        })
+        .collect();
+
+    let warnings = detail.last_import_warnings;
+    let errors = detail.last_import_errors;
+    let last_import = detail
+        .last_import
+        .map(|run| import_run_dto(run, warnings, errors));
+
+    Ok(Json(BffDataSourceDetailDto {
+        id: detail.data_source.id.0,
+        name: detail.data_source.name.0,
+        provider_type: detail.data_source.provider_type.0,
+        image_url,
+        station_count: detail.station_count,
+        channel_count: detail.channel_count,
+        stations,
+        last_updated_at: detail.data_source.last_updated_at,
+        first_data_at: detail.first_data_at,
+        last_data_at: detail.last_data_at,
+        has_historical: detail.has_historical,
+        has_real_time: detail.has_real_time,
+        has_full_current_year: detail.has_full_current_year,
+        last_import,
+    }))
 }

@@ -21,4 +21,19 @@ pub trait ChannelRepository {
         counting_station_id: Option<value_objects::CountingStationId>,
         name: Option<&str>,
     ) -> Result<Vec<Channel>, DomainError>;
+
+    /// The ids of every channel of one data source (resolved through its
+    /// counting stations). The default is unsupported in in-memory doubles —
+    /// channels carry no direct data-source link, so only the Postgres adapter
+    /// (which joins `counting_stations`) can answer it.
+    fn channel_ids_by_data_source_id(
+        &self,
+        _data_source_id: crate::core::domain::counting_stations::counting_station::value_objects::DataSourceId,
+    ) -> Result<Vec<value_objects::Id>, DomainError> {
+        Err(DomainError::Database(
+            "channel_ids_by_data_source_id is not supported by this ChannelRepository \
+             (only the Postgres adapter resolves channels through their counting station)"
+                .to_string(),
+        ))
+    }
 }

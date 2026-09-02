@@ -48,6 +48,32 @@ pub trait CountingStationRepository {
         Ok(self.find_all()?.len())
     }
 
+    /// Lists the counting stations of one data source. The Postgres adapter
+    /// pushes the filter into the `WHERE` clause; the default implementation
+    /// filters [`find_all`](Self::find_all) in memory and is intended for
+    /// in-memory test doubles.
+    fn find_by_data_source_id(
+        &self,
+        data_source_id: value_objects::DataSourceId,
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        Ok(self
+            .find_all()?
+            .into_iter()
+            .filter(|station| station.data_source_id == Some(data_source_id))
+            .collect())
+    }
+
+    /// Counts the counting stations of one data source. The Postgres adapter
+    /// uses `SELECT count(*)`; the default implementation counts
+    /// [`find_by_data_source_id`](Self::find_by_data_source_id) and is intended
+    /// for in-memory test doubles.
+    fn count_by_data_source_id(
+        &self,
+        data_source_id: value_objects::DataSourceId,
+    ) -> Result<usize, DomainError> {
+        Ok(self.find_by_data_source_id(data_source_id)?.len())
+    }
+
     /// Updates the mutable attributes (name, description, coordinates) of an
     /// existing station, keyed by its id.
     fn update(&self, station: CountingStation) -> Result<(), DomainError>;

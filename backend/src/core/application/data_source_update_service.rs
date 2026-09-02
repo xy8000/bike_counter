@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 use crate::core::application::data_import_service::{DataImportService, DataSourceRuntime};
 use crate::core::domain::configuration::configuration::Configuration;
+use crate::core::domain::data_source::import_run::DataImportRun;
+use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
 use crate::core::domain::error::DomainError;
@@ -36,6 +38,7 @@ pub const ADDED_MEASUREMENTS_KEY: &str = "added_measurements";
 pub struct DataSourceUpdateService {
     job_repository: Arc<dyn JobRepository + Send + Sync>,
     data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
+    import_run_repository: Arc<dyn DataImportRunRepository + Send + Sync>,
     data_import_service: Arc<DataImportService>,
     configuration: Arc<Configuration>,
     runtimes: Vec<DataSourceRuntime>,
@@ -45,6 +48,7 @@ impl DataSourceUpdateService {
     pub fn new(
         job_repository: Arc<dyn JobRepository + Send + Sync>,
         data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
+        import_run_repository: Arc<dyn DataImportRunRepository + Send + Sync>,
         data_import_service: Arc<DataImportService>,
         configuration: Arc<Configuration>,
         runtimes: Vec<DataSourceRuntime>,
@@ -52,6 +56,7 @@ impl DataSourceUpdateService {
         Self {
             job_repository,
             data_source_repository,
+            import_run_repository,
             data_import_service,
             configuration,
             runtimes,
@@ -216,15 +221,29 @@ impl DataSourceUpdateService {
     /// (incremental, no reprocessing).
     fn run_updates(&self, job_id: Uuid) -> Result<(), DomainError> {
         for runtime in &self.runtimes {
+            let data_source_id = runtime.data_source_id;
             let from = self
                 .data_source_repository
-                .find_by_id(runtime.data_source_id)?
+                .find_by_id(data_source_id)?
                 .and_then(|data_source| data_source.imported_until);
 
-            let update = self.data_import_service.update_data_source(
-                runtime,
-                from,
-                |processed, added| {
+            // Record a per-source RUNNING run so the UI can show this source's
+            // last-import status/duration. Recording failures are non-fatal (the
+            // import itself is the point; the run bookkeeping is best-effort).
+            let started_at = Utc::now();
+            let run_id = Uuid::new_v4();
+            if let Err(error) = self.import_run_repository.insert(&DataImportRun::start(
+                run_id,
+                data_source_id,
+                Some(job_id),
+                started_at,
+            )) {
+                eprintln!("Failed to record import run {run_id}: {error:?}");
+            }
+
+            match self
+                .data_import_service
+                .update_data_source(runtime, from, |processed, added| {
                     self.job_repository.update_metadata(
                         job_id,
                         PROCESSED_MEASUREMENTS_KEY,
@@ -235,17 +254,31 @@ impl DataSourceUpdateService {
                         ADDED_MEASUREMENTS_KEY,
                         json!(added),
                     )
-                },
-            )?;
-
-            if let Some(last_timestamp) = update.last_measurement_timestamp {
-                self.data_source_repository
-                    .update_imported_until(runtime.data_source_id, last_timestamp)?;
+                }) {
+                Ok(update) => {
+                    if let Some(last_timestamp) = update.last_measurement_timestamp {
+                        self.data_source_repository
+                            .update_imported_until(data_source_id, last_timestamp)?;
+                    }
+                    // Per-source success marker: survives a later source failing
+                    // (the whole job is FAILED then, but this source's data is
+                    // fresh).
+                    self.data_source_repository
+                        .update_last_updated(data_source_id, Utc::now())?;
+                    if let Err(error) = self.import_run_repository.finish(run_id, Utc::now()) {
+                        eprintln!("Failed to finish import run {run_id}: {error:?}");
+                    }
+                }
+                Err(error) => {
+                    if let Err(run_error) =
+                        self.import_run_repository
+                            .fail(run_id, Utc::now(), &format!("{error:?}"))
+                    {
+                        eprintln!("Failed to fail import run {run_id}: {run_error:?}");
+                    }
+                    return Err(error);
+                }
             }
-            // Per-source success marker: survives a later source failing (the
-            // whole job is FAILED then, but this source's data is fresh).
-            self.data_source_repository
-                .update_last_updated(runtime.data_source_id, Utc::now())?;
         }
         Ok(())
     }
@@ -286,6 +319,8 @@ mod tests {
     use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
+    use crate::core::domain::data_source::import_run::DataImportRun;
+    use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
     use crate::core::domain::data_source::provider_port::{
         ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch, MeasurementQuery,
         MeasurementRecord, ProviderError,
@@ -949,6 +984,48 @@ mod tests {
         job
     }
 
+    /// An in-memory import-run repository recording the runs written by the
+    /// service under test (the run bookkeeping must not disturb the job-level
+    /// assertions the other tests make).
+    #[derive(Default)]
+    struct MemoryImportRunRepository {
+        runs: Mutex<Vec<DataImportRun>>,
+    }
+
+    impl DataImportRunRepository for MemoryImportRunRepository {
+        fn insert(&self, run: &DataImportRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().push(run.clone());
+            Ok(())
+        }
+
+        fn finish(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn fail(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+            _message: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn latest_by_data_source(
+            &self,
+            data_source_id: DataSourceId,
+        ) -> Result<Option<DataImportRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|run| run.data_source_id == data_source_id)
+                .max_by_key(|run| run.started_at)
+                .cloned())
+        }
+    }
+
     /// A service with no configured data sources (empty runtimes).
     fn service_with(
         job_repo: Arc<MockJobRepository>,
@@ -968,6 +1045,7 @@ mod tests {
         DataSourceUpdateService::new(
             job_repo,
             data_source_repo,
+            Arc::new(MemoryImportRunRepository::default()),
             data_import,
             Arc::new(configuration()),
             runtimes,

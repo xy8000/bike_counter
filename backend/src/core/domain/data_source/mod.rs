@@ -17,6 +17,8 @@
 #![allow(clippy::module_inception)]
 pub mod data_provider_factory_port;
 pub mod data_source;
+pub mod import_run;
+pub mod import_run_port;
 pub mod persistent_state_port;
 pub mod provider_message;
 pub mod provider_message_filter;

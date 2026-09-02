@@ -22,6 +22,10 @@ impl PostgresDataSourceRepository {
             provider_type: value_objects::ProviderType(row.get(2)),
             imported_until: row.get(3),
             last_updated_at: row.get(4),
+            logo_asset_id: row
+                .get::<_, Option<uuid::Uuid>>(5)
+                .map(crate::core::domain::assets::asset::value_objects::AssetId),
+            logo_sha256: row.get::<_, Option<String>>(6),
         }
     }
 }
@@ -53,7 +57,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, name, provider_type, imported_until, last_updated_at FROM data_sources WHERE id = $1",
+                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256 FROM data_sources WHERE id = $1",
                 &[&id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -67,7 +71,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, name, provider_type, imported_until, last_updated_at FROM data_sources WHERE name = $1",
+                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256 FROM data_sources WHERE name = $1",
                 &[&name],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -81,7 +85,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, name, provider_type, imported_until, last_updated_at FROM data_sources ORDER BY name ASC",
+                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256 FROM data_sources ORDER BY name ASC",
                 &[],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -144,6 +148,29 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .execute(
                 "UPDATE data_sources SET last_updated_at = $2 WHERE id = $1",
                 &[&id.0, &timestamp],
+            )
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
+        Ok(())
+    }
+
+    fn update_logo(
+        &self,
+        id: value_objects::Id,
+        logo_asset_id: Option<crate::core::domain::assets::asset::value_objects::AssetId>,
+        logo_sha256: Option<String>,
+    ) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        client
+            .execute(
+                "UPDATE data_sources SET logo_asset_id = $2, logo_sha256 = $3 WHERE id = $1",
+                &[
+                    &id.0,
+                    &logo_asset_id.map(|asset_id| asset_id.0),
+                    &logo_sha256,
+                ],
             )
             .map_err(|error| DomainError::Database(format!("{error:?}")))?;
         Ok(())

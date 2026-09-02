@@ -112,6 +112,17 @@ pub struct StationImage {
     pub bytes: Vec<u8>,
 }
 
+/// The actual logo bytes of a data source, returned by
+/// [`DataProvider::get_data_source_image`] when the provider can serve a
+/// replaceable logo. `None` (the default) makes the frontend fall back to the
+/// bundled data-source SVG.
+#[derive(Debug, Clone)]
+pub struct DataSourceImage {
+    pub sha256: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// An external channel record, linked to its station by external id only.
 #[derive(Debug, Clone)]
 pub struct ChannelRecord {
@@ -175,6 +186,15 @@ pub trait DataProvider: Send + Sync {
     /// The default returns `Ok(None)`, so providers without images (and all
     /// existing mocks) are unaffected.
     fn get_station_image(&self, _external_id: &str) -> Result<Option<StationImage>, ProviderError> {
+        Ok(None)
+    }
+
+    /// The optional, replaceable logo of the data source itself, requested by
+    /// the core during an update so it can be stored as a content-addressed
+    /// asset (mirroring station images). The default returns `Ok(None)`, so
+    /// providers without a logo (and all existing mocks) are unaffected — the
+    /// frontend then falls back to the bundled data-source SVG.
+    fn get_data_source_image(&self) -> Result<Option<DataSourceImage>, ProviderError> {
         Ok(None)
     }
 

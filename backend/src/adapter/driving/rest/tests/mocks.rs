@@ -43,6 +43,9 @@ use crate::core::domain::data_source::provider_message::{
 };
 use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
 use crate::core::domain::data_source::repository_port::DataSourceRepository;
+use crate::core::domain::data_source_analytics::{
+    DataSourceAnalyticsServicePort, DataSourceDetail, DataSourceOverview,
+};
 use crate::core::domain::error::DomainError;
 use crate::core::domain::health::{HealthService, HealthStatus, ServiceHealthIndicator};
 use crate::core::domain::jobs::job::{Job, JobStatus};
@@ -462,6 +465,88 @@ impl DataSourceRepository for MockDataSourceRepository {
     ) -> Result<(), DomainError> {
         Ok(())
     }
+}
+
+/// A [`DataSourceAnalyticsServicePort`] mock standing in for the real
+/// data-source analytics service in REST tests.
+#[derive(Default)]
+pub struct MockDataSourceAnalyticsService {
+    pub data_source_repository: MockDataSourceRepository,
+}
+
+impl MockDataSourceAnalyticsService {
+    pub fn new(data_source_repository: MockDataSourceRepository) -> Self {
+        Self {
+            data_source_repository,
+        }
+    }
+}
+
+impl DataSourceAnalyticsServicePort for MockDataSourceAnalyticsService {
+    fn overview(&self) -> Result<Vec<DataSourceOverview>, DomainError> {
+        self.data_source_repository
+            .find_all()?
+            .into_iter()
+            .map(|data_source| {
+                Ok(DataSourceOverview {
+                    id: data_source.id.0,
+                    name: data_source.name.0,
+                    provider_type: data_source.provider_type.0,
+                    last_updated_at: data_source.last_updated_at,
+                    station_count: 1,
+                    channel_count: 1,
+                    logo_asset_id: None,
+                    last_import: None,
+                })
+            })
+            .collect()
+    }
+
+    fn detail(&self, id: data_source_vo::Id) -> Result<DataSourceDetail, DomainError> {
+        let data_source = self
+            .data_source_repository
+            .find_by_id(id)?
+            .ok_or(DomainError::NotFound(id.0))?;
+        let station = CountingStation {
+            id: station_vo::Id(Uuid::new_v4()),
+            name: station_vo::Name(format!("{} station", data_source.name.0)),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: None,
+            data_source_id: Some(station_vo::DataSourceId(id.0)),
+            coordinates: Some(station_vo::GeoCoordinates {
+                latitude: 51.9617,
+                longitude: 7.6335,
+            }),
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        };
+        Ok(DataSourceDetail {
+            data_source,
+            station_count: 1,
+            channel_count: 1,
+            stations: vec![station],
+            first_data_at: None,
+            last_data_at: None,
+            has_historical: false,
+            has_real_time: false,
+            has_full_current_year: false,
+            last_import: None,
+            last_import_warnings: 0,
+            last_import_errors: 0,
+        })
+    }
+}
+
+/// A [`DataSourceAnalyticsServicePort`] backed by the sample data-source repo.
+pub fn sample_data_source_analytics_service()
+-> Arc<dyn DataSourceAnalyticsServicePort + Send + Sync> {
+    Arc::new(MockDataSourceAnalyticsService::new(
+        MockDataSourceRepository {
+            data_sources: vec![data_source_a()],
+        },
+    ))
 }
 
 /// A configurable health indicator standing in for a real downstream service.

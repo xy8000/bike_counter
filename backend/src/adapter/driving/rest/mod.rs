@@ -14,10 +14,11 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::adapter::driving::bff::{
-    get_bff_asset_content, get_bff_global_summary, get_bff_station_detail_graphs,
-    get_bff_station_detail_monthly, get_bff_station_detail_overview, get_bff_station_detail_page,
-    get_bff_station_overview, get_bff_station_overview_stats, get_bff_stations_search,
-    get_bff_stations_sidebar, get_bff_stations_sidebar_stats, get_bff_stations_summary_graphs,
+    get_bff_asset_content, get_bff_data_source_detail, get_bff_data_sources,
+    get_bff_global_summary, get_bff_station_detail_graphs, get_bff_station_detail_monthly,
+    get_bff_station_detail_overview, get_bff_station_detail_page, get_bff_station_overview,
+    get_bff_station_overview_stats, get_bff_stations_search, get_bff_stations_sidebar,
+    get_bff_stations_sidebar_stats, get_bff_stations_summary_graphs,
     get_bff_stations_summary_monthly, get_bff_stations_summary_overview,
     get_bff_stations_summary_page, list_bff_stations,
 };
@@ -38,6 +39,7 @@ use crate::core::domain::counting_stations::service_port::CountingStationService
 use crate::core::domain::data_source::service_port::DataSourceServicePort;
 use crate::core::domain::data_source::service_port::PersistentStateServicePort;
 use crate::core::domain::data_source::service_port::ProviderMessageServicePort;
+use crate::core::domain::data_source_analytics::DataSourceAnalyticsServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
@@ -60,6 +62,7 @@ impl RestApiAdapter {
         persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
         provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
         station_analytics_service: Arc<dyn StationAnalyticsServicePort + Send + Sync>,
+        data_source_analytics_service: Arc<dyn DataSourceAnalyticsServicePort + Send + Sync>,
         asset_service: Arc<dyn AssetServicePort>,
         asset_storage: Arc<dyn AssetStorage>,
     ) -> Self {
@@ -74,6 +77,7 @@ impl RestApiAdapter {
                 persistent_state_service,
                 provider_message_service,
                 station_analytics_service,
+                data_source_analytics_service,
                 asset_service,
                 asset_storage,
             },
@@ -136,6 +140,11 @@ impl RestApiAdapter {
                 get(get_bff_stations_summary_monthly),
             )
             .route("/api/bff/assets/{id}/content", get(get_bff_asset_content))
+            .route("/api/bff/data-sources", get(get_bff_data_sources))
+            .route(
+                "/api/bff/data-sources/{id}",
+                get(get_bff_data_source_detail),
+            )
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))
             .route(

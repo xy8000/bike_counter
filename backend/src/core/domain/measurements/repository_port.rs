@@ -276,6 +276,23 @@ pub trait MeasurementRepository {
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<MonthTotal>, DomainError>;
 
+    /// Whether at least one measurement exists within each of the given half-open
+    /// `[from, to)` windows for the data source (across all of its channels). The
+    /// caller passes one window per local calendar month of the current year, so
+    /// the "full current year coverage" badge needs no aggregation over the
+    /// source's whole current-year data: every window is answered with an index
+    /// seek that stops at the first hit.
+    ///
+    /// Defaults to `false` for every window so in-memory doubles that never
+    /// exercise this need no change.
+    fn has_measurements_in_windows(
+        &self,
+        _data_source_id: crate::core::domain::counting_stations::counting_station::value_objects::DataSourceId,
+        _windows: &[(DateTime<Utc>, DateTime<Utc>)],
+    ) -> Result<Vec<bool>, DomainError> {
+        Ok(vec![false; _windows.len()])
+    }
+
     /// Per-resolution coverage of `[from, to]` across the given channels:
     /// distinct `resolution_seconds` present, each with its earliest/latest
     /// timestamp and row count, ascending by resolution. Empty when no rows are

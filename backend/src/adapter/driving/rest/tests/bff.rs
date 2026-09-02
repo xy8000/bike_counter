@@ -334,6 +334,8 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "/api/bff/stations/search",
         "/api/bff/stations/summary",
         "/api/bff/global-summary",
+        "/api/bff/data-sources",
+        "/api/bff/data-sources/{id}",
         "/api/bff/station-detail/{id}",
         "/api/bff/station-detail/{id}/overview",
         "/api/bff/station-detail/{id}/graphs/{timeframe}",
@@ -371,6 +373,10 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "SummaryPeriodGraphsDto",
         "PerStationSeriesDto",
         "MonthlyTotalsDto",
+        "BffDataSourceListDto",
+        "BffDataSourceListItemDto",
+        "BffDataSourceDetailDto",
+        "BffDataSourceImportDto",
     ] {
         assert!(
             schemas.contains_key(schema),
@@ -1177,4 +1183,71 @@ async fn bff_station_summary_aggregates_per_station_data() {
     assert_eq!(body["channel_count"], 1, "station A's single channel");
     // The all-time total reflects the same single measurement.
     assert_eq!(body["total_bikes"], 17);
+}
+
+// ---------------------------------------------------------------------------
+// Data-sources: GET /api/bff/data-sources + /api/bff/data-sources/{id}
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn data_sources_overview_lists_each_source_with_counts() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api/bff/data-sources").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items should be an array");
+    assert_eq!(
+        items.len(),
+        1,
+        "the mock analytics reports the sample source"
+    );
+    let item = &items[0];
+    assert_eq!(item["name"], "Münster");
+    assert_eq!(item["provider_type"], "münster_opendata_github_provider");
+    assert_eq!(item["station_count"], 1);
+    assert_eq!(item["channel_count"], 1);
+    assert_eq!(
+        item["image_url"], "",
+        "no logo -> empty so the UI falls back to the SVG"
+    );
+}
+
+#[tokio::test]
+async fn data_source_detail_returns_stations_and_badge_flags() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/data-sources/{}",
+            fixtures::DATA_SOURCE_ID_A
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "Münster");
+    assert_eq!(body["station_count"], 1);
+    assert_eq!(body["channel_count"], 1);
+    assert_eq!(body["has_historical"], false);
+    assert_eq!(body["has_real_time"], false);
+    assert_eq!(body["has_full_current_year"], false);
+    assert_eq!(body["image_url"], "");
+    let stations = body["stations"]
+        .as_array()
+        .expect("stations should be an array");
+    assert_eq!(
+        stations.len(),
+        1,
+        "the mock analytics reports one positioned station"
+    );
+    assert_eq!(stations[0]["name"], "Münster station");
+    assert!(stations[0]["latitude"].is_number());
+    assert_eq!(body["last_import"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn data_source_detail_unknown_source_is_not_found() {
+    let app = TestApp::new();
+    let (status, _) = app
+        .get_json(&format!("/api/bff/data-sources/{}", Uuid::new_v4()))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

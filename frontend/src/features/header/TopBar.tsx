@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react'
+import { Database, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { formatNumber, formatTimestamp } from '../../lib/format'
@@ -13,13 +13,23 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
 
   return (
     <header className="grid grid-cols-[auto_1fr] items-center gap-2 bg-primary px-4 py-2 text-primary-foreground shadow-md sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-4">
-      <Link
-        to="/"
-        className="flex min-w-0 items-center gap-2 font-bold whitespace-nowrap justify-self-start"
-      >
-        <img src="/bike-icon.svg" alt="" aria-hidden="true" className="h-8 w-8 shrink-0" />
-        <span className="truncate">Bike Counter</span>
-      </Link>
+      <div className="flex min-w-0 items-center gap-1 justify-self-start">
+        <Link to="/" className="flex min-w-0 items-center gap-2 font-bold whitespace-nowrap">
+          <img src="/bike-icon.svg" alt="" aria-hidden="true" className="h-8 w-8 shrink-0" />
+          <span className="truncate">Bike Counter</span>
+        </Link>
+        {/* Data-sources section: an icon on phones (no room), a labelled link on
+            large screens. Reachable on every page from the shared top bar. */}
+        <Link
+          to="/data-sources"
+          aria-label="Data sources"
+          title="Data sources"
+          className="flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-sm text-primary-foreground hover:bg-white/10"
+        >
+          <Database aria-hidden="true" className="h-4 w-4 shrink-0" />
+          <span className="hidden lg:inline">Data sources</span>
+        </Link>
+      </div>
 
       {/* Compact search icon on phones; the wide trigger takes over on sm+. */}
       <Button

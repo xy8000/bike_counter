@@ -73,6 +73,26 @@ impl ProviderMessageStore for PostgresProviderMessageRepository {
             })
             .collect())
     }
+
+    fn count_since(
+        &self,
+        data_source_id: Id,
+        severity: ProviderMessageSeverity,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = client
+            .query_one(
+                "SELECT count(*)::bigint FROM data_source_provider_messages \
+                 WHERE data_source_id = $1 AND severity = $2 AND occurred_at >= $3",
+                &[&data_source_id.0, &severity.as_str(), &since],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.get::<_, i64>(0))
+    }
 }
 
 #[cfg(test)]

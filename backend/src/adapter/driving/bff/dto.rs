@@ -666,3 +666,68 @@ impl From<StationsSummaryOverview> for StationsSummaryOverviewDto {
         }
     }
 }
+
+// -- Data-sources pages ------------------------------------------------------
+
+/// One row of the data-sources overview (`GET /api/bff/data-sources`): the
+/// persisted data source plus its station/channel counts and the small logo URL.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct BffDataSourceListItemDto {
+    pub id: Uuid,
+    pub name: String,
+    pub provider_type: String,
+    /// The last **successful** import of this data source.
+    pub last_updated_at: Option<DateTime<Utc>>,
+    pub station_count: usize,
+    pub channel_count: usize,
+    /// URL of the logo content (streamed by the BFF); empty when the provider
+    /// serves no logo, in which case the frontend shows the bundled SVG.
+    pub image_url: String,
+    /// The newest per-source import run (status shown in the list).
+    pub last_import: Option<BffDataSourceImportDto>,
+}
+
+/// The data-sources overview payload.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct BffDataSourceListDto {
+    pub items: Vec<BffDataSourceListItemDto>,
+}
+
+/// The last per-source import run of a data source.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct BffDataSourceImportDto {
+    /// `RUNNING` | `FINISHED` | `FAILED`.
+    pub status: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    /// `finished_at - started_at` in whole seconds (present once finished).
+    pub duration_seconds: Option<i64>,
+    pub failure_message: Option<String>,
+    /// WARNING/ERROR provider-message counters recorded since the run started.
+    pub warning_count: i64,
+    pub error_count: i64,
+}
+
+/// The detail payload of one data source (`GET /api/bff/data-sources/{id}`).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct BffDataSourceDetailDto {
+    pub id: Uuid,
+    pub name: String,
+    pub provider_type: String,
+    /// URL of the logo content (streamed by the BFF); empty when the provider
+    /// serves no logo, in which case the frontend shows the bundled SVG.
+    pub image_url: String,
+    pub station_count: usize,
+    pub channel_count: usize,
+    /// The positioned counting stations of the data source (map markers).
+    pub stations: Vec<StationMapDto>,
+    pub last_updated_at: Option<DateTime<Utc>>,
+    /// Earliest measurement timestamp across the source's channels.
+    pub first_data_at: Option<DateTime<Utc>>,
+    /// Latest measurement timestamp across the source's channels.
+    pub last_data_at: Option<DateTime<Utc>>,
+    pub has_historical: bool,
+    pub has_real_time: bool,
+    pub has_full_current_year: bool,
+    pub last_import: Option<BffDataSourceImportDto>,
+}
