@@ -24,7 +24,7 @@ export function SidebarHandle({
       aria-label={collapsed ? 'Show station list' : 'Hide station list'}
       aria-expanded={!collapsed}
       className={cn(
-        'absolute top-1/2 right-0 flex h-20 w-7 -translate-y-1/2 translate-x-full cursor-pointer items-center justify-center rounded-r-lg border border-l-0 bg-background text-muted-foreground shadow-md outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+        'absolute top-1/2 right-0 hidden h-20 w-7 -translate-y-1/2 translate-x-full cursor-pointer items-center justify-center rounded-r-lg border border-l-0 bg-background text-muted-foreground shadow-md outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] sm:flex',
         className,
       )}
     >

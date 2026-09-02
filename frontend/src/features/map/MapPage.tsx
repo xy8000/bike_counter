@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Menu } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import type { Map as MaplibreMap } from 'maplibre-gl'
 import type { Bounds } from '../../lib/geo'
 import { parseBoundsQuery, serializeBounds } from '../../lib/geo'
@@ -29,7 +31,13 @@ export default function MapPage() {
   // The visible bounding box and the open overview are seeded from the URL once;
   // the sync effect below keeps the URL in lock-step with these after that.
   const [bounds, setBounds] = useState<Bounds | null>(() => parseBoundsQuery(searchParams))
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // Phones start map-first: the drawer defaults to collapsed below the `sm`
+  // breakpoint (CSS viewport px, not device pixels), while tablets/desktops
+  // keep the expanded default. Only the first paint needs to be right — later
+  // layout differences are driven by CSS breakpoints.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => !window.matchMedia('(min-width: 640px)').matches,
+  )
   const [selectedStationId, setSelectedStationId] = useState<string | null>(
     () => searchParams.get('station') ?? null,
   )
@@ -147,6 +155,7 @@ export default function MapPage() {
               statsError={statsError}
               onSelectStation={selectStation}
               onSummarize={summarizeVisible}
+              onClose={() => setSidebarCollapsed(true)}
             />
           ) : (
             <StationOverview
@@ -172,6 +181,24 @@ export default function MapPage() {
             statsError={statsError}
           />
         </main>
+
+        {/* Phone-only floating toggle: on phones the drawer covers the map, so it
+            starts collapsed and the FAB is the only way back in. It only renders
+            while collapsed; closing the open drawer happens via its header close
+            button (or the overview's close button). */}
+        {sidebarCollapsed && (
+          <Button
+            type="button"
+            variant="default"
+            size="icon"
+            onClick={() => setSidebarCollapsed(false)}
+            aria-label="Show station list"
+            title="Show station list"
+            className="absolute top-3 left-3 z-[600] h-11 w-11 rounded-full shadow-lg sm:hidden"
+          >
+            <Menu />
+          </Button>
+        )}
       </div>
     </div>
   )

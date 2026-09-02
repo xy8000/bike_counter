@@ -41,6 +41,11 @@ It is a **monorepo** with two sub-projects:
   without a full-period baseline shows a neutral "New" instead of a misleading
   arrow).
 
+The layout is responsive and adapts to the viewport: on phones the station list
+becomes a full-screen drawer (collapsed by default, opened by a floating toggle
+button and closed by a header close button) with a compact header + search, while
+tablets and desktops keep the left overlay sidebar and the wide search trigger.
+
 Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
 
 ## Prerequisites

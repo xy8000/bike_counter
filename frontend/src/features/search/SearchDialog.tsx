@@ -30,7 +30,7 @@ export function SearchDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="top-[5rem] flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 translate-y-0 sm:max-w-[560px]"
+        className="top-[4rem] flex max-h-[calc(100dvh-4rem)] flex-col gap-0 overflow-hidden p-0 translate-y-0 sm:top-[5rem] sm:max-h-[70vh] sm:max-w-[560px]"
         showCloseButton={false}
       >
         <DialogHeader className="sr-only">

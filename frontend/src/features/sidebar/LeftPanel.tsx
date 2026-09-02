@@ -18,7 +18,7 @@ export function LeftPanel({
   return (
     <aside
       className={cn(
-        'absolute inset-y-0 left-0 z-[500] flex w-[360px] min-h-0 flex-col border-r bg-background shadow-lg',
+        'absolute inset-y-0 left-0 z-[500] flex min-h-0 w-full flex-col border-r bg-background shadow-lg sm:w-[360px]',
         'transition-transform duration-300 ease-in-out',
         collapsed ? '-translate-x-full' : 'translate-x-0',
       )}

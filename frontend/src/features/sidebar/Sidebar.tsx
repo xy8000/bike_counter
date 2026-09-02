@@ -1,4 +1,4 @@
-import { BarChart3 } from 'lucide-react'
+import { BarChart3, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -36,6 +36,7 @@ export function Sidebar({
   statsError,
   onSelectStation,
   onSummarize,
+  onClose,
 }: {
   shell: SidebarShell | null
   stats: Map<string, SidebarStationStats> | null
@@ -44,14 +45,32 @@ export function Sidebar({
   statsError: boolean
   onSelectStation: (station: SidebarStation) => void
   onSummarize: () => void
+  // Phone-only affordance: the full-screen drawer gets its own close button,
+  // while tablet/desktop close via the mid-height handle.
+  onClose?: () => void
 }) {
   return (
     <>
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="min-w-0 flex-1 text-base font-semibold">Visible counting stations</h2>
-        <Badge variant="default" className="rounded-full">
-          {shell ? `${shell.visible_count} / ${shell.total_count}` : '–'}
-        </Badge>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge variant="default" className="rounded-full">
+            {shell ? `${shell.visible_count} / ${shell.total_count}` : '–'}
+          </Badge>
+          {onClose && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              title="Close station list"
+              aria-label="Close station list"
+              className="sm:hidden"
+            >
+              <X />
+            </Button>
+          )}
+        </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         {error && (

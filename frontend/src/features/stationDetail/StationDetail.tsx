@@ -196,7 +196,7 @@ export function StationDetail() {
       <SearchableHeader onSelect={openDetail} onFind={findOnMap} onDetail={openDetail} />
 
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-4 py-6">
+        <div className="mx-auto max-w-6xl px-4 py-4 sm:py-6">
           <div className="mb-6 flex items-center justify-between gap-4">
             <Button asChild variant="outline" size="sm">
               {/* Restore the prior map view via history when we were reached by
@@ -391,7 +391,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
                 xDomain={domain}
-                className="aspect-[20/7.65]"
+                className="aspect-[20/15.3] sm:aspect-[20/7.65]"
               />
             </ChartCard>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -428,7 +428,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
                 xDomain={domain}
-                className="aspect-[21/9]"
+                className="aspect-[21/18] sm:aspect-[21/9]"
               />
             </ChartCard>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
