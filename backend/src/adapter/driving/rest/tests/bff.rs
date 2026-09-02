@@ -563,6 +563,15 @@ async fn bff_station_detail_returns_shell_with_links_and_channels() {
         overview_href.contains("as_of="),
         "overview link should pin as_of, got: {overview_href}"
     );
+    // The monthly card is whole-history, but it still pins as_of so the response
+    // is a pure function of its URL like the other windowed cards.
+    let monthly_href = body["_links"]["monthly"]["href"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        monthly_href.contains("as_of="),
+        "monthly link should pin as_of, got: {monthly_href}"
+    );
 }
 
 #[tokio::test]
@@ -760,6 +769,37 @@ async fn bff_station_detail_monthly_returns_totals() {
     assert!(body["monthly_totals"].is_array());
 }
 
+#[tokio::test]
+async fn bff_station_detail_monthly_honors_as_of() {
+    // The monthly card is a pure function of its URL, so it accepts and pins an
+    // `as_of` reference time like the other windowed cards.
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-detail/{}/monthly?as_of=2024-01-11T12:00:00Z",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["monthly_totals"].is_array());
+}
+
+#[tokio::test]
+async fn bff_station_overview_stats_honors_as_of_and_exclude_new_stations() {
+    // The map-popup overview shares the detail computation and honors the same
+    // `as_of` + Bike-Trends settings, so the popup and the detail page agree.
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/station-overview/{}/stats?as_of=2024-01-11T12:00:00Z&exclude_new_stations=true",
+            fixtures::STATION_ID_A
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["total_bikes"].is_number());
+    assert!(body["metrics"].is_array());
+}
+
 // ---------------------------------------------------------------------------
 // Asset content stream: GET /api/bff/assets/{id}/content
 // ---------------------------------------------------------------------------
@@ -794,6 +834,45 @@ async fn bff_asset_content_streams_bytes_with_correct_headers() {
         .expect("body should be collectable")
         .to_bytes();
     assert_eq!(&bytes[..], b"img");
+}
+
+#[tokio::test]
+async fn bff_asset_content_returns_304_when_if_none_match_matches() {
+    let app = TestApp::new();
+    let uri = format!("/api/bff/assets/{}/content", Uuid::from_u128(MOCK_ASSET_ID));
+    let etag = format!("\"{}\"", "a".repeat(64));
+
+    let response = app
+        .send_with_header(axum::http::Method::GET, &uri, "if-none-match", &etag)
+        .await;
+
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_MODIFIED,
+        "a matching If-None-Match answers 304 without streaming the object"
+    );
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .expect("body should be collectable")
+        .to_bytes();
+    assert!(bytes.is_empty());
+}
+
+#[tokio::test]
+async fn bff_asset_content_still_streams_when_if_none_match_differs() {
+    let app = TestApp::new();
+    let uri = format!("/api/bff/assets/{}/content", Uuid::from_u128(MOCK_ASSET_ID));
+
+    // A stale/unknown validator must fall through to the full 200 response.
+    let response = app
+        .send_with_header(
+            axum::http::Method::GET,
+            &uri,
+            "if-none-match",
+            &format!("\"{}\"", "b".repeat(64)),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

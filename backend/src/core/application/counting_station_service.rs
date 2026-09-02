@@ -23,6 +23,26 @@ impl CountingStationService {
         self.repository.find_filtered(name)
     }
 
+    /// Counts all counting stations (no rows transferred).
+    pub fn count_all(&self) -> Result<usize, DomainError> {
+        self.repository.count_all()
+    }
+
+    /// Lists the **positioned** counting stations whose coordinates lie inside
+    /// the given axis-aligned bounding box (the map viewport). The filter is
+    /// pushed into the repository, so a viewport read never loads the whole
+    /// table.
+    pub fn list_in_bounds(
+        &self,
+        min_latitude: f64,
+        min_longitude: f64,
+        max_latitude: f64,
+        max_longitude: f64,
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        self.repository
+            .find_in_bounds(min_latitude, min_longitude, max_latitude, max_longitude)
+    }
+
     /// Returns a single counting station; `DomainError::NotFound` if unknown.
     pub fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {
         self.repository.find_by_id(id)
@@ -45,6 +65,20 @@ impl CountingStationService {
 impl CountingStationServicePort for CountingStationService {
     fn list(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError> {
         self.list(name)
+    }
+
+    fn count_all(&self) -> Result<usize, DomainError> {
+        self.count_all()
+    }
+
+    fn list_in_bounds(
+        &self,
+        min_latitude: f64,
+        min_longitude: f64,
+        max_latitude: f64,
+        max_longitude: f64,
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        self.list_in_bounds(min_latitude, min_longitude, max_latitude, max_longitude)
     }
 
     fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError> {

@@ -181,6 +181,42 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         };
         Ok(rows.iter().map(Self::map_row).collect())
     }
+
+    fn find_in_bounds(
+        &self,
+        min_latitude: f64,
+        min_longitude: f64,
+        max_latitude: f64,
+        max_longitude: f64,
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let rows = client
+            .query(
+                &format!(
+                    "SELECT {STATION_COLUMNS} FROM counting_stations \
+                     WHERE latitude BETWEEN $1 AND $3 AND longitude BETWEEN $2 AND $4 \
+                     ORDER BY name ASC"
+                ),
+                &[&min_latitude, &min_longitude, &max_latitude, &max_longitude],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        // A station with a NULL latitude/longitude never matches BETWEEN.
+        Ok(rows.iter().map(Self::map_row).collect())
+    }
+
+    fn count_all(&self) -> Result<usize, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = client
+            .query_one("SELECT count(*)::bigint FROM counting_stations", &[])
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.get::<_, i64>(0) as usize)
+    }
 }
 
 /// Escapes `LIKE`/`ILIKE` wildcards in a user-supplied substring so it is
@@ -335,5 +371,70 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].coordinates, station.coordinates);
         assert_eq!(all[0].timezone, station.timezone);
+    }
+
+    #[test]
+    fn find_in_bounds_returns_only_positioned_stations_inside_the_box() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Münster");
+        let station = |id: u128, name: &str, latitude: f64, longitude: f64| CountingStation {
+            id: station_vo::Id(Uuid::from_u128(id)),
+            name: station_vo::Name(name.to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: None,
+            data_source_id: Some(station_vo::DataSourceId(data_source_id.0)),
+            coordinates: Some(station_vo::GeoCoordinates {
+                latitude,
+                longitude,
+            }),
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        };
+        // Two stations inside the box, one outside, one without coordinates.
+        db.repository
+            .save(station(0x1, "Inside A", 51.95, 7.61))
+            .unwrap();
+        db.repository
+            .save(station(0x2, "Inside B", 51.97, 7.63))
+            .unwrap();
+        db.repository
+            .save(station(0x3, "Outside", 52.20, 7.80))
+            .unwrap();
+        let mut unpositioned = station(0x4, "No coords", 51.96, 7.62);
+        unpositioned.coordinates = None;
+        db.repository.save(unpositioned).unwrap();
+
+        let found = db
+            .repository
+            .find_in_bounds(51.90, 7.50, 52.00, 7.70)
+            .unwrap();
+        let names: Vec<&str> = found.iter().map(|s| s.name.0.as_str()).collect();
+        assert_eq!(names, vec!["Inside A", "Inside B"]);
+    }
+
+    #[test]
+    fn count_all_counts_every_station() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Münster");
+        assert_eq!(db.repository.count_all().unwrap(), 0);
+        for id in 0x11..0x14 {
+            db.repository
+                .save(CountingStation {
+                    id: station_vo::Id(Uuid::from_u128(id)),
+                    name: station_vo::Name(format!("Station {id}")),
+                    description: station_vo::Description("desc".to_string()),
+                    external_datasource_id: None,
+                    data_source_id: Some(station_vo::DataSourceId(data_source_id.0)),
+                    coordinates: None,
+                    timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+                    image_asset_id: None,
+                    image_sha256: None,
+                    status: station_vo::Status::Active,
+                })
+                .unwrap();
+        }
+        assert_eq!(db.repository.count_all().unwrap(), 3);
     }
 }

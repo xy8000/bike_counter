@@ -85,40 +85,41 @@ impl StationAnalyticsService {
 
     /// The positioned stations inside `bounds`, excluding the given ids (the
     /// disabled stations the frontend grays out and keeps out of the
-    /// aggregation).
+    /// aggregation). The bounds filter is pushed down into the repository, so a
+    /// viewport read never loads the whole station table.
     fn included_stations(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
     ) -> Result<Vec<CountingStation>, DomainError> {
-        let all = self.counting_station_repository.find_filtered(None)?;
-        Ok(all
+        let in_bounds = self.counting_station_repository.find_in_bounds(
+            bounds.min_latitude,
+            bounds.min_longitude,
+            bounds.max_latitude,
+            bounds.max_longitude,
+        )?;
+        Ok(in_bounds
             .into_iter()
-            .filter(|station| {
-                station
-                    .coordinates
-                    .is_some_and(|coords| bounds.contains(coords))
-                    && !exclude.contains(&station.id)
-            })
+            .filter(|station| !exclude.contains(&station.id))
             .collect())
     }
 
     /// The summary shell's rendering list: every positioned station inside
     /// `bounds` (disabled ones stay — the frontend grays them out) with its
-    /// channel count.
+    /// channel count. The bounds filter is pushed down into the repository.
     fn summary_stations_in_bounds(
         &self,
         bounds: GeoBounds,
     ) -> Result<Vec<SummaryStation>, DomainError> {
-        let all = self.counting_station_repository.find_filtered(None)?;
+        let in_bounds = self.counting_station_repository.find_in_bounds(
+            bounds.min_latitude,
+            bounds.min_longitude,
+            bounds.max_latitude,
+            bounds.max_longitude,
+        )?;
         let channels_by_station = self.channels_by_station()?;
-        Ok(all
+        Ok(in_bounds
             .into_iter()
-            .filter(|station| {
-                station
-                    .coordinates
-                    .is_some_and(|coords| bounds.contains(coords))
-            })
             .map(|station| {
                 let coordinates = station
                     .coordinates
@@ -244,23 +245,21 @@ impl StationAnalyticsService {
 
     /// The stations whose coordinates lie inside `bounds` (all when `None`),
     /// sorted by name. Shared by `summaries`, `sidebar_shell` and
-    /// `sidebar_stats`.
+    /// `sidebar_stats`. When bounds are given the viewport filter is pushed down
+    /// into the repository, so a map move never loads the whole station table.
     fn stations_for_bounds(
         &self,
         bounds: Option<GeoBounds>,
     ) -> Result<Vec<CountingStation>, DomainError> {
-        let mut stations: Vec<CountingStation> = self
-            .counting_station_repository
-            .find_filtered(None)?
-            .into_iter()
-            .filter(|station| {
-                bounds.is_none_or(|bounds| {
-                    station
-                        .coordinates
-                        .is_some_and(|coords| bounds.contains(coords))
-                })
-            })
-            .collect();
+        let mut stations: Vec<CountingStation> = match bounds {
+            Some(bounds) => self.counting_station_repository.find_in_bounds(
+                bounds.min_latitude,
+                bounds.min_longitude,
+                bounds.max_latitude,
+                bounds.max_longitude,
+            )?,
+            None => self.counting_station_repository.find_filtered(None)?,
+        };
         stations.sort_by(|a, b| a.name.0.cmp(&b.name.0));
         Ok(stations)
     }
@@ -282,28 +281,58 @@ impl StationAnalyticsService {
         Ok((channel_count_by_station, channels_by_station))
     }
 
-    /// Sum of each station's channels over its own previous local-day window
-    /// (one multi-channel query per station).
+    /// Sum of each station's channels over its own previous local-day window.
+    /// Stations are grouped by timezone so the window math and the per-channel
+    /// `SUM` query run once per distinct timezone instead of once per station
+    /// (a single query when every station shares a timezone), killing the N+1
+    /// of the per-station loop.
     fn bikes_by_station(
         &self,
         stations: &[CountingStation],
         channels_by_station: &HashMap<uuid::Uuid, Vec<ChannelId>>,
         now: DateTime<Utc>,
     ) -> Result<HashMap<uuid::Uuid, i64>, DomainError> {
-        let mut bikes_by_station: HashMap<uuid::Uuid, i64> = HashMap::new();
+        let mut stations_by_timezone: HashMap<&str, Vec<&CountingStation>> = HashMap::new();
         for station in stations {
-            let tz = station.timezone.parse()?;
+            stations_by_timezone
+                .entry(station.timezone.0.as_str())
+                .or_default()
+                .push(station);
+        }
+
+        let mut bikes_by_station: HashMap<uuid::Uuid, i64> = HashMap::new();
+        for (_timezone, timezone_stations) in stations_by_timezone {
+            // Parse the IANA name through the value object so an unknown name
+            // maps to `DomainError` directly.
+            let tz = timezone_stations[0].timezone.parse()?;
             let (from, to) = previous_local_day(tz, now)?;
-            let bikes = match channels_by_station.get(&station.id.0) {
-                Some(channel_ids) => metrics::sum_window(
-                    self.measurement_repository.as_ref(),
-                    from,
-                    to,
-                    channel_ids,
-                )?,
-                None => 0,
-            };
-            bikes_by_station.insert(station.id.0, bikes);
+
+            // One query: the previous-local-day total of every channel of every
+            // station sharing this timezone.
+            let mut all_channel_ids: Vec<ChannelId> = Vec::new();
+            for station in &timezone_stations {
+                if let Some(channel_ids) = channels_by_station.get(&station.id.0) {
+                    all_channel_ids.extend_from_slice(channel_ids);
+                }
+            }
+            let totals =
+                self.measurement_repository
+                    .sum_by_channel(from, to, &all_channel_ids, None)?;
+            let total_by_channel: HashMap<uuid::Uuid, i64> = totals
+                .into_iter()
+                .map(|total| (total.channel_id, total.total))
+                .collect();
+
+            for station in timezone_stations {
+                let bikes = match channels_by_station.get(&station.id.0) {
+                    Some(channel_ids) => channel_ids
+                        .iter()
+                        .map(|id| total_by_channel.get(&id.0).copied().unwrap_or(0))
+                        .sum(),
+                    None => 0,
+                };
+                bikes_by_station.insert(station.id.0, bikes);
+            }
         }
         Ok(bikes_by_station)
     }
@@ -368,42 +397,60 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         let channels = self.channel_repository.find_all()?;
 
         let mut channels_by_station: HashMap<uuid::Uuid, Vec<ChannelId>> = HashMap::new();
+        let mut station_of_channel: HashMap<uuid::Uuid, uuid::Uuid> = HashMap::new();
         for channel in &channels {
+            let station_id = channel.counting_station_id.0;
             channels_by_station
-                .entry(channel.counting_station_id.0)
+                .entry(station_id)
                 .or_default()
                 .push(ChannelId(channel.id.0));
+            station_of_channel.insert(channel.id.0, station_id);
+        }
+
+        // The per-station previous-local-day totals, computed with one SUM query
+        // per distinct timezone (see `bikes_by_station`) instead of one query
+        // per station.
+        let bikes_by_station = self.bikes_by_station(&stations, &channels_by_station, now)?;
+
+        // Bike-Trends: only count stations that already existed before the
+        // previous local day (the comparison day), so a newly-built station
+        // cannot skew the header total. Data loss or outages do not exclude a
+        // station. The per-channel earliest-ever timestamps are fetched in a
+        // single query across every channel (no per-station N+1).
+        let mut earliest_by_station: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
+        if exclude_new_stations {
+            let all_channel_ids: Vec<ChannelId> = channels
+                .iter()
+                .map(|channel| ChannelId(channel.id.0))
+                .collect();
+            for channel_first in self
+                .measurement_repository
+                .earliest_by_channel(&all_channel_ids)?
+            {
+                if let Some(&station_id) = station_of_channel.get(&channel_first.channel_id) {
+                    let entry = earliest_by_station
+                        .entry(station_id)
+                        .or_insert(channel_first.timestamp);
+                    *entry = (*entry).min(channel_first.timestamp);
+                }
+            }
         }
 
         let mut bikes_last_day_total = 0i64;
         for station in &stations {
-            let tz = station.timezone.parse()?;
-            let (from, to) = previous_local_day(tz, now)?;
-            if let Some(channel_ids) = channels_by_station.get(&station.id.0) {
-                // Bike-Trends: only count stations that already existed before
-                // the previous local day (the comparison day), so a newly-built
-                // station cannot skew the header total. Data loss or outages do
-                // not exclude a station.
-                if exclude_new_stations {
-                    let (before_from, _) = previous_local_days(tz, now, 2)?;
-                    let introduced = self
-                        .measurement_repository
-                        .earliest_by_channel(channel_ids)?
-                        .into_iter()
-                        .map(|channel_first| channel_first.timestamp)
-                        .min()
-                        .is_some_and(|earliest| introduced_after(earliest, before_from));
-                    if introduced {
-                        continue;
-                    }
+            if exclude_new_stations {
+                let tz: Tz = station.timezone.parse()?;
+                let (before_from, _) = previous_local_days(tz, now, 2)?;
+                // No earliest (a station without measurements) is treated as
+                // "new": it has no baseline, and contributes 0 either way.
+                let introduced = earliest_by_station
+                    .get(&station.id.0)
+                    .is_none_or(|&earliest| introduced_after(earliest, before_from));
+                if introduced {
+                    continue;
                 }
-                bikes_last_day_total += metrics::sum_window(
-                    self.measurement_repository.as_ref(),
-                    from,
-                    to,
-                    channel_ids,
-                )?;
             }
+            bikes_last_day_total += bikes_by_station.get(&station.id.0).copied().unwrap_or(0);
         }
 
         Ok(GlobalSummary {

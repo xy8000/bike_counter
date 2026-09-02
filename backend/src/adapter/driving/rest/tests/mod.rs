@@ -231,6 +231,29 @@ impl TestApp {
             .expect("router should respond")
     }
 
+    /// Sends a request with a single extra header and returns the raw response
+    /// (used for conditional-request checks such as `If-None-Match`).
+    pub async fn send_with_header(
+        &self,
+        method: Method,
+        uri: &str,
+        header_name: &'static str,
+        header_value: &str,
+    ) -> axum::response::Response {
+        self.router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header_name, header_value)
+                    .body(Body::empty())
+                    .expect("valid request body"),
+            )
+            .await
+            .expect("router should respond")
+    }
+
     /// Sends a request with an optional JSON body and returns the raw response.
     pub async fn send_json(
         &self,

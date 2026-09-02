@@ -14,6 +14,40 @@ pub trait CountingStationRepository {
     /// name substring.
     fn find_filtered(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError>;
 
+    /// Lists the **positioned** counting stations whose coordinates lie inside
+    /// the given axis-aligned bounding box (the map viewport). The Postgres
+    /// adapter pushes the filter into the `WHERE` clause so a viewport read never
+    /// loads the whole table; the default implementation filters
+    /// [`find_all`](Self::find_all) in memory and is intended for in-memory test
+    /// doubles.
+    fn find_in_bounds(
+        &self,
+        min_latitude: f64,
+        min_longitude: f64,
+        max_latitude: f64,
+        max_longitude: f64,
+    ) -> Result<Vec<CountingStation>, DomainError> {
+        Ok(self
+            .find_all()?
+            .into_iter()
+            .filter(|station| {
+                station.coordinates.is_some_and(|c| {
+                    c.latitude >= min_latitude
+                        && c.latitude <= max_latitude
+                        && c.longitude >= min_longitude
+                        && c.longitude <= max_longitude
+                })
+            })
+            .collect())
+    }
+
+    /// Counts all counting stations. The Postgres adapter uses `SELECT count(*)`
+    /// so counting never transfers the rows; the default implementation counts
+    /// [`find_all`](Self::find_all) and is intended for in-memory test doubles.
+    fn count_all(&self) -> Result<usize, DomainError> {
+        Ok(self.find_all()?.len())
+    }
+
     /// Updates the mutable attributes (name, description, coordinates) of an
     /// existing station, keyed by its id.
     fn update(&self, station: CountingStation) -> Result<(), DomainError>;

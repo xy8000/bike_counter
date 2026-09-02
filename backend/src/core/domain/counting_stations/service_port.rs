@@ -10,6 +10,21 @@ pub trait CountingStationServicePort: Send + Sync {
     /// substring.
     fn list(&self, name: Option<&str>) -> Result<Vec<CountingStation>, DomainError>;
 
+    /// Counts all counting stations (no rows transferred).
+    fn count_all(&self) -> Result<usize, DomainError>;
+
+    /// Lists the **positioned** counting stations whose coordinates lie inside
+    /// the given axis-aligned bounding box (the map viewport). The filter is
+    /// pushed into the repository, so a viewport read never loads the whole
+    /// table.
+    fn list_in_bounds(
+        &self,
+        min_latitude: f64,
+        min_longitude: f64,
+        max_latitude: f64,
+        max_longitude: f64,
+    ) -> Result<Vec<CountingStation>, DomainError>;
+
     /// Returns a single counting station; `DomainError::NotFound` if unknown.
     fn find_by_id(&self, id: station_vo::Id) -> Result<CountingStation, DomainError>;
 

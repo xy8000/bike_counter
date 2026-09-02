@@ -70,18 +70,26 @@ pub(crate) fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorRes
                 error: format!("Entity with id {} not found", id),
             }),
         ),
-        DomainError::Database(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponseDto {
-                error: format!("Internal database error: {}", err),
-            }),
-        ),
-        DomainError::Provider(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponseDto {
-                error: format!("Provider error: {}", err),
-            }),
-        ),
+        // Never leak the raw database/provider error to the client; log it
+        // server-side and return a generic message.
+        DomainError::Database(err) => {
+            eprintln!("Internal database error: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponseDto {
+                    error: "Internal server error".to_string(),
+                }),
+            )
+        }
+        DomainError::Provider(err) => {
+            eprintln!("Internal provider error: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponseDto {
+                    error: "Internal server error".to_string(),
+                }),
+            )
+        }
         DomainError::InvalidQuery(message) => (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponseDto {
@@ -115,16 +123,19 @@ mod tests {
     use crate::core::domain::error::DomainError;
 
     #[test]
-    fn maps_database_errors_to_internal_server_error() {
+    fn maps_database_errors_to_generic_internal_server_error() {
         let (status, body) = map_domain_error(DomainError::Database("boom".to_string()));
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(body.0.error.contains("database error"));
+        // The raw database error must not leak to the client.
+        assert_eq!(body.0.error, "Internal server error");
+        assert!(!body.0.error.contains("boom"));
     }
 
     #[test]
-    fn maps_provider_errors_to_internal_server_error() {
+    fn maps_provider_errors_to_generic_internal_server_error() {
         let (status, body) = map_domain_error(DomainError::Provider("nope".to_string()));
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(body.0.error.contains("Provider error"));
+        assert_eq!(body.0.error, "Internal server error");
+        assert!(!body.0.error.contains("nope"));
     }
 }

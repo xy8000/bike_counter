@@ -326,13 +326,30 @@ impl MeasurementRepository for MockMeasurementRepository {
     }
     fn sum_by_channel(
         &self,
-        _from: DateTime<Utc>,
-        _to: DateTime<Utc>,
-        _channel_ids: &[measurement_vo::ChannelId],
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        channel_ids: &[measurement_vo::ChannelId],
         _resolution_seconds: Option<i64>,
     ) -> Result<Vec<crate::core::domain::measurements::repository_port::ChannelTotal>, DomainError>
     {
-        Ok(Vec::new())
+        let mut map: BTreeMap<Uuid, i64> = BTreeMap::new();
+        for m in self
+            .measurements
+            .iter()
+            .filter(|m| m.timestamp.0 >= from && m.timestamp.0 <= to)
+            .filter(|m| channel_ids.iter().any(|id| id.0 == m.channel_id.0))
+        {
+            *map.entry(m.channel_id.0).or_insert(0) += m.value.0;
+        }
+        Ok(map
+            .into_iter()
+            .map(|(channel_id, total)| {
+                crate::core::domain::measurements::repository_port::ChannelTotal {
+                    channel_id,
+                    total,
+                }
+            })
+            .collect())
     }
 
     fn sum_by_month(

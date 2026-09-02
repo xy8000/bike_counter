@@ -15,8 +15,8 @@ use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG};
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_NONE_MATCH};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Json, Response};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -230,29 +230,30 @@ pub async fn list_bff_stations(
     Query(params): Query<BffStationQueryParams>,
 ) -> Result<Json<StationMapListDto>, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = parse_required_bounds(&params).map_err(map_domain_error)?;
+    // The bounds filter is pushed into the repository (`list_in_bounds`), so a
+    // map move only loads the stations inside the viewport.
     let service = state.counting_station_service.clone();
-    let stations = blocking(move || service.list(None))
-        .await
-        .map_err(map_domain_error)?;
+    let stations = blocking(move || {
+        service.list_in_bounds(
+            bounds.min_latitude,
+            bounds.min_longitude,
+            bounds.max_latitude,
+            bounds.max_longitude,
+        )
+    })
+    .await
+    .map_err(map_domain_error)?;
 
     let items = stations
         .into_iter()
-        .filter(|station| {
-            station
-                .coordinates
-                .is_some_and(|coords| bounds.contains(coords))
-        })
-        .map(|station| {
-            let coords = station
-                .coordinates
-                .expect("filtered to positioned stations");
-            StationMapDto {
+        .filter_map(|station| {
+            station.coordinates.map(|coords| StationMapDto {
                 id: station.id.0,
                 name: station.name.0,
                 latitude: coords.latitude,
                 longitude: coords.longitude,
                 status: station.status.into(),
-            }
+            })
         })
         .collect();
 
@@ -284,10 +285,9 @@ pub async fn get_bff_stations_sidebar(
         .map_err(map_domain_error)?;
 
     let station_service = state.counting_station_service.clone();
-    let total_count = blocking(move || station_service.list(None))
+    let total_count = blocking(move || station_service.count_all())
         .await
-        .map_err(map_domain_error)?
-        .len();
+        .map_err(map_domain_error)?;
 
     let image_urls = station_image_urls(&state, &stations).await?;
     let visible_count = stations.len();
@@ -432,7 +432,7 @@ fn detail_page_links(id: Uuid, as_of: DateTime<Utc>) -> HashMap<String, LinkDto>
     }
     links.insert(
         "monthly".to_string(),
-        LinkDto::new(format!("{base}/monthly")),
+        LinkDto::new(format!("{base}/monthly{query}")),
     );
     links
 }
@@ -573,7 +573,8 @@ pub async fn get_bff_station_detail_graphs(
     path = "/api/bff/station-detail/{id}/monthly",
     tag = "BFF API",
     params(
-        ("id" = Uuid, Path, description = "Counting-station id")
+        ("id" = Uuid, Path, description = "Counting-station id"),
+        AsOfQueryParams
     ),
     responses(
         (status = 200, description = "Monthly totals over the whole history", body = MonthlyTotalsDto),
@@ -583,9 +584,12 @@ pub async fn get_bff_station_detail_graphs(
 )]
 pub async fn get_bff_station_detail_monthly(
     Path(id): Path<Uuid>,
+    Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
 ) -> Result<Json<MonthlyTotalsDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let now = Utc::now();
+    // Honor `as_of` like the other windowed cards so the monthly totals are a
+    // pure function of the URL (and therefore cacheable).
+    let now = as_of_or_now(params.as_of);
     let service = state.station_analytics_service.clone();
     let monthly = blocking(move || service.detail_monthly(Id(id), now))
         .await
@@ -679,7 +683,8 @@ pub async fn get_bff_station_overview(
     path = "/api/bff/station-overview/{id}/stats",
     tag = "BFF API",
     params(
-        ("id" = Uuid, Path, description = "Counting-station id")
+        ("id" = Uuid, Path, description = "Counting-station id"),
+        AsOfQueryParams
     ),
     responses(
         (status = 200, description = "Station overview stats (all-time total + four metrics)", body = StationOverviewStatsDto),
@@ -689,15 +694,20 @@ pub async fn get_bff_station_overview(
 )]
 pub async fn get_bff_station_overview_stats(
     Path(id): Path<Uuid>,
+    Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
 ) -> Result<Json<StationOverviewStatsDto>, (StatusCode, Json<ErrorResponseDto>)> {
-    let now = chrono::Utc::now();
-    let analytics_service = state.station_analytics_service.clone();
     // The station-overview panel (map popup) uses the same computation as the
-    // detail page but without the Bike-Trends flag.
-    let stats = blocking(move || analytics_service.detail_overview_stats(Id(id), now, false))
-        .await
-        .map_err(map_domain_error)?;
+    // detail page's overview card and honors the same `as_of` and Bike-Trends
+    // `exclude_new_stations` settings, so the popup and the detail page agree.
+    let now = as_of_or_now(params.as_of);
+    let exclude_new_stations = params.exclude_new_stations;
+    let analytics_service = state.station_analytics_service.clone();
+    let stats = blocking(move || {
+        analytics_service.detail_overview_stats(Id(id), now, exclude_new_stations)
+    })
+    .await
+    .map_err(map_domain_error)?;
     Ok(Json(stats.into()))
 }
 
@@ -731,7 +741,7 @@ fn summary_page_links(bounds: GeoBounds, as_of: DateTime<Utc>) -> HashMap<String
     }
     links.insert(
         "monthly".to_string(),
-        LinkDto::new(format!("{base}/monthly{bounds_query}")),
+        LinkDto::new(format!("{base}/monthly{windowed_query}")),
     );
     links
 }
@@ -937,6 +947,7 @@ pub async fn get_bff_stations_summary_monthly(
 )]
 pub async fn get_bff_asset_content(
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let asset_service = state.asset_service.clone();
@@ -944,6 +955,22 @@ pub async fn get_bff_asset_content(
         .await
         .map_err(map_domain_error)?
         .ok_or_else(|| map_domain_error(DomainError::NotFound(id)))?;
+
+    let etag = format!("\"{}\"", asset.sha256.0);
+
+    // Conditional GET: when the client already has exactly this content version,
+    // answer 304 Not Modified without streaming the object from storage.
+    if headers
+        .get(IF_NONE_MATCH)
+        .is_some_and(|if_none_match| if_none_match.as_bytes() == etag.as_bytes())
+    {
+        let mut not_modified = Response::new(Body::empty());
+        *not_modified.status_mut() = StatusCode::NOT_MODIFIED;
+        not_modified
+            .headers_mut()
+            .insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+        return Ok(not_modified);
+    }
 
     let storage = state.asset_storage.clone();
     let object_key = asset.object_key.clone();
@@ -965,7 +992,7 @@ pub async fn get_bff_asset_content(
     if let Ok(length) = HeaderValue::from_str(&asset.byte_size.0.to_string()) {
         response.headers_mut().insert(CONTENT_LENGTH, length);
     }
-    if let Ok(etag) = HeaderValue::from_str(&format!("\"{}\"", asset.sha256.0)) {
+    if let Ok(etag) = HeaderValue::from_str(&etag) {
         response.headers_mut().insert(ETAG, etag);
     }
     response
