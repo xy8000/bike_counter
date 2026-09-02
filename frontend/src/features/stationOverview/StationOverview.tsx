@@ -134,6 +134,16 @@ export function StationOverview({
           </div>
         )}
       </ScrollArea>
+      {page && (
+        <div className="shrink-0 border-t p-3">
+          <Button asChild className="w-full">
+            <Link to={page.detail_url}>
+              <ExternalLink />
+              Open detailed view
+            </Link>
+          </Button>
+        </div>
+      )}
     </>
   )
 }

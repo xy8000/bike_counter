@@ -143,6 +143,30 @@ test('the overview detail link navigates in the same tab', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
 })
 
+test('the overview footer "Open detailed view" button opens the detail page in the same tab', async ({
+  page,
+}) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  const marker = mapMarkers(page).first()
+  expect((await marker.getAttribute('alt')) ?? '').not.toBe('')
+  await marker.click()
+
+  // The pinned footer button is a full-width detail affordance next to the
+  // header icon button; both point at the detail page.
+  const overview = page.getByRole('complementary')
+  const footerButton = overview.getByRole('link', { name: 'Open detailed view' })
+  await expect(footerButton).toBeVisible()
+  await expect(footerButton).toHaveAttribute('href', /^\/stations\//)
+
+  // Clicking the footer button navigates in the same tab (no new page).
+  await footerButton.click()
+  await expect(page).toHaveURL(/\/stations\/[0-9a-f-]+/)
+  await expect(page.context().pages()).toHaveLength(1)
+  await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
+})
+
 test('the overview banner shows the name, description and channel count', async ({ page }) => {
   // A Hamburg station whose seed row carries a description (the Münster rows
   // have none), so every banner field is assertable.
