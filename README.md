@@ -6,11 +6,12 @@ Bonn and Hamburg (all imported from their official Open Data sources; see
 
 It is a **monorepo** with two sub-projects:
 
-- [`backend/`](backend) — Rust (Axum, hexagonal architecture) REST API backed by
+- [`backend/`](backend) — Rust (Axum, hexagonal architecture) HTTP API backed by
   a PostgreSQL database, documented via auto-generated OpenAPI and browsable
-  through Swagger-UI. It also exposes a **Backend-for-Frontend (BFF)** API under
-  `/api/bff` that is consumed by the frontend **only** and appears in Swagger
-  under its own `BFF API` collection.
+  through Swagger-UI. It exposes a **Backend-for-Frontend (BFF)** API under
+  `/api/bff` for the React frontend **only**, and a public **REST API** under
+  `/api/v1` for backend-to-backend integrations. Both appear in Swagger under
+  their own collections.
 - [`frontend/`](frontend) — React (Vite) single-page application served by nginx
   in the Docker stack: a self-hosted MapLibre GL map (a static PMTiles vector
   basemap served directly by nginx and read by the browser via range
@@ -399,7 +400,7 @@ The backend prints the loaded configuration and then serves:
 |------------------------|--------------------------------------------|
 | Frontend (React)       | <http://localhost:8081>                    |
 | BFF API base           | <http://localhost:8080/api/bff>            |
-| REST API base          | <http://localhost:8080/api/v1>             |
+| REST API base (B2B)    | <http://localhost:8080/api/v1>             |
 | Swagger-UI             | <http://localhost:8080/swagger-ui/>        |
 | OpenAPI JSON document  | <http://localhost:8080/api-docs/openapi.json> |
 | Liveness               | <http://localhost:8080/health/live>        |
@@ -435,8 +436,9 @@ docker compose logs -f           # make logs
 - The `backend` service builds the Rust binary inside a multi-stage Docker build
   and mounts [`config.toml`](config.toml) into the container. Its
   [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to start
-  without a `config.toml` and otherwise just runs the REST server (which applies
-  the refinery migrations on startup). The backend also builds the self-hosted
+  without a `config.toml` and otherwise just runs the HTTP API server (which
+  applies the refinery migrations on startup). The backend also builds the
+  self-hosted
   basemap (`tiles/map.pmtiles` — mandatory, see
   [`tiles/README.md`](tiles/README.md)) during its init phase from the `[maps]`
   configuration, and a cron-scheduled `tiles_update` job refreshes it atomically
@@ -524,10 +526,11 @@ additionally links to the operational health endpoints via `health-live` and
 
 ### BFF API (frontend-only)
 
-In addition to the public `/api/v1` REST API, the backend exposes a
-**Backend-for-Frontend** API reserved for the React frontend. It lives under
-`/api/bff` and is documented in the **same** Swagger document but grouped under
-its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
+Besides the public `/api/v1` REST API (used for backend-to-backend
+integrations), the backend exposes a **Backend-for-Frontend** API reserved for
+the React frontend. It lives under `/api/bff` and is documented in the **same**
+Swagger document as the REST API, grouped under its own `BFF API`
+collection/tag so the frontend-facing calls are easy to spot:
 
 - `GET /api/bff/stations` – map markers for the current viewport. Requires the
   `min_lat`/`min_lng`/`max_lat`/`max_lng` bounding-box query and returns only the

@@ -493,6 +493,63 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
     }
 }
 
+#[tokio::test]
+async fn openapi_documents_title_examples_and_cache_headers() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api-docs/openapi.json").await;
+
+    assert_eq!(status, StatusCode::OK);
+
+    // The document no longer calls itself a REST API.
+    assert_eq!(body["info"]["title"], "Bike Counter API");
+    let description = body["info"]["description"].as_str().unwrap_or_default();
+    assert!(
+        !description.contains("RESTful API"),
+        "info.description should not advertise a RESTful API"
+    );
+
+    // Field-level examples are emitted into the component schemas.
+    assert_eq!(
+        body["components"]["schemas"]["GlobalSummaryDto"]["properties"]["station_count"]["example"],
+        12
+    );
+
+    // The cacheable global-summary endpoint documents its Cache-Control + ETag
+    // response headers, the conditional If-None-Match request header and the 304
+    // revalidation response.
+    let get = &body["paths"]["/api/bff/global-summary"]["get"];
+    let headers = &get["responses"]["200"]["headers"];
+    assert!(
+        headers.get("Cache-Control").is_some(),
+        "global-summary 200 response should document Cache-Control"
+    );
+    assert!(
+        headers.get("ETag").is_some(),
+        "global-summary 200 response should document ETag"
+    );
+    assert!(
+        get["responses"].get("304").is_some(),
+        "cacheable endpoint should document a 304 response"
+    );
+    let parameters = get["parameters"]
+        .as_array()
+        .expect("parameters should be an array");
+    assert!(
+        parameters
+            .iter()
+            .any(|p| p["name"] == "If-None-Match" && p["in"] == "header"),
+        "cacheable endpoint should document the If-None-Match request header"
+    );
+
+    // A no-store endpoint documents Cache-Control: no-store too.
+    let stations_headers =
+        &body["paths"]["/api/bff/stations"]["get"]["responses"]["200"]["headers"];
+    assert!(
+        stations_headers.get("Cache-Control").is_some(),
+        "stations 200 response should document Cache-Control"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Station overview page: GET /api/bff/station-overview/{id}
 // ---------------------------------------------------------------------------

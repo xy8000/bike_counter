@@ -225,7 +225,12 @@ async fn station_image_urls(
     tag = "BFF API",
     params(BffStationQueryParams),
     responses(
-        (status = 200, description = "Counting-station map markers inside the bounding box (only positioned stations)", body = StationMapListDto),
+        (status = 200, description = "Counting-station map markers inside the bounding box (only positioned stations)", body = StationMapListDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -273,7 +278,12 @@ pub async fn list_bff_stations(
     tag = "BFF API",
     params(BffStationQueryParams),
     responses(
-        (status = 200, description = "Sidebar shell: station identities + image_url + visible/global counter + stats link", body = SidebarShellDto),
+        (status = 200, description = "Sidebar shell: station identities + image_url + visible/global counter + stats link", body = SidebarShellDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -346,7 +356,12 @@ pub async fn get_bff_stations_sidebar(
     tag = "BFF API",
     params(BffStationQueryParams),
     responses(
-        (status = 200, description = "Per-station stats (channel count + bikes last day) inside the bounding box", body = SidebarStatsDto),
+        (status = 200, description = "Per-station stats (channel count + bikes last day) inside the bounding box", body = SidebarStatsDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -375,7 +390,12 @@ pub async fn get_bff_stations_sidebar_stats(
     path = "/api/bff/stations/search",
     tag = "BFF API",
     responses(
-        (status = 200, description = "All counting-station summaries plus the possible actions (find on map, open detail)", body = StationSearchDto),
+        (status = 200, description = "All counting-station summaries plus the possible actions (find on map, open detail)", body = StationSearchDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
 )]
@@ -459,10 +479,21 @@ fn detail_page_links(id: Uuid, as_of: DateTime<Utc>) -> HashMap<String, LinkDto>
     tag = "BFF API",
     params(
         ("id" = Uuid, Path, description = "Counting-station id"),
-        AsOfQueryParams
+        AsOfQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Station detail page shell with HATEOAS links to the stats cards", body = StationDetailPageDto),
+        (status = 200, description = "Station detail page shell with HATEOAS links to the stats cards", body = StationDetailPageDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 404, description = "Station not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -511,10 +542,21 @@ pub async fn get_bff_station_detail_page(
     tag = "BFF API",
     params(
         ("id" = Uuid, Path, description = "Counting-station id"),
-        AsOfQueryParams
+        AsOfQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Station overview stats (all-time total + four metrics)", body = StationOverviewStatsDto),
+        (status = 200, description = "Station overview stats (all-time total + four metrics)", body = StationOverviewStatsDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 404, description = "Station not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -543,11 +585,22 @@ pub async fn get_bff_station_detail_overview(
     tag = "BFF API",
     params(
         ("id" = Uuid, Path, description = "Counting-station id"),
-        ("timeframe" = String, Path, description = "One of day | week | last_30_days | year"),
-        AsOfQueryParams
+        ("timeframe" = String, Path, description = "One of day | week | last_30_days | year (ignored when the Individual from/to range is given)"),
+        AsOfQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Graph data for one timeframe", body = PeriodGraphsDto),
+        (status = 200, description = "Graph data for one timeframe", body = PeriodGraphsDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 400, description = "Unknown timeframe", body = ErrorResponseDto),
         (status = 404, description = "Station not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
@@ -593,10 +646,21 @@ pub async fn get_bff_station_detail_graphs(
     tag = "BFF API",
     params(
         ("id" = Uuid, Path, description = "Counting-station id"),
-        AsOfQueryParams
+        AsOfQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Monthly totals over the whole history", body = MonthlyTotalsDto),
+        (status = 200, description = "Monthly totals over the whole history", body = MonthlyTotalsDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 404, description = "Station not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -622,9 +686,22 @@ pub async fn get_bff_station_detail_monthly(
     get,
     path = "/api/bff/global-summary",
     tag = "BFF API",
-    params(GlobalSummaryQueryParams),
+    params(
+        GlobalSummaryQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
+    ),
     responses(
-        (status = 200, description = "Whole-system statistics (all stations, channels, bikes and last update)", body = GlobalSummaryDto),
+        (status = 200, description = "Whole-system statistics (all stations, channels, bikes and last update)", body = GlobalSummaryDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=60, stale-while-revalidate=300 (changes as provider imports land)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
 )]
@@ -660,7 +737,12 @@ pub async fn get_bff_global_summary(
         ("id" = Uuid, Path, description = "Counting-station id")
     ),
     responses(
-        (status = 200, description = "Station overview shell (identity + stats link)", body = StationOverviewDto),
+        (status = 200, description = "Station overview shell (identity + stats link)", body = StationOverviewDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 404, description = "Station not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -709,10 +791,21 @@ pub async fn get_bff_station_overview(
     tag = "BFF API",
     params(
         ("id" = Uuid, Path, description = "Counting-station id"),
-        AsOfQueryParams
+        AsOfQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Station overview stats (all-time total + four metrics)", body = StationOverviewStatsDto),
+        (status = 200, description = "Station overview stats (all-time total + four metrics)", body = StationOverviewStatsDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 404, description = "Station not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -782,9 +875,22 @@ fn summary_page_links(bounds: GeoBounds, as_of: DateTime<Utc>) -> HashMap<String
     get,
     path = "/api/bff/stations/summary",
     tag = "BFF API",
-    params(BffStationSummaryQueryParams),
+    params(
+        BffStationSummaryQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
+    ),
     responses(
-        (status = 200, description = "Summary page shell (station list + HATEOAS links to the stats cards)", body = StationsSummaryPageDto),
+        (status = 200, description = "Summary page shell (station list + HATEOAS links to the stats cards)", body = StationsSummaryPageDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds / exclude ids", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -834,9 +940,22 @@ pub async fn get_bff_stations_summary_page(
     get,
     path = "/api/bff/stations/summary/overview",
     tag = "BFF API",
-    params(BffStationSummaryQueryParams),
+    params(
+        BffStationSummaryQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
+    ),
     responses(
-        (status = 200, description = "Aggregated overview stats of the included stations", body = StationsSummaryOverviewDto),
+        (status = 200, description = "Aggregated overview stats of the included stations", body = StationsSummaryOverviewDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds / exclude ids", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -868,11 +987,22 @@ pub async fn get_bff_stations_summary_overview(
     path = "/api/bff/stations/summary/graphs/{timeframe}",
     tag = "BFF API",
     params(
-        ("timeframe" = String, Path, description = "One of day | week | last_30_days | year"),
-        BffStationSummaryQueryParams
+        ("timeframe" = String, Path, description = "One of day | week | last_30_days | year (ignored when the Individual from/to range is given)"),
+        BffStationSummaryQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Graph data for one timeframe over the included stations", body = SummaryPeriodGraphsDto),
+        (status = 200, description = "Graph data for one timeframe over the included stations", body = SummaryPeriodGraphsDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds / exclude ids / unknown timeframe", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -935,9 +1065,22 @@ pub async fn get_bff_stations_summary_graphs(
     get,
     path = "/api/bff/stations/summary/monthly",
     tag = "BFF API",
-    params(BffStationSummaryQueryParams),
+    params(
+        BffStationSummaryQueryParams,
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
+    ),
     responses(
-        (status = 200, description = "Monthly totals over the included stations' whole history", body = MonthlyTotalsDto),
+        (status = 200, description = "Monthly totals over the included stations' whole history", body = MonthlyTotalsDto,
+            headers(
+                ("Cache-Control" = String, description = "public, max-age=3600, must-revalidate (as_of-pinned windowed cards)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body) for If-None-Match revalidation")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 400, description = "Invalid or missing bounds / exclude ids", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -972,10 +1115,23 @@ pub async fn get_bff_stations_summary_monthly(
     path = "/api/bff/assets/{id}/content",
     tag = "BFF API",
     params(
-        ("id" = Uuid, Path, description = "Asset id")
+        ("id" = Uuid, Path, description = "Asset id"),
+        ("If-None-Match" = String, Header, description = "ETag of a previously cached body; answered with 304 when it still matches")
     ),
     responses(
-        (status = 200, description = "Image content (streamed)"),
+        (status = 200, description = "Image content (streamed from object storage)",
+            headers(
+                ("Content-Type" = String, description = "MIME type of the asset from DB metadata (e.g. image/svg+xml)"),
+                ("Content-Length" = String, description = "Byte size of the streamed body"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 content hash) for If-None-Match revalidation"),
+                ("Cache-Control" = String, description = "public, max-age=31536000, immutable (built-in assets) or public, max-age=3600 (provider images)")
+            )
+        ),
+        (status = 304, description = "Not Modified: If-None-Match matches the current ETag",
+            headers(
+                ("ETag" = String, description = "The current strong ETag")
+            )
+        ),
         (status = 404, description = "Asset not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
@@ -1079,7 +1235,12 @@ fn import_run_dto(run: DataImportRun, warnings: i64, errors: i64) -> BffDataSour
     path = "/api/bff/data-sources",
     tag = "BFF API",
     responses(
-        (status = 200, description = "Data-sources overview (one row per provider)", body = BffDataSourceListDto),
+        (status = 200, description = "Data-sources overview (one row per provider)", body = BffDataSourceListDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )
 )]
@@ -1121,7 +1282,12 @@ pub async fn get_bff_data_sources(
         ("id" = Uuid, Path, description = "Data source UUID")
     ),
     responses(
-        (status = 200, description = "Data-source detail", body = BffDataSourceDetailDto),
+        (status = 200, description = "Data-source detail", body = BffDataSourceDetailDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
         (status = 404, description = "Data source not found", body = ErrorResponseDto),
         (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
     )

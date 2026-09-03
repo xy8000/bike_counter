@@ -153,9 +153,9 @@ use crate::adapter::driving::rest::handlers::{
         (name = "Health", description = "Operational health checks (liveness/readiness)"),
     ),
     info(
-        title = "Bike Counter REST API",
+        title = "Bike Counter API",
         version = "1.0.0",
-        description = "RESTful API with HATEOAS links and flat URL hierarchy for Bike Counter Stations"
+        description = "HTTP API of the Bike Counter backend.\n\n- The **BFF API** (`/api/bff`) is consumed by the React frontend only.\n- The **REST API** (`/api/v1`) is the public interface for backend-to-backend integrations.\n- `/health/live` and `/health/ready` are operational checks used by the Docker healthcheck.\n\nCacheable BFF JSON responses carry a `Cache-Control` freshness policy and a strong `ETag` (a SHA-256 of the body) and honor `If-None-Match` with `304 Not Modified`."
     )
 )]
 pub struct ApiDoc;

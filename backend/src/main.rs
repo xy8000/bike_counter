@@ -298,7 +298,7 @@ fn main() {
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!("Starting REST API server on http://{}", addr);
+    println!("Starting Bike Counter API server on http://{}", addr);
     println!("Swagger UI available at http://localhost:8080/swagger-ui/");
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
