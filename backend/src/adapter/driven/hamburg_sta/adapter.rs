@@ -5,10 +5,18 @@
 //! `properties/layerName eq 'Anzahl_Fahrraeder_Zaehlfeld_5-Min'` (with
 //! `$expand=Thing`), which yields the live `Zählfeld` datastreams *and* the
 //! legacy `(veraltet)` ones that extend each field's history. The parsed index
-//! is cached for `cache_duration` seconds. Observations are fetched live,
-//! paged via `@iot.nextLink`, and the legacy + current rows are merged per field
-//! (dedup keep-last, current wins).
+//! is cached for `cache_duration` seconds.
+//!
+//! Observations are read through the source-level
+//! [`DataProvider::get_measurements_source`]: each field (channel) owns two
+//! **independent** stream readers (legacy + current), each with its own buffer
+//! and `@iot.nextLink` continuation. Because the streams advance on their own
+//! cursors, a long legacy backfill never re-downloads the current feed, and the
+//! legacy + current rows are merged per field (dedup keep-last, current wins).
+//! Whole pages are buffered (no partial-page re-fetch) and up to `concurrency`
+//! fields are paged in parallel per batch.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,16 +41,20 @@ use super::parsing::{
 
 pub(crate) const PROVIDER_TYPE: &str = "hamburg_sta_http_provider";
 pub(crate) const DEFAULT_BASE_URL: &str = "https://iot.hamburg.de/v1.0/";
-pub(crate) const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 500;
+pub(crate) const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 1000;
 pub(crate) const DEFAULT_CACHE_DURATION_SECS: u64 = 300;
 const OBSERVATIONS_PAGE_SIZE: usize = 1000;
 const DISCOVERY_PAGE_SIZE: usize = 500;
+/// Fields paged concurrently per source-level batch.
+const DEFAULT_CONCURRENCY: usize = 8;
 
 pub struct HamburgStaAdapter {
     base_url: String,
     max_measurement_batch_size: usize,
     cache_duration: Duration,
     include_legacy: bool,
+    /// Fields paged in parallel per [`Self::get_measurements_source`] batch.
+    concurrency: usize,
     fetcher: Arc<dyn ResourceFetcher>,
     /// Scoped provider-message sink, attached by `StartupService`. `None` until
     /// attached.
@@ -53,12 +65,110 @@ pub struct HamburgStaAdapter {
     refresh_lock: Mutex<()>,
     /// Whole-source (channel-interleaved) reader state for the current run.
     scanner: Mutex<Option<SourceScanner>>,
+    /// Per-field (channel) stream readers for the current run.
+    readers: Mutex<Option<ReaderSet>>,
 }
 
 #[derive(Clone)]
 struct CachedData {
     fetched_at: Instant,
     index: Arc<HamburgIndex>,
+}
+
+/// One SensorThings observation stream (legacy or current) of a field.
+///
+/// A stream keeps an independent cursor: only its own `@iot.nextLink` advances
+/// it, so paging one feed never re-downloads the other. `pending` is the head
+/// row ready for the merge; `buffered` holds already-fetched rows past it.
+struct StreamReader {
+    /// The SensorThings datastream id (used for diagnostics).
+    datastream_id: i64,
+    /// First-page URL, built once per run from the anchor watermark.
+    initial_url: String,
+    /// The next candidate row (fetched, not yet emitted).
+    pending: Option<MeasurementRecord>,
+    /// Fetched rows beyond `pending`, ascending.
+    buffered: VecDeque<MeasurementRecord>,
+    /// Server continuation URL; `None` once the stream is exhausted.
+    next_link: Option<String>,
+    exhausted: bool,
+}
+
+impl StreamReader {
+    fn new(datastream_id: i64, initial_url: String) -> Self {
+        Self {
+            datastream_id,
+            initial_url,
+            pending: None,
+            buffered: VecDeque::new(),
+            next_link: None,
+            exhausted: false,
+        }
+    }
+
+    /// Ensures a candidate row (`pending`) is set whenever the stream still has
+    /// data, fetching a whole page on demand (the `@iot.nextLink` continuation,
+    /// or the initial URL once per run) and buffering it.
+    fn ensure_pending(&mut self, fetcher: &dyn ResourceFetcher) -> Result<(), ProviderError> {
+        while self.pending.is_none() && !self.exhausted {
+            let url = match self.next_link.take() {
+                Some(link) => link,
+                None => self.initial_url.clone(),
+            };
+            let json = fetcher.fetch(&url).map_err(|message| {
+                ProviderError::Unreachable(format!(
+                    "observations fetch failed (datastream {}): {message}",
+                    self.datastream_id
+                ))
+            })?;
+            let page: RawPage<RawObservation> = serde_json::from_str(&json).map_err(|e| {
+                ProviderError::InvalidData(format!(
+                    "invalid Observations json (datastream {}): {e}",
+                    self.datastream_id
+                ))
+            })?;
+            for observation in page.value {
+                if let Some(record) = parse_observation(&observation) {
+                    self.buffered.push_back(record);
+                }
+            }
+            self.next_link = page.next_link;
+            if self.next_link.is_none() {
+                self.exhausted = true;
+            }
+            self.pending = self.buffered.pop_front();
+        }
+        Ok(())
+    }
+
+    /// Removes and returns the head row, promoting the next buffered row (if
+    /// any) to `pending`.
+    fn pop(&mut self) -> Option<MeasurementRecord> {
+        let row = self.pending.take();
+        self.pending = self.buffered.pop_front();
+        row
+    }
+
+    /// Whether the stream can still produce a row.
+    fn has_more(&self) -> bool {
+        self.pending.is_some() || !self.buffered.is_empty() || !self.exhausted
+    }
+}
+
+/// The legacy + current readers of one field (a channel's `Zählfeld`).
+struct FieldReader {
+    /// Reader of the `(veraltet)` history stream, when enabled and present.
+    legacy: Option<StreamReader>,
+    /// Reader of the live field stream.
+    current: StreamReader,
+}
+
+/// The adapter's per-field readers for the current run, anchored at `from`.
+struct ReaderSet {
+    anchor: Option<DateTime<Utc>>,
+    ids: Vec<String>,
+    /// Per-field readers (a per-field lock keeps concurrent batches disjoint).
+    fields: HashMap<String, Arc<Mutex<FieldReader>>>,
 }
 
 impl HamburgStaAdapter {
@@ -69,10 +179,11 @@ impl HamburgStaAdapter {
     /// Builds the adapter from the data source's provider vars.
     ///
     /// Optional vars: `base_url` (default the official Hamburg SensorThings
-    /// root), `max_measurement_batch_size` (default `500`), `cache_duration`
+    /// root), `max_measurement_batch_size` (default `1000`), `cache_duration`
     /// (seconds, default `300`), `include_legacy` (default `true`, merges the
-    /// `(veraltet)` field series for history). A missing/invalid value is a
-    /// configuration error (blocks startup).
+    /// `(veraltet)` field series for history), `concurrency` (default `8`,
+    /// fields paged in parallel). A missing/invalid value is a configuration
+    /// error (blocks startup).
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
         Self::with_fetcher(config, Arc::new(HttpResourceFetcher))
     }
@@ -118,22 +229,39 @@ impl HamburgStaAdapter {
             None => true,
         };
 
+        let concurrency = match config.provider().var("concurrency") {
+            Some(raw) => raw.parse::<usize>().map_err(|_| {
+                ConfigError::InvalidFormat(format!(
+                    "{PROVIDER_TYPE}: var 'concurrency' is not a valid number"
+                ))
+            })?,
+            None => DEFAULT_CONCURRENCY,
+        }
+        .max(1);
+
         Ok(Self {
             base_url,
             max_measurement_batch_size,
             cache_duration: Duration::from_secs(cache_duration),
             include_legacy,
+            concurrency,
             fetcher,
             messages: Mutex::new(None),
             cache: Mutex::new(None),
             refresh_lock: Mutex::new(()),
             scanner: Mutex::new(None),
+            readers: Mutex::new(None),
         })
     }
 
     /// The configured cache window in seconds.
     pub fn cache_duration_secs(&self) -> u64 {
         self.cache_duration.as_secs()
+    }
+
+    /// The configured number of fields paged in parallel per batch.
+    pub(crate) fn concurrency(&self) -> usize {
+        self.concurrency
     }
 
     /// The attached provider-message sink, if any (cloned handle for callers).
@@ -210,44 +338,6 @@ impl HamburgStaAdapter {
         Ok(all)
     }
 
-    /// Fetches observations of one datastream, following `@iot.nextLink` pages,
-    /// up to `budget` parsed rows. Returns whether more rows remain.
-    fn fetch_field_observations(
-        &self,
-        datastream_id: i64,
-        from: Option<DateTime<Utc>>,
-        to: Option<DateTime<Utc>>,
-        budget: usize,
-    ) -> Result<(Vec<MeasurementRecord>, bool), ProviderError> {
-        let mut url = self.observations_url(datastream_id, from, to);
-        let mut rows = Vec::new();
-        let mut truncated = false;
-        loop {
-            let json = self.fetcher.fetch(&url).map_err(|message| {
-                ProviderError::Unreachable(format!(
-                    "observations fetch failed (datastream {datastream_id}): {message}"
-                ))
-            })?;
-            let page: RawPage<RawObservation> = serde_json::from_str(&json).map_err(|e| {
-                ProviderError::InvalidData(format!("invalid Observations json: {e}"))
-            })?;
-            for observation in page.value {
-                if let Some(record) = parse_observation(&observation) {
-                    rows.push(record);
-                }
-            }
-            match page.next_link {
-                Some(next) if rows.len() < budget => url = next,
-                Some(_) => {
-                    truncated = true;
-                    break;
-                }
-                None => break,
-            }
-        }
-        Ok((rows, truncated))
-    }
-
     /// Builds the paged observations URL for one datastream, filtered to the
     /// watermark window.
     fn observations_url(
@@ -281,79 +371,135 @@ impl HamburgStaAdapter {
         }
     }
 
-    /// Merges legacy + current rows for one field: dedup keep-last on
-    /// `(timestamp, resolution_seconds)` so the current (live) value wins on an
-    /// overlap, sorted ascending.
-    fn merge_rows(mut rows: Vec<MeasurementRecord>) -> Vec<MeasurementRecord> {
-        rows.sort_by_key(|r| (r.timestamp, r.resolution_seconds));
-        let mut merged: Vec<MeasurementRecord> = Vec::with_capacity(rows.len());
-        for row in rows {
-            if let Some(last) = merged.last_mut()
-                && last.timestamp == row.timestamp
-                && last.resolution_seconds == row.resolution_seconds
-            {
-                *last = row;
-            } else {
-                merged.push(row);
-            }
+    /// (Re)seeds the per-field stream readers when the run anchor or the
+    /// channel set changes. The readers are anchored at `from` (the persisted
+    /// watermark) so a resumed run starts at its checkpoint.
+    fn ensure_readers(&self, from: Option<DateTime<Utc>>, ids: &[String], index: &HamburgIndex) {
+        let mut guard = self.readers.lock().unwrap();
+        let needs_seed = match guard.as_ref() {
+            Some(set) => set.anchor != from || set.ids.as_slice() != ids,
+            None => true,
+        };
+        if !needs_seed {
+            return;
         }
-        merged
+
+        let mut fields = HashMap::with_capacity(ids.len());
+        for id in ids {
+            let Some(sources) = index.fields.get(id) else {
+                continue;
+            };
+            let Some(current_id) = sources.current else {
+                continue;
+            };
+            let mut legacy = None;
+            if self.include_legacy
+                && let Some(legacy_id) = sources.legacy
+            {
+                legacy = Some(StreamReader::new(
+                    legacy_id,
+                    self.observations_url(legacy_id, from, None),
+                ));
+            }
+            fields.insert(
+                id.clone(),
+                Arc::new(Mutex::new(FieldReader {
+                    current: StreamReader::new(
+                        current_id,
+                        self.observations_url(current_id, from, None),
+                    ),
+                    legacy,
+                })),
+            );
+        }
+        *guard = Some(ReaderSet {
+            anchor: from,
+            ids: ids.to_vec(),
+            fields,
+        });
     }
 
-    /// Serves the next page of measurements of one field (channel) starting
-    /// strictly after `from`, tagged with the field's external id. Returns
-    /// whether the field is exhausted (`done`).
-    fn page_channel(
+    /// Serves the next page of one field (channel): a streaming merge of its
+    /// legacy + current readers (dedup keep-last, current wins), ascending,
+    /// returning up to `budget` rows. `anchor` is the run watermark; rows at or
+    /// before it (only the boundary row) are never re-emitted.
+    fn fill_page(
         &self,
         external_id: &str,
-        from: Option<DateTime<Utc>>,
         budget: usize,
+        anchor: Option<DateTime<Utc>>,
     ) -> Result<ChannelPage, ProviderError> {
-        let index = self.ensure_index()?;
-        let sources = index.fields.get(external_id).ok_or_else(|| {
-            ProviderError::InvalidData(format!("unknown Hamburg field '{external_id}'"))
-        })?;
+        let reader = {
+            let readers = self.readers.lock().unwrap();
+            let set = readers.as_ref().ok_or_else(|| {
+                ProviderError::InvalidData(format!("unknown Hamburg field '{external_id}'"))
+            })?;
+            set.fields.get(external_id).cloned().ok_or_else(|| {
+                ProviderError::InvalidData(format!("unknown Hamburg field '{external_id}'"))
+            })?
+        };
+        let mut reader = reader.lock().unwrap();
+        let fetcher: &dyn ResourceFetcher = self.fetcher.as_ref();
 
-        // Fetch legacy first, then current, so the stable dedup keep-last makes
-        // the current (live) value win on overlapping rows.
-        let mut rows: Vec<MeasurementRecord> = Vec::new();
-        let mut truncated = false;
-        if self.include_legacy
-            && let Some(legacy_id) = sources.legacy
-        {
-            let (mut legacy, legacy_truncated) =
-                self.fetch_field_observations(legacy_id, from, None, budget)?;
-            truncated |= legacy_truncated;
-            rows.append(&mut legacy);
+        let mut measurements: Vec<SourceMeasurement> = Vec::with_capacity(budget);
+        while measurements.len() < budget {
+            // Both streams need a head to compare (a no-op when already set).
+            reader.current.ensure_pending(fetcher)?;
+            if let Some(legacy) = reader.legacy.as_mut() {
+                legacy.ensure_pending(fetcher)?;
+            }
+
+            let current_head = reader.current.pending.clone();
+            let legacy_head = match reader.legacy.as_ref() {
+                Some(legacy) => legacy.pending.clone(),
+                None => None,
+            };
+
+            let take_legacy = match (&legacy_head, &current_head) {
+                (None, None) => break,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (Some(legacy), Some(current)) => {
+                    if legacy.timestamp == current.timestamp
+                        && legacy.resolution_seconds == current.resolution_seconds
+                    {
+                        // Overlap: the current (live) value wins; drop the legacy row.
+                        reader.legacy.as_mut().expect("legacy present").pop();
+                        false
+                    } else {
+                        (legacy.timestamp, legacy.resolution_seconds)
+                            <= (current.timestamp, current.resolution_seconds)
+                    }
+                }
+            };
+
+            let row = if take_legacy {
+                reader.legacy.as_mut().expect("legacy present").pop()
+            } else {
+                reader.current.pop()
+            };
+            let Some(row) = row else { break };
+            // Exclusive lower bound: never re-emit the anchor boundary row.
+            if anchor.is_none_or(|anchor| row.timestamp > anchor) {
+                measurements.push(SourceMeasurement {
+                    channel_external_id: external_id.to_string(),
+                    record: row,
+                });
+            }
         }
-        if let Some(current_id) = sources.current {
-            let (mut current, current_truncated) =
-                self.fetch_field_observations(current_id, from, None, budget)?;
-            truncated |= current_truncated;
-            rows.append(&mut current);
-        }
 
-        let filtered: Vec<_> = Self::merge_rows(rows)
-            .into_iter()
-            .filter(|record| from.is_none_or(|f| record.timestamp > f))
-            .collect();
+        let last_real = measurements.last().map(|m| m.record.timestamp);
+        let legacy_done = match reader.legacy.as_ref() {
+            Some(legacy) => !legacy.has_more(),
+            None => true,
+        };
+        let done = legacy_done && !reader.current.has_more();
 
-        let limit_reached = truncated || filtered.len() > budget;
-        let mut filtered = filtered;
-        filtered.truncate(budget);
-        let last_real = filtered.last().map(|record| record.timestamp);
-        let measurements = filtered
-            .into_iter()
-            .map(|record| SourceMeasurement {
-                channel_external_id: external_id.to_string(),
-                record,
-            })
-            .collect();
         Ok(ChannelPage {
             measurements,
             last_real,
             next_from: last_real,
-            done: !limit_reached,
+            done,
         })
     }
 }
@@ -389,8 +535,11 @@ impl DataProvider for HamburgStaAdapter {
             .map(|channel| channel.external_id.clone())
             .collect();
 
-        // Pick the next not-yet-exhausted field to page (fair round-robin).
-        let pick = {
+        self.ensure_readers(from, &ids, &index);
+
+        // Pick up to `concurrency` not-yet-exhausted fields (fair round-robin),
+        // de-duplicated so a short tail is never paged twice in one batch.
+        let picks = {
             let mut guard = self.scanner.lock().unwrap();
             let needs_seed = match guard.as_ref() {
                 Some(scanner) => !scanner.matches(from, &ids),
@@ -399,20 +548,71 @@ impl DataProvider for HamburgStaAdapter {
             if needs_seed {
                 *guard = Some(SourceScanner::new(from, &ids));
             }
-            guard.as_mut().expect("scanner seeded").next_channel()
+            let scanner = guard.as_mut().expect("scanner seeded");
+            let mut picks: Vec<(String, Option<DateTime<Utc>>)> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut probes = 0;
+            while picks.len() < self.concurrency && probes < ids.len() {
+                probes += 1;
+                match scanner.next_channel() {
+                    Some((id, next)) => {
+                        if seen.insert(id.clone()) {
+                            picks.push((id, next));
+                        }
+                    }
+                    None => break,
+                }
+            }
+            picks
         };
 
-        let Some((id, next)) = pick else {
+        if picks.is_empty() {
             return Ok(SourceMeasurementBatch {
                 measurements: vec![],
                 next_from: None,
                 more: false,
             });
-        };
+        }
 
-        let page = self.page_channel(&id, next, max_batch_size)?;
+        let budget = max_batch_size.max(1);
+
+        // Page every picked field concurrently. Per-field readers live behind
+        // per-field locks, so the fetched channels never contend; a transient
+        // failure of one field fails the batch (un-recorded fields are simply
+        // read again on the next call).
+        let results: Vec<(String, Result<ChannelPage, ProviderError>)> =
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = picks
+                    .into_iter()
+                    .map(|(id, _)| {
+                        scope.spawn(move || {
+                            let page = self.fill_page(&id, budget, from);
+                            (id, page)
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("field pager panicked"))
+                    .collect()
+            });
+
         let mut guard = self.scanner.lock().unwrap();
-        guard.as_mut().expect("scanner seeded").record(&id, page)
+        let scanner = guard.as_mut().expect("scanner seeded");
+        let mut measurements: Vec<SourceMeasurement> = Vec::new();
+        let mut next_from: Option<DateTime<Utc>> = None;
+        let mut more = false;
+        for (id, page) in results {
+            let batch = scanner.record(&id, page?)?;
+            measurements.extend(batch.measurements);
+            next_from = batch.next_from;
+            more = batch.more;
+        }
+        Ok(SourceMeasurementBatch {
+            measurements,
+            next_from,
+            more,
+        })
     }
 
     fn max_measurement_batch_size(&self) -> usize {

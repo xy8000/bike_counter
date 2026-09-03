@@ -43,14 +43,15 @@ infrared detector) at a **5-minute** resolution. The station-level series
 ## Configuration
 
 Read from the data source's provider vars in
-[`adapter.rs`](adapter.rs:74) (missing/invalid required vars are startup errors):
+[`adapter.rs`](adapter.rs:76) (missing/invalid required vars are startup errors):
 
 | Var | Required | Default | Meaning |
 |---|---|---|---|
 | `base_url` | no | `https://iot.hamburg.de/v1.0/` | SensorThings root |
-| `max_measurement_batch_size` | no | `500` | page size |
+| `max_measurement_batch_size` | no | `1000` | rows kept per source-level batch (must be `>=` the `$top` page size) |
 | `cache_duration` | no | `300` | seconds to cache the discovery index |
 | `include_legacy` | no | `true` | merge the `(veraltet)` field series for history |
+| `concurrency` | no | `8` | fields paged in parallel per batch |
 
 ## Module layout
 
@@ -62,7 +63,9 @@ Read from the data source's provider vars in
   `build_index` that groups fields into MQ stations, observation parsing
   (interval → timestamp/resolution/interval_end, sentinel skip) and `build_index`.
 - [`adapter.rs`](adapter.rs:1) — `HamburgStaAdapter` + the `DataProvider` impl,
-  config parsing, discovery, observation paging, legacy+current merge, health.
+  config parsing, discovery, the independent legacy/current stream readers
+  (`@iot.nextLink` continuation, buffered paging, bounded concurrency),
+  legacy+current merge, health.
 - [`tests.rs`](tests.rs:1) — unit tests (fixtures + fake fetcher).
 
 ## Design decisions
@@ -85,6 +88,15 @@ Read from the data source's provider vars in
 6. **In-memory cache, no persistent state.** The discovery index is re-fetched
    when `cache_duration` elapses; observations are fetched live per call.
 7. **Health check** is a TCP connect to the host/port of `base_url`.
+8. **Independent stream cursors.** Each field (channel) pages its legacy and
+   current datastreams on **separate** cursors, each buffering a whole page and
+   following its own `@iot.nextLink`. The current feed is therefore fetched once
+   (its first page) while a legacy backfill runs — never re-downloaded per page —
+   and pages are never truncated/re-fetched (the batch size is the `$top` page
+   size). Up to `concurrency` fields are paged in parallel per source-level
+   batch. The exclusive `phenomenonTime ge` filter is only re-issued on resume
+   (from the persisted `imported_until`); in-run paging reuses the server
+   continuation.
 
 ## Provider messages
 

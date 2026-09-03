@@ -253,3 +253,113 @@ fn health_is_down_for_an_unreachable_host() {
     .unwrap();
     assert!(matches!(a.check_health(), HealthStatus::Down(_)));
 }
+
+#[test]
+fn parses_concurrency_default_and_custom() {
+    let a = HamburgStaAdapter::new(&config(&[])).unwrap();
+    assert_eq!(a.concurrency(), 8);
+    let a = HamburgStaAdapter::new(&config(&[("concurrency", "2")])).unwrap();
+    assert_eq!(a.concurrency(), 2);
+    assert!(HamburgStaAdapter::new(&config(&[("concurrency", "nope")])).is_err());
+}
+
+/// Builds an Observations JSON body for 5-min rows at `offset_min` past
+/// 2026-01-01T00:00Z with the given values.
+fn obs_json(rows: &[(i64, i64)]) -> String {
+    let items: Vec<String> = rows
+        .iter()
+        .map(|(offset_min, value)| {
+            let start = utc(2026, 1, 1, 0, 0, 0) + chrono::Duration::minutes(*offset_min);
+            let end = start + chrono::Duration::seconds(299);
+            format!(
+                "{{\"phenomenonTime\":\"{}/{}\",\"result\":{}}}",
+                start.to_rfc3339(),
+                end.to_rfc3339(),
+                value
+            )
+        })
+        .collect();
+    format!("{{\"value\":[{}]}}", items.join(","))
+}
+
+/// A fetcher that records how often each datastream URL was requested.
+struct CountingFetcher {
+    responses: std::collections::HashMap<String, String>,
+    counts: Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
+}
+
+impl CountingFetcher {
+    fn new(responses: Vec<(&str, &str)>) -> Self {
+        Self {
+            responses: responses
+                .into_iter()
+                .map(|(key, json)| (key.to_string(), json.to_string()))
+                .collect(),
+            counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+}
+
+impl ResourceFetcher for CountingFetcher {
+    fn fetch(&self, url: &str) -> Result<String, String> {
+        for key in self.responses.keys() {
+            if url.contains(key) {
+                *self.counts.lock().unwrap().entry(key.clone()).or_insert(0) += 1;
+            }
+        }
+        for (key, json) in &self.responses {
+            if url.contains(key) {
+                return Ok(json.clone());
+            }
+        }
+        Err(format!("no fake response for {url}"))
+    }
+}
+
+#[test]
+fn does_not_refetch_the_current_stream_while_legacy_dominates() {
+    // Legacy spans offsets 0..95 min; the current feed only has rows from
+    // offset 1000 on, so a small batch pages legacy for a long time while the
+    // current head stays far ahead. The current feed must be fetched exactly
+    // once (its first page) and never re-downloaded per legacy page.
+    let legacy_json = obs_json(
+        &(0..20)
+            .map(|i| (i as i64 * 5, 100 + i as i64))
+            .collect::<Vec<_>>(),
+    );
+    let current_json = obs_json(&[(1000, 900), (1005, 905), (1010, 910)]);
+    let fetcher = Arc::new(CountingFetcher::new(vec![
+        ("Datastreams?", DISCOVERY),
+        ("Datastreams(26140)/Observations", legacy_json.as_str()),
+        ("Datastreams(26394)/Observations", current_json.as_str()),
+        ("Datastreams(26400)/Observations", FIELD2_OBS),
+    ]));
+    let a =
+        HamburgStaAdapter::with_fetcher(&config(&[("concurrency", "1")]), fetcher.clone()).unwrap();
+
+    let mut seen = 0usize;
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 50, "source read must terminate");
+        let batch = a.get_measurements_source(None, 4).unwrap();
+        seen += batch.measurements.len();
+        if !batch.more {
+            break;
+        }
+    }
+
+    // Field G: 20 legacy + 3 current rows; field I (26400): 4 current rows.
+    assert_eq!(seen, 27, "every row is served exactly once");
+    let counts = fetcher.counts.lock().unwrap();
+    assert_eq!(
+        counts.get("Datastreams(26394)/Observations"),
+        Some(&1),
+        "the current feed is fetched once, not once per legacy page"
+    );
+    assert_eq!(
+        counts.get("Datastreams(26140)/Observations"),
+        Some(&1),
+        "the legacy feed is fetched once (its rows are buffered)"
+    );
+}

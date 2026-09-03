@@ -82,8 +82,12 @@ log_level = "WARNING"
 # Official Hamburg SensorThings API (dataset HH_STA_Verkehrsdaten_Rad_Infrarotdetektoren).
 # Stations = MQ (knotenName), channels = Zählfeld (directional counting fields).
 base_url = "https://iot.hamburg.de/v1.0/"
-max_measurement_batch_size = "500"
+# Rows kept per source-level batch; must be >= the $top page size (1000) so a
+# fetched page is never truncated and re-fetched.
+max_measurement_batch_size = "1000"
 # Cache window for the discovery index, in seconds (default 300).
 cache_duration = "300"
 # Merge the legacy "(veraltet)" field 5-min series for history (default true).
 include_legacy = "true"
+# Fields paged in parallel per batch (default 8). Lower to be gentler on the API.
+concurrency = "8"
