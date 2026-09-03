@@ -722,6 +722,9 @@ pub struct BffDataSourceDetailDto {
     /// The positioned counting stations of the data source (map markers).
     pub stations: Vec<StationMapDto>,
     pub last_updated_at: Option<DateTime<Utc>>,
+    /// The incremental import watermark: everything on/before this timestamp has
+    /// been imported. `null` means "not yet imported" (full re-import).
+    pub imported_until: Option<DateTime<Utc>>,
     /// Earliest measurement timestamp across the source's channels.
     pub first_data_at: Option<DateTime<Utc>>,
     /// Latest measurement timestamp across the source's channels.

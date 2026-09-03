@@ -1,3 +1,16 @@
+Persist per-data-source first/last measurement bounds (plans/92_data_source_detail_persisted_bounds_plan.md)
+
+- [x] Migration V21: `data_sources.first_measurement_at` / `last_measurement_at` + one-time backfill from the existing measurement history (MIN/MAX per source via channels → counting_stations; ~5 s on the 30 M-row dev DB)
+- [x] Domain: `DataSource.first_measurement_at` / `last_measurement_at` (+ `new()`) and `DataSourceRepository::update_measurement_bounds` (default no-op; Postgres merges NULL-safe with LEAST/GREATEST)
+- [x] Core: `DataImportService::update_data_source` folds the run-wide earliest/latest measurement timestamps into `DataSourceUpdate`; `DataSourceUpdateService::run_updates` persists them after every successful source run (incl. deadline-stopped runs)
+- [x] Data-source detail: `DataSourceAnalyticsService::detail` reads the persisted bounds instead of the `DISTINCT ON` whole-history scans of `earliest_by_channel` / `latest_by_channel` — the Hamburg detail page drops from ~8.4 s to a primary-key read
+- [x] Tests: Postgres bounds round-trip/widen, update-service bounds persistence + failure propagation, import-service run-bound reporting, analytics detail badges from persisted bounds; `make check` + `make test` (551) + `make test-rest` (109) + `make coverage` (overall 86.48%, core 95.07%) green
+- [ ] Recommended follow-up: regenerate `frontend/e2e/e2e-seed.sql` from a V21 stack (`scripts/dump-e2e-fixture.sh`) + `make test-playwright` (backend-only change, not a required gate here)
+
+Global summary database index (plans/91_global_summary_db_index_plan.md)
+
+- [x] Migration V20: covering btree index `measurements_timestamp_idx` on `measurements (timestamp) INCLUDE (channel_id, resolution_seconds, value)`, turning the global-summary / sidebar / summary `bikes_last_day` windowed `SUM` into an index-only range scan instead of a sequential scan over the whole measurement history (the previous indexes all led with `channel_id`, so the time-range predicate was not indexable)
+
 Data Sources baseline
 
 - [x] Configure data sources in config.toml as an array (nested name + provider type + key-value vars)

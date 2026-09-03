@@ -162,6 +162,8 @@ pub fn data_source_a() -> DataSource {
         last_updated_at: None,
         logo_asset_id: None,
         logo_sha256: None,
+        first_measurement_at: None,
+        last_measurement_at: None,
     }
 }
 

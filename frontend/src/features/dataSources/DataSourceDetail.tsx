@@ -131,7 +131,7 @@ export function DataSourceDetail() {
               <div>
                 <Skeleton className="mb-3 h-5 w-44" />
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {Array.from({ length: 8 }, (_, index) => (
+                  {Array.from({ length: 9 }, (_, index) => (
                     <StatCardSkeleton key={index} />
                   ))}
                 </div>
@@ -211,6 +211,7 @@ function DetailContent({ detail }: { detail: DataSourceDetailType }) {
           <StatCard label="Last successful import">
             {formatTimestamp(detail.last_updated_at)}
           </StatCard>
+          <StatCard label="Data imported until">{formatTimestamp(detail.imported_until)}</StatCard>
 
           <StatCard label="Last import">
             <ImportStatus import={detail.last_import} />

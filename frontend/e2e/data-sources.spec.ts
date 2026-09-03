@@ -35,6 +35,7 @@ test('clicking a data source opens the detail page', async ({ page }) => {
   await expect(page.getByText('Stations', { exact: true })).toBeVisible()
   await expect(page.getByText('Channels', { exact: true })).toBeVisible()
   await expect(page.getByText('First data from', { exact: true })).toBeVisible()
+  await expect(page.getByText('Data imported until', { exact: true })).toBeVisible()
 })
 
 test('top-bar link reaches the data-sources overview from the map', async ({ page }) => {

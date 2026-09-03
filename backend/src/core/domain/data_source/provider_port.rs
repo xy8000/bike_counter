@@ -19,7 +19,6 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
-use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::data_source::data_source::value_objects::Id;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::error::DomainError;
@@ -45,40 +44,6 @@ impl From<ProviderError> for crate::core::domain::error::DomainError {
 impl From<DomainError> for ProviderError {
     fn from(error: DomainError) -> Self {
         ProviderError::Storage(format!("{error:?}"))
-    }
-}
-
-/// A single call for measurements of one channel.
-#[derive(Debug, Clone)]
-pub struct MeasurementQuery {
-    /// The channel whose measurements are requested. Always required.
-    pub channel: Channel,
-    /// Optional start datetime. `None` = all data from the beginning.
-    pub from: Option<DateTime<Utc>>,
-    /// Optional end datetime. `None` = all available data up to now.
-    pub to: Option<DateTime<Utc>>,
-    /// Upper bound for the number of measurements returned in one call.
-    pub max_batch_size: usize,
-}
-
-impl MeasurementQuery {
-    pub fn for_channel(channel: Channel, max_batch_size: usize) -> Self {
-        Self {
-            channel,
-            from: None,
-            to: None,
-            max_batch_size,
-        }
-    }
-
-    pub fn with_start(mut self, from: DateTime<Utc>) -> Self {
-        self.from = Some(from);
-        self
-    }
-
-    pub fn with_end(mut self, to: DateTime<Utc>) -> Self {
-        self.to = Some(to);
-        self
     }
 }
 
@@ -150,18 +115,25 @@ pub struct MeasurementRecord {
     pub interval_end: Option<DateTime<Utc>>,
 }
 
-/// A page of measurements for one channel.
+/// A measurement read from a whole data source, tagged with the external id of
+/// the channel it belongs to (matching [`ChannelRecord::external_id`]).
+#[derive(Debug, Clone)]
+pub struct SourceMeasurement {
+    pub channel_external_id: String,
+    pub record: MeasurementRecord,
+}
+
+/// A page of measurements read across a whole data source.
 #[derive(Debug)]
-pub struct MeasurementBatch {
-    pub measurements: Vec<MeasurementRecord>,
-    /// Timestamp of the last returned measurement (for paging). `None` if empty.
-    pub last_measurement_datetime: Option<DateTime<Utc>>,
-    /// `true` when the batch-size limit was reached and more data may remain.
-    pub batch_size_limit_reached: bool,
-    /// `true` when the provider's time window (e.g. 7 days) was exhausted while
-    /// more data exists beyond it. The core keeps paging while either limit flag
-    /// is set.
-    pub timeframe_limit_reached: bool,
+pub struct SourceMeasurementBatch {
+    pub measurements: Vec<SourceMeasurement>,
+    /// Safe watermark to advance the persisted `imported_until` cursor to: the
+    /// minimum cursor over channels that still have data, so no remaining
+    /// channel can miss measurements at or before this timestamp. `None` while
+    /// no real measurement has been read yet (the cursor must not advance).
+    pub next_from: Option<DateTime<Utc>>,
+    /// `false` when the whole source has been read and no more batches remain.
+    pub more: bool,
 }
 
 /// Serves all entities of an external data source.
@@ -178,8 +150,22 @@ pub trait DataProvider: Send + Sync {
     /// All channels currently available from the external source.
     fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError>;
 
-    /// Measurements of a single channel, bounded by `query.max_batch_size`.
-    fn get_measurements(&self, query: MeasurementQuery) -> Result<MeasurementBatch, ProviderError>;
+    /// Reads the next page of measurements across the whole data source,
+    /// starting after `from` (the persisted `imported_until` watermark; `None`
+    /// requests a full read). The provider owns its reading strategy — how it
+    /// interleaves its channels and where each channel's cursor sits — and
+    /// reports the safe watermark (`next_from`) the core persists as
+    /// `imported_until`. Synthetic gap-skip cursors must never be reported as
+    /// `next_from`.
+    ///
+    /// Every batch carries `more`, which stays `true` while any channel still
+    /// has data; the core keeps paging until the source is exhausted or its job
+    /// deadline is reached (checkpointing `next_from` after every batch).
+    fn get_measurements_source(
+        &self,
+        from: Option<DateTime<Utc>>,
+        max_batch_size: usize,
+    ) -> Result<SourceMeasurementBatch, ProviderError>;
 
     /// The actual image bytes for one station, requested by the core only when
     /// the reported hash changed (or the station has no linked asset yet).
@@ -198,7 +184,8 @@ pub trait DataProvider: Send + Sync {
         Ok(None)
     }
 
-    /// The configured default batch size, used to fill `MeasurementQuery::max_batch_size`.
+    /// The configured default page size passed to
+    /// [`Self::get_measurements_source`].
     fn max_measurement_batch_size(&self) -> usize;
 
     /// Optional: called once at startup so a stateful provider can keep its
@@ -257,30 +244,13 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use chrono::{TimeZone, Utc};
-    use uuid::Uuid;
-
-    use super::{MeasurementQuery, ProviderError};
-    use crate::core::domain::channels::channel::Channel;
-    use crate::core::domain::channels::channel::value_objects::{
-        CountingStationId, Description, Id, Name,
-    };
+    use super::ProviderError;
     use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
     use crate::core::domain::data_source::provider_port::{
-        ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch,
+        ChannelRecord, CountingStationRecord, DataProvider, SourceMeasurementBatch,
     };
     use crate::core::domain::error::DomainError;
     use crate::core::domain::health::HealthStatus;
-
-    fn channel() -> Channel {
-        Channel {
-            id: Id(Uuid::from_u128(1)),
-            counting_station_id: CountingStationId(Uuid::from_u128(2)),
-            name: Name("channel".to_string()),
-            description: Description("desc".to_string()),
-            external_datasource_id: None,
-        }
-    }
 
     #[test]
     fn provider_error_converts_to_domain_error() {
@@ -293,18 +263,6 @@ mod tests {
     fn domain_error_converts_to_provider_error() {
         let error: ProviderError = DomainError::Database("boom".to_string()).into();
         assert!(matches!(error, ProviderError::Storage(_)));
-    }
-
-    #[test]
-    fn measurement_query_builders_set_time_bounds() {
-        let from = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let to = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
-        let query = MeasurementQuery::for_channel(channel(), 10)
-            .with_start(from)
-            .with_end(to);
-        assert_eq!(query.from, Some(from));
-        assert_eq!(query.to, Some(to));
-        assert_eq!(query.max_batch_size, 10);
     }
 
     #[test]
@@ -330,15 +288,15 @@ mod tests {
             Ok(vec![])
         }
 
-        fn get_measurements(
+        fn get_measurements_source(
             &self,
-            _query: MeasurementQuery,
-        ) -> Result<MeasurementBatch, ProviderError> {
-            Ok(MeasurementBatch {
+            _from: Option<chrono::DateTime<chrono::Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            Ok(SourceMeasurementBatch {
                 measurements: vec![],
-                last_measurement_datetime: None,
-                batch_size_limit_reached: false,
-                timeframe_limit_reached: false,
+                next_from: None,
+                more: false,
             })
         }
 

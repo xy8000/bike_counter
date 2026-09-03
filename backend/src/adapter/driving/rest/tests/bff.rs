@@ -1241,6 +1241,11 @@ async fn data_source_detail_returns_stations_and_badge_flags() {
     assert_eq!(stations[0]["name"], "Münster station");
     assert!(stations[0]["latitude"].is_number());
     assert_eq!(body["last_import"], serde_json::Value::Null);
+    assert_eq!(
+        body["imported_until"],
+        serde_json::Value::Null,
+        "the sample source has no import watermark yet"
+    );
 }
 
 #[tokio::test]

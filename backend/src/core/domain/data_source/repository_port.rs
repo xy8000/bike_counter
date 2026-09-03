@@ -40,4 +40,20 @@ pub trait DataSourceRepository {
     ) -> Result<(), DomainError> {
         Ok(())
     }
+
+    /// Records the source-wide earliest/latest measurement timestamps for a run
+    /// that inserted measurements. The merge is idempotent (the persisted lower
+    /// bound only moves earlier, the upper bound only later), so a later
+    /// historical backfill and a fresh batch both converge correctly. `None`
+    /// leaves the corresponding bound unchanged. The default is a no-op so
+    /// in-memory doubles that never exercise the bounds path need no change; the
+    /// Postgres adapter persists it atomically.
+    fn update_measurement_bounds(
+        &self,
+        _id: Id,
+        _first: Option<DateTime<Utc>>,
+        _last: Option<DateTime<Utc>>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
 }

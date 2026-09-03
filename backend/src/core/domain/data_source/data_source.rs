@@ -28,6 +28,16 @@ pub struct DataSource {
     /// Persisted provider logo hash used for hash-based change detection during
     /// import. `None` when the provider reports no logo.
     pub logo_sha256: Option<String>,
+    /// The earliest measurement timestamp ever stored across the source's
+    /// channels. Persisted and maintained by the import flow so the data-source
+    /// detail page ("first data from", historical badge) never has to scan the
+    /// measurement history. `None` while the source has no measurements.
+    pub first_measurement_at: Option<DateTime<Utc>>,
+    /// The latest measurement timestamp ever stored across the source's
+    /// channels. Persisted and maintained by the import flow so the data-source
+    /// detail page (recency, real-time badge) never has to scan the measurement
+    /// history. `None` while the source has no measurements.
+    pub last_measurement_at: Option<DateTime<Utc>>,
 }
 
 impl DataSource {
@@ -40,6 +50,8 @@ impl DataSource {
             last_updated_at: None,
             logo_asset_id: None,
             logo_sha256: None,
+            first_measurement_at: None,
+            last_measurement_at: None,
         }
     }
 
@@ -96,5 +108,7 @@ mod tests {
         assert_eq!(data_source.last_updated_at, None);
         assert_eq!(data_source.logo_asset_id, None);
         assert_eq!(data_source.logo_sha256, None);
+        assert_eq!(data_source.first_measurement_at, None);
+        assert_eq!(data_source.last_measurement_at, None);
     }
 }

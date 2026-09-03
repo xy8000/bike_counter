@@ -14,12 +14,13 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_port::{
-    DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
-    ProviderMessageSink,
+    DataProvider, PersistentStateAccess, ProviderError, ProviderMessageSink, SourceMeasurement,
+    SourceMeasurementBatch,
 };
 use crate::core::domain::health::HealthStatus;
 
@@ -62,6 +63,8 @@ pub struct MuensterGithubAdapter {
     refresh_lock: Mutex<()>,
     /// In-memory index of the currently usable archive.
     index: Mutex<Option<Arc<ArchiveIndex>>>,
+    /// Whole-source (channel-interleaved) reader state for the current run.
+    scanner: Mutex<Option<SourceScanner>>,
 }
 
 impl MuensterGithubAdapter {
@@ -132,6 +135,7 @@ impl MuensterGithubAdapter {
             messages: Mutex::new(None),
             refresh_lock: Mutex::new(()),
             index: Mutex::new(None),
+            scanner: Mutex::new(None),
         })
     }
 
@@ -489,6 +493,75 @@ impl MuensterGithubAdapter {
         in_window.sort_by_key(|record| record.timestamp);
         Ok((in_window, data_beyond))
     }
+
+    /// Serves the next page of measurements of one channel starting strictly
+    /// after `from` (windows by the configured timeframe and skips gaps),
+    /// tagged with the channel's external id.
+    fn page_channel(
+        &self,
+        channel_external_id: &str,
+        from: Option<DateTime<Utc>>,
+        budget: usize,
+    ) -> Result<ChannelPage, ProviderError> {
+        let index = self.ensure_archive()?;
+        let csvs = index
+            .channel_csvs
+            .get(channel_external_id)
+            .cloned()
+            .unwrap_or_default();
+
+        let timeframe = self.max_measurement_timeframe;
+        let earliest = self.earliest_timestamp(&csvs, channel_external_id)?;
+        let Some(earliest) = earliest else {
+            // The channel has no data anywhere: nothing to page.
+            return Ok(ChannelPage {
+                measurements: Vec::new(),
+                last_real: None,
+                next_from: None,
+                done: true,
+            });
+        };
+
+        // The window start is the page cursor (exclusive). Without a cursor,
+        // start just before the earliest sample so the first sample is included.
+        let window_start = from.unwrap_or_else(|| earliest - Duration::seconds(1));
+        let window_end = from.unwrap_or(earliest) + timeframe;
+
+        let (mut records, data_beyond) =
+            self.windowed_series(channel_external_id, &csvs, window_start, window_end)?;
+
+        let batch_size_limit_reached = records.len() > budget;
+        records.truncate(budget);
+
+        // Real rows: the watermark may advance to the last row. Empty window:
+        // skip the gap only when data exists beyond; never fabricate a real
+        // cursor from the synthetic window end.
+        let (last_real, next_from) = if records.is_empty() {
+            if data_beyond {
+                (None, Some(window_end))
+            } else {
+                (None, None)
+            }
+        } else {
+            let last = records.last().map(|record| record.timestamp);
+            (last, last)
+        };
+
+        let measurements = records
+            .into_iter()
+            .map(|record| SourceMeasurement {
+                channel_external_id: channel_external_id.to_string(),
+                record,
+            })
+            .collect();
+
+        Ok(ChannelPage {
+            measurements,
+            last_real,
+            next_from,
+            done: !(batch_size_limit_reached || data_beyond),
+        })
+    }
 }
 
 impl DataProvider for MuensterGithubAdapter {
@@ -520,66 +593,41 @@ impl DataProvider for MuensterGithubAdapter {
         Ok(self.ensure_archive()?.channels.clone())
     }
 
-    fn get_measurements(&self, query: MeasurementQuery) -> Result<MeasurementBatch, ProviderError> {
+    fn get_measurements_source(
+        &self,
+        from: Option<DateTime<Utc>>,
+        max_batch_size: usize,
+    ) -> Result<SourceMeasurementBatch, ProviderError> {
         let index = self.ensure_archive()?;
-        let channel_external_id = query
-            .channel
-            .external_datasource_id
-            .as_ref()
-            .map(|external| external.0.clone())
-            .ok_or_else(|| ProviderError::InvalidData("channel has no external id".to_string()))?;
+        let ids: Vec<String> = index
+            .channels
+            .iter()
+            .map(|channel| channel.external_id.clone())
+            .collect();
 
-        let csvs = index
-            .channel_csvs
-            .get(&channel_external_id)
-            .cloned()
-            .unwrap_or_default();
+        let pick = {
+            let mut guard = self.scanner.lock().unwrap();
+            let needs_seed = match guard.as_ref() {
+                Some(scanner) => !scanner.matches(from, &ids),
+                None => true,
+            };
+            if needs_seed {
+                *guard = Some(SourceScanner::new(from, &ids));
+            }
+            guard.as_mut().expect("scanner seeded").next_channel()
+        };
 
-        let timeframe = self.max_measurement_timeframe;
-        let earliest = self.earliest_timestamp(&csvs, &channel_external_id)?;
-        let Some(earliest) = earliest else {
-            // The channel has no data anywhere: nothing to page.
-            return Ok(MeasurementBatch {
-                measurements: Vec::new(),
-                last_measurement_datetime: query.from,
-                batch_size_limit_reached: false,
-                timeframe_limit_reached: false,
+        let Some((id, next)) = pick else {
+            return Ok(SourceMeasurementBatch {
+                measurements: vec![],
+                next_from: None,
+                more: false,
             });
         };
 
-        // The window start is the page cursor (exclusive). Without a cursor,
-        // start just before the earliest sample so the first sample is included.
-        let window_start = query
-            .from
-            .unwrap_or_else(|| earliest - Duration::seconds(1));
-        let window_end = match query.to {
-            Some(to) => to,
-            None => query.from.unwrap_or(earliest) + timeframe,
-        };
-
-        let (mut records, data_beyond) =
-            self.windowed_series(&channel_external_id, &csvs, window_start, window_end)?;
-
-        let batch_size_limit_reached = records.len() > query.max_batch_size;
-        records.truncate(query.max_batch_size);
-
-        // Advance past gaps only when data exists beyond the window. When the
-        // window holds no rows and no later data exists, do NOT advance: the
-        // window end is `from + timeframe`, so reporting it as the cursor would
-        // jump the persisted `imported_until` watermark into the future and
-        // silently skip data that arrives later.
-        let last_measurement_datetime = if records.is_empty() {
-            if data_beyond { Some(window_end) } else { None }
-        } else {
-            records.last().map(|record| record.timestamp)
-        };
-
-        Ok(MeasurementBatch {
-            measurements: records,
-            last_measurement_datetime,
-            batch_size_limit_reached,
-            timeframe_limit_reached: query.to.is_none() && data_beyond,
-        })
+        let page = self.page_channel(&id, next, max_batch_size)?;
+        let mut guard = self.scanner.lock().unwrap();
+        guard.as_mut().expect("scanner seeded").record(&id, page)
     }
 
     fn max_measurement_batch_size(&self) -> usize {

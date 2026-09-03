@@ -26,6 +26,8 @@ impl PostgresDataSourceRepository {
                 .get::<_, Option<uuid::Uuid>>(5)
                 .map(crate::core::domain::assets::asset::value_objects::AssetId),
             logo_sha256: row.get::<_, Option<String>>(6),
+            first_measurement_at: row.get(7),
+            last_measurement_at: row.get(8),
         }
     }
 }
@@ -57,7 +59,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256 FROM data_sources WHERE id = $1",
+                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at FROM data_sources WHERE id = $1",
                 &[&id.0],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -71,7 +73,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let row = client
             .query_opt(
-                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256 FROM data_sources WHERE name = $1",
+                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at FROM data_sources WHERE name = $1",
                 &[&name],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -85,7 +87,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let rows = client
             .query(
-                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256 FROM data_sources ORDER BY name ASC",
+                "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at FROM data_sources ORDER BY name ASC",
                 &[],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
@@ -171,6 +173,36 @@ impl DataSourceRepository for PostgresDataSourceRepository {
                     &logo_asset_id.map(|asset_id| asset_id.0),
                     &logo_sha256,
                 ],
+            )
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
+        Ok(())
+    }
+
+    fn update_measurement_bounds(
+        &self,
+        id: value_objects::Id,
+        first: Option<DateTime<Utc>>,
+        last: Option<DateTime<Utc>>,
+    ) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        client
+            .execute(
+                "UPDATE data_sources
+                 SET first_measurement_at = CASE
+                         WHEN $2::timestamptz IS NULL THEN first_measurement_at
+                         WHEN first_measurement_at IS NULL THEN $2::timestamptz
+                         ELSE LEAST(first_measurement_at, $2::timestamptz)
+                     END,
+                     last_measurement_at = CASE
+                         WHEN $3::timestamptz IS NULL THEN last_measurement_at
+                         WHEN last_measurement_at IS NULL THEN $3::timestamptz
+                         ELSE GREATEST(last_measurement_at, $3::timestamptz)
+                     END
+                 WHERE id = $1",
+                &[&id.0, &first, &last],
             )
             .map_err(|error| DomainError::Database(format!("{error:?}")))?;
         Ok(())
@@ -274,5 +306,54 @@ mod tests {
         // t0 has no fractional seconds, so it round-trips exactly through the
         // microsecond-precision TIMESTAMPTZ column.
         assert_eq!(stored.last_updated_at, Some(t0));
+    }
+
+    #[test]
+    fn update_measurement_bounds_round_trip_and_widen() {
+        let db = TestDb::new();
+        let data_source = DataSource::new(
+            "Münster".to_string(),
+            "münster_opendata_github_provider".to_string(),
+        );
+        db.repository.upsert(data_source.clone()).unwrap();
+
+        let id: Id = data_source.id;
+        let at = |rfc3339: &str| {
+            DateTime::parse_from_rfc3339(rfc3339)
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        let earliest = at("2023-06-01T00:00:00Z");
+        let early = at("2024-01-01T00:00:00Z");
+        let mid = at("2024-03-01T00:00:00Z");
+        let late = at("2024-06-01T00:00:00Z");
+
+        // The first write seeds both bounds.
+        db.repository
+            .update_measurement_bounds(id, Some(early), Some(mid))
+            .unwrap();
+        let stored = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(stored.first_measurement_at, Some(early));
+        assert_eq!(stored.last_measurement_at, Some(mid));
+
+        // A later run only widens the bounds: an earlier first and a later last
+        // both move out; a NULL leaves the corresponding bound unchanged.
+        db.repository
+            .update_measurement_bounds(id, Some(earliest), Some(late))
+            .unwrap();
+        db.repository
+            .update_measurement_bounds(id, None, Some(mid))
+            .unwrap();
+        let stored = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(
+            stored.first_measurement_at,
+            Some(earliest),
+            "the lower bound only moves earlier"
+        );
+        assert_eq!(
+            stored.last_measurement_at,
+            Some(late),
+            "the upper bound only moves later"
+        );
     }
 }

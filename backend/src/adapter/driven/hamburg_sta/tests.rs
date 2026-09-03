@@ -3,15 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use uuid::Uuid;
-
-use crate::core::domain::channels::channel::Channel;
-use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::configuration::configuration::value_objects::{
     DataProviderConfiguration, DataSourceConfiguration,
 };
 use crate::core::domain::data_source::provider_port::{
-    ChannelRecord, DataProvider, MeasurementQuery, ProviderError,
+    ChannelRecord, DataProvider, MeasurementRecord,
 };
 use crate::core::domain::health::HealthStatus;
 
@@ -19,16 +15,31 @@ use super::adapter::HamburgStaAdapter;
 use super::fetcher::ResourceFetcher;
 use super::parsing::utc;
 
-/// A domain `Channel` whose external id is the `Zählfeld` id, as produced by the
-/// import pipeline from the adapter's `ChannelRecord`.
-fn field_channel(field_id: &str) -> Channel {
-    Channel {
-        id: channel_vo::Id(Uuid::new_v4()),
-        counting_station_id: channel_vo::CountingStationId(Uuid::new_v4()),
-        name: channel_vo::Name(field_id.to_string()),
-        description: channel_vo::Description(String::new()),
-        external_datasource_id: Some(channel_vo::ExternalDatasourceId(field_id.to_string())),
+/// Reads the whole source through [`DataProvider::get_measurements_source`],
+/// collecting the real measurements served for one field (channel).
+fn read_field(
+    a: &HamburgStaAdapter,
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    batch_size: usize,
+    field: &str,
+) -> Vec<MeasurementRecord> {
+    let mut out = Vec::new();
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 20, "source read must terminate");
+        let page = a.get_measurements_source(from, batch_size).unwrap();
+        out.extend(
+            page.measurements
+                .into_iter()
+                .filter(|m| m.channel_external_id == field)
+                .map(|m| m.record),
+        );
+        if !page.more {
+            break;
+        }
     }
+    out
 }
 
 /// Serves fixture JSON keyed by a URL substring.
@@ -161,59 +172,76 @@ fn serves_merged_measurements_with_current_winning_on_overlap() {
         ("Datastreams?", DISCOVERY),
         ("Datastreams(26140)/Observations", LEGACY_OBS),
         ("Datastreams(26394)/Observations", CURRENT_OBS),
+        ("Datastreams(26400)/Observations", FIELD2_OBS),
     ]);
 
     // from = one microsecond before the first row -> everything is included.
     let from = utc(2026, 3, 1, 0, 0, 0) - chrono::Duration::microseconds(1);
-    let batch = a
-        .get_measurements(
-            MeasurementQuery::for_channel(field_channel("B_11.1_1_G"), 100).with_start(from),
-        )
-        .unwrap();
+    let rows = read_field(&a, Some(from), 100, "B_11.1_1_G");
 
     // 3 current rows + 1 legacy row (the sentinel + the overlapping legacy row
     // are gone): legacy 00:05 = 2 is superseded by current 00:05 = 10.
-    let rows = &batch.measurements;
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].timestamp, utc(2026, 3, 1, 0, 0, 0));
     assert_eq!(rows[0].value, 9, "the current value wins on the overlap");
     assert_eq!(rows[0].resolution_seconds, 300);
     assert_eq!(rows[1].value, 10);
     assert_eq!(rows[2].value, 11);
-    assert!(!batch.batch_size_limit_reached);
 }
 
 #[test]
-fn filters_from_exclusive_and_truncates_to_batch_size() {
+fn filters_from_exclusive_and_pages_to_completion() {
     let a = adapter(vec![
         ("Datastreams?", DISCOVERY),
+        ("Datastreams(26140)/Observations", LEGACY_OBS),
+        ("Datastreams(26394)/Observations", CURRENT_OBS),
         ("Datastreams(26400)/Observations", FIELD2_OBS),
     ]);
 
     // From after the first row -> only rows strictly after `from`.
     let from = utc(2026, 3, 1, 0, 0, 0);
-    let batch = a
-        .get_measurements(
-            MeasurementQuery::for_channel(field_channel("B_11.1_2_I"), 2).with_start(from),
-        )
-        .unwrap();
-    assert_eq!(batch.measurements.len(), 2);
-    assert_eq!(batch.measurements[0].timestamp, utc(2026, 3, 1, 0, 5, 0));
-    assert!(
-        batch.batch_size_limit_reached,
-        "a small batch must page again"
+    let rows = read_field(&a, Some(from), 2, "B_11.1_2_I");
+    let values: Vec<i64> = rows.iter().map(|row| row.value).collect();
+    assert_eq!(
+        rows.len(),
+        3,
+        "the first row is excluded by the exclusive `from`"
     );
     assert_eq!(
-        batch.last_measurement_datetime,
-        Some(utc(2026, 3, 1, 0, 10, 0))
+        values,
+        vec![2, 3, 4],
+        "a small batch must page until the field is exhausted"
     );
+    assert_eq!(rows[0].timestamp, utc(2026, 3, 1, 0, 5, 0));
 }
 
 #[test]
-fn unknown_field_is_invalid_data() {
-    let a = adapter(vec![("Datastreams?", DISCOVERY)]);
-    let result = a.get_measurements(MeasurementQuery::for_channel(field_channel("NOPE"), 100));
-    assert!(matches!(result, Err(ProviderError::InvalidData(_))));
+fn source_read_pages_every_field_and_terminates() {
+    let a = adapter(vec![
+        ("Datastreams?", DISCOVERY),
+        ("Datastreams(26140)/Observations", LEGACY_OBS),
+        ("Datastreams(26394)/Observations", CURRENT_OBS),
+        ("Datastreams(26400)/Observations", FIELD2_OBS),
+    ]);
+
+    // One source-level call pages one field (fair round-robin); the fields
+    // here have few rows, so a page finishes each field and the read ends.
+    let mut seen: Vec<String> = Vec::new();
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 10, "source read must terminate");
+        let batch = a.get_measurements_source(None, 100).unwrap();
+        for measurement in &batch.measurements {
+            seen.push(measurement.channel_external_id.clone());
+        }
+        if !batch.more {
+            break;
+        }
+    }
+
+    assert!(seen.iter().any(|id| id == "B_11.1_1_G"), "field 1 served");
+    assert!(seen.iter().any(|id| id == "B_11.1_2_I"), "field 2 served");
 }
 
 #[test]

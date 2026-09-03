@@ -12,18 +12,15 @@ use super::parsing::{
     parse_stations_geojson, parse_yearly_hourly_csv,
 };
 use super::*;
-use crate::core::domain::channels::channel::Channel;
-use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::configuration::configuration::value_objects::{
     DataProviderConfiguration, DataSourceConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_port::{
-    DataProvider, MeasurementQuery, ProviderError, ProviderMessageSink,
+    DataProvider, MeasurementRecord, ProviderError, ProviderMessageSink,
 };
 use crate::core::domain::health::HealthStatus;
-use uuid::Uuid;
 
 const STATIONS_URL: &str = "https://stadtplan.bonn.de/geojson?Thema=22640";
 const VORTAG_URL: &str = "https://stadtplan.bonn.de/csv?OD=4285";
@@ -165,14 +162,31 @@ fn adapter_with(
     BonnOpendataAdapter::with_fetcher(&config, fetcher).unwrap()
 }
 
-fn channel(external_id: &str) -> Channel {
-    Channel {
-        id: channel_vo::Id(Uuid::new_v4()),
-        counting_station_id: channel_vo::CountingStationId(Uuid::new_v4()),
-        name: channel_vo::Name("channel".to_string()),
-        description: channel_vo::Description(String::new()),
-        external_datasource_id: Some(channel_vo::ExternalDatasourceId(external_id.to_string())),
+/// Reads the whole source through [`DataProvider::get_measurements_source`],
+/// collecting the measurements served for one channel (external id).
+fn read_channel(
+    adapter: &BonnOpendataAdapter,
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    batch_size: usize,
+    channel_external_id: &str,
+) -> Vec<MeasurementRecord> {
+    let mut out = Vec::new();
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 20, "source read must terminate");
+        let page = adapter.get_measurements_source(from, batch_size).unwrap();
+        out.extend(
+            page.measurements
+                .into_iter()
+                .filter(|m| m.channel_external_id == channel_external_id)
+                .map(|m| m.record),
+        );
+        if !page.more {
+            break;
+        }
     }
+    out
 }
 
 fn timestamp(rfc3339: &str) -> chrono::DateTime<chrono::Utc> {
@@ -571,66 +585,56 @@ fn serves_stations_channels_and_measurements() {
     assert!(channels.iter().any(|c| c.external_id == "1"));
 
     // Channel 1: historical (3 rows) + vortag (2 rows) = 5 rows ascending.
-    let batch = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel("1"), 500))
-        .unwrap();
-    assert_eq!(batch.measurements.len(), 5);
-    assert!(!batch.batch_size_limit_reached);
-    assert!(!batch.timeframe_limit_reached);
+    let rows = read_channel(&adapter, None, 500, "1");
+    let values: Vec<i64> = rows.iter().map(|row| row.value).collect();
+    assert_eq!(values, vec![3, 4, 10, 0, 5]);
     assert_eq!(
-        batch.last_measurement_datetime.unwrap().to_rfc3339(),
+        rows.last().unwrap().timestamp.to_rfc3339(),
         "2026-08-23T23:00:00+00:00"
     );
 }
 
 #[test]
-fn get_measurements_filters_from_exclusive_and_pages() {
-    let fetcher = Arc::new(FakeFetcher::new(fixtures()));
-    let mut vars = vars_all();
-    vars.insert("max_measurement_batch_size".to_string(), "2".to_string());
-    let adapter = adapter_with(vars, fetcher);
-
-    // Page 1: two rows; batch-size limit reached.
-    let first = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel("1"), 2))
-        .unwrap();
-    assert_eq!(first.measurements.len(), 2);
-    assert!(first.batch_size_limit_reached);
-    let resume = first.last_measurement_datetime.unwrap();
-
-    // Page 2: `from` is exclusive -> continues past `resume`.
-    let second = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel("1"), 2).with_start(resume))
-        .unwrap();
-    assert_eq!(second.measurements.len(), 2);
-    assert!(second.batch_size_limit_reached);
-    let resume = second.last_measurement_datetime.unwrap();
-
-    let third = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel("1"), 2).with_start(resume))
-        .unwrap();
-    assert_eq!(third.measurements.len(), 1);
-    assert!(!third.batch_size_limit_reached);
-    assert_eq!(
-        third.measurements[0].timestamp.to_rfc3339(),
-        "2026-08-23T23:00:00+00:00"
-    );
-}
-
-#[test]
-fn get_measurements_empty_window_does_not_advance_the_cursor() {
+fn get_measurements_source_filters_from_exclusive_and_pages() {
     let fetcher = Arc::new(FakeFetcher::new(fixtures()));
     let adapter = adapter_with(vars_all(), fetcher);
 
-    // A `from` beyond all data returns an empty batch with no cursor.
+    // `from` is exclusive: the 2024-06-30T22:00:00Z row (value 10) is skipped
+    // and only the two later Vortag rows remain, read in pages of two.
+    let from = timestamp("2024-06-30T22:00:00Z");
+    let rows = read_channel(&adapter, Some(from), 2, "1");
+    let values: Vec<i64> = rows.iter().map(|row| row.value).collect();
+    assert_eq!(values, vec![0, 5]);
+    assert_eq!(rows[0].timestamp.to_rfc3339(), "2026-08-23T22:00:00+00:00");
+}
+
+#[test]
+fn get_measurements_source_empty_window_does_not_advance_the_cursor() {
+    let fetcher = Arc::new(FakeFetcher::new(fixtures()));
+    let adapter = adapter_with(vars_all(), fetcher);
+
+    // A `from` beyond all data returns no rows and never fabricates a
+    // watermark (otherwise `imported_until` would jump into the future).
     let far_future = timestamp("2030-01-01T00:00:00Z");
-    let batch = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel("1"), 500).with_start(far_future))
-        .unwrap();
-    assert!(batch.measurements.is_empty());
-    assert_eq!(batch.last_measurement_datetime, None);
-    assert!(!batch.batch_size_limit_reached);
-    assert!(!batch.timeframe_limit_reached);
+    let mut saw_rows = 0;
+    let mut next_from = None;
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 10, "source read must terminate");
+        let batch = adapter
+            .get_measurements_source(Some(far_future), 500)
+            .unwrap();
+        saw_rows += batch.measurements.len();
+        if batch.next_from.is_some() {
+            next_from = batch.next_from;
+        }
+        if !batch.more {
+            break;
+        }
+    }
+    assert_eq!(saw_rows, 0);
+    assert_eq!(next_from, None, "an empty read must not fabricate a cursor");
 }
 
 #[test]

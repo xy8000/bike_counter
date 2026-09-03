@@ -13,14 +13,13 @@ use super::parsing::{
     berlin_to_utc, csv_month_range, parse_host_and_port, parse_measurement_csv, parse_site_index,
 };
 use super::*;
-use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::configuration::configuration::value_objects::{
     DataProviderConfiguration, DataSourceConfiguration,
 };
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_port::{
-    DataProvider, MeasurementQuery, PersistentStateAccess, ProviderError, ProviderMessageSink,
+    DataProvider, MeasurementRecord, PersistentStateAccess, ProviderError, ProviderMessageSink,
 };
 use crate::core::domain::health::HealthStatus;
 use uuid::Uuid;
@@ -480,6 +479,33 @@ fn adapter_with(
     MuensterGithubAdapter::with_fetcher(&config, fetcher).unwrap()
 }
 
+/// Reads the whole source through [`DataProvider::get_measurements_source`],
+/// collecting the measurements served for one channel (external id).
+fn read_channel(
+    adapter: &MuensterGithubAdapter,
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    batch_size: usize,
+    channel_external_id: &str,
+) -> Vec<MeasurementRecord> {
+    let mut out = Vec::new();
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 50, "source read must terminate");
+        let page = adapter.get_measurements_source(from, batch_size).unwrap();
+        out.extend(
+            page.measurements
+                .into_iter()
+                .filter(|m| m.channel_external_id == channel_external_id)
+                .map(|m| m.record),
+        );
+        if !page.more {
+            break;
+        }
+    }
+    out
+}
+
 #[test]
 fn serves_stations_channels_and_measurements_from_a_fresh_archive() {
     // Build a real extracted fixture on disk and point state at it.
@@ -513,41 +539,13 @@ fn serves_stations_channels_and_measurements_from_a_fresh_archive() {
     let channels = adapter.get_all_channels().unwrap();
     assert_eq!(channels.len(), 2, "aggregate channel is skipped");
 
-    // Query all measurements for the second channel, paged in twos.
-    let channel = Channel {
-        id: crate::core::domain::channels::channel::value_objects::Id(Uuid::new_v4()),
-        counting_station_id:
-            crate::core::domain::channels::channel::value_objects::CountingStationId(Uuid::new_v4()),
-        name: crate::core::domain::channels::channel::value_objects::Name("Radfahrer".to_string()),
-        description: crate::core::domain::channels::channel::value_objects::Description(
-            String::new(),
-        ),
-        external_datasource_id: Some(
-            crate::core::domain::channels::channel::value_objects::ExternalDatasourceId(
-                "102031297".to_string(),
-            ),
-        ),
-    };
-    let first = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel.clone(), 2))
-        .unwrap();
-    assert_eq!(first.measurements.len(), 2);
-    assert_eq!(first.measurements[0].value, 1);
-    assert_eq!(first.measurements[1].value, 4);
-    assert!(first.batch_size_limit_reached);
-    let resume = first.last_measurement_datetime.unwrap();
-    assert_eq!(resume.to_rfc3339(), "2022-12-31T23:15:00+00:00");
-
-    let second = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel.clone(), 2).with_start(resume))
-        .unwrap();
-    assert_eq!(second.measurements.len(), 1, "from is exclusive");
-    assert!(!second.batch_size_limit_reached);
-    assert_eq!(second.measurements[0].value, 8);
-    assert_eq!(
-        second.measurements[0].timestamp.to_rfc3339(),
-        "2022-12-31T23:30:00+00:00"
-    );
+    // Read the whole source and collect the second channel's measurements,
+    // paged in twos: values are ascending 1, 4, 8.
+    let rows = read_channel(&adapter, None, 2, "102031297");
+    let values: Vec<i64> = rows.iter().map(|row| row.value).collect();
+    assert_eq!(values, vec![1, 4, 8]);
+    assert_eq!(rows[0].timestamp.to_rfc3339(), "2022-12-31T23:00:00+00:00");
+    assert_eq!(rows[1].timestamp.to_rfc3339(), "2022-12-31T23:15:00+00:00");
 
     // Tier 1: the fresh extracted dir is reused; no download happened.
     assert_eq!(*fetcher.get_calls.lock().unwrap(), 0);
@@ -595,58 +593,11 @@ fn get_measurements_windows_by_timeframe_and_advances_past_gaps() {
     let adapter = adapter_with(config, fetcher);
     adapter.attach_persistent_state(state);
 
-    let channel = Channel {
-        id: crate::core::domain::channels::channel::value_objects::Id(Uuid::new_v4()),
-        counting_station_id:
-            crate::core::domain::channels::channel::value_objects::CountingStationId(Uuid::new_v4()),
-        name: crate::core::domain::channels::channel::value_objects::Name("Radfahrer".to_string()),
-        description: crate::core::domain::channels::channel::value_objects::Description(
-            String::new(),
-        ),
-        external_datasource_id: Some(
-            crate::core::domain::channels::channel::value_objects::ExternalDatasourceId(
-                "102031297".to_string(),
-            ),
-        ),
-    };
-
-    // Page 1: first two days (48h window); more data exists beyond it.
-    let first = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel.clone(), 500))
-        .unwrap();
-    assert_eq!(first.measurements.len(), 2);
-    assert!(!first.batch_size_limit_reached);
-    assert!(first.timeframe_limit_reached);
-    assert_eq!(
-        first.last_measurement_datetime.unwrap().to_rfc3339(),
-        "2023-01-01T23:00:00+00:00"
-    );
-
-    // Page 2: the ~3-day gap yields an empty window that advances to its end.
-    let gap = first.last_measurement_datetime.unwrap();
-    let second = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel.clone(), 500).with_start(gap))
-        .unwrap();
-    assert!(second.measurements.is_empty());
-    assert!(second.timeframe_limit_reached);
-    assert_eq!(
-        second.last_measurement_datetime.unwrap().to_rfc3339(),
-        "2023-01-03T23:00:00+00:00"
-    );
-
-    // Page 3: the final day is imported and the channel is complete.
-    let resume = second.last_measurement_datetime.unwrap();
-    let third = adapter
-        .get_measurements(MeasurementQuery::for_channel(channel.clone(), 500).with_start(resume))
-        .unwrap();
-    assert_eq!(third.measurements.len(), 1);
-    assert_eq!(third.measurements[0].value, 9);
-    assert!(!third.batch_size_limit_reached);
-    assert!(!third.timeframe_limit_reached);
-    assert_eq!(
-        third.last_measurement_datetime.unwrap().to_rfc3339(),
-        "2023-01-04T23:00:00+00:00"
-    );
+    // Read the whole source: with a 48h window the scanner skips the ~3-day
+    // gap and still reaches the last day.
+    let rows = read_channel(&adapter, None, 500, "102031297");
+    let values: Vec<i64> = rows.iter().map(|row| row.value).collect();
+    assert_eq!(values, vec![1, 2, 9], "gap-skip must reach the last day");
 
     fs::remove_dir_all(&fixture).unwrap();
 }
@@ -695,35 +646,30 @@ fn get_measurements_does_not_advance_past_the_last_data() {
     let adapter = adapter_with(config, fetcher);
     adapter.attach_persistent_state(state);
 
-    let channel = Channel {
-        id: crate::core::domain::channels::channel::value_objects::Id(Uuid::new_v4()),
-        counting_station_id:
-            crate::core::domain::channels::channel::value_objects::CountingStationId(Uuid::new_v4()),
-        name: crate::core::domain::channels::channel::value_objects::Name("Radfahrer".to_string()),
-        description: crate::core::domain::channels::channel::value_objects::Description(
-            String::new(),
-        ),
-        external_datasource_id: Some(
-            crate::core::domain::channels::channel::value_objects::ExternalDatasourceId(
-                "102031297".to_string(),
-            ),
-        ),
-    };
-
     // The watermark sits on the last real sample (2023-01-05 00:00 Berlin =
     // 2023-01-04 23:00 UTC). Nothing follows it, so no cursor advance.
     let last_sample = chrono::DateTime::parse_from_rfc3339("2023-01-04T23:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let batch = adapter
-        .get_measurements(
-            MeasurementQuery::for_channel(channel.clone(), 500).with_start(last_sample),
-        )
-        .unwrap();
-    assert!(batch.measurements.is_empty());
-    assert_eq!(batch.last_measurement_datetime, None);
-    assert!(!batch.batch_size_limit_reached);
-    assert!(!batch.timeframe_limit_reached);
+    let mut saw_rows = 0;
+    let mut next_from = None;
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        assert!(calls < 20, "source read must terminate");
+        let page = adapter
+            .get_measurements_source(Some(last_sample), 500)
+            .unwrap();
+        saw_rows += page.measurements.len();
+        if page.next_from.is_some() {
+            next_from = page.next_from;
+        }
+        if !page.more {
+            break;
+        }
+    }
+    assert_eq!(saw_rows, 0);
+    assert_eq!(next_from, None, "an empty read must not fabricate a cursor");
 
     fs::remove_dir_all(&fixture).unwrap();
 }

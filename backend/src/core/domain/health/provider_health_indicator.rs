@@ -34,9 +34,8 @@ mod tests {
 
     use super::ProviderHealthIndicator;
     use crate::core::domain::data_source::provider_port::DataProvider;
-    use crate::core::domain::data_source::provider_port::MeasurementBatch;
-    use crate::core::domain::data_source::provider_port::MeasurementQuery;
     use crate::core::domain::data_source::provider_port::ProviderError;
+    use crate::core::domain::data_source::provider_port::SourceMeasurementBatch;
     use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
     struct MockProvider {
@@ -66,15 +65,15 @@ mod tests {
             Ok(vec![])
         }
 
-        fn get_measurements(
+        fn get_measurements_source(
             &self,
-            _query: MeasurementQuery,
-        ) -> Result<MeasurementBatch, ProviderError> {
-            Ok(MeasurementBatch {
+            _from: Option<chrono::DateTime<chrono::Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            Ok(SourceMeasurementBatch {
                 measurements: vec![],
-                last_measurement_datetime: None,
-                batch_size_limit_reached: false,
-                timeframe_limit_reached: false,
+                next_from: None,
+                more: false,
             })
         }
 

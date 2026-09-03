@@ -1135,6 +1135,7 @@ pub async fn get_bff_data_source_detail(
         channel_count: detail.channel_count,
         stations,
         last_updated_at: detail.data_source.last_updated_at,
+        imported_until: detail.data_source.imported_until,
         first_data_at: detail.first_data_at,
         last_data_at: detail.last_data_at,
         has_historical: detail.has_historical,

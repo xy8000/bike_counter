@@ -158,11 +158,12 @@ impl DataSourceUpdateService {
 
     /// Runs one full data-source update as a tracked job.
     fn execute(&self, now: DateTime<Utc>) {
+        let deadline = now + self.configuration.data_source_update_max_lifetime();
         let job = Job::new(
             Uuid::new_v4(),
             DATA_SOURCE_UPDATE_JOB_NAME.to_string(),
             DATA_SOURCE_UPDATE_JOB_TYPE.to_string(),
-            now + self.configuration.data_source_update_max_lifetime(),
+            deadline,
         );
         let job_id = job.id;
         let job_name = job.name.clone();
@@ -187,7 +188,7 @@ impl DataSourceUpdateService {
         println!("Data source update job {job_name} ({job_id}) started");
 
         // RUNNING -> FINISHED / FAILED.
-        match self.run_updates(job_id) {
+        match self.run_updates(job_id, deadline) {
             Ok(()) => {
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
                     eprintln!(
@@ -212,14 +213,17 @@ impl DataSourceUpdateService {
         }
     }
 
-    /// Updates every configured data source, in strict order per source:
-    /// counting stations, then channels, then measurements (paged from the
-    /// source's `imported_until`). After each persisted measurement batch the
-    /// running `processed_measurements` and `added_measurements` counts are
-    /// recorded in the job metadata. On success the data source's
-    /// `imported_until` is advanced to the last processed measurement timestamp
-    /// (incremental, no reprocessing).
-    fn run_updates(&self, job_id: Uuid) -> Result<(), DomainError> {
+    /// Updates every configured data source through its source-level read
+    /// ([`DataImportService::update_data_source`], which pages across the whole
+    /// source via [`DataProvider::get_measurements_source`]): the run stops
+    /// gracefully at the job `deadline` (`lifetime_until`) and the reported
+    /// safe watermark is checkpointed into `imported_until` after every batch —
+    /// so an interrupted (deadline/crash) run resumes instead of reprocessing.
+    ///
+    /// A deadline stop returns `Ok` (a partial but valid success): `execute`
+    /// then marks the job FINISHED and the next scheduled run resumes from the
+    /// checkpoint.
+    fn run_updates(&self, job_id: Uuid, deadline: DateTime<Utc>) -> Result<(), DomainError> {
         for runtime in &self.runtimes {
             let data_source_id = runtime.data_source_id;
             let from = self
@@ -241,9 +245,11 @@ impl DataSourceUpdateService {
                 eprintln!("Failed to record import run {run_id}: {error:?}");
             }
 
-            match self
-                .data_import_service
-                .update_data_source(runtime, from, |processed, added| {
+            let result = self.data_import_service.update_data_source(
+                runtime,
+                from,
+                Some(deadline),
+                |processed, added, watermark| {
                     self.job_repository.update_metadata(
                         job_id,
                         PROCESSED_MEASUREMENTS_KEY,
@@ -253,18 +259,38 @@ impl DataSourceUpdateService {
                         job_id,
                         ADDED_MEASUREMENTS_KEY,
                         json!(added),
-                    )
-                }) {
-                Ok(update) => {
-                    if let Some(last_timestamp) = update.last_measurement_timestamp {
+                    )?;
+                    // Checkpoint the safe watermark after every batch: an
+                    // interrupted run resumes from here.
+                    if let Some(watermark) = watermark {
                         self.data_source_repository
-                            .update_imported_until(data_source_id, last_timestamp)?;
+                            .update_imported_until(data_source_id, watermark)?;
                     }
-                    // Per-source success marker: survives a later source failing
-                    // (the whole job is FAILED then, but this source's data is
-                    // fresh).
-                    self.data_source_repository
-                        .update_last_updated(data_source_id, Utc::now())?;
+                    Ok(())
+                },
+            );
+
+            match result {
+                Ok(update) => {
+                    // Per-source success marker only when the whole source was
+                    // actually caught up (a deadline-stop is not "fresh data").
+                    if update.completed {
+                        self.data_source_repository
+                            .update_last_updated(data_source_id, Utc::now())?;
+                    }
+                    // Persist the run's earliest/latest measurement timestamps
+                    // as the source's measurement bounds (the data-source detail
+                    // page reads these instead of scanning the history). Done
+                    // even on a deadline-stop: the rows were inserted either way.
+                    if update.first_measurement_timestamp.is_some()
+                        || update.last_measurement_timestamp_bound.is_some()
+                    {
+                        self.data_source_repository.update_measurement_bounds(
+                            data_source_id,
+                            update.first_measurement_timestamp,
+                            update.last_measurement_timestamp_bound,
+                        )?;
+                    }
                     if let Err(error) = self.import_run_repository.finish(run_id, Utc::now()) {
                         eprintln!("Failed to finish import run {run_id}: {error:?}");
                     }
@@ -322,8 +348,8 @@ mod tests {
     use crate::core::domain::data_source::import_run::DataImportRun;
     use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
     use crate::core::domain::data_source::provider_port::{
-        ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch, MeasurementQuery,
-        MeasurementRecord, ProviderError,
+        ChannelRecord, CountingStationRecord, DataProvider, MeasurementRecord, ProviderError,
+        SourceMeasurement, SourceMeasurementBatch,
     };
     use crate::core::domain::data_source::repository_port::DataSourceRepository;
     use crate::core::domain::health::HealthStatus;
@@ -413,6 +439,11 @@ mod tests {
         jobs: Mutex<Vec<Job>>,
         fail_set_running: bool,
         fail_expire: bool,
+        fail_insert: bool,
+        fail_find_running: bool,
+        fail_find_last_finished: bool,
+        fail_set_finished: bool,
+        fail_set_failed: bool,
     }
 
     impl MockJobRepository {
@@ -421,6 +452,11 @@ mod tests {
                 jobs: Mutex::new(jobs),
                 fail_set_running: false,
                 fail_expire: false,
+                fail_insert: false,
+                fail_find_running: false,
+                fail_find_last_finished: false,
+                fail_set_finished: false,
+                fail_set_failed: false,
             }
         }
 
@@ -432,6 +468,26 @@ mod tests {
             self.fail_expire = fail;
         }
 
+        fn set_fail_insert(&mut self, fail: bool) {
+            self.fail_insert = fail;
+        }
+
+        fn set_fail_find_running(&mut self, fail: bool) {
+            self.fail_find_running = fail;
+        }
+
+        fn set_fail_find_last_finished(&mut self, fail: bool) {
+            self.fail_find_last_finished = fail;
+        }
+
+        fn set_fail_set_finished(&mut self, fail: bool) {
+            self.fail_set_finished = fail;
+        }
+
+        fn set_fail_set_failed(&mut self, fail: bool) {
+            self.fail_set_failed = fail;
+        }
+
         fn jobs(&self) -> Vec<Job> {
             self.jobs.lock().unwrap().clone()
         }
@@ -439,6 +495,9 @@ mod tests {
 
     impl JobRepository for MockJobRepository {
         fn insert(&self, job: Job) -> Result<(), DomainError> {
+            if self.fail_insert {
+                return Err(DomainError::Database("insert failed".to_string()));
+            }
             if job.lifetime_until <= Utc::now() {
                 return Err(DomainError::InvalidQuery(
                     "a job requires a lifetime_until deadline in the future".to_string(),
@@ -468,6 +527,9 @@ mod tests {
         }
 
         fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            if self.fail_set_finished {
+                return Err(DomainError::Database("set_finished failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             let job = jobs
                 .iter_mut()
@@ -484,6 +546,9 @@ mod tests {
             finished_at: DateTime<Utc>,
             message: &str,
         ) -> Result<(), DomainError> {
+            if self.fail_set_failed {
+                return Err(DomainError::Database("set_failed failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             let job = jobs
                 .iter_mut()
@@ -529,6 +594,9 @@ mod tests {
         }
 
         fn find_running_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+            if self.fail_find_running {
+                return Err(DomainError::Database("find running failed".to_string()));
+            }
             Ok(self
                 .jobs
                 .lock()
@@ -539,6 +607,9 @@ mod tests {
         }
 
         fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+            if self.fail_find_last_finished {
+                return Err(DomainError::Database("find last failed".to_string()));
+            }
             Ok(self
                 .jobs
                 .lock()
@@ -579,6 +650,9 @@ mod tests {
     struct MockDataSourceRepository {
         data_sources: Mutex<Vec<DataSource>>,
         fail_find: bool,
+        fail_update_imported_until: bool,
+        fail_update_last_updated: bool,
+        fail_update_measurement_bounds: bool,
     }
 
     impl MockDataSourceRepository {
@@ -586,11 +660,26 @@ mod tests {
             Self {
                 data_sources: Mutex::new(data_sources),
                 fail_find: false,
+                fail_update_imported_until: false,
+                fail_update_last_updated: false,
+                fail_update_measurement_bounds: false,
             }
         }
 
         fn set_fail_find(&mut self, fail: bool) {
             self.fail_find = fail;
+        }
+
+        fn set_fail_update_imported_until(&mut self, fail: bool) {
+            self.fail_update_imported_until = fail;
+        }
+
+        fn set_fail_update_last_updated(&mut self, fail: bool) {
+            self.fail_update_last_updated = fail;
+        }
+
+        fn set_fail_update_measurement_bounds(&mut self, fail: bool) {
+            self.fail_update_measurement_bounds = fail;
         }
     }
 
@@ -629,6 +718,11 @@ mod tests {
             id: DataSourceId,
             timestamp: DateTime<Utc>,
         ) -> Result<(), DomainError> {
+            if self.fail_update_imported_until {
+                return Err(DomainError::Database(
+                    "update imported_until failed".to_string(),
+                ));
+            }
             if let Some(ds) = self
                 .data_sources
                 .lock()
@@ -659,6 +753,11 @@ mod tests {
             id: DataSourceId,
             timestamp: DateTime<Utc>,
         ) -> Result<(), DomainError> {
+            if self.fail_update_last_updated {
+                return Err(DomainError::Database(
+                    "update last_updated failed".to_string(),
+                ));
+            }
             if let Some(ds) = self
                 .data_sources
                 .lock()
@@ -667,6 +766,40 @@ mod tests {
                 .find(|ds| ds.id == id)
             {
                 ds.last_updated_at = Some(timestamp);
+            }
+            Ok(())
+        }
+
+        fn update_measurement_bounds(
+            &self,
+            id: DataSourceId,
+            first: Option<DateTime<Utc>>,
+            last: Option<DateTime<Utc>>,
+        ) -> Result<(), DomainError> {
+            if self.fail_update_measurement_bounds {
+                return Err(DomainError::Database(
+                    "update measurement bounds failed".to_string(),
+                ));
+            }
+            if let Some(ds) = self
+                .data_sources
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|ds| ds.id == id)
+            {
+                if let Some(first) = first {
+                    ds.first_measurement_at = Some(
+                        ds.first_measurement_at
+                            .map_or(first, |existing| existing.min(first)),
+                    );
+                }
+                if let Some(last) = last {
+                    ds.last_measurement_at = Some(
+                        ds.last_measurement_at
+                            .map_or(last, |existing| existing.max(last)),
+                    );
+                }
             }
             Ok(())
         }
@@ -899,11 +1032,11 @@ mod tests {
         }
     }
 
-    /// A provider that serves fixed external-id records and a single page queue.
+    /// A provider that serves fixed external-id records and source-level pages.
     struct ScriptedProvider {
         stations: Vec<CountingStationRecord>,
         channels: Vec<ChannelRecord>,
-        pages: Mutex<VecDeque<MeasurementBatch>>,
+        batches: Mutex<VecDeque<SourceMeasurementBatch>>,
     }
 
     impl DataProvider for ScriptedProvider {
@@ -919,11 +1052,12 @@ mod tests {
             Ok(self.channels.clone())
         }
 
-        fn get_measurements(
+        fn get_measurements_source(
             &self,
-            _query: MeasurementQuery,
-        ) -> Result<MeasurementBatch, ProviderError> {
-            self.pages
+            _from: Option<DateTime<Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            self.batches
                 .lock()
                 .unwrap()
                 .pop_front()
@@ -990,15 +1124,38 @@ mod tests {
     #[derive(Default)]
     struct MemoryImportRunRepository {
         runs: Mutex<Vec<DataImportRun>>,
+        fail_insert: Mutex<bool>,
+        fail_finish: Mutex<bool>,
+        fail_fail: Mutex<bool>,
+    }
+
+    impl MemoryImportRunRepository {
+        fn set_fail_insert(&self, fail: bool) {
+            *self.fail_insert.lock().unwrap() = fail;
+        }
+
+        fn set_fail_finish(&self, fail: bool) {
+            *self.fail_finish.lock().unwrap() = fail;
+        }
+
+        fn set_fail_fail(&self, fail: bool) {
+            *self.fail_fail.lock().unwrap() = fail;
+        }
     }
 
     impl DataImportRunRepository for MemoryImportRunRepository {
         fn insert(&self, run: &DataImportRun) -> Result<(), DomainError> {
+            if *self.fail_insert.lock().unwrap() {
+                return Err(DomainError::Database("insert run failed".to_string()));
+            }
             self.runs.lock().unwrap().push(run.clone());
             Ok(())
         }
 
         fn finish(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            if *self.fail_finish.lock().unwrap() {
+                return Err(DomainError::Database("finish run failed".to_string()));
+            }
             Ok(())
         }
 
@@ -1008,6 +1165,9 @@ mod tests {
             _finished_at: DateTime<Utc>,
             _message: &str,
         ) -> Result<(), DomainError> {
+            if *self.fail_fail.lock().unwrap() {
+                return Err(DomainError::Database("fail run failed".to_string()));
+            }
             Ok(())
         }
 
@@ -1026,10 +1186,11 @@ mod tests {
         }
     }
 
-    /// A service with no configured data sources (empty runtimes).
-    fn service_with(
+    /// A service wired to the given (fault-injectable) import-run repository.
+    fn service_with_import_runs(
         job_repo: Arc<MockJobRepository>,
         data_source_repo: Arc<MockDataSourceRepository>,
+        import_runs: Arc<MemoryImportRunRepository>,
         runtimes: Vec<DataSourceRuntime>,
     ) -> DataSourceUpdateService {
         let data_repos = Arc::new(RecordingDataRepositories::new());
@@ -1045,9 +1206,23 @@ mod tests {
         DataSourceUpdateService::new(
             job_repo,
             data_source_repo,
-            Arc::new(MemoryImportRunRepository::default()),
+            import_runs,
             data_import,
             Arc::new(configuration()),
+            runtimes,
+        )
+    }
+
+    /// A service with a default (never-failing) import-run repository.
+    fn service_with(
+        job_repo: Arc<MockJobRepository>,
+        data_source_repo: Arc<MockDataSourceRepository>,
+        runtimes: Vec<DataSourceRuntime>,
+    ) -> DataSourceUpdateService {
+        service_with_import_runs(
+            job_repo,
+            data_source_repo,
+            Arc::new(MemoryImportRunRepository::default()),
             runtimes,
         )
     }
@@ -1211,7 +1386,7 @@ mod tests {
         let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
             stations: Vec::new(),
             channels: Vec::new(),
-            pages: Mutex::new(VecDeque::new()),
+            batches: Mutex::new(VecDeque::new()),
         });
         let service = service_with(job_repo.clone(), data_source_repo, vec![runtime(provider)]);
 
@@ -1233,11 +1408,13 @@ mod tests {
         let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
             stations: vec![station_record("station-1")],
             channels: vec![channel_record("channel-1", "station-1")],
-            pages: Mutex::new(VecDeque::from([MeasurementBatch {
-                measurements: vec![measurement_record(1, t0)],
-                last_measurement_datetime: Some(t0),
-                batch_size_limit_reached: false,
-                timeframe_limit_reached: false,
+            batches: Mutex::new(VecDeque::from([SourceMeasurementBatch {
+                measurements: vec![SourceMeasurement {
+                    channel_external_id: "channel-1".to_string(),
+                    record: measurement_record(1, t0),
+                }],
+                next_from: Some(t0),
+                more: false,
             }])),
         });
 
@@ -1272,5 +1449,323 @@ mod tests {
             stored.last_updated_at.is_some(),
             "a successful source update stamps last_updated_at (drives the header)"
         );
+    }
+
+    #[test]
+    fn run_updates_persists_measurement_bounds() {
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t1 = DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            batches: Mutex::new(VecDeque::from([SourceMeasurementBatch {
+                measurements: vec![
+                    SourceMeasurement {
+                        channel_external_id: "channel-1".to_string(),
+                        record: measurement_record(1, t0),
+                    },
+                    SourceMeasurement {
+                        channel_external_id: "channel-1".to_string(),
+                        record: measurement_record(1, t1),
+                    },
+                ],
+                next_from: Some(t1),
+                more: false,
+            }])),
+        });
+
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo.clone(),
+            vec![runtime(provider)],
+        );
+
+        service.run_if_due();
+
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+
+        let stored = data_source_repo
+            .find_by_id(DataSourceId(DataSource::id_from_name("Münster")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored.first_measurement_at,
+            Some(t0),
+            "the run's earliest measurement is persisted as the lower bound"
+        );
+        assert_eq!(
+            stored.last_measurement_at,
+            Some(t1),
+            "the run's latest measurement is persisted as the upper bound"
+        );
+    }
+
+    #[test]
+    fn run_updates_propagates_when_measurement_bounds_update_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let mut data_source_repo = MockDataSourceRepository::new(vec![data_source()]);
+        data_source_repo.set_fail_update_measurement_bounds(true);
+        let data_source_repo = Arc::new(data_source_repo);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Failed);
+        assert!(jobs[0].failure_message.is_some());
+    }
+
+    /// A runtime whose provider serves one measurement for channel-1 at `t0`
+    /// with a real watermark, so `run_updates` tries to checkpoint it.
+    fn measured_runtime(t0: DateTime<Utc>) -> DataSourceRuntime {
+        let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            batches: Mutex::new(VecDeque::from([SourceMeasurementBatch {
+                measurements: vec![SourceMeasurement {
+                    channel_external_id: "channel-1".to_string(),
+                    record: measurement_record(1, t0),
+                }],
+                next_from: Some(t0),
+                more: false,
+            }])),
+        });
+        runtime(provider)
+    }
+
+    #[test]
+    fn run_if_due_logs_and_returns_when_running_check_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_find_running(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        // The running-check error is logged and no run starts.
+        assert!(job_repo.jobs().is_empty());
+    }
+
+    #[test]
+    fn run_if_due_logs_when_last_finished_check_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_find_last_finished(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        // The last-finished error is logged and no run starts.
+        assert!(job_repo.jobs().is_empty());
+    }
+
+    #[test]
+    fn execute_logs_when_job_insert_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_insert(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        // The insert failure is logged; no job was recorded.
+        assert!(job_repo.jobs().is_empty());
+    }
+
+    #[test]
+    fn execute_logs_when_failed_marking_fails_after_start_failure() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_set_running(true);
+        job_repo.set_fail_set_failed(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        // The job stays PENDING because both the start and the failed-marking fail.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Pending);
+    }
+
+    #[test]
+    fn execute_logs_when_finish_marking_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_set_finished(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        // run_updates succeeds but the FINISHED marking fails: the job stays RUNNING.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Running);
+    }
+
+    #[test]
+    fn execute_logs_when_failed_marking_fails_after_update_failure() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_set_failed(true);
+        let job_repo = Arc::new(job_repo);
+        let mut data_source_repo = MockDataSourceRepository::new(vec![data_source()]);
+        data_source_repo.set_fail_find(true);
+        let data_source_repo = Arc::new(data_source_repo);
+        let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
+            stations: Vec::new(),
+            channels: Vec::new(),
+            batches: Mutex::new(VecDeque::new()),
+        });
+        let service = service_with(job_repo.clone(), data_source_repo, vec![runtime(provider)]);
+
+        service.run_if_due();
+
+        // The update failed and the FAILED marking itself failed: the job stays
+        // RUNNING (the error was only logged).
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Running);
+    }
+
+    #[test]
+    fn run_updates_logs_when_import_run_insert_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        import_runs.set_fail_insert(true);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with_import_runs(
+            job_repo.clone(),
+            data_source_repo,
+            import_runs,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // The run-record insert failure is non-fatal: the source still updates.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+    }
+
+    #[test]
+    fn run_updates_propagates_when_watermark_checkpoint_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let mut data_source_repo = MockDataSourceRepository::new(vec![data_source()]);
+        data_source_repo.set_fail_update_imported_until(true);
+        let data_source_repo = Arc::new(data_source_repo);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // The per-batch checkpoint error aborts the source update -> RUNNING -> FAILED.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Failed);
+        assert!(jobs[0].failure_message.is_some());
+    }
+
+    #[test]
+    fn run_updates_propagates_when_last_updated_checkpoint_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let mut data_source_repo = MockDataSourceRepository::new(vec![data_source()]);
+        data_source_repo.set_fail_update_last_updated(true);
+        let data_source_repo = Arc::new(data_source_repo);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Failed);
+    }
+
+    #[test]
+    fn run_updates_logs_when_import_run_finish_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        import_runs.set_fail_finish(true);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with_import_runs(
+            job_repo.clone(),
+            data_source_repo,
+            import_runs,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // The finish-failure is non-fatal (only logged).
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+    }
+
+    #[test]
+    fn run_updates_logs_when_run_failure_marking_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let mut data_source_repo = MockDataSourceRepository::new(vec![data_source()]);
+        data_source_repo.set_fail_update_imported_until(true);
+        let data_source_repo = Arc::new(data_source_repo);
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        import_runs.set_fail_fail(true);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with_import_runs(
+            job_repo.clone(),
+            data_source_repo,
+            import_runs,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // The update failed and even recording the run failure failed: the job
+        // is still marked FAILED (the bookkeeping error is only logged).
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Failed);
     }
 }

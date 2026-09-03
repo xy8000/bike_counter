@@ -43,6 +43,9 @@ export interface DataSourceDetail {
   /// The positioned counting stations of the data source (map markers).
   stations: DataSourceMapStation[]
   last_updated_at: string | null
+  /// The incremental import watermark: everything on/before this timestamp has
+  /// been imported. `null` means "not yet imported" (full re-import).
+  imported_until: string | null
   /// Earliest measurement timestamp across the source's channels.
   first_data_at: string | null
   /// Latest measurement timestamp across the source's channels.

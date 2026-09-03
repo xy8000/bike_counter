@@ -175,8 +175,8 @@ mod tests {
     use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
     use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
     use crate::core::domain::data_source::provider_port::{
-        DataProvider, MeasurementBatch, MeasurementQuery, PersistentStateAccess, ProviderError,
-        ProviderMessageSink, ProviderMessageSinkFactory,
+        DataProvider, PersistentStateAccess, ProviderError, ProviderMessageSink,
+        ProviderMessageSinkFactory, SourceMeasurementBatch,
     };
     use crate::core::domain::health::HealthStatus;
 
@@ -397,15 +397,15 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn get_measurements(
+        fn get_measurements_source(
             &self,
-            _query: MeasurementQuery,
-        ) -> Result<MeasurementBatch, ProviderError> {
-            Ok(MeasurementBatch {
+            _from: Option<DateTime<Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            Ok(SourceMeasurementBatch {
                 measurements: Vec::new(),
-                last_measurement_datetime: None,
-                batch_size_limit_reached: false,
-                timeframe_limit_reached: false,
+                next_from: None,
+                more: false,
             })
         }
 

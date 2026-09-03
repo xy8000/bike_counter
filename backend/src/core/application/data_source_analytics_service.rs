@@ -101,21 +101,13 @@ impl DataSourceAnalyticsService {
             .map(|channel_id| measurement_vo::ChannelId(channel_id.0))
             .collect();
 
-        // First/last measurement derived from the per-channel first/last lookups
-        // (each is an index seek that stops at one row per channel, so large
-        // sources such as Hamburg are cheap — never a full-history scan).
-        let first_data_at = self
-            .measurement_repository
-            .earliest_by_channel(&channel_ids)?
-            .into_iter()
-            .map(|earliest| earliest.timestamp)
-            .min();
-        let last_data_at = self
-            .measurement_repository
-            .latest_by_channel(&channel_ids)?
-            .into_iter()
-            .map(|latest| latest.timestamp)
-            .max();
+        // First/last data come from the persisted per-source measurement bounds
+        // (maintained by the import flow), not from scanning the source's whole
+        // measurement history — those `DISTINCT ON` scans read every stored row
+        // of large sources such as Hamburg (20.9M rows) and made the detail
+        // page take seconds.
+        let first_data_at = data_source.first_measurement_at;
+        let last_data_at = data_source.last_measurement_at;
 
         let timezone = stations
             .first()
@@ -770,7 +762,12 @@ mod tests {
     #[test]
     fn detail_derives_first_last_and_real_time_badge() {
         let data_sources = MemoryDataSourceRepository::default();
-        let ds = source(1, "Münster");
+        // First/last data come from the persisted per-source measurement bounds
+        // (maintained by the import flow), not from scanning the history.
+        let now = Utc::now();
+        let mut ds = source(1, "Münster");
+        ds.first_measurement_at = Some(now - Duration::days(600));
+        ds.last_measurement_at = Some(now - Duration::hours(1));
         let source_id = ds.id.0;
         data_sources.upsert(ds.clone()).unwrap();
 
@@ -778,21 +775,11 @@ mod tests {
         stations.save(station(source_id, 0x10, "A")).unwrap();
         let channels = MemoryChannelRepository::default();
         channels.set_station_source(Uuid::from_u128(0x10), source_id);
-        let channel_id = Uuid::from_u128(0x20);
         channels.save(channel(0x20, Uuid::from_u128(0x10))).unwrap();
 
-        let now = Utc::now();
-        let measurements = MemoryMeasurementRepository::default();
-        measurements.first.lock().unwrap().push(ChannelFirst {
-            channel_id,
-            timestamp: now - Duration::days(600),
-        });
-        measurements.latest.lock().unwrap().push(ChannelLatest {
-            channel_id,
-            timestamp: now - Duration::hours(1),
-        });
         // Every elapsed month of the current year is present in the store.
         let elapsed = now.with_timezone(&chrono_tz::Europe::Berlin).month() as usize;
+        let measurements = MemoryMeasurementRepository::default();
         measurements
             .windows_present
             .lock()
@@ -811,11 +798,11 @@ mod tests {
         let detail = service.detail(ds.id).unwrap();
         assert_eq!(detail.station_count, 1);
         assert_eq!(detail.channel_count, 1);
+        assert_eq!(detail.first_data_at, Some(now - Duration::days(600)));
+        assert_eq!(detail.last_data_at, Some(now - Duration::hours(1)));
         assert!(detail.has_historical);
         assert!(detail.has_real_time);
         assert!(detail.has_full_current_year);
-        assert!(detail.first_data_at.is_some());
-        assert!(detail.last_data_at.is_some());
         assert!(detail.last_import.is_none());
     }
 
@@ -928,5 +915,25 @@ mod tests {
 
         let detail = service.detail(ds.id).unwrap();
         assert!(!detail.has_full_current_year);
+    }
+
+    #[test]
+    fn default_update_measurement_bounds_is_a_no_op() {
+        // `MemoryDataSourceRepository` does not override `update_measurement_bounds`,
+        // so this exercises the trait's default no-op (the Postgres adapter and
+        // the update-service test double provide the real behaviour).
+        let data_sources = MemoryDataSourceRepository::default();
+        let ds = source(1, "Münster");
+        data_sources.upsert(ds.clone()).unwrap();
+
+        assert!(
+            data_sources
+                .update_measurement_bounds(ds.id, Some(Utc::now()), None)
+                .is_ok()
+        );
+        // The default leaves the stored data source untouched.
+        let stored = data_sources.find_by_id(ds.id).unwrap().unwrap();
+        assert_eq!(stored.first_measurement_at, None);
+        assert_eq!(stored.last_measurement_at, None);
     }
 }

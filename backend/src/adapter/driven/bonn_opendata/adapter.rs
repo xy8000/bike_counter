@@ -6,12 +6,15 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
+
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_port::{
-    ChannelRecord, CountingStationRecord, DataProvider, MeasurementBatch, MeasurementQuery,
-    ProviderError, ProviderMessageSink,
+    ChannelRecord, CountingStationRecord, DataProvider, MeasurementRecord, ProviderError,
+    ProviderMessageSink, SourceMeasurement, SourceMeasurementBatch,
 };
 use crate::core::domain::health::HealthStatus;
 
@@ -40,6 +43,8 @@ pub struct BonnOpendataAdapter {
     cache: Mutex<Option<CachedData>>,
     /// Serializes cache refresh across threads.
     refresh_lock: Mutex<()>,
+    /// Whole-source (channel-interleaved) reader state for the current run.
+    scanner: Mutex<Option<SourceScanner>>,
 }
 
 #[derive(Clone)]
@@ -122,6 +127,7 @@ impl BonnOpendataAdapter {
             messages: Mutex::new(None),
             cache: Mutex::new(None),
             refresh_lock: Mutex::new(()),
+            scanner: Mutex::new(None),
         })
     }
 
@@ -249,6 +255,43 @@ impl BonnOpendataAdapter {
         });
         Ok(index)
     }
+
+    /// Serves the next page of measurements of one channel starting strictly
+    /// after `from`, tagged with the channel's external id. The whole index is
+    /// in memory and pre-sorted, so paging is row-count based only.
+    fn page_channel(
+        &self,
+        external_id: &str,
+        from: Option<DateTime<Utc>>,
+        budget: usize,
+    ) -> Result<ChannelPage, ProviderError> {
+        let index = self.ensure_index()?;
+        let records = index.rows.get(external_id).cloned().unwrap_or_default();
+
+        let mut filtered: Vec<MeasurementRecord> = records
+            .into_iter()
+            .filter(|record| from.is_none_or(|f| record.timestamp > f))
+            .collect();
+
+        // Rows are already sorted ascending (see `build_index`).
+        let batch_size_limit_reached = filtered.len() > budget;
+        filtered.truncate(budget);
+        let last_real = filtered.last().map(|record| record.timestamp);
+        let measurements = filtered
+            .into_iter()
+            .map(|record| SourceMeasurement {
+                channel_external_id: external_id.to_string(),
+                record,
+            })
+            .collect();
+
+        Ok(ChannelPage {
+            measurements,
+            last_real,
+            next_from: last_real,
+            done: !batch_size_limit_reached,
+        })
+    }
 }
 
 impl DataProvider for BonnOpendataAdapter {
@@ -275,42 +318,41 @@ impl DataProvider for BonnOpendataAdapter {
         Ok(self.ensure_index()?.channels.clone())
     }
 
-    fn get_measurements(&self, query: MeasurementQuery) -> Result<MeasurementBatch, ProviderError> {
+    fn get_measurements_source(
+        &self,
+        from: Option<DateTime<Utc>>,
+        max_batch_size: usize,
+    ) -> Result<SourceMeasurementBatch, ProviderError> {
         let index = self.ensure_index()?;
-        let channel_external_id = query
-            .channel
-            .external_datasource_id
-            .as_ref()
-            .map(|external| external.0.clone())
-            .ok_or_else(|| ProviderError::InvalidData("channel has no external id".to_string()))?;
-
-        let records = index
-            .rows
-            .get(&channel_external_id)
-            .cloned()
-            .unwrap_or_default();
-
-        let mut filtered: Vec<_> = records
-            .into_iter()
-            .filter(|record| {
-                query.from.is_none_or(|from| record.timestamp > from)
-                    && query.to.is_none_or(|to| record.timestamp <= to)
-            })
+        let ids: Vec<String> = index
+            .channels
+            .iter()
+            .map(|channel| channel.external_id.clone())
             .collect();
 
-        // Rows are already sorted ascending (see `build_index`).
-        let batch_size_limit_reached = filtered.len() > query.max_batch_size;
-        filtered.truncate(query.max_batch_size);
-        let last_measurement_datetime = filtered.last().map(|record| record.timestamp);
+        let pick = {
+            let mut guard = self.scanner.lock().unwrap();
+            let needs_seed = match guard.as_ref() {
+                Some(scanner) => !scanner.matches(from, &ids),
+                None => true,
+            };
+            if needs_seed {
+                *guard = Some(SourceScanner::new(from, &ids));
+            }
+            guard.as_mut().expect("scanner seeded").next_channel()
+        };
 
-        Ok(MeasurementBatch {
-            measurements: filtered,
-            last_measurement_datetime,
-            batch_size_limit_reached,
-            // No time window for Bonn: the whole index is served; paging is
-            // row-count based only.
-            timeframe_limit_reached: false,
-        })
+        let Some((id, next)) = pick else {
+            return Ok(SourceMeasurementBatch {
+                measurements: vec![],
+                next_from: None,
+                more: false,
+            });
+        };
+
+        let page = self.page_channel(&id, next, max_batch_size)?;
+        let mut guard = self.scanner.lock().unwrap();
+        guard.as_mut().expect("scanner seeded").record(&id, page)
     }
 
     fn max_measurement_batch_size(&self) -> usize {
