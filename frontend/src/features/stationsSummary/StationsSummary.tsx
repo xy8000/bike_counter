@@ -15,14 +15,13 @@ import { HourRadar, type HourRadarSeries } from '../stationDetail/HourRadar'
 import { KeyFacts, computeKeyFacts } from '../stationDetail/KeyFacts'
 import { MonthlyBarChart } from '../stationDetail/MonthlyBarChart'
 import { SharePie, type ShareSlice } from '../stationDetail/SharePie'
-import { TimeSeriesLineChart, type LineSeries } from '../stationDetail/TimeSeriesLineChart'
+import { TimeSeriesBarChart, type BarSeries } from '../stationDetail/TimeSeriesBarChart'
 import type { FixedTimeframe } from '../stationDetail/types'
 import {
   TIMEFRAMES,
   alignSeries,
   customTimeframeConfig,
   dateFromInput,
-  timeframeDomain,
   timeframeSeries,
   type TimeframeConfig,
 } from '../stationDetail/timeframes'
@@ -46,22 +45,24 @@ import {
   PageShellSkeleton,
 } from '../stationDetail/Skeletons'
 
-/// Per-station series for one timeframe: one line per station, plus the previous
-/// period per station when the compare checkbox is on (the summary's
-/// "Detailed stats" distinguish stations, not channels).
+/// Per-station series for one timeframe: one series per station (stacked into
+/// the current-period bar), plus the previous period per station when the
+/// compare checkbox is on (drawn as a separate side-by-side bar). The summary's
+/// "Detailed stats" distinguish stations, not channels.
 function stationSeries(
   period: SummaryPeriodGraphs,
   cfg: TimeframeConfig,
   stations: SummaryStation[],
   compare: boolean,
-): LineSeries[] {
+): BarSeries[] {
   const nameOf = (id: string) => stations.find((station) => station.id === id)?.name ?? id
-  const series: LineSeries[] = []
+  const series: BarSeries[] = []
   for (const station of period.per_station) {
     if (station.current.length > 0) {
       series.push({
         key: `${station.station_id}_current`,
         label: `${nameOf(station.station_id)} (${cfg.currentLabel})`,
+        stackId: 'current',
         data: station.current,
       })
     }
@@ -69,6 +70,7 @@ function stationSeries(
       series.push({
         key: `${station.station_id}_previous`,
         label: `${nameOf(station.station_id)} (${cfg.previousLabel})`,
+        stackId: 'previous',
         data: station.previous,
       })
     }
@@ -349,7 +351,6 @@ function SummaryContent({
   const period = graphs
   const firstBucket = period?.current[0] ?? period?.previous[0]
   const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : NaN
-  const domain = timeframeDomain(cfg, anchor)
 
   const mainSeries = period
     ? alignSeries(timeframeSeries(period, cfg, comparePrevious), anchor, cfg.periodStart)
@@ -416,7 +417,7 @@ function SummaryContent({
       </section>
 
       {/* Detailed statistics: shared timeframe selector driving the aggregate
-          line chart and the weekday radar. */}
+          bar chart and the weekday radar. */}
       <section className="mt-8">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Detailed statistics</h2>
@@ -447,11 +448,10 @@ function SummaryContent({
                 metric-box theme. */}
             <KeyFacts facts={computeKeyFacts(period)} />
             <ChartCard title={cfg.title} subtitle={cfg.subtitle}>
-              <TimeSeriesLineChart
+              <TimeSeriesBarChart
                 series={mainSeries}
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
-                xDomain={domain}
                 className="aspect-[20/15.3] sm:aspect-[20/7.65]"
               />
             </ChartCard>
@@ -484,11 +484,10 @@ function SummaryContent({
         {period ? (
           <div className="grid grid-cols-1 gap-4">
             <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
-              <TimeSeriesLineChart
+              <TimeSeriesBarChart
                 series={perStationSeries}
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
-                xDomain={domain}
                 className="aspect-[21/18] sm:aspect-[21/9]"
               />
             </ChartCard>

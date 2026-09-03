@@ -156,10 +156,10 @@ test('the per-channel nerd-stats charts show the info note for a station with mo
   await page.goto(`/stations/${GASSELSTIEGE_ID}`, { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
 
-  // The per-channel line chart is replaced by the info note and draws nothing.
-  const lineCard = page.locator('[data-slot="card"]').filter({ hasText: 'This week by channel' })
-  await expect(lineCard.getByText(/too many data-streams to render/)).toBeVisible()
-  await expect(lineCard.locator('.recharts-wrapper')).toHaveCount(0)
+  // The per-channel bar chart is replaced by the info note and draws nothing.
+  const barCard = page.locator('[data-slot="card"]').filter({ hasText: 'This week by channel' })
+  await expect(barCard.getByText(/too many data-streams to render/)).toBeVisible()
+  await expect(barCard.locator('.recharts-wrapper')).toHaveCount(0)
 
   // The per-channel weekday radar and the share pie are guarded the same way.
   const weekdayCard = page.locator('[data-slot="card"]').filter({ hasText: 'Weekdays by channel' })

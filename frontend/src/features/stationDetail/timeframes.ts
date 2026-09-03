@@ -5,7 +5,7 @@
 
 import { formatFullDate, formatFullDateTime, LOCALE } from '../../lib/format'
 import type { FixedTimeframe, TimeBucket, Timeframe } from './types'
-import type { LineSeries } from './TimeSeriesLineChart'
+import type { BarSeries } from './TimeSeriesBarChart'
 
 type TimeUnit = 'hour' | 'day' | 'month'
 
@@ -71,11 +71,7 @@ export interface TimeframeConfig {
   axis: (time: number) => string
   tooltip: (time: number) => string
   periodStart: (time: number) => number
-  domainWidthMs?: number
 }
-
-const HOUR_MS = 3_600_000
-const DAY_MS = 24 * HOUR_MS
 
 export const TIMEFRAMES: Record<FixedTimeframe, TimeframeConfig> = {
   day: {
@@ -91,7 +87,6 @@ export const TIMEFRAMES: Record<FixedTimeframe, TimeframeConfig> = {
     axis: timeAxis('hour'),
     tooltip: formatFullDateTime,
     periodStart: dayStartOf,
-    domainWidthMs: DAY_MS,
   },
   week: {
     key: 'week',
@@ -106,7 +101,6 @@ export const TIMEFRAMES: Record<FixedTimeframe, TimeframeConfig> = {
     axis: weekdayAxis,
     tooltip: formatFullDateTime,
     periodStart: weekStartOf,
-    domainWidthMs: 7 * DAY_MS,
   },
   last_30_days: {
     key: 'last_30_days',
@@ -121,7 +115,6 @@ export const TIMEFRAMES: Record<FixedTimeframe, TimeframeConfig> = {
     axis: timeAxis('day'),
     tooltip: formatFullDate,
     periodStart: dayStartOf,
-    domainWidthMs: 30 * DAY_MS,
   },
   year: {
     key: 'year',
@@ -141,31 +134,15 @@ export const TIMEFRAMES: Record<FixedTimeframe, TimeframeConfig> = {
 
 export const TIMEFRAME_ORDER: FixedTimeframe[] = ['day', 'week', 'last_30_days', 'year']
 
-/// The x-axis domain of the selected timeframe, anchored on the current period's
-/// start. The year timeframe runs to the actual next local Jan 1; the others use
-/// a fixed width (DST days are a couple of minutes short/long, which is fine for
-/// display).
-export function timeframeDomain(
-  cfg: TimeframeConfig,
-  anchor: number,
-): [number, number] | undefined {
-  if (!Number.isFinite(anchor)) return undefined
-  if (cfg.key === 'year') {
-    const yearEnd = new Date(new Date(anchor).getFullYear() + 1, 0, 1).getTime()
-    return [anchor, yearEnd]
-  }
-  return [anchor, anchor + (cfg.domainWidthMs ?? 0)]
-}
-
 /// Shift every bucket to the same "position in period" axis so the current and
 /// previous periods overlap: each series' own period start (from its first
 /// bucket) is aligned onto the `anchor`. Returns the series unchanged when no
 /// anchor is available (no data).
 export function alignSeries(
-  series: LineSeries[],
+  series: BarSeries[],
   anchor: number,
   periodStart: (time: number) => number,
-): LineSeries[] {
+): BarSeries[] {
   if (!Number.isFinite(anchor)) return series
   return series.map((item) => {
     const first = item.data[0]
@@ -189,13 +166,23 @@ export function timeframeSeries(
   period: { current: TimeBucket[]; previous: TimeBucket[] },
   cfg: TimeframeConfig,
   compare: boolean,
-): LineSeries[] {
-  const series: LineSeries[] = []
+): BarSeries[] {
+  const series: BarSeries[] = []
   if (period.current.length > 0) {
-    series.push({ key: 'current', label: cfg.currentLabel, data: period.current })
+    series.push({
+      key: 'current',
+      label: cfg.currentLabel,
+      stackId: 'current',
+      data: period.current,
+    })
   }
   if (compare && period.previous.length > 0) {
-    series.push({ key: 'previous', label: cfg.previousLabel, data: period.previous })
+    series.push({
+      key: 'previous',
+      label: cfg.previousLabel,
+      stackId: 'previous',
+      data: period.previous,
+    })
   }
   return series
 }
@@ -280,7 +267,6 @@ export function customTimeframeConfig(from: Date, to: Date): TimeframeConfig {
           : weekAxis
   const tooltip =
     resolution === '15m' || resolution === 'hour' ? formatFullDateTime : formatFullDate
-  const toExclusive = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1)
   return {
     key: 'individual' as Timeframe,
     label: 'Individual',
@@ -293,9 +279,8 @@ export function customTimeframeConfig(from: Date, to: Date): TimeframeConfig {
     previousLabel: '',
     axis,
     tooltip,
-    // Identity period start: the aligned anchor is the first bucket, and the
-    // domain spans the whole selected range (no previous overlay).
+    // Identity period start: the aligned anchor is the first bucket (a custom
+    // range has no previous-period overlay).
     periodStart: (time) => time,
-    domainWidthMs: toExclusive.getTime() - from.getTime(),
   }
 }

@@ -69,8 +69,8 @@ function ChartCardSkeleton() {
   )
 }
 
-/// The "Detailed statistics" / "Detailed stats" skeleton: a full-width
-/// line-chart card + two radar cards, matching the rendered chart grid.
+/// The "Detailed statistics" / "Detailed stats" skeleton: a full-width bar-chart
+/// card + two radar cards, matching the rendered chart grid.
 export function ChartsSkeleton() {
   return (
     <div className="flex flex-col gap-4">

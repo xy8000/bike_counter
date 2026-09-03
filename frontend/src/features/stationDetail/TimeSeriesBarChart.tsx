@@ -1,4 +1,4 @@
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import {
   ChartContainer,
   ChartLegend,
@@ -14,18 +14,22 @@ import { ChartEmptyState } from './ChartEmptyState'
 import { ChartLimitNotice } from './ChartLimitNotice'
 import { MAX_DATA_STREAMS, seriesColor } from './chartUtils'
 
-export interface LineSeries {
+export interface BarSeries {
   key: string
   label: string
+  /** Bars with the same `stackId` stack together (e.g. all channels of the
+   *  current period); different `stackId`s are drawn side-by-side (e.g. the
+   *  current period next to the previous period). */
+  stackId: string
   data: TimeBucket[]
 }
 
 type MergedPoint = { time: number; [series: string]: number | null }
 
 /// Merge the series' buckets (keyed by their bucket start) into one point per
-/// timestamp so Recharts can draw several lines on a shared time axis. Points
+/// timestamp so Recharts can draw several bars on a shared time axis. Points
 /// exist only where there is data — no zero-filling.
-function mergeSeries(series: LineSeries[]): MergedPoint[] {
+function mergeSeries(series: BarSeries[]): MergedPoint[] {
   const byTime = new Map<number, MergedPoint>()
   for (const { key, data } of series) {
     for (const bucket of data) {
@@ -38,25 +42,23 @@ function mergeSeries(series: LineSeries[]): MergedPoint[] {
   return [...byTime.values()].sort((a, b) => a.time - b.time)
 }
 
-/// A line chart for one or more time-series built on the shadcn `chart`
-/// component. The optional `xDomain` lets the caller extend the axis past the
-/// latest data point so a running window (e.g. the current week) shows its
-/// leftover days without fabricating buckets.
+/// A bar chart for one or more time-series built on the shadcn `chart`
+/// component. Series sharing a `stackId` (e.g. several channels of the current
+/// period) stack into one bar, while series with different `stackId`s (e.g.
+/// the previous period) render as separate side-by-side bars.
 ///
 /// Series without any data are dropped before rendering, and the legend is only
 /// drawn when more than one series actually has data — so the chart never shows
 /// legend entries for channels that have no traffic.
-export function TimeSeriesLineChart({
+export function TimeSeriesBarChart({
   series,
   xFormatter,
   tooltipFormatter,
-  xDomain,
   className,
 }: {
-  series: LineSeries[]
+  series: BarSeries[]
   xFormatter: (time: number) => string
   tooltipFormatter?: (time: number) => string
-  xDomain?: [number, number]
   className?: string
 }) {
   const visibleSeries = series.filter((item) => item.data.length > 0)
@@ -73,7 +75,7 @@ export function TimeSeriesLineChart({
     return <ChartEmptyState className={cn('aspect-[20/9]', className)} />
   }
 
-  // A per-channel/per-station chart with more than MAX_DATA_STREAMS lines is
+  // A per-channel/per-station chart with more than MAX_DATA_STREAMS series is
   // unreadable; show an info note instead of rendering it.
   if (visibleSeries.length > MAX_DATA_STREAMS) {
     return <ChartLimitNotice className={cn('aspect-[20/9]', className)} />
@@ -81,13 +83,11 @@ export function TimeSeriesLineChart({
 
   return (
     <ChartContainer config={config} className={cn('aspect-[20/9]', className)}>
-      <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+      <BarChart accessibilityLayer data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid vertical={false} />
         <XAxis
           dataKey="time"
-          type="number"
-          scale="time"
-          domain={xDomain ?? ['dataMin', 'dataMax']}
+          type="category"
           tickLine={false}
           axisLine={false}
           tickMargin={8}
@@ -116,17 +116,16 @@ export function TimeSeriesLineChart({
         />
         {visibleSeries.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
         {visibleSeries.map((item) => (
-          <Line
+          <Bar
             key={item.key}
             dataKey={item.key}
-            type="monotone"
-            stroke={`var(--color-${item.key})`}
-            strokeWidth={2}
-            dot={false}
+            stackId={item.stackId}
+            fill={`var(--color-${item.key})`}
+            radius={2}
             isAnimationActive={false}
           />
         ))}
-      </LineChart>
+      </BarChart>
     </ChartContainer>
   )
 }

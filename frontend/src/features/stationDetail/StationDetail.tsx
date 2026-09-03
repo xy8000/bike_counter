@@ -21,7 +21,6 @@ import {
   alignSeries,
   customTimeframeConfig,
   dateFromInput,
-  timeframeDomain,
   timeframeSeries,
   type TimeframeConfig,
 } from './timeframes'
@@ -31,7 +30,7 @@ import { DetailMap } from './DetailMap'
 import { HourRadar, type HourRadarSeries } from './HourRadar'
 import { KeyFacts, computeKeyFacts } from './KeyFacts'
 import { MonthlyBarChart } from './MonthlyBarChart'
-import { TimeSeriesLineChart, type LineSeries } from './TimeSeriesLineChart'
+import { TimeSeriesBarChart, type BarSeries } from './TimeSeriesBarChart'
 import { WeekdayRadar, type RadarSeries } from './WeekdayRadar'
 import { useStationDetailPage } from './useStationDetailPage'
 import { useStationGraphs } from './useStationGraphs'
@@ -45,22 +44,24 @@ import {
   PageShellSkeleton,
 } from './Skeletons'
 
-/// Per-channel series for one timeframe: one line per channel, plus the previous
-/// period per channel when the compare checkbox is on. Channels without data in
-/// the requested periods are dropped.
+/// Per-channel series for one timeframe: one series per channel (stacked into
+/// the current-period bar), plus the previous period per channel when the
+/// compare checkbox is on (drawn as a separate side-by-side bar). Channels
+/// without data in the requested periods are dropped.
 function channelSeries(
   period: PeriodGraphs,
   cfg: TimeframeConfig,
   channels: ChannelRef[],
   compare: boolean,
-): LineSeries[] {
+): BarSeries[] {
   const nameOf = (id: string) => channels.find((channel) => channel.id === id)?.name ?? id
-  const series: LineSeries[] = []
+  const series: BarSeries[] = []
   for (const channel of period.per_channel) {
     if (channel.current.length > 0) {
       series.push({
         key: `${channel.channel_id}_current`,
         label: `${nameOf(channel.channel_id)} (${cfg.currentLabel})`,
+        stackId: 'current',
         data: channel.current,
       })
     }
@@ -68,6 +69,7 @@ function channelSeries(
       series.push({
         key: `${channel.channel_id}_previous`,
         label: `${nameOf(channel.channel_id)} (${cfg.previousLabel})`,
+        stackId: 'previous',
         data: channel.previous,
       })
     }
@@ -284,7 +286,6 @@ function DetailContent({ page }: { page: StationDetailPage }) {
   // year grid so the current and previous periods can be overlaid.
   const firstBucket = period?.current[0] ?? period?.previous[0]
   const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : NaN
-  const domain = timeframeDomain(cfg, anchor)
 
   const mainSeries = period
     ? alignSeries(timeframeSeries(period, cfg, comparePrevious), anchor, cfg.periodStart)
@@ -345,7 +346,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
       </section>
 
       {/* Detailed statistics: one shared timeframe selector driving the full-width
-          line chart and the weekday radar. */}
+          bar chart and the weekday radar. */}
       <section className="mt-8">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Detailed statistics</h2>
@@ -386,11 +387,10 @@ function DetailContent({ page }: { page: StationDetailPage }) {
                 metric-box theme. */}
             <KeyFacts facts={computeKeyFacts(period)} />
             <ChartCard title={cfg.title} subtitle={cfg.subtitle}>
-              <TimeSeriesLineChart
+              <TimeSeriesBarChart
                 series={mainSeries}
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
-                xDomain={domain}
                 className="aspect-[20/15.3] sm:aspect-[20/7.65]"
               />
             </ChartCard>
@@ -423,11 +423,10 @@ function DetailContent({ page }: { page: StationDetailPage }) {
         {period ? (
           <div className="grid grid-cols-1 gap-4">
             <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
-              <TimeSeriesLineChart
+              <TimeSeriesBarChart
                 series={perChannelSeries}
                 xFormatter={cfg.axis}
                 tooltipFormatter={cfg.tooltip}
-                xDomain={domain}
                 className="aspect-[21/18] sm:aspect-[21/9]"
               />
             </ChartCard>

@@ -1,8 +1,8 @@
 import { cn } from '@/lib/utils'
 
 /// Shared empty state for the station-detail charts. Keeps the look and wording
-/// consistent across the line chart, the donut and the radar when a period has
-/// no traffic yet, so every chart degrades the same way.
+/// consistent across the bar chart, the donut and the radar when a period has no
+/// traffic yet, so every chart degrades the same way.
 export function ChartEmptyState({
   message = 'No data for this period.',
   className,
