@@ -21,7 +21,14 @@ server {
     # byte-range requests for static files by default, which is how MapLibre's
     # `pmtiles` protocol reads individual tiles out of the single archive.
     location /tiles/ {
-        add_header Cache-Control "public, max-age=3600";
+        # The pmtiles basemap archive is refreshed by the backend's cron
+        # `tiles_update` job only every ~2 months, so it may be cached for
+        # longer than a day. nginx emits `ETag` + `Last-Modified` for static
+        # files by default and honors `If-None-Match` / `If-Modified-Since`
+        # (-> 304), so a browser revalidates cheaply after `max-age` expires
+        # instead of re-downloading the (multi-GB) archive.
+        etag on;
+        add_header Cache-Control "public, max-age=604800, must-revalidate";
     }
 
     # Reverse-proxy the backend (BFF + REST) so the browser only ever talks

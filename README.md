@@ -616,15 +616,29 @@ its own `BFF API` collection/tag so the frontend-facing calls are easy to spot:
   from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
   (`immutable` for built-in assets, short-lived for provider assets). Only the
   BFF exposes MinIO; there are no upload/delete artifact endpoints.
+- **HTTP caching (BFF-controlled)** – the BFF drives the browser cache with
+  standard RFC headers via the generic helper
+  [`backend/src/adapter/driving/bff/cache.rs`](backend/src/adapter/driving/bff/cache.rs):
+  every JSON response carries a `Cache-Control` and a strong `ETag` (a SHA-256 of
+  the body) and answers `If-None-Match` with `304 Not Modified`. The header
+  summary (`/api/bff/global-summary`) is short-lived
+  (`public, max-age=60, stale-while-revalidate=300`), the `as_of`-pinned
+  windowed cards are cached for an hour (`public, max-age=3600,
+  must-revalidate`), and live `Utc::now()`-driven endpoints are `no-store`.
+  The basemap archive `/tiles/map.pmtiles` is served by nginx with
+  `public, max-age=604800, must-revalidate` plus `ETag`/`Last-Modified`
+  revalidation (it is rebuilt only every ~2 months) — see
+  [`tiles/README.md`](tiles/README.md).
 
 The aggregations are computed **on the fly** per request by the core
-[`StationAnalyticsService`](backend/src/core/application/station_analytics/service.rs:38);
-a cache (e.g. Redis/Valkey) may be introduced later — the `as_of` reference-time
-query params make every windowed card URL a stable cache key, and the
-`graph_windows` / `metric_windows` helpers already take the reference time as an
-argument, which is also the seam for a future date/time picker. The BFF module
-lives in [`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff)
-and is the seam for future frontend-only endpoints (for example aggregations or
+[`StationAnalyticsService`](backend/src/core/application/station_analytics/service.rs:38).
+The `as_of` reference-time query params keep every windowed card URL a stable
+cache key (the browser cache is served first; the `ETag` revalidation keeps it
+correct as data lands). The `graph_windows` / `metric_windows` helpers already
+take the reference time as an argument, which is also the seam for a future
+date/time picker or a server-side cache. The BFF module lives in
+[`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff) and is the
+seam for future frontend-only endpoints (for example aggregations or
 transformations of the `/api/v1` data).
 
 ## Name uniqueness

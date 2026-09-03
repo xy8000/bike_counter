@@ -15,6 +15,14 @@ nginx supports byte-range requests for static files by default, so no special
 config is needed beyond the `/tiles/` location in
 [`nginx.conf.template`](../frontend/nginx.conf.template).
 
+**Caching.** The archive changes only when the cron `tiles_update` job rebuilds
+it (every ~2 months, atomically), so nginx serves `/tiles/map.pmtiles` with a
+long `Cache-Control: public, max-age=604800, must-revalidate` (7 days) and its
+default `ETag` + `Last-Modified`. A browser serves the archive from cache for a
+week and then revalidates cheaply with `If-None-Match` / `If-Modified-Since`
+(nginx answers `304 Not Modified` without re-streaming the multi-GB file), and
+reads individual tiles via range requests as usual.
+
 ## What's in `map.pmtiles`
 
 A single archive combining two *extracts* (not full downloads) of the public

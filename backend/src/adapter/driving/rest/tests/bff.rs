@@ -314,6 +314,91 @@ async fn bff_global_summary_accepts_exclude_new_stations() {
 }
 
 // ---------------------------------------------------------------------------
+// Frontend cache: Cache-Control + ETag revalidation (304)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bff_global_summary_is_cached_short_lived_with_etag_and_answers_304() {
+    let app = TestApp::new();
+    let uri = "/api/bff/global-summary";
+
+    let response = app.send(axum::http::Method::GET, uri).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "public, max-age=60, stale-while-revalidate=300",
+        "the header summary is short-lived"
+    );
+    let etag = response
+        .headers()
+        .get("etag")
+        .expect("the header summary should carry a strong ETag")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // Revalidation: the same ETag in If-None-Match yields 304 with no body.
+    let not_modified = app
+        .send_with_header(axum::http::Method::GET, uri, "if-none-match", &etag)
+        .await;
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        not_modified.headers().get("etag").unwrap(),
+        etag.as_str(),
+        "the 304 repeats the current ETag"
+    );
+}
+
+#[tokio::test]
+async fn bff_windowed_summary_card_is_cached_with_etag_and_answers_304() {
+    let app = TestApp::new();
+    let uri = format!("/api/bff/stations/summary/overview{STATIONS_BBOX}");
+
+    let response = app.send(axum::http::Method::GET, &uri).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "public, max-age=3600, must-revalidate",
+        "the as_of-pinned summary overview is cached for an hour"
+    );
+    let etag = response
+        .headers()
+        .get("etag")
+        .expect("the windowed card should carry a strong ETag")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let not_modified = app
+        .send_with_header(axum::http::Method::GET, &uri, "if-none-match", &etag)
+        .await;
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        not_modified.headers().get("etag").unwrap(),
+        etag.as_str(),
+        "the 304 repeats the current ETag"
+    );
+}
+
+#[tokio::test]
+async fn bff_live_endpoints_are_not_stored() {
+    let app = TestApp::new();
+    for uri in [
+        format!("/api/bff/stations{STATIONS_BBOX}"),
+        "/api/bff/stations/search".to_string(),
+        "/api/bff/data-sources".to_string(),
+    ] {
+        let response = app.send(axum::http::Method::GET, &uri).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri} should return 200");
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "no-store",
+            "{uri} is live and must not be cached"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OpenAPI
 // ---------------------------------------------------------------------------
 

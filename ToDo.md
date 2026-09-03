@@ -1,3 +1,11 @@
+Frontend cache: RFC cache headers (plans/94_frontend_cache_rfc_headers_plan.md)
+
+- [x] Generic BFF helper `backend/src/adapter/driving/bff/cache.rs`: `CachePolicy` (`NoStore` / `ShortLived` / `Windowed`) + `cached_json()` — serializes the DTO, sets `Cache-Control` + a strong SHA-256 `ETag` and answers `If-None-Match` with `304 Not Modified`
+- [x] BFF JSON handlers wired through `cached_json`: header summary short-lived (`public, max-age=60, stale-while-revalidate=300`), the `as_of`-pinned detail/summary shells + cards cached for an hour (`public, max-age=3600, must-revalidate`), live `Utc::now()`-driven endpoints `no-store`
+- [x] nginx `/tiles/` location: long `Cache-Control: public, max-age=604800, must-revalidate` + explicit `etag on` (default `ETag`/`Last-Modified` revalidation) for the ~2-monthly pmtiles archive
+- [x] Tests: REST cache-header tests (global-summary + windowed card `ETag`/`Cache-Control`/`304`, live `no-store`); OpenAPI unchanged; `make check` + `make test-rest` (112) green
+- [x] Gates green: `make check`, `make test-rest` (112), `make test` (556), `make coverage` (overall 86.68%, core 95.07%), `make test-playwright` (64)
+
 Persist per-data-source first/last measurement bounds (plans/92_data_source_detail_persisted_bounds_plan.md)
 
 - [x] Migration V21: `data_sources.first_measurement_at` / `last_measurement_at` + one-time backfill from the existing measurement history (MIN/MAX per source via channels → counting_stations; ~5 s on the 30 M-row dev DB)

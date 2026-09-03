@@ -5,6 +5,7 @@
 //! the same crate and the same Swagger document, but are grouped under their own
 //! `BFF API` tag/collection so the frontend-facing calls are easy to spot.
 
+pub mod cache;
 pub mod dto;
 pub mod handlers;
 

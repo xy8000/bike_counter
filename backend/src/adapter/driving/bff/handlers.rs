@@ -21,6 +21,7 @@ use axum::response::{Json, Response};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::adapter::driving::bff::cache::{CachePolicy, cached_json};
 use crate::adapter::driving::bff::dto::{
     ActionDto, AsOfQueryParams, BffDataSourceDetailDto, BffDataSourceImportDto,
     BffDataSourceListDto, BffDataSourceListItemDto, BffStationQueryParams,
@@ -230,9 +231,10 @@ async fn station_image_urls(
     )
 )]
 pub async fn list_bff_stations(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<BffStationQueryParams>,
-) -> Result<Json<StationMapListDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = parse_required_bounds(&params).map_err(map_domain_error)?;
     // The bounds filter is pushed into the repository (`list_in_bounds`), so a
     // map move only loads the stations inside the viewport.
@@ -261,7 +263,8 @@ pub async fn list_bff_stations(
         })
         .collect();
 
-    Ok(Json(StationMapListDto { items }))
+    let dto = StationMapListDto { items };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
 #[utoipa::path(
@@ -276,9 +279,10 @@ pub async fn list_bff_stations(
     )
 )]
 pub async fn get_bff_stations_sidebar(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<BffStationQueryParams>,
-) -> Result<Json<SidebarShellDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = parse_required_bounds(&params).map_err(map_domain_error)?;
 
     // The shell is the cheap half: identity only, no measurement aggregation, so
@@ -323,12 +327,13 @@ pub async fn get_bff_stations_sidebar(
         )),
     );
 
-    Ok(Json(SidebarShellDto {
+    let dto = SidebarShellDto {
         items,
         visible_count,
         total_count,
         links,
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
 /// The per-station stats of the sidebar: the channel count and the bikes
@@ -347,9 +352,10 @@ pub async fn get_bff_stations_sidebar(
     )
 )]
 pub async fn get_bff_stations_sidebar_stats(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<BffStationQueryParams>,
-) -> Result<Json<SidebarStatsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = parse_required_bounds(&params).map_err(map_domain_error)?;
     let now = chrono::Utc::now();
 
@@ -358,9 +364,10 @@ pub async fn get_bff_stations_sidebar_stats(
         .await
         .map_err(map_domain_error)?;
 
-    Ok(Json(SidebarStatsDto {
+    let dto = SidebarStatsDto {
         items: stats.into_iter().map(Into::into).collect(),
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
 #[utoipa::path(
@@ -373,8 +380,9 @@ pub async fn get_bff_stations_sidebar_stats(
     )
 )]
 pub async fn get_bff_stations_search(
+    headers: HeaderMap,
     State(state): State<AppState>,
-) -> Result<Json<StationSearchDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
     let service = state.station_analytics_service.clone();
     let summaries = blocking(move || service.summaries(None, now))
@@ -398,7 +406,8 @@ pub async fn get_bff_stations_search(
     actions.insert("find_on_map".to_string(), ActionDto { enabled: true });
     actions.insert("open_detail".to_string(), ActionDto { enabled: true });
 
-    Ok(Json(StationSearchDto { items, actions }))
+    let dto = StationSearchDto { items, actions };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
 /// Parses the comma-separated `exclude` station ids into their value objects,
@@ -459,10 +468,11 @@ fn detail_page_links(id: Uuid, as_of: DateTime<Utc>) -> HashMap<String, LinkDto>
     )
 )]
 pub async fn get_bff_station_detail_page(
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
-) -> Result<Json<StationDetailPageDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let now = as_of_or_now(params.as_of);
     let analytics_service = state.station_analytics_service.clone();
     let page = blocking(move || analytics_service.detail_page(Id(id), now))
@@ -479,7 +489,7 @@ pub async fn get_bff_station_detail_page(
         })
         .collect();
 
-    Ok(Json(StationDetailPageDto {
+    let dto = StationDetailPageDto {
         id: page.station.id.0,
         name: page.station.name.0,
         description: page.station.description.0,
@@ -490,7 +500,8 @@ pub async fn get_bff_station_detail_page(
         last_update: page.last_update,
         channels,
         links: detail_page_links(id, now),
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The overview stats card of the detail page (all-time total + four metrics).
@@ -509,17 +520,19 @@ pub async fn get_bff_station_detail_page(
     )
 )]
 pub async fn get_bff_station_detail_overview(
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
-) -> Result<Json<StationOverviewStatsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let now = as_of_or_now(params.as_of);
     let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
     let stats = blocking(move || service.detail_overview_stats(Id(id), now, exclude_new_stations))
         .await
         .map_err(map_domain_error)?;
-    Ok(Json(stats.into()))
+    let dto = StationOverviewStatsDto::from(stats);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The graph data for one selectable timeframe of the detail page (aggregate
@@ -541,10 +554,11 @@ pub async fn get_bff_station_detail_overview(
     )
 )]
 pub async fn get_bff_station_detail_graphs(
+    headers: HeaderMap,
     Path((id, timeframe)): Path<(Uuid, String)>,
     Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
-) -> Result<Json<PeriodGraphsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let now = as_of_or_now(params.as_of);
     let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
@@ -568,7 +582,8 @@ pub async fn get_bff_station_detail_graphs(
             .map_err(map_domain_error)?
         }
     };
-    Ok(Json(graphs.into()))
+    let dto = PeriodGraphsDto::from(graphs);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The monthly totals card of the detail page (whole-history monthly bar chart).
@@ -587,10 +602,11 @@ pub async fn get_bff_station_detail_graphs(
     )
 )]
 pub async fn get_bff_station_detail_monthly(
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
-) -> Result<Json<MonthlyTotalsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     // Honor `as_of` like the other windowed cards so the monthly totals are a
     // pure function of the URL (and therefore cacheable).
     let now = as_of_or_now(params.as_of);
@@ -598,7 +614,8 @@ pub async fn get_bff_station_detail_monthly(
     let monthly = blocking(move || service.detail_monthly(Id(id), now))
         .await
         .map_err(map_domain_error)?;
-    Ok(Json(monthly.into()))
+    let dto = MonthlyTotalsDto::from(monthly);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 #[utoipa::path(
@@ -612,9 +629,10 @@ pub async fn get_bff_station_detail_monthly(
     )
 )]
 pub async fn get_bff_global_summary(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<GlobalSummaryQueryParams>,
-) -> Result<Json<GlobalSummaryDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let now = chrono::Utc::now();
     let exclude_new_stations = params.exclude_new_stations;
     let service = state.station_analytics_service.clone();
@@ -622,12 +640,13 @@ pub async fn get_bff_global_summary(
         .await
         .map_err(map_domain_error)?;
 
-    Ok(Json(GlobalSummaryDto {
+    let dto = GlobalSummaryDto {
         station_count: summary.station_count,
         channel_count: summary.channel_count,
         bikes_last_day_total: summary.bikes_last_day_total,
         last_update: summary.last_update,
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::ShortLived, &headers))
 }
 
 /// The **page-shaped** overview payload for one counting station: everything the
@@ -647,9 +666,10 @@ pub async fn get_bff_global_summary(
     )
 )]
 pub async fn get_bff_station_overview(
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-) -> Result<Json<StationOverviewDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let analytics_service = state.station_analytics_service.clone();
     let overview = blocking(move || analytics_service.overview_shell(Id(id)))
         .await
@@ -665,7 +685,7 @@ pub async fn get_bff_station_overview(
         "stats".to_string(),
         LinkDto::new(format!("/api/bff/station-overview/{id}/stats")),
     );
-    Ok(Json(StationOverviewDto {
+    let dto = StationOverviewDto {
         id: overview.station.id.0,
         name: overview.station.name.0,
         description: overview.station.description.0,
@@ -676,7 +696,8 @@ pub async fn get_bff_station_overview(
         last_update: overview.last_update,
         detail_url: format!("/stations/{}", overview.station.id.0),
         links,
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
 /// The overview stats card: the all-time total and the four trend metrics,
@@ -697,10 +718,11 @@ pub async fn get_bff_station_overview(
     )
 )]
 pub async fn get_bff_station_overview_stats(
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Query(params): Query<AsOfQueryParams>,
     State(state): State<AppState>,
-) -> Result<Json<StationOverviewStatsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     // The station-overview panel (map popup) uses the same computation as the
     // detail page's overview card and honors the same `as_of` and Bike-Trends
     // `exclude_new_stations` settings, so the popup and the detail page agree.
@@ -712,7 +734,8 @@ pub async fn get_bff_station_overview_stats(
     })
     .await
     .map_err(map_domain_error)?;
-    Ok(Json(stats.into()))
+    let dto = StationOverviewStatsDto::from(stats);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The HATEOAS `_links` of the summary page shell: bounds on every sub-resource
@@ -767,9 +790,10 @@ fn summary_page_links(bounds: GeoBounds, as_of: DateTime<Utc>) -> HashMap<String
     )
 )]
 pub async fn get_bff_stations_summary_page(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<BffStationSummaryQueryParams>,
-) -> Result<Json<StationsSummaryPageDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = GeoBounds {
         min_latitude: params.min_lat,
         min_longitude: params.min_lng,
@@ -795,12 +819,13 @@ pub async fn get_bff_stations_summary_page(
         .await
         .map_err(map_domain_error)?;
 
-    Ok(Json(StationsSummaryPageDto {
+    let dto = StationsSummaryPageDto {
         image_url: format!("/api/bff/assets/{}/content", image_asset.id.0),
         stations: page.stations.into_iter().map(Into::into).collect(),
         last_update: page.last_update,
         links: summary_page_links(bounds, now),
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The overview stats card of the summary page (aggregated channel count +
@@ -817,9 +842,10 @@ pub async fn get_bff_stations_summary_page(
     )
 )]
 pub async fn get_bff_stations_summary_overview(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<BffStationSummaryQueryParams>,
-) -> Result<Json<StationsSummaryOverviewDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
@@ -831,7 +857,8 @@ pub async fn get_bff_stations_summary_overview(
     })
     .await
     .map_err(map_domain_error)?;
-    Ok(Json(stats.into()))
+    let dto = StationsSummaryOverviewDto::from(stats);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The graph data for one selectable timeframe of the summary page (aggregate
@@ -851,10 +878,11 @@ pub async fn get_bff_stations_summary_overview(
     )
 )]
 pub async fn get_bff_stations_summary_graphs(
+    headers: HeaderMap,
     Path(timeframe): Path<String>,
     State(state): State<AppState>,
     Query(params): Query<BffStationSummaryQueryParams>,
-) -> Result<Json<SummaryPeriodGraphsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
@@ -898,7 +926,8 @@ pub async fn get_bff_stations_summary_graphs(
             .map_err(map_domain_error)?
         }
     };
-    Ok(Json(graphs.into()))
+    let dto = SummaryPeriodGraphsDto::from(graphs);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// The monthly totals card of the summary page over the included stations.
@@ -914,9 +943,10 @@ pub async fn get_bff_stations_summary_graphs(
     )
 )]
 pub async fn get_bff_stations_summary_monthly(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(params): Query<BffStationSummaryQueryParams>,
-) -> Result<Json<MonthlyTotalsDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let bounds = summary_bounds(&params).map_err(map_domain_error)?;
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
@@ -928,7 +958,8 @@ pub async fn get_bff_stations_summary_monthly(
     })
     .await
     .map_err(map_domain_error)?;
-    Ok(Json(monthly.into()))
+    let dto = MonthlyTotalsDto::from(monthly);
+    Ok(cached_json(&dto, CachePolicy::Windowed, &headers))
 }
 
 /// Streams an asset's binary content from object storage with the correct
@@ -1053,8 +1084,9 @@ fn import_run_dto(run: DataImportRun, warnings: i64, errors: i64) -> BffDataSour
     )
 )]
 pub async fn get_bff_data_sources(
+    headers: HeaderMap,
     State(state): State<AppState>,
-) -> Result<Json<BffDataSourceListDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let service = state.data_source_analytics_service.clone();
     let overview = blocking(move || service.overview())
         .await
@@ -1074,7 +1106,8 @@ pub async fn get_bff_data_sources(
             last_import: row.last_import.map(|run| import_run_dto(run, 0, 0)),
         });
     }
-    Ok(Json(BffDataSourceListDto { items }))
+    let dto = BffDataSourceListDto { items };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
 /// The data-source detail page (`GET /api/bff/data-sources/{id}`): the large
@@ -1094,9 +1127,10 @@ pub async fn get_bff_data_sources(
     )
 )]
 pub async fn get_bff_data_source_detail(
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
-) -> Result<Json<BffDataSourceDetailDto>, (StatusCode, Json<ErrorResponseDto>)> {
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let service = state.data_source_analytics_service.clone();
     let data_source_id = data_source_vo::Id(id);
     let detail = blocking(move || service.detail(data_source_id))
@@ -1126,7 +1160,7 @@ pub async fn get_bff_data_source_detail(
         .last_import
         .map(|run| import_run_dto(run, warnings, errors));
 
-    Ok(Json(BffDataSourceDetailDto {
+    let dto = BffDataSourceDetailDto {
         id: detail.data_source.id.0,
         name: detail.data_source.name.0,
         provider_type: detail.data_source.provider_type.0,
@@ -1142,5 +1176,6 @@ pub async fn get_bff_data_source_detail(
         has_real_time: detail.has_real_time,
         has_full_current_year: detail.has_full_current_year,
         last_import,
-    }))
+    };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
