@@ -1,19 +1,27 @@
-import { Database, Search } from 'lucide-react'
+import { Database, Info, Search } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { formatNumber, formatTimestamp } from '../../lib/format'
+import { Skeleton } from '@/components/ui/skeleton'
+import { formatTimestamp } from '../../lib/format'
+import { GlobalSummaryDialog } from './GlobalSummaryDialog'
 import { useGlobalSummary } from './useGlobalSummary'
 
 /// Top header bar: brand (links home), centered search trigger, and the global
-/// summary. The header stays on a single line; the side columns can shrink so
-/// the summary never wraps or overflows — when space runs out the stats part
-/// truncates and only the "updated …" timestamp remains.
+/// summary. Only the `updated …` timestamp stays visible inline; it doubles as a
+/// button that opens the full summary (stations, channels, bikes) in a popup
+/// dialogue. While the summary loads, a skeleton of the same height stands in so
+/// the bar never shifts. The right side shares a cell on phones: the compact
+/// search icon sits next to the timestamp trigger.
 export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
   const { summary, error } = useGlobalSummary()
+  const [summaryOpen, setSummaryOpen] = useState(false)
 
   return (
-    <header className="grid grid-cols-[auto_1fr] items-center gap-2 bg-primary px-4 py-2 text-primary-foreground shadow-md sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-4">
-      <div className="flex min-w-0 items-center gap-1 justify-self-start">
+    <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-primary px-4 py-2 text-primary-foreground shadow-md sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-4">
+      {/* Brand (links home) + data-sources shortcut. Stretches and truncates so
+          the always-visible summary timestamp never gets squeezed off. */}
+      <div className="flex min-w-0 items-center gap-1">
         <Link to="/" className="flex min-w-0 items-center gap-2 font-bold whitespace-nowrap">
           <img src="/bike-icon.svg" alt="" aria-hidden="true" className="h-8 w-8 shrink-0" />
           <span className="truncate">Bike Counter</span>
@@ -31,19 +39,7 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
         </Link>
       </div>
 
-      {/* Compact search icon on phones; the wide trigger takes over on sm+. */}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={onOpenSearch}
-        aria-label="Search counting stations"
-        title="Search counting stations"
-        className="justify-self-end sm:hidden"
-      >
-        <Search aria-hidden="true" />
-      </Button>
-
+      {/* Wide search trigger on sm+ (the centred middle column). */}
       <Button
         type="button"
         variant="ghost"
@@ -54,24 +50,42 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
         Search counting stations…
       </Button>
 
-      <div className="hidden min-w-0 items-center justify-end justify-self-end overflow-hidden sm:flex">
+      {/* Right side: the compact search icon on phones plus the always-visible
+          global-summary timestamp. The timestamp opens the summary popup. */}
+      <div className="flex min-w-0 items-center justify-self-end gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onOpenSearch}
+          aria-label="Search counting stations"
+          title="Search counting stations"
+          className="sm:hidden"
+        >
+          <Search aria-hidden="true" />
+        </Button>
+
         {summary && (
-          <span className="flex min-w-0 items-center gap-1 text-sm text-primary-foreground/80">
-            {/* The stats truncate first; the update timestamp stays visible when
-                there is not enough space, per plan 55. */}
-            <span className="truncate">
-              {summary.station_count} stations · {formatNumber(summary.channel_count)} channels ·{' '}
-              {formatNumber(summary.bikes_last_day_total)} bikes / last day
-            </span>
-            <span className="shrink-0 whitespace-nowrap">
-              updated {formatTimestamp(summary.last_update)}
-            </span>
-          </span>
+          <button
+            type="button"
+            onClick={() => setSummaryOpen(true)}
+            aria-haspopup="dialog"
+            title="Show global summary"
+            className="flex h-8 max-w-full items-center gap-1 rounded-md px-2 text-sm whitespace-nowrap text-primary-foreground/80 transition-colors hover:bg-white/10 hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+          >
+            <Info aria-hidden="true" className="h-4 w-4 shrink-0" />
+            <span className="truncate">updated {formatTimestamp(summary.last_update)}</span>
+          </button>
         )}
         {error && (
           <span className="truncate text-sm text-red-200">Global summary unavailable.</span>
         )}
+        {!summary && !error && <Skeleton aria-busy="true" className="h-8 w-44 bg-white/15" />}
       </div>
+
+      {summaryOpen && summary && (
+        <GlobalSummaryDialog summary={summary} onClose={() => setSummaryOpen(false)} />
+      )}
     </header>
   )
 }

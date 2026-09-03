@@ -1,3 +1,11 @@
+Global summary popup dialog (plans/95_global_summary_popup_dialog_plan.md)
+
+- [x] New `frontend/src/features/header/GlobalSummaryDialog.tsx` (shadcn `Dialog`): counting stations, channels, bikes / last day and the update timestamp
+- [x] `TopBar`: only the `updated …` timestamp stays visible inline on all screen sizes as a clickable trigger that opens the popup; while loading a same-height `Skeleton` ghost stands in, and the error state is unchanged
+- [x] Mobile: the timestamp trigger sits next to the compact search icon in the header's right cell; the brand truncates instead of squeezing the date off-screen
+- [x] e2e: `frontend/e2e/header-summary.spec.ts` — stats no longer inline, popup opens with full stats + repeated timestamp and closes via Escape; layout-stability gate asserts skeleton and loaded trigger share the same height and the app bar does not shift
+- [x] Gates green: `make check`, frontend `tsc` + `vite build`, `make test-playwright` (66)
+
 Frontend cache: RFC cache headers (plans/94_frontend_cache_rfc_headers_plan.md)
 
 - [x] Generic BFF helper `backend/src/adapter/driving/bff/cache.rs`: `CachePolicy` (`NoStore` / `ShortLived` / `Windowed`) + `cached_json()` — serializes the DTO, sets `Cache-Control` + a strong SHA-256 `ETag` and answers `If-None-Match` with `304 Not Modified`
