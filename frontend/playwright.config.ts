@@ -17,7 +17,8 @@ export default defineConfig({
   timeout: 90_000,
   globalTimeout: 20 * 60 * 1000,
   expect: {
-    timeout: 20_000,
+    // Per-assertion ("step") timeout. Kept short so a hung step fails fast.
+    timeout: 7_000,
   },
   retries: process.env.CI ? 2 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],

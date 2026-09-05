@@ -42,6 +42,7 @@ export function BaseMap({
   bounds,
   onReady,
   onBounds,
+  onZoom,
   onVoidClick,
   navigationControl = false,
   navigationControlPosition = 'top-right',
@@ -55,6 +56,10 @@ export function BaseMap({
   bounds?: Bounds
   onReady?: (map: MaplibreMap) => void
   onBounds?: (bounds: Bounds) => void
+  /// Reports the current zoom whenever the view settles (map load and every
+  /// moveend). Consumers (e.g. station clustering) re-derive their viewport
+  /// state from this instead of reaching into the map instance.
+  onZoom?: (zoom: number) => void
   onVoidClick?: (map: MaplibreMap) => void
   navigationControl?: boolean
   navigationControlPosition?: 'top-right' | 'top-left'
@@ -136,8 +141,13 @@ export function BaseMap({
         if (fitBounds) map.fitBounds(fitBounds, { padding: 0, duration: 0 })
         onReady?.(map)
         onBounds?.(mapBounds(map))
+        onZoom?.(map.getZoom())
       }}
-      onMoveEnd={(event) => onBounds?.(mapBounds(event.target))}
+      onMoveEnd={(event) => {
+        const map = event.target
+        onBounds?.(mapBounds(map))
+        onZoom?.(map.getZoom())
+      }}
     >
       {navigationControl && <NavigationControl position={navigationControlPosition} />}
       {children}

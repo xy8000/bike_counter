@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { cityUrl, mapMarkers, sidebarBadge, waitForStations } from './helpers'
+import { cityUrl, mapClusters, mapMarkers, sidebarBadge, waitForStations } from './helpers'
 
 test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({ page }) => {
   // MapLibre reads vector tiles directly out of the static archive via HTTP
@@ -181,4 +181,33 @@ test('the overview banner shows the name, description and channel count', async 
   await expect(overview.getByText('MQ10.1+10.2', { exact: true })).toBeVisible()
   await expect(overview.getByText('Messquerschnitt (Zählfeld-Gruppe) MQ10.1+10.2')).toBeVisible()
   await expect(overview.getByText(/\d+ channels?/)).toBeVisible()
+})
+
+test('overlapping stations group into a numbered circle that un-groups when clicked', async ({
+  page,
+}) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  // The expanded sidebar overlays the left edge; collapse it so the circle is
+  // clickable. This does not change the map bounds (the map is full width).
+  await page.getByRole('button', { name: 'Hide station list' }).click()
+
+  // Grouping: at the default Münster view at least one pair of close stations
+  // (e.g. Hafen-/Hammer Straße) is folded into a numbered circle instead of two
+  // stacked flags. The circle carries the group size as text and `data-count`.
+  const cluster = mapClusters(page).first()
+  await expect(cluster).toBeVisible()
+  const count = Number(await cluster.getAttribute('data-count'))
+  expect(count).toBeGreaterThan(1)
+  await expect(cluster).toHaveText(String(count))
+
+  const clustersBefore = await mapClusters(page).count()
+
+  // Clicking the circle eases the map to the zoom where the cluster splits: the
+  // circle disappears and the stations it stood for re-render as individual
+  // flags (the map re-fetches the smaller viewport, so poll for the settle).
+  await cluster.click()
+  await expect.poll(async () => mapClusters(page).count()).toBeLessThan(clustersBefore)
+  await expect(mapMarkers(page).first()).toBeVisible()
 })

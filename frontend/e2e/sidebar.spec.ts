@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import {
   cityUrl,
   mapMarkers,
+  mapRepresentedStations,
   readSidebarCounts,
   sidebar,
   sidebarBadge,
@@ -15,13 +16,16 @@ test('the sidebar renders only the stations visible in the current viewport', as
 
   const baseline = await readSidebarCounts(page)
   const baselineItems = await sidebarStationItems(page).count()
-  const baselineMarkers = await mapMarkers(page).count()
+  // The map represents each visible station either as an individual flag or
+  // inside a cluster circle (overlapping stations group into numbered circles),
+  // so compare the represented count — not the raw flag count — to the sidebar.
+  const baselineRepresented = await mapRepresentedStations(page)
 
   // The counter badge matches the number of rendered sidebar entries…
   expect(baselineItems).toBeGreaterThan(0)
   expect(baseline.visible).toBe(baselineItems)
-  // …the markers match the sidebar (same viewport, same positioned set)…
-  expect(baselineMarkers).toBe(baselineItems)
+  // …the map's represented stations match the sidebar (same viewport set)…
+  expect(baselineRepresented).toBe(baselineItems)
   // …and the badge total is the overall station count (>= visible).
   expect(baseline.total).toBeGreaterThanOrEqual(baseline.visible)
 
@@ -70,8 +74,8 @@ test('the sidebar renders only the stations visible in the current viewport', as
       async () => {
         const counts = await readSidebarCounts(page)
         const items = await sidebarStationItems(page).count()
-        const markers = await mapMarkers(page).count()
-        return items === counts.visible && markers === counts.visible
+        const represented = await mapRepresentedStations(page)
+        return items === counts.visible && represented === counts.visible
       },
       { timeout: 20000 },
     )

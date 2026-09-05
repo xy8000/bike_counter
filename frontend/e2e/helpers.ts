@@ -21,9 +21,28 @@ export function sidebarStationItems(page: Page): Locator {
   return sidebar(page).locator('li:has(button)')
 }
 
-/// The MapLibre station marker images (one per station in the current viewport).
+/// The MapLibre station marker images (one per station in the current viewport;
+/// stations that overlap are folded into a cluster circle instead — see
+/// `mapClusters`).
 export function mapMarkers(page: Page): Locator {
   return page.locator('.station-marker')
+}
+
+/// A MapLibre cluster circle: renders instead of a group of overlapping station
+/// flags and shows how many stations it folds together (`data-count`).
+export function mapClusters(page: Page): Locator {
+  return page.locator('.station-cluster')
+}
+
+/// Counts the stations the map currently represents — one per individual flag
+/// plus every station folded into a cluster circle. Under clustering this (not
+/// the raw `.station-marker` count) matches the sidebar's visible counter.
+export async function mapRepresentedStations(page: Page): Promise<number> {
+  const markers = await mapMarkers(page).count()
+  const counts = await mapClusters(page).evaluateAll((elements) =>
+    elements.map((element) => Number(element.getAttribute('data-count')) || 1),
+  )
+  return markers + counts.reduce((sum, count) => sum + count, 0)
 }
 
 export interface VisibleCounts {
@@ -79,6 +98,19 @@ export function cityUrl(city: CityName): string {
     min_lng: String(bounds.min_lng),
     max_lat: String(bounds.max_lat),
     max_lng: String(bounds.max_lng),
+  })
+  return `/?${params.toString()}`
+}
+
+/// A map-view URL centred tightly on one station, so the map fits that spot at a
+/// high zoom and the station's marker renders individually — even when it sits
+/// next to a close neighbour that would otherwise group into a cluster circle.
+export function stationBoundsUrl(latitude: number, longitude: number, span = 0.004): string {
+  const params = new URLSearchParams({
+    min_lat: String(latitude - span),
+    min_lng: String(longitude - span),
+    max_lat: String(latitude + span),
+    max_lng: String(longitude + span),
   })
   return `/?${params.toString()}`
 }

@@ -1,13 +1,20 @@
 import { Marker, Popup } from '@vis.gl/react-maplibre'
 import type { Map as MaplibreMap } from 'maplibre-gl'
 import { ExternalLink } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { Bounds } from '../../lib/geo'
 import type { StationMap } from '../stations/types'
 import { stationMarkerImage } from '../../lib/map'
+import {
+  buildStationClusterIndex,
+  clusterExpansionZoom,
+  clusterStationsForView,
+  isClusterFeature,
+  stationFromPoint,
+} from './clusterStations'
 import { BaseMap } from './BaseMap'
 
 /// The enriched identity a station popup shows, fed from the sidebar shell +
@@ -20,10 +27,13 @@ export interface PopupStationInfo {
   channelCount: number | null
 }
 
-/// The interactive MapLibre map with one marker per visible station. Clicking a
-/// marker opens the station overview panel (and a popup with the station image,
-/// name, description, channel count and detail link); clicking the map void
-/// closes them. The marker flag is `selected` for the station whose id matches
+/// The interactive MapLibre map with the visible stations. Stations that would
+/// overlap at the current zoom are grouped into a numbered circle marker
+/// (supercluster): clicking a circle eases the map to the zoom where it splits,
+/// so the grouped stations re-render as individual flags. Clicking a flag opens
+/// the station overview panel (and a popup with the station image, name,
+/// description, channel count and detail link); clicking the map void closes
+/// them. The marker flag is `selected` for the station whose id matches
 /// `selectedStationId` (the URL `station` param), `active`/`inactive` otherwise
 /// (from the BFF-reported status). When `initialBounds` is set (from a shared
 /// URL) the map fits that view on mount instead of the Münster default.
@@ -61,43 +71,118 @@ export function MapView({
   // pending (the shell entry exists but its count is not known yet).
   const statsLoading = popupInfo !== undefined && popupInfo.channelCount === null && !statsError
 
+  // The MapLibre instance this view renders into (the parent keeps its own copy
+  // for the fly-to on selection). Cluster circles zoom through this instance.
+  const mapRef = useRef<MaplibreMap | null>(null)
+  // The current viewport, fed by BaseMap's bounds/zoom reporting: the cluster
+  // circles are recomputed whenever the user pans or zooms.
+  const [viewportBounds, setViewportBounds] = useState<Bounds | null>(initialBounds ?? null)
+  const [zoom, setZoom] = useState<number | null>(null)
+
+  // Rebuild the cluster index only when the station set changes (panning/
+  // zooming refetches a new array per moveend, but the reference is stable in
+  // between, so the index is reused across moves).
+  const stationIndex = useMemo(() => buildStationClusterIndex(stations ?? []), [stations])
+
+  // The features to render for the current view: cluster circles + ungrouped
+  // station flags. Empty until the map has reported its first viewport.
+  const clusterFeatures = useMemo(() => {
+    if (!stationIndex || !viewportBounds || zoom === null) return []
+    return clusterStationsForView(stationIndex, viewportBounds, zoom)
+  }, [stationIndex, viewportBounds, zoom])
+
+  // "Click a circle to zoom into it": ease to the cluster's expansion zoom, the
+  // level at which supercluster splits it into children, so the grouped
+  // stations re-render as individual flags because they no longer overlap.
+  const zoomToCluster = (clusterId: number, longitude: number, latitude: number) => {
+    const map = mapRef.current
+    if (!map || !stationIndex) return
+    setPopupStation(null)
+    map.easeTo({
+      center: [longitude, latitude],
+      zoom: clusterExpansionZoom(stationIndex, clusterId),
+    })
+  }
+
   return (
     <BaseMap
       bounds={initialBounds ?? undefined}
-      onReady={onReady}
-      onBounds={onBounds}
+      onReady={(map) => {
+        mapRef.current = map
+        onReady(map)
+      }}
+      onBounds={(bounds) => {
+        setViewportBounds(bounds)
+        onBounds(bounds)
+      }}
+      onZoom={setZoom}
       navigationControl
       onVoidClick={() => {
         setPopupStation(null)
         onDeselect()
       }}
     >
-      {(stations ?? []).map((station) => (
-        <Marker key={station.id} longitude={station.longitude} latitude={station.latitude}>
-          {/* The marker DOM element is a child of the map container, so its click
-              bubbles up to the map's onClick; stop it here (the BaseMap void-click
-              guard ignores .maplibregl-marker clicks as a second layer). */}
-          <div
-            className="cursor-pointer"
-            onClick={(event) => {
-              event.stopPropagation()
-              setPopupStation(station)
-              onSelectStation(station)
-            }}
-          >
-            {stationMarkerImage(station.name, {
-              // Inactive always wins: a decommissioned station must look
-              // inactive even when it is the one selected in the URL.
-              state:
-                station.status === 'inactive'
-                  ? 'inactive'
-                  : station.id === selectedStationId
-                    ? 'selected'
-                    : 'active',
-            })}
-          </div>
-        </Marker>
-      ))}
+      {clusterFeatures.map((feature) => {
+        if (isClusterFeature(feature)) {
+          const [longitude, latitude] = feature.geometry.coordinates
+          const count = feature.properties.point_count
+          return (
+            <Marker
+              key={`cluster-${feature.properties.cluster_id}`}
+              longitude={longitude}
+              latitude={latitude}
+            >
+              {/* A numbered circle instead of the stacked flags it stands for.
+                  `-translate-x/y-1/2` centres it on the coordinate; the marker
+                  DOM element is a child of the map container, so its click
+                  bubbles up to the map's onClick — stop it here (the BaseMap
+                  void-click guard ignores .maplibregl-marker clicks too). */}
+              <button
+                type="button"
+                aria-label={`${count} stations`}
+                title={`${count} stations`}
+                data-count={count}
+                className="station-cluster flex h-9 min-w-9 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-2 border-background bg-primary px-1.5 text-sm leading-none font-semibold text-primary-foreground shadow-lg transition-transform hover:scale-110"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  zoomToCluster(feature.properties.cluster_id, longitude, latitude)
+                }}
+              >
+                {count}
+              </button>
+            </Marker>
+          )
+        }
+
+        // An ungrouped station: the regular flag marker (selection/popup as
+        // before). The marker DOM element is a child of the map container, so
+        // its click bubbles up to the map's onClick; stop it here (the BaseMap
+        // void-click guard ignores .maplibregl-marker clicks as a second layer).
+        const station = stationFromPoint(feature)
+        return (
+          <Marker key={station.id} longitude={station.longitude} latitude={station.latitude}>
+            <div
+              className="cursor-pointer"
+              onClick={(event) => {
+                event.stopPropagation()
+                setPopupStation(station)
+                onSelectStation(station)
+              }}
+            >
+              {stationMarkerImage(station.name, {
+                // Inactive always wins: a decommissioned station must look
+                // inactive even when it is the one selected in the URL.
+                state:
+                  station.status === 'inactive'
+                    ? 'inactive'
+                    : station.id === selectedStationId
+                      ? 'selected'
+                      : 'active',
+              })}
+            </div>
+          </Marker>
+        )
+      })}
       {popupStation && (
         <Popup
           longitude={popupStation.longitude}

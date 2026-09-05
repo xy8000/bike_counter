@@ -1,10 +1,9 @@
 import { expect, test } from '@playwright/test'
 import {
-  CITY_BOUNDS,
-  cityUrl,
   mapMarkers,
   SEARCH_PLACEHOLDER,
   SEARCH_TRIGGER_TEXT,
+  stationBoundsUrl,
   waitForStations,
 } from './helpers'
 
@@ -77,10 +76,16 @@ test('search + Find on map marks the found station as selected', async ({ page }
 
 // Gartenstraße is marked inactive by the e2e stack after startup
 // (scripts/e2e-playwright.sh) to exercise the persisted `status` reporting.
+// Gartenstraße's seeded coordinates (51.9715, 7.6356); the map fits a tight box
+// around it so its marker renders individually instead of grouping into a
+// cluster circle with a close neighbour at a whole-city view.
 const GARTENSTRASSE_ID = '2b410a8a-3474-4ab3-9fa4-d88b92256bee'
+const GARTENSTRASSE_COORDS = { latitude: 51.9715, longitude: 7.6356 }
 
 test('an inactive station renders with the inactive flag', async ({ page }) => {
-  await page.goto(cityUrl('Münster'), { waitUntil: 'domcontentloaded' })
+  await page.goto(stationBoundsUrl(GARTENSTRASSE_COORDS.latitude, GARTENSTRASSE_COORDS.longitude), {
+    waitUntil: 'domcontentloaded',
+  })
   await waitForStations(page)
 
   await expect(page.getByAltText('Gartenstraße', { exact: true })).toHaveClass(
@@ -93,15 +98,10 @@ test('an inactive station stays inactive even when it is the selected station', 
 }) => {
   // Open the map with Gartenstraße selected in the URL: the inactive status must
   // win over the selected state, so the marker stays gray (not amber).
-  const bounds = CITY_BOUNDS['Münster']
-  const params = new URLSearchParams({
-    min_lat: String(bounds.min_lat),
-    min_lng: String(bounds.min_lng),
-    max_lat: String(bounds.max_lat),
-    max_lng: String(bounds.max_lng),
-    station: GARTENSTRASSE_ID,
-  })
-  await page.goto(`/?${params.toString()}`, { waitUntil: 'domcontentloaded' })
+  await page.goto(
+    `${stationBoundsUrl(GARTENSTRASSE_COORDS.latitude, GARTENSTRASSE_COORDS.longitude)}&station=${GARTENSTRASSE_ID}`,
+    { waitUntil: 'domcontentloaded' },
+  )
   // Selecting a station via the URL opens the overview panel (not the sidebar),
   // so wait for the marker itself instead of `waitForStations`.
   const marker = page.getByAltText('Gartenstraße', { exact: true })
