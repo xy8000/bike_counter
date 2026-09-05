@@ -21,7 +21,7 @@ use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects::GeoCoordinates;
 use crate::core::domain::measurements::repository_port::{
-    ChannelTotal, HourTotal, TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelTotal, HourTotal, TimeBucket, WeekdayTotal,
 };
 
 // ---------------------------------------------------------------------------
@@ -250,6 +250,66 @@ impl GraphTimeframe {
     }
 }
 
+/// The bucket resolution of the detail/summary graphs, selected by the
+/// Bike-Trends resolution changer (one of `high` / `mid` / `low` per timeframe,
+/// sent by the frontend as its concrete granularity token).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GraphResolution {
+    FifteenMinutes,
+    ThirtyMinutes,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Quarter,
+}
+
+impl GraphResolution {
+    pub const ALL: [GraphResolution; 7] = [
+        GraphResolution::FifteenMinutes,
+        GraphResolution::ThirtyMinutes,
+        GraphResolution::Hour,
+        GraphResolution::Day,
+        GraphResolution::Week,
+        GraphResolution::Month,
+        GraphResolution::Quarter,
+    ];
+
+    /// Stable string key used in the BFF `resolution` query parameter.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GraphResolution::FifteenMinutes => "15m",
+            GraphResolution::ThirtyMinutes => "30m",
+            GraphResolution::Hour => "hour",
+            GraphResolution::Day => "day",
+            GraphResolution::Week => "week",
+            GraphResolution::Month => "month",
+            GraphResolution::Quarter => "quarter",
+        }
+    }
+
+    /// Parses the string key used by the BFF `resolution` query parameter;
+    /// `None` for an unknown key.
+    pub fn from_key(key: &str) -> Option<GraphResolution> {
+        GraphResolution::ALL.into_iter().find(|r| r.as_str() == key)
+    }
+
+    /// The repository bucket granularity this resolution aggregates into.
+    /// Fixed-width resolutions (15/30 minutes, 1 hour) use `date_bin` buckets;
+    /// day/week/month/quarter use calendar-aligned buckets.
+    pub fn to_bucket_granularity(self) -> BucketGranularity {
+        match self {
+            GraphResolution::FifteenMinutes => BucketGranularity::Fixed { seconds: 15 * 60 },
+            GraphResolution::ThirtyMinutes => BucketGranularity::Fixed { seconds: 30 * 60 },
+            GraphResolution::Hour => BucketGranularity::Fixed { seconds: 60 * 60 },
+            GraphResolution::Day => BucketGranularity::Day,
+            GraphResolution::Week => BucketGranularity::Week,
+            GraphResolution::Month => BucketGranularity::Month,
+            GraphResolution::Quarter => BucketGranularity::Quarter,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Station-summary page (aggregated over the visible stations)
 // ---------------------------------------------------------------------------
@@ -399,6 +459,51 @@ mod tests {
         assert_eq!(GraphTimeframe::from_key(""), None);
         // The "individual" custom range is not one of the fixed timeframes.
         assert_eq!(GraphTimeframe::from_key("individual"), None);
+    }
+
+    #[test]
+    fn graph_resolution_from_key_parses_every_stable_key() {
+        for resolution in GraphResolution::ALL {
+            assert_eq!(
+                GraphResolution::from_key(resolution.as_str()),
+                Some(resolution),
+                "{} should parse back to its resolution",
+                resolution.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn graph_resolution_from_key_rejects_unknown_keys() {
+        assert_eq!(GraphResolution::from_key("bogus"), None);
+        assert_eq!(GraphResolution::from_key(""), None);
+        assert_eq!(GraphResolution::from_key("5m"), None);
+        assert_eq!(GraphResolution::from_key("high"), None);
+    }
+
+    #[test]
+    fn graph_resolution_maps_to_the_repository_bucket_granularity() {
+        use crate::core::domain::measurements::repository_port::BucketGranularity;
+
+        let check = |resolution: GraphResolution, expected: BucketGranularity| {
+            assert_eq!(resolution.to_bucket_granularity(), expected);
+        };
+        check(
+            GraphResolution::FifteenMinutes,
+            BucketGranularity::Fixed { seconds: 15 * 60 },
+        );
+        check(
+            GraphResolution::ThirtyMinutes,
+            BucketGranularity::Fixed { seconds: 30 * 60 },
+        );
+        check(
+            GraphResolution::Hour,
+            BucketGranularity::Fixed { seconds: 60 * 60 },
+        );
+        check(GraphResolution::Day, BucketGranularity::Day);
+        check(GraphResolution::Week, BucketGranularity::Week);
+        check(GraphResolution::Month, BucketGranularity::Month);
+        check(GraphResolution::Quarter, BucketGranularity::Quarter);
     }
 
     #[test]

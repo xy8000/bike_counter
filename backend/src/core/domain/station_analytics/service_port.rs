@@ -8,9 +8,9 @@ use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::repository_port::MonthTotal;
 use crate::core::domain::station_analytics::{
-    GeoBounds, GlobalSummary, GraphTimeframe, PeriodGraphs, SidebarStationStats, StationDetailPage,
-    StationOverviewShell, StationSummary, StationsSummaryOverview, StationsSummaryPage,
-    SummaryPeriodGraphs,
+    GeoBounds, GlobalSummary, GraphResolution, GraphTimeframe, PeriodGraphs, SidebarStationStats,
+    StationDetailPage, StationOverviewShell, StationSummary, StationsSummaryOverview,
+    StationsSummaryPage, SummaryPeriodGraphs,
 };
 
 pub trait StationAnalyticsServicePort: Send + Sync {
@@ -78,25 +78,29 @@ pub trait StationAnalyticsServicePort: Send + Sync {
 
     /// The graph data for one selectable timeframe of the detail page (aggregate
     /// series + radars + channel pie + per-channel nerd stats), over the windows
-    /// derived from `now`. With `exclude_new_stations` (Bike-Trends) the graphs
-    /// carry an `is_new` flag when the station was introduced during the period.
+    /// derived from `now`. `resolution` overrides the timeframe's default bucket
+    /// granularity (the Bike-Trends resolution changer). With
+    /// `exclude_new_stations` (Bike-Trends) the graphs carry an `is_new` flag
+    /// when the station was introduced during the period.
     fn detail_graphs_timeframe(
         &self,
         station_id: Id,
         timeframe: GraphTimeframe,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<PeriodGraphs, DomainError>;
 
     /// The graph data of the detail page for a custom `[from, to]` range (the
     /// "Individual" timeframe): the bucket granularity is derived from the range
-    /// length and there is no previous period (compare is disabled for custom
-    /// ranges).
+    /// length (or overridden by `resolution`) and there is no previous period
+    /// (compare is disabled for custom ranges).
     fn detail_graphs_custom(
         &self,
         station_id: Id,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<PeriodGraphs, DomainError>;
@@ -133,27 +137,32 @@ pub trait StationAnalyticsServicePort: Send + Sync {
 
     /// The graph data for one selectable timeframe of the summary page (aggregate
     /// series + radars + station pie + per-station nerd stats) over the included
-    /// stations. With `exclude_new_stations` (Bike-Trends) only stations that
-    /// already existed before the current + previous window are aggregated.
+    /// stations. `resolution` overrides the timeframe's default bucket
+    /// granularity (the Bike-Trends resolution changer). With
+    /// `exclude_new_stations` (Bike-Trends) only stations that already existed
+    /// before the current + previous window are aggregated.
     fn stations_summary_graphs_timeframe(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         timeframe: GraphTimeframe,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<SummaryPeriodGraphs, DomainError>;
 
     /// The graph data of the summary page for a custom `[from, to]` range (the
     /// "Individual" timeframe): the bucket granularity is derived from the range
-    /// length and there is no previous period (compare is disabled for custom
-    /// ranges).
+    /// length (or overridden by `resolution`) and there is no previous period
+    /// (compare is disabled for custom ranges).
+    #[allow(clippy::too_many_arguments)]
     fn stations_summary_graphs_custom(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<SummaryPeriodGraphs, DomainError>;

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo } from 'react'
 
 import { getCookie, setCookie } from '../../lib/cookies'
+import {
+  DEFAULT_RESOLUTION,
+  isResolutionLevel,
+  type ResolutionLevel,
+} from '../stationDetail/resolution'
 import { dateToInput } from '../stationDetail/timeframes'
 import type { Timeframe } from '../stationDetail/types'
 
@@ -15,7 +20,9 @@ const VALID_TIMEFRAMES: Timeframe[] = ['day', 'week', 'last_30_days', 'year', 'i
 /// The persisted shape stored in the URL and the cookie. `from`/`to` are the
 /// user-selected dates (`YYYY-MM-DD`) and only apply to the `individual`
 /// timeframe. `compare` is kept even while `individual` is active, so switching
-/// back to a fixed interval restores the exact previous value.
+/// back to a fixed interval restores the exact previous value. `resolution` is
+/// the Bike-Trends resolution level (`high`/`mid`/`low`), always present
+/// (defaults to `mid` for absent/legacy values).
 export interface PersistedTimeframeSettings {
   timeframe: Timeframe
   from?: string
@@ -24,6 +31,7 @@ export interface PersistedTimeframeSettings {
   /// The Bike-Trends "exclude new stations" flag. Presence of `exclude_new_stations=1`
   /// in the URL means on, so a shared link restores the same filter.
   exclude: boolean
+  resolution: ResolutionLevel
 }
 
 /// The value consumed by the shared settings dialog and the page header label.
@@ -33,12 +41,19 @@ export interface TimeframeSettingsValue {
   to: string | null
   compare: boolean
   exclude: boolean
+  resolution: ResolutionLevel
   isIndividual: boolean
   setTimeframe: (timeframe: Timeframe) => void
   setFrom: (from: string) => void
   setTo: (to: string) => void
   setCompare: (compare: boolean) => void
   setExclude: (exclude: boolean) => void
+  setResolution: (resolution: ResolutionLevel) => void
+}
+
+/// Normalizes an untrusted/absent resolution value to a valid level.
+function normalizeResolution(value: string | null | undefined): ResolutionLevel {
+  return isResolutionLevel(value) ? value : DEFAULT_RESOLUTION
 }
 
 /// Reads the settings from the URL query params; `null` when no `timeframe`
@@ -54,6 +69,7 @@ function parseUrl(searchParams: URLSearchParams): PersistedTimeframeSettings | n
     to,
     compare: searchParams.get('compare') === '1',
     exclude: searchParams.get('exclude_new_stations') === '1',
+    resolution: normalizeResolution(searchParams.get('resolution')),
   }
 }
 
@@ -70,6 +86,7 @@ function readCookie(): PersistedTimeframeSettings | null {
         to: parsed.to,
         compare: parsed.compare === true,
         exclude: parsed.exclude === true,
+        resolution: normalizeResolution(parsed.resolution),
       }
     }
   } catch {
@@ -99,10 +116,21 @@ function applyToParams(params: URLSearchParams, settings: PersistedTimeframeSett
   } else {
     params.delete('exclude_new_stations')
   }
+  if (settings.resolution && settings.resolution !== DEFAULT_RESOLUTION) {
+    params.set('resolution', settings.resolution)
+  } else {
+    params.delete('resolution')
+  }
 }
 
-/// Defaults for a bare URL with no cookie: the week timeframe, compare off.
-const DEFAULTS: PersistedTimeframeSettings = { timeframe: 'week', compare: false, exclude: false }
+/// Defaults for a bare URL with no cookie: the week timeframe, compare off and
+/// the mid resolution level.
+const DEFAULTS: PersistedTimeframeSettings = {
+  timeframe: 'week',
+  compare: false,
+  exclude: false,
+  resolution: DEFAULT_RESOLUTION,
+}
 
 /// Default individual range when the user first picks it: the last 90 days.
 function defaultIndividualRange(): { from: string; to: string } {
@@ -200,18 +228,25 @@ export function useTimeframeSettings(
     [effective, update],
   )
 
+  const setResolution = useCallback(
+    (resolution: ResolutionLevel) => update({ ...effective, resolution }),
+    [effective, update],
+  )
+
   return {
     timeframe: effective.timeframe,
     from: isIndividual ? (effective.from ?? null) : null,
     to: isIndividual ? (effective.to ?? null) : null,
     compare: effective.compare,
     exclude: effective.exclude,
+    resolution: effective.resolution,
     isIndividual,
     setTimeframe,
     setFrom,
     setTo,
     setCompare,
     setExclude,
+    setResolution,
   }
 }
 

@@ -342,6 +342,11 @@ pub struct AsOfQueryParams {
     /// present and `from` must be before `to`.
     #[serde(default)]
     pub to: Option<DateTime<Utc>>,
+    /// Bike-Trends resolution changer: overrides the bucket granularity of the
+    /// graphs. One of `15m | 30m | hour | day | week | month | quarter`; absent
+    /// keeps the timeframe's default. Unknown values are rejected with 400.
+    #[serde(default)]
+    pub resolution: Option<String>,
 }
 
 /// The **page-shell** BFF payload for the counting-station detail page: the
@@ -609,6 +614,11 @@ pub struct BffStationSummaryQueryParams {
     /// present and `from` must be before `to`.
     #[serde(default)]
     pub to: Option<DateTime<Utc>>,
+    /// Bike-Trends resolution changer: overrides the bucket granularity of the
+    /// graphs. One of `15m | 30m | hour | day | week | month | quarter`; absent
+    /// keeps the timeframe's default. Unknown values are rejected with 400.
+    #[serde(default)]
+    pub resolution: Option<String>,
 }
 
 /// Query parameters of the global-summary endpoint. The Bike-Trends

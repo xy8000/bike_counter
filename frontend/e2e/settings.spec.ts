@@ -239,7 +239,8 @@ test('the individual range renders real buckets without a previous-period overla
   })
 
   // The custom range (2026-08-25..31) overlaps the seeded rolling data, so the
-  // chart draws real day buckets for it. Capture the request to prove the
+  // chart draws real buckets for it. A one-week range uses the week resolution
+  // set (default mid = 1-hour buckets). Capture the request to prove the
   // individual range is fetched without a compare (previous period) parameter.
   const individualRequest = page.waitForRequest(
     (request) =>
@@ -258,9 +259,83 @@ test('the individual range renders real buckets without a previous-period overla
   await expect(individualRequest).resolves.toBeTruthy()
   await dialog.getByRole('button', { name: 'Apply' }).click()
 
-  // The chart card switches to the individual range and renders the day-bucket
+  // The chart card switches to the individual range and renders the bucket
   // series (not just the URL round-trip).
   await expect(statsSection.getByText('Individual range', { exact: true })).toBeVisible()
-  await expect(statsSection.getByText('1-day buckets', { exact: true })).toBeVisible()
+  await expect(statsSection.getByText('1-hour buckets', { exact: true })).toBeVisible()
   await expect(statsSection.locator('.recharts-wrapper').first()).toBeVisible()
+})
+
+test('the resolution buttons reflect the timeframe and drive the graph request', async ({
+  page,
+}) => {
+  await openDetailPage(page)
+  const dialog = await openSettings(page)
+
+  // The default timeframe is "This week", so its resolution set is shown and the
+  // mid level (Hour) is selected by default.
+  const hour = dialog.getByRole('button', { name: 'Hour', exact: true })
+  await expect(hour).toBeVisible()
+  await expect(hour).toHaveAttribute('aria-pressed', 'true')
+  await expect(dialog.getByRole('button', { name: '30 Min', exact: true })).toBeVisible()
+  const day = dialog.getByRole('button', { name: 'Day', exact: true })
+  await expect(day).toBeVisible()
+
+  // Picking the coarsest (low) level sends `resolution=day` on the week graph
+  // request and persists `resolution=low` into the URL.
+  const lowRequest = page.waitForRequest(
+    (request) =>
+      request.url().includes('/api/bff/station-detail/') &&
+      request.url().includes('/graphs/week') &&
+      request.url().includes('resolution=day'),
+  )
+  await day.click()
+  await expect(day).toHaveAttribute('aria-pressed', 'true')
+  await expect(lowRequest).resolves.toBeTruthy()
+  await expect(page).toHaveURL(/[?&]resolution=low/)
+})
+
+test('the resolution level is stored in the URL and restored on a bare URL', async ({ page }) => {
+  const stationId = await openDetailPage(page)
+  const dialog = await openSettings(page)
+
+  // Coarsest on the week set (Day) -> `resolution=low`.
+  const day = dialog.getByRole('button', { name: 'Day', exact: true })
+  await day.click()
+  await expect(page).toHaveURL(/[?&]resolution=low/)
+
+  // A bare URL (no settings params) restores the level from the cookie and
+  // writes it back into the URL, so a shared link keeps the resolution.
+  await page.goto(`/stations/${stationId}`, { waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
+  await expect(page).toHaveURL(/[?&]resolution=low/)
+
+  const restoredDialog = await openSettings(page)
+  await expect(restoredDialog.getByRole('button', { name: 'Day', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+})
+
+test('an individual range beyond one year drops the day resolution', async ({ page }) => {
+  await openDetailPage(page)
+  const dialog = await openSettings(page)
+  await dialog.getByRole('button', { name: 'Individual', exact: true }).click()
+
+  // A multi-year range uses the year set with the `Day` option dropped. Each
+  // value must commit (URL + input) before the next fill, so the second fill
+  // cannot read the stale default of the first input and revert it.
+  const fromInput = dialog.getByLabel('From', { exact: true })
+  await fromInput.fill('2022-01-01')
+  await expect(page).toHaveURL(/[?&]from=2022-01-01/)
+  await expect(fromInput).toHaveValue('2022-01-01')
+  const toInput = dialog.getByLabel('To', { exact: true })
+  await toInput.fill('2024-12-31')
+  await expect(page).toHaveURL(/[?&]to=2024-12-31/)
+  await expect(toInput).toHaveValue('2024-12-31')
+
+  await expect(dialog.getByRole('button', { name: 'Week', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Month', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Quarter', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Day', exact: true })).toBeHidden()
 })

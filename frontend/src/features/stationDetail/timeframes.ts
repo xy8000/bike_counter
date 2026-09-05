@@ -191,10 +191,10 @@ export function timeframeSeries(
 // "Individual" custom from/to range
 // ---------------------------------------------------------------------------
 
-/// The bucket resolution of a custom from/to range, mirroring the backend's
-/// `custom_granularity`: `<= 24h` → 15 minutes, `<= 48h` → 1 hour, `<= 30d` →
-/// 1 day, `<= 90d` → 1 week, `<= 2y` → 1 month, otherwise → 1 quarter.
-export type CustomResolution = '15m' | 'hour' | 'day' | 'week' | 'month' | 'quarter'
+/// The bucket resolutions the graphs can be aggregated into, keyed like the
+/// backend's `resolution` query parameter: fixed-width 15/30-minute and hour
+/// buckets plus calendar day/week/month/quarter buckets.
+export type GranularityKey = '15m' | '30m' | 'hour' | 'day' | 'week' | 'month' | 'quarter'
 
 /// Parses a `YYYY-MM-DD` input value into a browser-local `Date`.
 export function dateFromInput(value: string): Date {
@@ -208,21 +208,6 @@ export function dateToInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-/// The bucket resolution for an inclusive custom range `[from, to]` (the API
-/// range runs to the day after `to`, so the span equals the selected day count).
-export function customResolution(from: Date, to: Date): CustomResolution {
-  const toExclusive = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1)
-  const spanMs = toExclusive.getTime() - from.getTime()
-  const hours = spanMs / 3_600_000
-  const days = spanMs / 86_400_000
-  if (hours <= 24) return '15m'
-  if (hours <= 48) return 'hour'
-  if (days <= 30) return 'day'
-  if (days <= 90) return 'week'
-  if (days <= 730) return 'month'
-  return 'quarter'
 }
 
 /// Axis labels for week-aligned buckets: `dd.MM`.
@@ -240,45 +225,103 @@ function quarterAxis(time: number): string {
   return `Q${quarter} ${date.getFullYear()}`
 }
 
-/// The presentation config of the "Individual" timeframe, derived from the
-/// selected from/to range. There is no previous period (compare is disabled),
-/// so `previousLabel` is unused; the axis width covers the whole range.
-export function customTimeframeConfig(from: Date, to: Date): TimeframeConfig {
-  const resolution = customResolution(from, to)
-  const subtitle =
-    resolution === '15m'
-      ? '15-minute buckets'
-      : resolution === 'hour'
-        ? '1-hour buckets'
-        : resolution === 'week'
-          ? '1-week buckets'
-          : resolution === 'month'
-            ? '1-month buckets'
-            : resolution === 'quarter'
-              ? '1-quarter buckets'
-              : '1-day buckets'
-  const axis =
-    resolution === '15m' || resolution === 'hour'
-      ? timeAxis('hour')
-      : resolution === 'month'
-        ? monthAxis
-        : resolution === 'quarter'
-          ? quarterAxis
-          : weekAxis
-  const tooltip =
-    resolution === '15m' || resolution === 'hour' ? formatFullDateTime : formatFullDate
+/// Axis label for the overlapped week chart with day buckets: a short weekday
+/// name marks each aligned day (one bucket per weekday, so no time suffix).
+function weekdayDayAxis(time: number): string {
+  return new Date(time).toLocaleDateString(LOCALE, { weekday: 'short' })
+}
+
+/// The chart-subtitle wording for a bucket resolution.
+export function granularitySubtitle(granularity: GranularityKey): string {
+  switch (granularity) {
+    case '15m':
+      return '15-minute buckets'
+    case '30m':
+      return '30-minute buckets'
+    case 'hour':
+      return '1-hour buckets'
+    case 'day':
+      return '1-day buckets'
+    case 'week':
+      return '1-week buckets'
+    case 'month':
+      return '1-month buckets'
+    case 'quarter':
+      return '1-quarter buckets'
+  }
+}
+
+/// The tooltip formatter for a bucket resolution: sub-day buckets need the full
+/// date-time, coarser buckets only the date.
+function granularityTooltip(granularity: GranularityKey): (time: number) => string {
+  return granularity === '15m' || granularity === '30m' || granularity === 'hour'
+    ? formatFullDateTime
+    : formatFullDate
+}
+
+/// The x-axis formatter for a resolution within a fixed timeframe. Week overlays
+/// keep their weekday axis for sub-day buckets so weekday context is not lost;
+/// the year view keeps its month labels at every resolution.
+function fixedAxis(
+  timeframe: FixedTimeframe,
+  granularity: GranularityKey,
+): (time: number) => string {
+  switch (timeframe) {
+    case 'week':
+      if (granularity === '15m' || granularity === '30m' || granularity === 'hour') {
+        return weekdayAxis
+      }
+      return weekdayDayAxis
+    case 'year':
+      return timeAxis('month')
+    case 'day':
+    case 'last_30_days':
+      return granularity === '15m' || granularity === '30m' || granularity === 'hour'
+        ? timeAxis('hour')
+        : timeAxis('day')
+  }
+}
+
+/// The presentation config of a fixed timeframe at a chosen resolution: the
+/// timeframe's static labels/period math (from [`TIMEFRAMES`]) plus the
+/// resolution-dependent subtitle, x-axis and tooltip.
+export function fixedTimeframeConfig(
+  timeframe: FixedTimeframe,
+  granularity: GranularityKey,
+): TimeframeConfig {
+  const base = TIMEFRAMES[timeframe]
+  return {
+    ...base,
+    subtitle: granularitySubtitle(granularity),
+    axis: fixedAxis(timeframe, granularity),
+    tooltip: granularityTooltip(granularity),
+  }
+}
+
+/// The presentation config of the "Individual" timeframe for a chosen
+/// resolution. There is no previous period (compare is disabled), so
+/// `previousLabel` is unused; the axis width covers the whole range.
+export function customTimeframeConfig(granularity: GranularityKey): TimeframeConfig {
+  const subDay = granularity === '15m' || granularity === '30m' || granularity === 'hour'
+  const axis = subDay
+    ? timeAxis('hour')
+    : granularity === 'month'
+      ? monthAxis
+      : granularity === 'quarter'
+        ? quarterAxis
+        : weekAxis
   return {
     key: 'individual' as Timeframe,
     label: 'Individual',
     title: 'Individual range',
-    subtitle,
+    subtitle: granularitySubtitle(granularity),
     radarSubtitle: 'over the selected range',
     pieSubtitle: 'over the selected range',
     perChannelTitle: 'Individual by channel',
     currentLabel: 'Selected range',
     previousLabel: '',
     axis,
-    tooltip,
+    tooltip: granularityTooltip(granularity),
     // Identity period start: the aligned anchor is the first bucket (a custom
     // range has no previous-period overlay).
     periodStart: (time) => time,

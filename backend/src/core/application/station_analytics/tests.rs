@@ -1056,7 +1056,7 @@ fn detail_computes_all_windows() {
     assert_eq!(page.channels.len(), 2);
 
     let day = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Day, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, None, now, false)
         .unwrap();
     assert_eq!(
         sum_buckets(&day.current),
@@ -1066,13 +1066,13 @@ fn detail_computes_all_windows() {
     assert!(day.previous.is_empty(), "no data for the day before");
 
     let week = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Week, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Week, None, now, false)
         .unwrap();
     assert_eq!(sum_buckets(&week.current), 150, "Jan 8 (Mon) + Jan 10");
     assert_eq!(sum_buckets(&week.previous), 40, "Jan 4 + Jan 5");
 
     let last_30_days = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, None, now, false)
         .unwrap();
     assert_eq!(
         sum_buckets(&last_30_days.current),
@@ -1085,7 +1085,7 @@ fn detail_computes_all_windows() {
     );
 
     let year = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Year, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Year, None, now, false)
         .unwrap();
     assert_eq!(sum_buckets(&year.current), 190, "all 2024 measurements");
     assert_eq!(sum_buckets(&year.previous), 25, "Dec 2023 + Jun 2023");
@@ -1103,10 +1103,10 @@ fn detail_computes_previous_periods_for_day_and_last_30_days() {
     let service = promenade_service(measurements);
     let id = station_vo::Id(Uuid::from_u128(STATION_1));
     let day = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Day, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, None, now, false)
         .unwrap();
     let last_30_days = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, None, now, false)
         .unwrap();
 
     assert!(day.current.is_empty());
@@ -1180,13 +1180,13 @@ fn detail_resolutions_bucket_by_hour_and_day() {
     let service = promenade_service(measurements);
     let id = station_vo::Id(Uuid::from_u128(STATION_1));
     let week = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Week, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Week, None, now, false)
         .unwrap();
     let last_30_days = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Last30Days, None, now, false)
         .unwrap();
     let year = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Year, now, false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Year, None, now, false)
         .unwrap();
 
     let week_starts: Vec<i64> = week.current.iter().map(|b| b.start.timestamp()).collect();
@@ -1250,6 +1250,7 @@ fn detail_current_week_has_no_future_buckets() {
         .detail_graphs_timeframe(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Week,
+            None,
             now,
             false,
         )
@@ -1270,6 +1271,7 @@ fn detail_per_channel_series_and_pie() {
         .detail_graphs_timeframe(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Last30Days,
+            None,
             now,
             false,
         )
@@ -1309,6 +1311,7 @@ fn detail_per_channel_weekday_radar_follows_the_station_timezone() {
         .detail_graphs_timeframe(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Last30Days,
+            None,
             now,
             false,
         )
@@ -1351,6 +1354,7 @@ fn detail_weekday_radar_aggregates_over_last_30_days() {
         .detail_graphs_timeframe(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Last30Days,
+            None,
             now,
             false,
         )
@@ -1379,6 +1383,7 @@ fn detail_previous_and_hour_radars_are_computed() {
         .detail_graphs_timeframe(
             station_vo::Id(Uuid::from_u128(STATION_1)),
             GraphTimeframe::Day,
+            None,
             now,
             false,
         )
@@ -1447,7 +1452,7 @@ fn detail_station_without_channels_returns_empty_graphs() {
     let page = service.detail_page(id, detail_now()).unwrap();
     assert!(page.channels.is_empty());
     let day = service
-        .detail_graphs_timeframe(id, GraphTimeframe::Day, detail_now(), false)
+        .detail_graphs_timeframe(id, GraphTimeframe::Day, None, detail_now(), false)
         .unwrap();
     assert!(day.current.is_empty());
     assert!(day.per_channel.is_empty());
@@ -1610,6 +1615,7 @@ fn stations_summary_aggregates_per_station_graphs_and_station_pie() {
             bounds(),
             &[],
             GraphTimeframe::Week,
+            None,
             summary_now(),
             false,
         )
@@ -1644,6 +1650,7 @@ fn stations_summary_per_station_weekday_radar_folds_each_station_buckets() {
             bounds(),
             &[],
             GraphTimeframe::Week,
+            None,
             summary_now(),
             false,
         )
@@ -1666,6 +1673,7 @@ fn stations_summary_computes_previous_and_hour_radars() {
             bounds(),
             &[],
             GraphTimeframe::Week,
+            None,
             summary_now(),
             false,
         )
@@ -1842,6 +1850,7 @@ fn stations_summary_empty_bounds_returns_empty_stations_and_graphs() {
             empty_bounds,
             &[],
             GraphTimeframe::Week,
+            None,
             summary_now(),
             false,
         )
@@ -1902,6 +1911,7 @@ fn graph_windows_rejects_invalid_timezone_via_detail() {
     let result = service.detail_graphs_timeframe(
         station_vo::Id(Uuid::from_u128(STATION_1)),
         GraphTimeframe::Week,
+        None,
         detail_now(),
         false,
     );
@@ -2046,10 +2056,10 @@ fn stations_summary_graphs_exclude_new_stations() {
     let now = summary_now();
 
     let plain = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Day, now, false)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Day, None, now, false)
         .unwrap();
     let filtered = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Day, now, true)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Day, None, now, true)
         .unwrap();
 
     assert_eq!(sum_buckets(&plain.current), 850, "A (350) + B (500)");
@@ -2096,10 +2106,10 @@ fn established_stations_with_a_stale_last_measurement_are_not_dropped() {
     let now = summary_now();
 
     let plain = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, false)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, None, now, false)
         .unwrap();
     let filtered = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, true)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, None, now, true)
         .unwrap();
 
     assert_eq!(sum_buckets(&plain.current), 850, "A (350) + B (500)");
@@ -2141,10 +2151,10 @@ fn stations_summary_graphs_keep_a_station_with_no_current_week_data() {
     let now = summary_now();
 
     let plain = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, false)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, None, now, false)
         .unwrap();
     let filtered = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, now, true)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Week, None, now, true)
         .unwrap();
 
     assert_eq!(
@@ -2216,7 +2226,7 @@ fn detail_custom_range_groups_by_range_length() {
     let now = utc(2027, 1, 1, 0, 0, 0);
     let custom = |measurements: Vec<Measurement>, from: DateTime<Utc>, to: DateTime<Utc>| {
         promenade_service(measurements)
-            .detail_graphs_custom(id, from, to, now, false)
+            .detail_graphs_custom(id, from, to, None, now, false)
             .unwrap()
     };
     let diffs = |series: &[TimeBucket]| -> Vec<i64> {
@@ -2357,6 +2367,7 @@ fn detail_custom_range_zero_fills_empty_buckets() {
             id,
             utc(2024, 1, 1, 0, 0, 0),
             utc(2024, 8, 31, 0, 0, 0),
+            None,
             now,
             false,
         )
@@ -2411,6 +2422,7 @@ fn detail_custom_range_has_no_previous_period_and_wide_radars() {
             id,
             utc(2023, 1, 1, 0, 0, 0),
             utc(2023, 5, 1, 0, 0, 0),
+            None,
             now,
             false,
         )
@@ -2448,6 +2460,7 @@ fn stations_summary_custom_range_aggregates_without_previous() {
             &[],
             utc(2023, 1, 1, 0, 0, 0),
             utc(2023, 5, 1, 0, 0, 0),
+            None,
             now,
             false,
         )
@@ -2474,6 +2487,7 @@ fn detail_custom_range_rejects_an_inverted_range() {
         id,
         utc(2023, 5, 1, 0, 0, 0),
         utc(2023, 1, 1, 0, 0, 0),
+        None,
         now,
         false,
     );
@@ -2492,6 +2506,7 @@ fn detail_custom_range_exclude_new_stations_checks_only_the_current_window() {
             id,
             utc(2023, 1, 1, 0, 0, 0),
             utc(2023, 5, 1, 0, 0, 0),
+            None,
             now,
             true,
         )
@@ -2524,6 +2539,7 @@ fn stations_summary_custom_range_exclude_new_stations_filters_new_stations() {
             &[],
             utc(2023, 1, 1, 0, 0, 0),
             utc(2023, 5, 1, 0, 0, 0),
+            None,
             now,
             false,
         )
@@ -2534,6 +2550,7 @@ fn stations_summary_custom_range_exclude_new_stations_filters_new_stations() {
             &[],
             utc(2023, 1, 1, 0, 0, 0),
             utc(2023, 5, 1, 0, 0, 0),
+            None,
             now,
             true,
         )
@@ -2572,10 +2589,10 @@ fn stations_summary_graphs_keep_an_established_station_despite_data_loss_at_the_
     let now = summary_now();
 
     let plain = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Year, now, false)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Year, None, now, false)
         .unwrap();
     let filtered = service
-        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Year, now, true)
+        .stations_summary_graphs_timeframe(bounds(), &[], GraphTimeframe::Year, None, now, true)
         .unwrap();
 
     assert_eq!(
@@ -2654,6 +2671,7 @@ fn stations_summary_custom_range_with_no_included_stations_is_empty() {
             &[],
             utc(2023, 1, 1, 0, 0, 0),
             utc(2023, 5, 1, 0, 0, 0),
+            None,
             now,
             false,
         )

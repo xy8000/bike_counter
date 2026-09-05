@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { resolutionOptions } from '../stationDetail/resolution'
 import { TIMEFRAMES, TIMEFRAME_ORDER } from '../stationDetail/timeframes'
 import type { Timeframe } from '../stationDetail/types'
 import { useTrendSettings } from './TrendSettingsContext'
@@ -45,12 +46,14 @@ export function SettingsDialog({
     from,
     to,
     compare,
+    resolution,
     isIndividual,
     setTimeframe,
     setFrom,
     setTo,
     setCompare,
     setExclude,
+    setResolution,
   } = settings
 
   return (
@@ -108,6 +111,29 @@ export function SettingsDialog({
               </div>
             </div>
           )}
+
+          <div>
+            <span className="text-sm font-medium">Resolution</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {resolutionOptions(timeframe, from, to).map((option) => (
+                <button
+                  key={option.level}
+                  type="button"
+                  onClick={() => setResolution(option.level)}
+                  aria-pressed={resolution === option.level}
+                  title={`Resolution ${option.label}`}
+                  className={cn(
+                    'rounded-md border px-3 py-1.5 text-sm transition-colors',
+                    resolution === option.level
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'hover:bg-muted',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div
             className={cn(

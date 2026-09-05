@@ -16,11 +16,12 @@ import { MetricCard } from '../stationOverview/MetricCard'
 import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
 import type { ChannelRef, FixedTimeframe, PeriodGraphs, StationDetailPage } from './types'
 import { GRAPH_LINK_KEYS } from './types'
+import { resolutionGranularity, withResolutionParam } from './resolution'
 import {
   TIMEFRAMES,
   alignSeries,
   customTimeframeConfig,
-  dateFromInput,
+  fixedTimeframeConfig,
   timeframeSeries,
   type TimeframeConfig,
 } from './timeframes'
@@ -241,7 +242,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const settings = useTimeframeSettings(searchParams, setSearchParams)
-  const { timeframe, from, to, compare, isIndividual } = settings
+  const { timeframe, from, to, compare, resolution, isIndividual } = settings
   const { excludeNewStations, setExcludeNewStations } = useTrendSettings()
 
   // A shared link carries the Bike-Trends flag (`exclude_new_stations=1`); sync
@@ -256,18 +257,24 @@ function DetailContent({ page }: { page: StationDetailPage }) {
 
   // The fixed timeframes use their HATEOAS link and static config; the
   // individual range builds its own link (from/to appended to the `graphs_day`
-  // base) and derives its config (labels/axis) from the selected range. Compare
-  // is disabled for a custom range.
+  // base) and derives its config (labels/axis) from the selected range. The
+  // resolution level maps to a concrete granularity per timeframe/range, which
+  // drives both the chart config and the `resolution` query token on the link.
+  // Compare is disabled for a custom range.
+  const granularity = resolutionGranularity(resolution, timeframe, from, to)
   const cfg: TimeframeConfig = !isIndividual
-    ? TIMEFRAMES[timeframe as FixedTimeframe]
+    ? fixedTimeframeConfig(timeframe as FixedTimeframe, granularity)
     : from && to
-      ? customTimeframeConfig(dateFromInput(from), dateFromInput(to))
+      ? customTimeframeConfig(granularity)
       : TIMEFRAMES.week
-  const graphLink = !isIndividual
-    ? page._links[GRAPH_LINK_KEYS[timeframe as FixedTimeframe]]
-    : from && to
-      ? withCustomRange(page._links.graphs_day, from, to)
-      : page._links.graphs_week
+  const graphLink = withResolutionParam(
+    !isIndividual
+      ? page._links[GRAPH_LINK_KEYS[timeframe as FixedTimeframe]]
+      : from && to
+        ? withCustomRange(page._links.graphs_day, from, to)
+        : page._links.graphs_week,
+    granularity,
+  )
   const comparePrevious = compare && !isIndividual
 
   // Each stats card fetches its own sub-resource through the shell's links

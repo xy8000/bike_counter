@@ -24,7 +24,8 @@ use crate::core::domain::measurements::repository_port::{
     WeekdayTotal,
 };
 use crate::core::domain::station_analytics::{
-    PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal, SummaryPeriodGraphs,
+    GraphResolution, PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal,
+    SummaryPeriodGraphs,
 };
 
 use super::resolution::introduced_after;
@@ -171,6 +172,18 @@ pub(super) fn graph_windows(tz: Tz, now: DateTime<Utc>) -> Result<GraphWindows, 
             },
         },
     })
+}
+
+/// Overrides a window's bucket granularity with the requested Bike-Trends
+/// resolution. `None` leaves the window untouched (the current default per
+/// timeframe). For fixed-width granularities the window's `origin` is kept: it
+/// is already a local midnight for every fixed timeframe and the custom-range
+/// builder, so quarter-hour / hour buckets stay aligned to local clock
+/// boundaries.
+pub(super) fn apply_resolution(window: &mut Window, resolution: Option<GraphResolution>) {
+    if let Some(resolution) = resolution {
+        window.granularity = resolution.to_bucket_granularity();
+    }
 }
 
 /// Whether buckets of this granularity are at most one day wide, so folding them
@@ -954,6 +967,51 @@ mod tests {
             custom_granularity(Duration::days(731)),
             BucketGranularity::Quarter
         );
+    }
+
+    #[test]
+    fn apply_resolution_overrides_only_the_window_granularity() {
+        let from = utc(2026, 1, 1, 0, 0, 0);
+        let to = utc(2026, 12, 31, 0, 0, 0);
+        let default_granularity = BucketGranularity::Fixed {
+            seconds: 24 * 60 * 60,
+        };
+
+        // `None` leaves the window untouched (the timeframe's default applies).
+        let mut unchanged = Window {
+            from,
+            to,
+            granularity: default_granularity,
+            origin: from,
+        };
+        apply_resolution(&mut unchanged, None);
+        assert_eq!(unchanged.granularity, default_granularity);
+
+        // A requested resolution overwrites the granularity; the window's
+        // origin is preserved (already a local midnight for the fixed
+        // timeframes and the custom-range builder).
+        let mut month = Window {
+            from,
+            to,
+            granularity: default_granularity,
+            origin: from,
+        };
+        apply_resolution(&mut month, Some(GraphResolution::Month));
+        assert_eq!(month.granularity, BucketGranularity::Month);
+        assert_eq!(month.origin, from);
+
+        let mut half_hour = Window {
+            from,
+            to,
+            granularity: default_granularity,
+            origin: from,
+        };
+        apply_resolution(&mut half_hour, Some(GraphResolution::ThirtyMinutes));
+        assert_eq!(
+            half_hour.granularity,
+            BucketGranularity::Fixed { seconds: 30 * 60 }
+        );
+        assert_eq!(half_hour.origin, from);
     }
 
     #[test]

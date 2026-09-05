@@ -17,11 +17,12 @@ import { MonthlyBarChart } from '../stationDetail/MonthlyBarChart'
 import { SharePie, type ShareSlice } from '../stationDetail/SharePie'
 import { TimeSeriesBarChart, type BarSeries } from '../stationDetail/TimeSeriesBarChart'
 import type { FixedTimeframe } from '../stationDetail/types'
+import { resolutionGranularity, withResolutionParam } from '../stationDetail/resolution'
 import {
   TIMEFRAMES,
   alignSeries,
   customTimeframeConfig,
-  dateFromInput,
+  fixedTimeframeConfig,
   timeframeSeries,
   type TimeframeConfig,
 } from '../stationDetail/timeframes'
@@ -304,7 +305,7 @@ function SummaryContent({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const settings = useTimeframeSettings(searchParams, setSearchParams)
-  const { timeframe, from, to, compare, isIndividual } = settings
+  const { timeframe, from, to, compare, resolution, isIndividual } = settings
 
   // A shared link carries the Bike-Trends flag (`exclude_new_stations=1`); sync
   // it into the app-global context so the header and every stats card agree with
@@ -318,18 +319,24 @@ function SummaryContent({
 
   // The fixed timeframes use their HATEOAS link and static config; the
   // individual range builds its own link (from/to appended to the `graphs_day`
-  // base) and derives its config from the selected range. Compare is disabled
-  // for a custom range.
+  // base) and derives its config from the selected range. The resolution level
+  // maps to a concrete granularity per timeframe/range, which drives both the
+  // chart config and the `resolution` query token on the link. Compare is
+  // disabled for a custom range.
+  const granularity = resolutionGranularity(resolution, timeframe, from, to)
   const cfg: TimeframeConfig = !isIndividual
-    ? TIMEFRAMES[timeframe as FixedTimeframe]
+    ? fixedTimeframeConfig(timeframe as FixedTimeframe, granularity)
     : from && to
-      ? customTimeframeConfig(dateFromInput(from), dateFromInput(to))
+      ? customTimeframeConfig(granularity)
       : TIMEFRAMES.week
-  const graphLink = !isIndividual
-    ? page._links[GRAPH_LINK_KEYS[timeframe as FixedTimeframe]]
-    : from && to
-      ? withCustomRange(page._links.graphs_day, from, to)
-      : page._links.graphs_week
+  const graphLink = withResolutionParam(
+    !isIndividual
+      ? page._links[GRAPH_LINK_KEYS[timeframe as FixedTimeframe]]
+      : from && to
+        ? withCustomRange(page._links.graphs_day, from, to)
+        : page._links.graphs_week,
+    granularity,
+  )
   const comparePrevious = compare && !isIndividual
 
   const { overview, error: overviewError } = useStationsSummaryOverview(

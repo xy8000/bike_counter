@@ -31,9 +31,9 @@ use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::{MeasurementRepository, MonthTotal};
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
-    GeoBounds, GlobalSummary, GraphTimeframe, PeriodGraphs, SidebarStationStats, StationDetailPage,
-    StationOverviewShell, StationOverviewStats, StationSummary, StationsSummaryOverview,
-    StationsSummaryPage, SummaryPeriodGraphs, SummaryStation,
+    GeoBounds, GlobalSummary, GraphResolution, GraphTimeframe, PeriodGraphs, SidebarStationStats,
+    StationDetailPage, StationOverviewShell, StationOverviewStats, StationSummary,
+    StationsSummaryOverview, StationsSummaryPage, SummaryPeriodGraphs, SummaryStation,
 };
 
 use super::resolution::introduced_after;
@@ -544,6 +544,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         &self,
         station_id: Id,
         timeframe: GraphTimeframe,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<PeriodGraphs, DomainError> {
@@ -558,12 +559,14 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             .map(|channel| ChannelId(channel.id.0))
             .collect();
         let windows = graphs::graph_windows(tz, now)?;
-        let pair = match timeframe {
-            GraphTimeframe::Day => &windows.day,
-            GraphTimeframe::Week => &windows.week,
-            GraphTimeframe::Last30Days => &windows.last_30_days,
-            GraphTimeframe::Year => &windows.year,
+        let mut pair = match timeframe {
+            GraphTimeframe::Day => windows.day,
+            GraphTimeframe::Week => windows.week,
+            GraphTimeframe::Last30Days => windows.last_30_days,
+            GraphTimeframe::Year => windows.year,
         };
+        graphs::apply_resolution(&mut pair.current, resolution);
+        graphs::apply_resolution(&mut pair.previous, resolution);
         graphs::period_graphs_per_channel(
             self.measurement_repository.as_ref(),
             &pair.current,
@@ -582,6 +585,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         station_id: Id,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<PeriodGraphs, DomainError> {
@@ -595,7 +599,8 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             .iter()
             .map(|channel| ChannelId(channel.id.0))
             .collect();
-        let current = graphs::custom_window(tz, from, to)?;
+        let mut current = graphs::custom_window(tz, from, to)?;
+        graphs::apply_resolution(&mut current, resolution);
         graphs::period_graphs_per_channel(
             self.measurement_repository.as_ref(),
             &current,
@@ -682,6 +687,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         bounds: GeoBounds,
         exclude: &[Id],
         timeframe: GraphTimeframe,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<SummaryPeriodGraphs, DomainError> {
@@ -704,12 +710,14 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         let tz: Tz = first.timezone.parse()?;
         let timezone = first.timezone.0.clone();
         let windows = graphs::graph_windows(tz, now)?;
-        let pair = match timeframe {
-            GraphTimeframe::Day => &windows.day,
-            GraphTimeframe::Week => &windows.week,
-            GraphTimeframe::Last30Days => &windows.last_30_days,
-            GraphTimeframe::Year => &windows.year,
+        let mut pair = match timeframe {
+            GraphTimeframe::Day => windows.day,
+            GraphTimeframe::Week => windows.week,
+            GraphTimeframe::Last30Days => windows.last_30_days,
+            GraphTimeframe::Year => windows.year,
         };
+        graphs::apply_resolution(&mut pair.current, resolution);
+        graphs::apply_resolution(&mut pair.previous, resolution);
         graphs::period_graphs_per_station(
             self.measurement_repository.as_ref(),
             &pair.current,
@@ -724,12 +732,14 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn stations_summary_graphs_custom(
         &self,
         bounds: GeoBounds,
         exclude: &[Id],
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        resolution: Option<GraphResolution>,
         now: DateTime<Utc>,
         exclude_new_stations: bool,
     ) -> Result<SummaryPeriodGraphs, DomainError> {
@@ -751,7 +761,8 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
             Self::summary_group_ids(&included, &channels_by_station);
         let tz: Tz = first.timezone.parse()?;
         let timezone = first.timezone.0.clone();
-        let current = graphs::custom_window(tz, from, to)?;
+        let mut current = graphs::custom_window(tz, from, to)?;
+        graphs::apply_resolution(&mut current, resolution);
         graphs::period_graphs_per_station(
             self.measurement_repository.as_ref(),
             &current,

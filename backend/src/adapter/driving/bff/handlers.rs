@@ -40,7 +40,7 @@ use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
 use crate::core::domain::data_source::import_run::DataImportRun;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::station_analytics::{GeoBounds, GraphTimeframe};
+use crate::core::domain::station_analytics::{GeoBounds, GraphResolution, GraphTimeframe};
 
 /// Converts the four optional bounds into a validated `GeoBounds`.
 ///
@@ -120,6 +120,19 @@ fn parse_custom_range(
         _ => Err(DomainError::InvalidQuery(
             "provide both 'from' and 'to' or neither".to_string(),
         )),
+    }
+}
+
+/// Validates the optional `resolution` query parameter of a graphs query,
+/// mapping its stable string key to a [`GraphResolution`]. `Ok(None)` when the
+/// parameter is absent (the timeframe's default bucket granularity applies); an
+/// unknown key is an `InvalidQuery` (400).
+fn parse_resolution(resolution: Option<String>) -> Result<Option<GraphResolution>, DomainError> {
+    match resolution {
+        Some(key) => GraphResolution::from_key(&key)
+            .map(Some)
+            .ok_or_else(|| DomainError::InvalidQuery(format!("unknown resolution '{key}'"))),
+        None => Ok(None),
     }
 }
 
@@ -614,11 +627,12 @@ pub async fn get_bff_station_detail_graphs(
 ) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
     let now = as_of_or_now(params.as_of);
     let exclude_new_stations = params.exclude_new_stations;
+    let resolution = parse_resolution(params.resolution).map_err(map_domain_error)?;
     let service = state.station_analytics_service.clone();
     let graphs = match parse_custom_range(params.from, params.to).map_err(map_domain_error)? {
         // Custom "Individual" range: the `{timeframe}` path segment is ignored.
         Some((from, to)) => blocking(move || {
-            service.detail_graphs_custom(Id(id), from, to, now, exclude_new_stations)
+            service.detail_graphs_custom(Id(id), from, to, resolution, now, exclude_new_stations)
         })
         .await
         .map_err(map_domain_error)?,
@@ -629,7 +643,13 @@ pub async fn get_bff_station_detail_graphs(
                 ))));
             };
             blocking(move || {
-                service.detail_graphs_timeframe(Id(id), timeframe, now, exclude_new_stations)
+                service.detail_graphs_timeframe(
+                    Id(id),
+                    timeframe,
+                    resolution,
+                    now,
+                    exclude_new_stations,
+                )
             })
             .await
             .map_err(map_domain_error)?
@@ -1017,11 +1037,13 @@ pub async fn get_bff_stations_summary_graphs(
     let exclude = parse_exclude(&params.exclude).map_err(map_domain_error)?;
     let now = as_of_or_now(params.as_of);
     let exclude_new_stations = params.exclude_new_stations;
+    let resolution = parse_resolution(params.resolution).map_err(map_domain_error)?;
     let service = state.station_analytics_service.clone();
 
     // Each `blocking` closure must own its captures; `exclude` is cloned for the
     // custom branch so the two mutually-exclusive closures each get an owned
-    // slice (GeoBounds is `Copy`, so it needs no special handling).
+    // slice (GeoBounds and GraphResolution are `Copy`, so they need no special
+    // handling).
     let exclude_custom = exclude.clone();
     let graphs = match parse_custom_range(params.from, params.to).map_err(map_domain_error)? {
         // Custom "Individual" range: the `{timeframe}` path segment is ignored.
@@ -1031,6 +1053,7 @@ pub async fn get_bff_stations_summary_graphs(
                 &exclude_custom,
                 from,
                 to,
+                resolution,
                 now,
                 exclude_new_stations,
             )
@@ -1048,6 +1071,7 @@ pub async fn get_bff_stations_summary_graphs(
                     bounds,
                     &exclude,
                     timeframe,
+                    resolution,
                     now,
                     exclude_new_stations,
                 )
