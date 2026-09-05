@@ -22,12 +22,12 @@ pub struct Configuration {
     data_sources: Vec<DataSourceConfiguration>,
     /// CRON expression defining when the data-source update job re-triggers.
     data_source_update_cron: String,
-    /// Required ShedLock-style max lifetime for the update job (no default).
-    data_source_update_max_lifetime_seconds: i64,
+    /// Required max interval between heartbeats for the update job (no default).
+    data_source_update_max_heartbeat_interval_seconds: i64,
     /// CRON expression defining when the asset cleanup job re-triggers.
     asset_cleanup_cron: String,
-    /// Required ShedLock-style max lifetime for the asset cleanup job (no default).
-    asset_cleanup_max_lifetime_seconds: i64,
+    /// Required max interval between heartbeats for the asset cleanup job (no default).
+    asset_cleanup_max_heartbeat_interval_seconds: i64,
     /// S3-compatible object storage holding the image binaries.
     asset_storage: AssetStorageConfiguration,
     /// Self-hosted vector basemap ("maps") configuration.
@@ -44,10 +44,10 @@ impl Configuration {
         database: DatabaseConfiguration,
         data_sources: Vec<DataSourceConfiguration>,
         data_source_update_cron: String,
-        data_source_update_max_lifetime_seconds: i64,
+        data_source_update_max_heartbeat_interval_seconds: i64,
         asset_storage: AssetStorageConfiguration,
         asset_cleanup_cron: String,
-        asset_cleanup_max_lifetime_seconds: i64,
+        asset_cleanup_max_heartbeat_interval_seconds: i64,
         maps: MapsConfiguration,
     ) -> Result<Self, ConfigError> {
         cron::Schedule::from_str(&data_source_update_cron).map_err(|error| {
@@ -55,9 +55,10 @@ impl Configuration {
                 "invalid data_source_update_cron '{data_source_update_cron}': {error}"
             ))
         })?;
-        if data_source_update_max_lifetime_seconds <= 0 {
+        if data_source_update_max_heartbeat_interval_seconds <= 0 {
             return Err(ConfigError::InvalidFormat(
-                "data_source_update_max_lifetime_seconds must be a positive integer".to_string(),
+                "data_source_update_max_heartbeat_interval_seconds must be a positive integer"
+                    .to_string(),
             ));
         }
         cron::Schedule::from_str(&asset_cleanup_cron).map_err(|error| {
@@ -65,9 +66,10 @@ impl Configuration {
                 "invalid asset_cleanup_cron '{asset_cleanup_cron}': {error}"
             ))
         })?;
-        if asset_cleanup_max_lifetime_seconds <= 0 {
+        if asset_cleanup_max_heartbeat_interval_seconds <= 0 {
             return Err(ConfigError::InvalidFormat(
-                "asset_cleanup_max_lifetime_seconds must be a positive integer".to_string(),
+                "asset_cleanup_max_heartbeat_interval_seconds must be a positive integer"
+                    .to_string(),
             ));
         }
 
@@ -85,9 +87,9 @@ impl Configuration {
             database,
             data_sources,
             data_source_update_cron,
-            data_source_update_max_lifetime_seconds,
+            data_source_update_max_heartbeat_interval_seconds,
             asset_cleanup_cron,
-            asset_cleanup_max_lifetime_seconds,
+            asset_cleanup_max_heartbeat_interval_seconds,
             asset_storage,
             maps,
             scheduled_jobs_enabled: true,
@@ -107,14 +109,14 @@ impl Configuration {
         &self.data_source_update_cron
     }
 
-    /// Required ShedLock-style max lifetime for the update job (no default).
-    pub fn data_source_update_max_lifetime_seconds(&self) -> i64 {
-        self.data_source_update_max_lifetime_seconds
+    /// Required max interval between heartbeats for the update job (no default).
+    pub fn data_source_update_max_heartbeat_interval_seconds(&self) -> i64 {
+        self.data_source_update_max_heartbeat_interval_seconds
     }
 
-    /// The configured max lifetime as a `chrono::Duration` for the domain.
-    pub fn data_source_update_max_lifetime(&self) -> chrono::Duration {
-        chrono::Duration::seconds(self.data_source_update_max_lifetime_seconds)
+    /// The configured max heartbeat interval as a `chrono::Duration` for the domain.
+    pub fn data_source_update_max_heartbeat_interval(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.data_source_update_max_heartbeat_interval_seconds)
     }
 
     /// CRON expression defining when the asset cleanup job is re-triggered.
@@ -122,14 +124,14 @@ impl Configuration {
         &self.asset_cleanup_cron
     }
 
-    /// Required ShedLock-style max lifetime for the asset cleanup job (no default).
-    pub fn asset_cleanup_max_lifetime_seconds(&self) -> i64 {
-        self.asset_cleanup_max_lifetime_seconds
+    /// Required max interval between heartbeats for the asset cleanup job (no default).
+    pub fn asset_cleanup_max_heartbeat_interval_seconds(&self) -> i64 {
+        self.asset_cleanup_max_heartbeat_interval_seconds
     }
 
-    /// The configured max lifetime as a `chrono::Duration` for the domain.
-    pub fn asset_cleanup_max_lifetime(&self) -> chrono::Duration {
-        chrono::Duration::seconds(self.asset_cleanup_max_lifetime_seconds)
+    /// The configured max heartbeat interval as a `chrono::Duration` for the domain.
+    pub fn asset_cleanup_max_heartbeat_interval(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.asset_cleanup_max_heartbeat_interval_seconds)
     }
 
     /// S3-compatible object storage holding the image binaries.
@@ -372,8 +374,8 @@ pub mod value_objects {
     pub struct MapsConfiguration {
         /// CRON expression defining when the tiles update job re-triggers.
         update_cron: String,
-        /// Required ShedLock-style max lifetime for the tiles update job.
-        update_max_lifetime_seconds: i64,
+        /// Required max interval between heartbeats for the tiles update job.
+        update_max_heartbeat_interval_seconds: i64,
         /// Pinned Protomaps daily build URL (dated snapshot).
         protomaps_build_url: String,
         /// Pinned go-pmtiles CLI version.
@@ -383,7 +385,7 @@ pub mod value_objects {
     impl MapsConfiguration {
         pub fn new(
             update_cron: String,
-            update_max_lifetime_seconds: i64,
+            update_max_heartbeat_interval_seconds: i64,
             protomaps_build_url: String,
             go_pmtiles_version: String,
         ) -> Result<Self, ConfigError> {
@@ -392,9 +394,10 @@ pub mod value_objects {
                     "invalid maps.update_cron '{update_cron}': {error}"
                 ))
             })?;
-            if update_max_lifetime_seconds <= 0 {
+            if update_max_heartbeat_interval_seconds <= 0 {
                 return Err(ConfigError::InvalidFormat(
-                    "maps.update_max_lifetime_seconds must be a positive integer".to_string(),
+                    "maps.update_max_heartbeat_interval_seconds must be a positive integer"
+                        .to_string(),
                 ));
             }
             if protomaps_build_url.trim().is_empty() {
@@ -405,7 +408,7 @@ pub mod value_objects {
             }
             Ok(Self {
                 update_cron,
-                update_max_lifetime_seconds,
+                update_max_heartbeat_interval_seconds,
                 protomaps_build_url,
                 go_pmtiles_version,
             })
@@ -416,14 +419,14 @@ pub mod value_objects {
             &self.update_cron
         }
 
-        /// Required ShedLock-style max lifetime for the tiles update job.
-        pub fn update_max_lifetime_seconds(&self) -> i64 {
-            self.update_max_lifetime_seconds
+        /// Required max interval between heartbeats for the tiles update job.
+        pub fn update_max_heartbeat_interval_seconds(&self) -> i64 {
+            self.update_max_heartbeat_interval_seconds
         }
 
-        /// The configured max lifetime as a `chrono::Duration` for the domain.
-        pub fn update_max_lifetime(&self) -> chrono::Duration {
-            chrono::Duration::seconds(self.update_max_lifetime_seconds)
+        /// The configured max heartbeat interval as a `chrono::Duration` for the domain.
+        pub fn update_max_heartbeat_interval(&self) -> chrono::Duration {
+            chrono::Duration::seconds(self.update_max_heartbeat_interval_seconds)
         }
 
         /// Pinned Protomaps daily build URL (dated snapshot).
@@ -490,18 +493,18 @@ mod tests {
         database: DatabaseConfiguration,
         data_sources: Vec<DataSourceConfiguration>,
         data_source_update_cron: String,
-        data_source_update_max_lifetime_seconds: i64,
+        data_source_update_max_heartbeat_interval_seconds: i64,
         asset_cleanup_cron: String,
-        asset_cleanup_max_lifetime_seconds: i64,
+        asset_cleanup_max_heartbeat_interval_seconds: i64,
     ) -> Result<super::Configuration, ConfigError> {
         super::Configuration::new(
             database,
             data_sources,
             data_source_update_cron,
-            data_source_update_max_lifetime_seconds,
+            data_source_update_max_heartbeat_interval_seconds,
             asset_storage_config(),
             asset_cleanup_cron,
-            asset_cleanup_max_lifetime_seconds,
+            asset_cleanup_max_heartbeat_interval_seconds,
             maps_config(),
         )
     }
@@ -637,9 +640,9 @@ mod tests {
     fn exposes_maps_values() {
         let config = maps_config();
         assert_eq!(config.update_cron(), DEFAULT_MAPS_UPDATE_CRON);
-        assert_eq!(config.update_max_lifetime_seconds(), 7200);
+        assert_eq!(config.update_max_heartbeat_interval_seconds(), 7200);
         assert_eq!(
-            config.update_max_lifetime(),
+            config.update_max_heartbeat_interval(),
             chrono::Duration::seconds(7200)
         );
         assert_eq!(
@@ -663,12 +666,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_positive_maps_update_lifetime() {
-        for lifetime in [0, -1] {
+    fn rejects_non_positive_maps_update_heartbeat_interval() {
+        for interval in [0, -1] {
             assert!(matches!(
                 MapsConfiguration::new(
                     DEFAULT_MAPS_UPDATE_CRON.to_string(),
-                    lifetime,
+                    interval,
                     "https://example.com/source.pmtiles".to_string(),
                     "1.31.2".to_string(),
                 ),
@@ -719,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_valid_cron_and_positive_lifetime() {
+    fn accepts_valid_cron_and_positive_heartbeat_interval() {
         let configuration = configuration(
             database_config(),
             vec![],
@@ -734,20 +737,23 @@ mod tests {
             DEFAULT_DATA_SOURCE_UPDATE_CRON
         );
         assert_eq!(
-            configuration.data_source_update_max_lifetime_seconds(),
+            configuration.data_source_update_max_heartbeat_interval_seconds(),
             3600
         );
         assert_eq!(
-            configuration.data_source_update_max_lifetime(),
+            configuration.data_source_update_max_heartbeat_interval(),
             chrono::Duration::seconds(3600)
         );
         assert_eq!(
             configuration.asset_cleanup_cron(),
             DEFAULT_ASSET_CLEANUP_CRON
         );
-        assert_eq!(configuration.asset_cleanup_max_lifetime_seconds(), 7200);
         assert_eq!(
-            configuration.asset_cleanup_max_lifetime(),
+            configuration.asset_cleanup_max_heartbeat_interval_seconds(),
+            7200
+        );
+        assert_eq!(
+            configuration.asset_cleanup_max_heartbeat_interval(),
             chrono::Duration::seconds(7200)
         );
         assert_eq!(
@@ -832,14 +838,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_positive_data_source_update_lifetime() {
-        for lifetime in [0, -1] {
+    fn rejects_non_positive_data_source_update_heartbeat_interval() {
+        for interval in [0, -1] {
             assert!(matches!(
                 configuration(
                     database_config(),
                     vec![],
                     DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
-                    lifetime,
+                    interval,
                     DEFAULT_ASSET_CLEANUP_CRON.to_string(),
                     3600,
                 ),
@@ -849,8 +855,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_positive_asset_cleanup_lifetime() {
-        for lifetime in [0, -1] {
+    fn rejects_non_positive_asset_cleanup_heartbeat_interval() {
+        for interval in [0, -1] {
             assert!(matches!(
                 configuration(
                     database_config(),
@@ -858,7 +864,7 @@ mod tests {
                     DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
                     3600,
                     DEFAULT_ASSET_CLEANUP_CRON.to_string(),
-                    lifetime,
+                    interval,
                 ),
                 Err(ConfigError::InvalidFormat(_))
             ));

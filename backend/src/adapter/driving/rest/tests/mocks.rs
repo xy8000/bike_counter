@@ -576,37 +576,108 @@ pub fn mock_health_service(status: HealthStatus) -> Arc<HealthService> {
     )]))
 }
 
-/// In-memory job repository standing in for the real database.
+/// In-memory job repository standing in for the real database. Mutex-backed so
+/// the status-transition methods mutate state (the REST cancel tests observe
+/// the resulting status through `JobService`).
 pub struct MockJobRepository {
-    pub jobs: Vec<Job>,
+    jobs: Mutex<Vec<Job>>,
 }
 
 impl MockJobRepository {
     pub fn new(jobs: Vec<Job>) -> Self {
-        Self { jobs }
+        Self {
+            jobs: Mutex::new(jobs),
+        }
     }
 }
 
 impl JobRepository for MockJobRepository {
-    fn insert(&self, _job: Job) -> Result<(), DomainError> {
+    fn insert(&self, job: Job) -> Result<(), DomainError> {
+        self.jobs.lock().unwrap().push(job);
         Ok(())
     }
 
-    fn set_running(&self, _id: Uuid, _started_at: DateTime<Utc>) -> Result<(), DomainError> {
+    fn acquire(
+        &self,
+        _job_type: &str,
+        _instance_id: Uuid,
+        _lock_until: DateTime<Utc>,
+    ) -> Result<bool, DomainError> {
+        Ok(true)
+    }
+
+    fn release(&self, _job_type: &str, _instance_id: Uuid) -> Result<(), DomainError> {
         Ok(())
     }
 
-    fn set_finished(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
-        Ok(())
+    fn heartbeat(
+        &self,
+        id: Uuid,
+        _job_type: &str,
+        _instance_id: Uuid,
+        _at: DateTime<Utc>,
+        _lock_until: DateTime<Utc>,
+    ) -> Result<JobStatus, DomainError> {
+        self.find_by_id(id)?
+            .map(|job| job.status)
+            .ok_or(DomainError::NotFound(id))
+    }
+
+    fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
+            if job.status == JobStatus::Running {
+                job.status = JobStatus::Finished;
+                job.finished_at = Some(finished_at);
+                return Ok(());
+            }
+        }
+        Err(DomainError::InvalidQuery("not running".to_string()))
     }
 
     fn set_failed(
         &self,
-        _id: Uuid,
-        _finished_at: DateTime<Utc>,
-        _message: &str,
+        id: Uuid,
+        finished_at: DateTime<Utc>,
+        message: &str,
     ) -> Result<(), DomainError> {
-        Ok(())
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
+            if job.status == JobStatus::Running {
+                job.status = JobStatus::Failed;
+                job.finished_at = Some(finished_at);
+                job.failure_message = Some(message.to_string());
+                return Ok(());
+            }
+        }
+        Err(DomainError::InvalidQuery("not running".to_string()))
+    }
+
+    fn request_cancellation(&self, id: Uuid) -> Result<(), DomainError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
+            if job.status == JobStatus::Running {
+                job.status = JobStatus::CancellationRequested;
+                return Ok(());
+            }
+        }
+        Err(DomainError::InvalidQuery("not running".to_string()))
+    }
+
+    fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
+            if matches!(
+                job.status,
+                JobStatus::Running | JobStatus::CancellationRequested
+            ) {
+                job.status = JobStatus::Cancelled;
+                job.finished_at = Some(finished_at);
+                job.failure_message = Some("cancelled".to_string());
+                return Ok(());
+            }
+        }
+        Err(DomainError::InvalidQuery("not cancellable".to_string()))
     }
 
     fn update_metadata(
@@ -619,7 +690,13 @@ impl JobRepository for MockJobRepository {
     }
 
     fn find_by_id(&self, id: Uuid) -> Result<Option<Job>, DomainError> {
-        Ok(self.jobs.iter().find(|job| job.id == id).cloned())
+        Ok(self
+            .jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|job| job.id == id)
+            .cloned())
     }
 
     fn find_all(
@@ -627,7 +704,7 @@ impl JobRepository for MockJobRepository {
         job_type: Option<&str>,
         status: Option<JobStatus>,
     ) -> Result<Vec<Job>, DomainError> {
-        let mut jobs = self.jobs.clone();
+        let mut jobs = self.jobs.lock().unwrap().clone();
         if let Some(job_type) = job_type {
             jobs.retain(|job| job.job_type == job_type);
         }
@@ -637,25 +714,41 @@ impl JobRepository for MockJobRepository {
         Ok(jobs)
     }
 
-    fn find_running_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
-        Ok(None)
+    fn find_active_by_type(&self, job_type: &str) -> Result<Vec<Job>, DomainError> {
+        Ok(self
+            .jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|job| {
+                job.job_type == job_type
+                    && matches!(
+                        job.status,
+                        JobStatus::Running | JobStatus::CancellationRequested
+                    )
+            })
+            .cloned()
+            .collect())
     }
 
     fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
         Ok(self
             .jobs
+            .lock()
+            .unwrap()
             .iter()
             .filter(|job| job.job_type == job_type && job.status == JobStatus::Finished)
             .max_by_key(|job| job.finished_at)
             .cloned())
     }
 
-    fn expire_running_jobs(
+    fn reconcile_stale_active(
         &self,
         _job_type: &str,
+        _heartbeat_before: DateTime<Utc>,
         _now: DateTime<Utc>,
-    ) -> Result<u64, DomainError> {
-        Ok(0)
+    ) -> Result<(), DomainError> {
+        Ok(())
     }
 }
 

@@ -2,8 +2,10 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use include_dir::{Dir, include_dir};
+use uuid::Uuid;
 
 use crate::adapter::driven::configuration_toml_adapter::ConfigurationTomlAdapter;
 use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
@@ -26,6 +28,7 @@ use crate::core::application::data_import_service::DataImportService;
 use crate::core::application::data_source_analytics_service::DataSourceAnalyticsService;
 use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
+use crate::core::application::job_reconciliation_service::JobReconciliationService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::persistent_state_service::PersistentStateService;
@@ -98,6 +101,10 @@ fn main() {
         ));
     let database_configuration = configuration.database().clone();
     let maps_configuration = configuration.maps().clone();
+
+    // Random per-instance identity used to claim jobs (multi-instance-safe job
+    // scheduling/cancellation). Regenerated on every startup.
+    let instance_id = Uuid::new_v4();
 
     // The self-hosted basemap is mandatory. `TilesInit` builds it during the
     // init phase (before the HTTP server binds) if it is missing, and the
@@ -232,6 +239,7 @@ fn main() {
         data_import_service,
         configuration.clone(),
         startup.data_source_runtimes,
+        instance_id,
     ));
 
     // All station analytics backing the BFF read endpoints (sidebar/search
@@ -261,6 +269,7 @@ fn main() {
         asset_repository.clone(),
         asset_storage.clone(),
         configuration.clone(),
+        instance_id,
     ));
 
     // Scheduled refresh of the self-hosted basemap (see the `[maps]` config).
@@ -268,6 +277,15 @@ fn main() {
     let tiles_update_service = Arc::new(TilesUpdateService::new(
         job_repo.clone(),
         tiles_init.clone(),
+        configuration.clone(),
+        instance_id,
+    ));
+
+    // Periodic watcher that reconciles stale/cancelled jobs via their
+    // heartbeats (see JobReconciliationService); spawned alongside the cron
+    // schedulers when scheduled jobs are enabled.
+    let job_reconciliation_service = Arc::new(JobReconciliationService::new(
+        job_repo.clone(),
         configuration.clone(),
     ));
 
@@ -319,6 +337,12 @@ fn main() {
             tokio::spawn(job_scheduler::run_scheduler(
                 tiles_update_service,
                 configuration.maps().update_cron().to_string(),
+            ));
+            // The job watcher reconciles stale/cancelled jobs on a fixed short
+            // interval independent of the (possibly sparse) cron schedules.
+            tokio::spawn(job_scheduler::run_job_watcher(
+                job_reconciliation_service,
+                StdDuration::from_secs(30),
             ));
         }
         rest_adapter.run(addr).await

@@ -98,6 +98,18 @@ pub(crate) fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorRes
                 error: format!("Invalid request: {}", message),
             }),
         ),
+        // `Cancelled` is internal control flow for the job worker loops; it must
+        // never reach the REST boundary. Log it defensively and return a generic
+        // error rather than leaking internals.
+        DomainError::Cancelled => {
+            eprintln!("Internal cancellation signal leaked to the REST boundary");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponseDto {
+                    error: "Internal server error".to_string(),
+                }),
+            )
+        }
     }
 }
 

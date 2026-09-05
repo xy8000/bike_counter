@@ -10,21 +10,23 @@ use crate::core::domain::jobs::job::{Job, JobStatus};
 
 /// Lifecycle status of a job, as exposed by the API.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
-#[serde(rename_all = "UPPERCASE")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobStatusDto {
-    Pending,
     Running,
     Finished,
     Failed,
+    CancellationRequested,
+    Cancelled,
 }
 
 impl From<JobStatus> for JobStatusDto {
     fn from(status: JobStatus) -> Self {
         match status {
-            JobStatus::Pending => JobStatusDto::Pending,
             JobStatus::Running => JobStatusDto::Running,
             JobStatus::Finished => JobStatusDto::Finished,
             JobStatus::Failed => JobStatusDto::Failed,
+            JobStatus::CancellationRequested => JobStatusDto::CancellationRequested,
+            JobStatus::Cancelled => JobStatusDto::Cancelled,
         }
     }
 }
@@ -44,9 +46,11 @@ pub struct JobDto {
     /// `<data-source-uuid>_added_measurements` and `<data-source-uuid>_status`.
     #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
-    /// Absolute deadline until which a RUNNING job blocks other runs.
-    pub lifetime_until: DateTime<Utc>,
-    pub max_lifetime_exceeded: bool,
+    /// The instance that owns (runs) this job; `null` only for rows created
+    /// before the ownership model.
+    pub instance_id: Option<Uuid>,
+    /// Last time the owning instance reported progress.
+    pub heartbeat_at: Option<DateTime<Utc>>,
     #[serde(rename = "_links")]
     pub links: HashMap<String, LinkDto>,
 }
@@ -61,6 +65,13 @@ impl From<Job> for JobDto {
         );
         links.insert("collection".to_string(), LinkDto::new("/api/v1/jobs"));
         links.insert("root".to_string(), LinkDto::new("/api/v1"));
+        // A RUNNING job can still be cancelled; expose the action as a link.
+        if job.is_cancellable() {
+            links.insert(
+                "cancel".to_string(),
+                LinkDto::new(format!("/api/v1/jobs/{id}/cancel")),
+            );
+        }
 
         Self {
             id,
@@ -71,8 +82,8 @@ impl From<Job> for JobDto {
             finished_at: job.finished_at,
             failure_message: job.failure_message,
             metadata: serde_json::Value::Object(job.metadata),
-            lifetime_until: job.lifetime_until,
-            max_lifetime_exceeded: job.max_lifetime_exceeded,
+            instance_id: job.instance_id,
+            heartbeat_at: job.heartbeat_at,
             links,
         }
     }
@@ -94,6 +105,17 @@ impl JobListDto {
 
         Self { items, links }
     }
+}
+
+/// Body of the cancel endpoint. `force = true` marks the job CANCELLED
+/// immediately; the default (`false`) requests a cooperative cancellation
+/// (CANCELLATION_REQUESTED) that the owning worker finalizes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct CancelJobRequestDto {
+    /// Whether to force-cancel immediately instead of requesting a cooperative
+    /// stop. Defaults to `false`.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]

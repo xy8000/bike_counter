@@ -132,10 +132,6 @@ fn templated_link_serializes_with_templated_flag() {
 #[test]
 fn job_status_dto_maps_all_domain_statuses() {
     assert_eq!(
-        JobStatusDto::from(JobStatus::Pending),
-        JobStatusDto::Pending
-    );
-    assert_eq!(
         JobStatusDto::from(JobStatus::Running),
         JobStatusDto::Running
     );
@@ -144,6 +140,14 @@ fn job_status_dto_maps_all_domain_statuses() {
         JobStatusDto::Finished
     );
     assert_eq!(JobStatusDto::from(JobStatus::Failed), JobStatusDto::Failed);
+    assert_eq!(
+        JobStatusDto::from(JobStatus::CancellationRequested),
+        JobStatusDto::CancellationRequested
+    );
+    assert_eq!(
+        JobStatusDto::from(JobStatus::Cancelled),
+        JobStatusDto::Cancelled
+    );
 }
 
 #[test]
@@ -153,9 +157,39 @@ fn job_dto_maps_fields_and_links() {
     assert_eq!(dto.id, JOB_ID_A);
     assert_eq!(dto.job_type, "data_source_update");
     assert_eq!(dto.status, JobStatusDto::Finished);
+    assert!(dto.instance_id.is_some());
+    assert!(dto.heartbeat_at.is_some());
     assert_eq!(dto.links["self"].href, format!("/api/v1/jobs/{JOB_ID_A}"));
     assert_eq!(dto.links["collection"].href, "/api/v1/jobs");
     assert_eq!(dto.links["root"].href, "/api/v1");
+    // A FINISHED job is not cancellable: no cancel link.
+    assert!(!dto.links.contains_key("cancel"));
+}
+
+#[test]
+fn running_job_dto_exposes_the_cancel_link() {
+    let dto = JobDto::from(job_b());
+
+    assert_eq!(dto.status, JobStatusDto::Running);
+    assert_eq!(
+        dto.links["cancel"].href,
+        format!("/api/v1/jobs/{}/cancel", job_b().id)
+    );
+}
+
+#[test]
+fn requested_job_dto_still_exposes_the_cancel_link() {
+    let mut job = job_b();
+    job.status = JobStatus::CancellationRequested;
+
+    let dto = JobDto::from(job);
+
+    assert_eq!(dto.status, JobStatusDto::CancellationRequested);
+    // A requested cancellation can still be force-cancelled.
+    assert!(
+        dto.links.contains_key("cancel"),
+        "a CANCELLATION_REQUESTED job must keep its cancel (force) link"
+    );
 }
 
 #[test]

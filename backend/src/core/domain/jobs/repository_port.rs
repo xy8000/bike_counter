@@ -6,24 +6,63 @@ use super::job::{Job, JobStatus};
 use crate::core::domain::error::DomainError;
 
 /// Repository for ShedLock-style generic jobs.
+///
+/// Mutual exclusion is delegated to a dedicated `job_locks` table: the only
+/// racy step is [`Self::acquire`] (one atomic `INSERT ... ON CONFLICT` upsert);
+/// once a job is RUNNING, all status transitions are single conditional
+/// `UPDATE`s guarded by the current status and the owning `instance_id`.
 pub trait JobRepository {
-    /// Inserts a new job. Requires a `lifetime_until` deadline in the future;
-    /// fails with a domain error otherwise (there is no default anywhere).
+    /// Persists a new (already RUNNING, owned) job. Callers must have acquired
+    /// the type's lock first via [`Self::acquire`].
     fn insert(&self, job: Job) -> Result<(), DomainError>;
 
-    /// Marks a PENDING job as RUNNING and records its start time.
-    fn set_running(&self, id: Uuid, started_at: DateTime<Utc>) -> Result<(), DomainError>;
+    /// Atomically claims the job type for `instance_id` until `lock_until` on
+    /// the `job_locks` table (ShedLock-style upsert). Returns `false` when
+    /// another instance still holds an unexpired lock; the caller should skip.
+    fn acquire(
+        &self,
+        job_type: &str,
+        instance_id: Uuid,
+        lock_until: DateTime<Utc>,
+    ) -> Result<bool, DomainError>;
 
-    /// Marks a RUNNING job as FINISHED and records its finish time.
+    /// Releases the type's lock. Only meaningful when `instance_id` is still
+    /// the lock owner (e.g. at the terminal transition).
+    fn release(&self, job_type: &str, instance_id: Uuid) -> Result<(), DomainError>;
+
+    /// Owner-only liveness report: refreshes the job's `heartbeat_at` and
+    /// extends the type's `job_locks` lease to `lock_until` (the owner passes
+    /// `at + heartbeat_interval`). Updates only apply while the row is RUNNING
+    /// and owned by `instance_id` (a foreign caller's write is a no-op).
+    /// Returns the job's current status so the worker can detect a
+    /// `CANCELLATION_REQUESTED`/`CANCELLED` transition; `DomainError::NotFound`
+    /// if the job id is unknown.
+    fn heartbeat(
+        &self,
+        id: Uuid,
+        job_type: &str,
+        instance_id: Uuid,
+        at: DateTime<Utc>,
+        lock_until: DateTime<Utc>,
+    ) -> Result<JobStatus, DomainError>;
+
+    /// Marks a RUNNING job FINISHED and records its finish time.
     fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError>;
 
-    /// Marks a job as FAILED. Valid from both RUNNING and PENDING.
+    /// Marks a RUNNING job FAILED and records its finish time + message.
     fn set_failed(
         &self,
         id: Uuid,
         finished_at: DateTime<Utc>,
         message: &str,
     ) -> Result<(), DomainError>;
+
+    /// Requests cooperative cancellation: RUNNING -> CANCELLATION_REQUESTED.
+    fn request_cancellation(&self, id: Uuid) -> Result<(), DomainError>;
+
+    /// Force-finalizes cancellation: RUNNING or CANCELLATION_REQUESTED ->
+    /// CANCELLED, recording the finish time and a `cancelled` message.
+    fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError>;
 
     /// Updates a single key in the job's metadata map.
     fn update_metadata(&self, id: Uuid, key: &str, value: Value) -> Result<(), DomainError>;
@@ -37,16 +76,23 @@ pub trait JobRepository {
         status: Option<JobStatus>,
     ) -> Result<Vec<Job>, DomainError>;
 
-    /// The RUNNING job of the given type, if any.
-    fn find_running_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError>;
+    /// The active (RUNNING or CANCELLATION_REQUESTED) jobs of the given type —
+    /// used to skip starting a new run while one is in flight or being
+    /// finalized.
+    fn find_active_by_type(&self, job_type: &str) -> Result<Vec<Job>, DomainError>;
 
     /// The most recently FINISHED job of the given type, if any (used to decide
     /// whether a job has ever succeeded).
     fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError>;
 
-    /// Atomically flips RUNNING jobs of the given type whose
-    /// `started_at + max_lifetime < now` to FAILED, setting
-    /// `max_lifetime_exceeded = true` and a failure message. Returns the number
-    /// of jobs that were expired.
-    fn expire_running_jobs(&self, job_type: &str, now: DateTime<Utc>) -> Result<u64, DomainError>;
+    /// Watcher reconciliation: atomically flips RUNNING jobs of the type whose
+    /// `heartbeat_at` is older than `heartbeat_before` to CANCELLATION_REQUESTED,
+    /// and flips CANCELLATION_REQUESTED jobs past the threshold to CANCELLED.
+    /// Rows with a `NULL` heartbeat are treated as stale.
+    fn reconcile_stale_active(
+        &self,
+        job_type: &str,
+        heartbeat_before: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<(), DomainError>;
 }

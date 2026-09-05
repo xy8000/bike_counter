@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::{delete, get, put};
+use axum::routing::{delete, get, post, put};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -24,9 +24,9 @@ use crate::adapter::driving::bff::{
 };
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
-    clear_persistent_state, delete_persistent_state_entry, get_api_root, get_channel_by_id,
-    get_counting_station_by_id, get_data_source_by_id, get_health_live, get_health_ready,
-    get_job_by_id, get_measurement_by_id, get_persistent_state, list_channels,
+    cancel_job, clear_persistent_state, delete_persistent_state_entry, get_api_root,
+    get_channel_by_id, get_counting_station_by_id, get_data_source_by_id, get_health_live,
+    get_health_ready, get_job_by_id, get_measurement_by_id, get_persistent_state, list_channels,
     list_counting_stations, list_data_sources, list_jobs, list_measurements, list_measurements_raw,
     list_provider_messages, patch_counting_station, put_persistent_state_entry,
     reset_imported_until,
@@ -176,6 +176,7 @@ impl RestApiAdapter {
             )
             .route("/api/v1/jobs", get(list_jobs))
             .route("/api/v1/jobs/{id}", get(get_job_by_id))
+            .route("/api/v1/jobs/{id}/cancel", post(cancel_job))
             .route("/health/live", get(get_health_live))
             .route("/health/ready", get(get_health_ready))
             .with_state(app_state)

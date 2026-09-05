@@ -11,6 +11,7 @@ use std::time::Duration as StdDuration;
 
 use chrono::Utc;
 
+use crate::core::application::job_reconciliation_service::JobReconciliationService;
 use crate::core::domain::jobs::scheduled_job_port::ScheduledJobPort;
 
 /// Runs `service` immediately at startup and then on the given CRON schedule,
@@ -41,5 +42,19 @@ pub async fn run_scheduler(service: Arc<dyn ScheduledJobPort>, cron_expression: 
 
         let service_for_tick = service.clone();
         let _ = tokio::task::spawn_blocking(move || service_for_tick.run_if_due()).await;
+    }
+}
+
+/// Runs the job watcher forever on a fixed short interval: it reconciles stale
+/// active jobs of every scheduled type (heartbeat-based) so cancelled or
+/// crashed workers are finalized promptly, independently of the (possibly
+/// sparse) cron schedules of the individual job types. The blocking repository
+/// calls run on the tokio blocking pool (see the module docs).
+pub async fn run_job_watcher(service: Arc<JobReconciliationService>, interval: StdDuration) {
+    loop {
+        let service_for_tick = service.clone();
+        let _ = tokio::task::spawn_blocking(move || service_for_tick.reconcile_all(Utc::now()))
+            .await;
+        tokio::time::sleep(interval).await;
     }
 }

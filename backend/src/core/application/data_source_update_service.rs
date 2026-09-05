@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use uuid::Uuid;
 
+use super::job_heartbeat::JobHeartbeat;
 use crate::core::application::data_import_service::{
     DataImportService, DataSourceImportPhase, DataSourceRuntime,
 };
@@ -23,7 +24,7 @@ use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::jobs::job::Job;
+use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::jobs::scheduled_job_port::ScheduledJobPort;
 
@@ -58,6 +59,7 @@ pub struct DataSourceUpdateService {
     data_import_service: Arc<DataImportService>,
     configuration: Arc<Configuration>,
     runtimes: Vec<DataSourceRuntime>,
+    instance_id: Uuid,
 }
 
 impl DataSourceUpdateService {
@@ -68,6 +70,7 @@ impl DataSourceUpdateService {
         data_import_service: Arc<DataImportService>,
         configuration: Arc<Configuration>,
         runtimes: Vec<DataSourceRuntime>,
+        instance_id: Uuid,
     ) -> Self {
         Self {
             job_repository,
@@ -76,6 +79,7 @@ impl DataSourceUpdateService {
             data_import_service,
             configuration,
             runtimes,
+            instance_id,
         }
     }
 
@@ -92,41 +96,25 @@ impl DataSourceUpdateService {
     pub fn run_if_due(&self) {
         let now = Utc::now();
 
-        // 1. Expire stale RUNNING jobs (past their lifetime_until deadline).
-        match self
-            .job_repository
-            .expire_running_jobs(DATA_SOURCE_UPDATE_JOB_TYPE, now)
-        {
-            Ok(expired) if expired > 0 => {
-                println!("Expired {expired} stale RUNNING data-source update job(s)");
-            }
-            Ok(_) => {}
-            Err(error) => {
-                eprintln!("Failed to expire stale data-source update jobs: {error:?}");
-            }
-        }
-
-        // 2. A RUNNING job within its lifetime blocks a new run.
-        match self
-            .job_repository
-            .find_running_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
-        {
-            Ok(Some(running)) if !running.lifetime_exceeded(now) => {
+        // A RUNNING (or cancellation-requested) job blocks a new run; the
+        // periodic watcher reconciles stale ones (see JobReconciliationService).
+        match self.job_repository.find_active_by_type(DATA_SOURCE_UPDATE_JOB_TYPE) {
+            Ok(active) if !active.is_empty() => {
                 println!(
-                    "Data source update job {} is still running (until {}); skipping",
-                    running.id, running.lifetime_until
+                    "Data source update job is still active ({} running/requesting); skipping",
+                    active.len()
                 );
                 return;
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("Failed to check for a running data-source update job: {error:?}");
+                eprintln!("Failed to check for an active data-source update job: {error:?}");
                 return;
             }
         }
 
-        // 3. Run when the job has never succeeded or the last successful run is
-        //    overdue.
+        // Run when the job has never succeeded or the last successful run is
+        // overdue.
         match self
             .job_repository
             .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
@@ -172,40 +160,80 @@ impl DataSourceUpdateService {
         }
     }
 
-    /// Runs one full data-source update as a tracked job.
+    /// Runs one full data-source update as a job owned by this instance.
     fn execute(&self, now: DateTime<Utc>) {
-        let deadline = now + self.configuration.data_source_update_max_lifetime();
-        let job = Job::new(
+        let interval = self.configuration.data_source_update_max_heartbeat_interval();
+        let instance_id = self.instance_id;
+
+        // 1. Claim the type's lock; only the winning instance proceeds.
+        match self
+            .job_repository
+            .acquire(DATA_SOURCE_UPDATE_JOB_TYPE, instance_id, now + interval)
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                println!("Data source update is already running elsewhere; skipping");
+                return;
+            }
+            Err(error) => {
+                eprintln!("Failed to acquire the data source update lock: {error:?}");
+                return;
+            }
+        }
+
+        // 2. Record the RUNNING job owned by this instance.
+        let job = Job::running(
             Uuid::new_v4(),
             DATA_SOURCE_UPDATE_JOB_NAME.to_string(),
             DATA_SOURCE_UPDATE_JOB_TYPE.to_string(),
-            deadline,
+            instance_id,
+            now,
         );
         let job_id = job.id;
         let job_name = job.name.clone();
-
         if let Err(error) = self.job_repository.insert(job) {
+            let _ = self.job_repository.release(DATA_SOURCE_UPDATE_JOB_TYPE, instance_id);
             eprintln!("Failed to record data-source update job {job_name} ({job_id}): {error:?}");
             return;
         }
-
-        // PENDING -> RUNNING.
-        if let Err(error) = self.job_repository.set_running(job_id, now) {
-            // PENDING -> FAILED (a job may fail before it ever starts).
-            let message = format!("failed to start job: {error:?}");
-            if let Err(fail_error) = self.job_repository.set_failed(job_id, Utc::now(), &message) {
-                eprintln!(
-                    "Failed to mark data-source update job {job_name} ({job_id}) as failed: {fail_error:?}"
-                );
-            }
-            return;
-        }
-
         println!("Data source update job {job_name} ({job_id}) started");
 
-        // RUNNING -> FINISHED / FAILED.
-        match self.run_updates(job_id, deadline) {
-            Ok(()) => {
+        // 3. A dedicated heartbeat loop keeps the job fresh on a fixed tick,
+        //    independent of import-batch boundaries (a slow provider or a large
+        //    page must not let the watcher treat the job as stale).
+        let heartbeat = JobHeartbeat::start(
+            self.job_repository.clone(),
+            job_id,
+            DATA_SOURCE_UPDATE_JOB_TYPE,
+            instance_id,
+            interval,
+        );
+        let outcome = self.run_updates(job_id);
+        heartbeat.stop();
+
+        // 4. Finalize based on the resulting status.
+        self.finalize(job_id, &job_name, outcome);
+    }
+
+    /// Finalizes the job according to `outcome` and the current persisted status,
+    /// then always releases the type's lock.
+    fn finalize(&self, job_id: Uuid, job_name: &str, outcome: Result<(), DomainError>) {
+        let status = self
+            .job_repository
+            .find_by_id(job_id)
+            .ok()
+            .flatten()
+            .map(|job| job.status);
+        match (outcome, status) {
+            (_, Some(JobStatus::CancellationRequested)) | (_, Some(JobStatus::Cancelled)) => {
+                match self.job_repository.mark_cancelled(job_id, Utc::now()) {
+                    Ok(()) => println!("Data source update job {job_name} ({job_id}) cancelled"),
+                    Err(error) => eprintln!(
+                        "Could not finalize data-source update job {job_name} ({job_id}) as cancelled: {error:?}"
+                    ),
+                }
+            }
+            (Ok(()), _) => {
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
                     eprintln!(
                         "Failed to finish data-source update job {job_name} ({job_id}): {error:?}"
@@ -214,7 +242,7 @@ impl DataSourceUpdateService {
                     println!("Data source update job {job_name} ({job_id}) finished");
                 }
             }
-            Err(error) => {
+            (Err(error), _) => {
                 let message = format!("{error:?}");
                 if let Err(set_failed_error) =
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
@@ -227,6 +255,7 @@ impl DataSourceUpdateService {
                 }
             }
         }
+        let _ = self.job_repository.release(DATA_SOURCE_UPDATE_JOB_TYPE, self.instance_id);
     }
 
     /// Updates **every configured data source in parallel**, one blocking thread
@@ -244,7 +273,7 @@ impl DataSourceUpdateService {
     ///
     /// All sources are started even when one fails; the returned error (which
     /// fails the aggregate job) summarizes every failing source.
-    fn run_updates(&self, job_id: Uuid, deadline: DateTime<Utc>) -> Result<(), DomainError> {
+    fn run_updates(&self, job_id: Uuid) -> Result<(), DomainError> {
         // This method is invoked from a blocking context (the scheduler wraps
         // `run_if_due` in `spawn_blocking`), so spawning plain OS threads is safe
         // — no tokio worker thread is ever blocked. `std::thread::scope` joins
@@ -253,9 +282,7 @@ impl DataSourceUpdateService {
             let handles: Vec<_> = self
                 .runtimes
                 .iter()
-                .map(|runtime| {
-                    scope.spawn(move || self.update_one_source(job_id, deadline, runtime))
-                })
+                .map(|runtime| scope.spawn(move || self.update_one_source(job_id, runtime)))
                 .collect();
 
             let mut failures = Vec::new();
@@ -295,7 +322,6 @@ impl DataSourceUpdateService {
     fn update_one_source(
         &self,
         job_id: Uuid,
-        deadline: DateTime<Utc>,
         runtime: &DataSourceRuntime,
     ) -> Result<(), DomainError> {
         let data_source_id = runtime.data_source_id;
@@ -321,7 +347,7 @@ impl DataSourceUpdateService {
         let result = self.data_import_service.update_data_source_with_progress(
             runtime,
             from,
-            Some(deadline),
+            None,
             |processed, added, watermark| {
                 self.job_repository.update_metadata(
                     job_id,
@@ -339,7 +365,10 @@ impl DataSourceUpdateService {
                     self.data_source_repository
                         .update_imported_until(data_source_id, watermark)?;
                 }
-                Ok(())
+                // Heartbeat + cancellation check at the sub-task boundary (after
+                // every batch) so a requested cancellation stops the run
+                // gracefully with its watermark already checkpointed.
+                self.check_cancellation(job_id)
             },
             |phase| {
                 self.job_repository.update_metadata(
@@ -353,15 +382,14 @@ impl DataSourceUpdateService {
         match result {
             Ok(update) => {
                 // Per-source success marker only when the whole source was
-                // actually caught up (a deadline-stop is not "fresh data").
+                // actually caught up.
                 if update.completed {
                     self.data_source_repository
                         .update_last_updated(data_source_id, Utc::now())?;
                 }
                 // Persist the run's earliest/latest measurement timestamps as
                 // the source's measurement bounds (the data-source detail page
-                // reads these instead of scanning the history). Done even on a
-                // deadline-stop: the rows were inserted either way.
+                // reads these instead of scanning the history).
                 if update.first_measurement_timestamp.is_some()
                     || update.last_measurement_timestamp_bound.is_some()
                 {
@@ -385,6 +413,26 @@ impl DataSourceUpdateService {
                 }
                 Ok(())
             }
+            Err(DomainError::Cancelled) => {
+                // Graceful cooperative stop: the watermark is already
+                // checkpointed. Record the per-source phase as finished and
+                // finish the import run so the source does not appear stuck;
+                // the aggregate job itself is finalized as CANCELLED by
+                // `execute`/`finalize`.
+                if let Err(status_error) = self.job_repository.update_metadata(
+                    job_id,
+                    &status_key(data_source_id),
+                    json!(DataSourceImportPhase::Finished.as_str()),
+                ) {
+                    eprintln!(
+                        "Failed to record FINISHED status for {data_source_id:?}: {status_error:?}"
+                    );
+                }
+                if let Err(run_error) = self.import_run_repository.finish(run_id, Utc::now()) {
+                    eprintln!("Failed to finish import run {run_id}: {run_error:?}");
+                }
+                Ok(())
+            }
             Err(error) => {
                 if let Err(run_error) =
                     self.import_run_repository
@@ -403,6 +451,26 @@ impl DataSourceUpdateService {
                 }
                 Err(error)
             }
+        }
+    }
+
+    /// Heartbeats the job and returns [`DomainError::Cancelled`] when a
+    /// cancellation was requested, so the batch loop stops gracefully.
+    fn check_cancellation(&self, job_id: Uuid) -> Result<(), DomainError> {
+        let now = Utc::now();
+        let interval = self.configuration.data_source_update_max_heartbeat_interval();
+        match self.job_repository.heartbeat(
+            job_id,
+            DATA_SOURCE_UPDATE_JOB_TYPE,
+            self.instance_id,
+            now,
+            now + interval,
+        ) {
+            Ok(JobStatus::CancellationRequested) | Ok(JobStatus::Cancelled) => {
+                Err(DomainError::Cancelled)
+            }
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
         }
     }
 }

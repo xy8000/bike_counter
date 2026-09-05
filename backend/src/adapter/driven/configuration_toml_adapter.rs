@@ -20,10 +20,10 @@ struct ConfigurationDto {
     data_sources: Vec<DataSourceDto>,
     #[serde(default = "default_data_source_update_cron")]
     data_source_update_cron: String,
-    data_source_update_max_lifetime_seconds: i64,
+    data_source_update_max_heartbeat_interval_seconds: i64,
     #[serde(default = "default_asset_cleanup_cron")]
     asset_cleanup_cron: String,
-    asset_cleanup_max_lifetime_seconds: i64,
+    asset_cleanup_max_heartbeat_interval_seconds: i64,
     asset_storage: AssetStorageDto,
     #[serde(default = "default_maps")]
     maps: MapsDto,
@@ -56,7 +56,7 @@ fn default_log_level() -> String {
 /// Default tiles-update max lifetime (seconds) when the `[maps]` table is
 /// omitted entirely. The extraction can take a while (multi-GB range requests),
 /// so 2 h is a generous bound for the ShedLock-style job lifetime.
-const DEFAULT_MAPS_UPDATE_MAX_LIFETIME_SECONDS: i64 = 7200;
+const DEFAULT_MAPS_UPDATE_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 7200;
 /// Default pinned Protomaps build when the `[maps]` table is omitted.
 const DEFAULT_MAPS_PROTOMAPS_BUILD_URL: &str = "https://build.protomaps.com/20260829.pmtiles";
 /// Default pinned go-pmtiles CLI version when the `[maps]` table is omitted.
@@ -66,8 +66,8 @@ fn default_maps_update_cron() -> String {
     DEFAULT_MAPS_UPDATE_CRON.to_string()
 }
 
-fn default_maps_update_max_lifetime() -> i64 {
-    DEFAULT_MAPS_UPDATE_MAX_LIFETIME_SECONDS
+fn default_maps_update_max_heartbeat_interval() -> i64 {
+    DEFAULT_MAPS_UPDATE_MAX_HEARTBEAT_INTERVAL_SECONDS
 }
 
 fn default_maps_protomaps_build_url() -> String {
@@ -82,7 +82,7 @@ fn default_maps_go_pmtiles_version() -> String {
 fn default_maps() -> MapsDto {
     MapsDto {
         update_cron: default_maps_update_cron(),
-        update_max_lifetime_seconds: DEFAULT_MAPS_UPDATE_MAX_LIFETIME_SECONDS,
+        update_max_heartbeat_interval_seconds: DEFAULT_MAPS_UPDATE_MAX_HEARTBEAT_INTERVAL_SECONDS,
         protomaps_build_url: default_maps_protomaps_build_url(),
         go_pmtiles_version: default_maps_go_pmtiles_version(),
     }
@@ -128,8 +128,8 @@ struct DataProviderDto {
 struct MapsDto {
     #[serde(default = "default_maps_update_cron")]
     update_cron: String,
-    #[serde(default = "default_maps_update_max_lifetime")]
-    update_max_lifetime_seconds: i64,
+    #[serde(default = "default_maps_update_max_heartbeat_interval")]
+    update_max_heartbeat_interval_seconds: i64,
     #[serde(default = "default_maps_protomaps_build_url")]
     protomaps_build_url: String,
     #[serde(default = "default_maps_go_pmtiles_version")]
@@ -182,7 +182,7 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
 
         let maps = MapsConfiguration::new(
             dto.maps.update_cron,
-            dto.maps.update_max_lifetime_seconds,
+            dto.maps.update_max_heartbeat_interval_seconds,
             dto.maps.protomaps_build_url,
             dto.maps.go_pmtiles_version,
         )?;
@@ -191,10 +191,10 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             database,
             data_sources,
             dto.data_source_update_cron,
-            dto.data_source_update_max_lifetime_seconds,
+            dto.data_source_update_max_heartbeat_interval_seconds,
             asset_storage,
             dto.asset_cleanup_cron,
-            dto.asset_cleanup_max_lifetime_seconds,
+            dto.asset_cleanup_max_heartbeat_interval_seconds,
             maps,
         )
         .map(|configuration| configuration.with_scheduled_jobs_enabled(dto.scheduled_jobs_enabled))
@@ -233,7 +233,7 @@ mod tests {
     fn with_asset_section(config: &str) -> String {
         format!(
             "asset_cleanup_cron = \"0 0 4 * * *\"\n\
-             asset_cleanup_max_lifetime_seconds = 3600\n\n\
+             asset_cleanup_max_heartbeat_interval_seconds = 3600\n\n\
              {config}\n\n{}\n\n{}",
             asset_storage_section(),
             maps_section()
@@ -256,7 +256,7 @@ mod tests {
         "\
             [maps]\n\
             update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
-            update_max_lifetime_seconds = 7200\n\
+            update_max_heartbeat_interval_seconds = 7200\n\
             protomaps_build_url = \"https://build.protomaps.com/20260829.pmtiles\"\n\
             go_pmtiles_version = \"1.31.2\"\n"
     }
@@ -277,7 +277,7 @@ mod tests {
             database_password = \"password\"\n\
             database_name = \"database\"\n\
             data_source_update_cron = \"0 15 * * * *\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             \n\
             [[data_sources]]\n\
             name = \"Münster\"\n\
@@ -304,11 +304,11 @@ mod tests {
         assert_eq!(configuration.database().database_name(), "database");
         assert_eq!(configuration.data_source_update_cron(), "0 15 * * * *");
         assert_eq!(
-            configuration.data_source_update_max_lifetime_seconds(),
+            configuration.data_source_update_max_heartbeat_interval_seconds(),
             3600
         );
         assert_eq!(configuration.asset_cleanup_cron(), "0 0 4 * * *");
-        assert_eq!(configuration.asset_cleanup_max_lifetime_seconds(), 3600);
+        assert_eq!(configuration.asset_cleanup_max_heartbeat_interval_seconds(), 3600);
         assert_eq!(
             configuration.asset_storage().endpoint(),
             "http://minio:9000"
@@ -349,7 +349,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             \n\
             [[data_sources]]\n\
             name = \"Münster\"\n\
@@ -402,7 +402,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n",
+            data_source_update_max_heartbeat_interval_seconds = 3600\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -415,7 +415,7 @@ mod tests {
             DEFAULT_DATA_SOURCE_UPDATE_CRON
         );
         assert_eq!(
-            configuration.data_source_update_max_lifetime_seconds(),
+            configuration.data_source_update_max_heartbeat_interval_seconds(),
             3600
         );
     }
@@ -427,7 +427,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n",
+            data_source_update_max_heartbeat_interval_seconds = 3600\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -444,7 +444,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             scheduled_jobs_enabled = false\n",
         ));
 
@@ -462,7 +462,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             scheduled_jobs_enabled = true\n",
         ));
 
@@ -480,8 +480,8 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 1800\n\
-            asset_cleanup_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 1800\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
             asset_cleanup_cron = \"0 15 * * * *\"\n",
         ));
 
@@ -494,11 +494,11 @@ mod tests {
             DEFAULT_DATA_SOURCE_UPDATE_CRON
         );
         assert_eq!(
-            configuration.data_source_update_max_lifetime_seconds(),
+            configuration.data_source_update_max_heartbeat_interval_seconds(),
             1800
         );
         assert_eq!(configuration.asset_cleanup_cron(), "0 15 * * * *");
-        assert_eq!(configuration.asset_cleanup_max_lifetime_seconds(), 3600);
+        assert_eq!(configuration.asset_cleanup_max_heartbeat_interval_seconds(), 3600);
     }
 
     #[test]
@@ -508,7 +508,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 1800\n",
+            data_source_update_max_heartbeat_interval_seconds = 1800\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -529,7 +529,7 @@ mod tests {
             database_password = \"password\"\n\
             database_name = \"database\"\n\
             data_source_update_cron = \"not a cron\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n",
+            data_source_update_max_heartbeat_interval_seconds = 3600\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -545,8 +545,8 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
-            asset_cleanup_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
             asset_cleanup_cron = \"not a cron\"\n",
         ));
 
@@ -563,7 +563,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 0\n",
+            data_source_update_max_heartbeat_interval_seconds = 0\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -579,9 +579,9 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             asset_cleanup_cron = \"0 0 4 * * *\"\n\
-            asset_cleanup_max_lifetime_seconds = 0\n",
+            asset_cleanup_max_heartbeat_interval_seconds = 0\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -612,7 +612,7 @@ mod tests {
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
             endpoint = \"http://minio:9000\"\n\
             access_key = \"minioadmin\"\n\
@@ -670,12 +670,12 @@ mod tests {
     fn reads_maps_section() {
         let path = write_config(
             "asset_cleanup_cron = \"0 0 4 * * *\"\n\
-            asset_cleanup_max_lifetime_seconds = 3600\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
             database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
             endpoint = \"http://minio:9000\"\n\
             access_key = \"minioadmin\"\n\
@@ -684,7 +684,7 @@ mod tests {
             region = \"us-east-1\"\n\
             [maps]\n\
             update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
-            update_max_lifetime_seconds = 1800\n\
+            update_max_heartbeat_interval_seconds = 1800\n\
             protomaps_build_url = \"https://example.com/source.pmtiles\"\n\
             go_pmtiles_version = \"9.9.9\"\n",
         );
@@ -694,7 +694,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
         assert_eq!(configuration.maps().update_cron(), "0 0 3 1 1,3,5,7,9,11 *");
-        assert_eq!(configuration.maps().update_max_lifetime_seconds(), 1800);
+        assert_eq!(configuration.maps().update_max_heartbeat_interval_seconds(), 1800);
         assert_eq!(
             configuration.maps().protomaps_build_url(),
             "https://example.com/source.pmtiles"
@@ -706,12 +706,12 @@ mod tests {
     fn defaults_maps_when_section_absent() {
         let path = write_config(&with_asset_storage(
             "asset_cleanup_cron = \"0 0 4 * * *\"\n\
-            asset_cleanup_max_lifetime_seconds = 3600\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
             database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n",
+            data_source_update_max_heartbeat_interval_seconds = 3600\n",
         ));
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -719,7 +719,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
         assert_eq!(configuration.maps().update_cron(), DEFAULT_MAPS_UPDATE_CRON);
-        assert_eq!(configuration.maps().update_max_lifetime_seconds(), 7200);
+        assert_eq!(configuration.maps().update_max_heartbeat_interval_seconds(), 7200);
         assert_eq!(
             configuration.maps().protomaps_build_url(),
             "https://build.protomaps.com/20260829.pmtiles"
@@ -731,12 +731,12 @@ mod tests {
     fn defaults_maps_update_max_lifetime_when_not_configured() {
         let path = write_config(
             "asset_cleanup_cron = \"0 0 4 * * *\"\n\
-            asset_cleanup_max_lifetime_seconds = 3600\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
             database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
             endpoint = \"http://minio:9000\"\n\
             access_key = \"minioadmin\"\n\
@@ -751,19 +751,19 @@ mod tests {
 
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
-        assert_eq!(configuration.maps().update_max_lifetime_seconds(), 7200);
+        assert_eq!(configuration.maps().update_max_heartbeat_interval_seconds(), 7200);
     }
 
     #[test]
     fn rejects_maps_update_max_lifetime_when_zero() {
         let path = write_config(
             "asset_cleanup_cron = \"0 0 4 * * *\"\n\
-            asset_cleanup_max_lifetime_seconds = 3600\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
             database_url = \"postgres://localhost\"\n\
             database_user = \"user\"\n\
             database_password = \"password\"\n\
             database_name = \"database\"\n\
-            data_source_update_max_lifetime_seconds = 3600\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
             endpoint = \"http://minio:9000\"\n\
             access_key = \"minioadmin\"\n\
@@ -771,7 +771,7 @@ mod tests {
             bucket = \"bike-counter-images\"\n\
             region = \"us-east-1\"\n\
             [maps]\n\
-            update_max_lifetime_seconds = 0\n",
+            update_max_heartbeat_interval_seconds = 0\n",
         );
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -780,7 +780,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(ConfigError::InvalidFormat(message))
-                if message.contains("maps.update_max_lifetime_seconds")
+                if message.contains("maps.update_max_heartbeat_interval_seconds")
         ));
     }
 }

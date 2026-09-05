@@ -3,9 +3,11 @@
 //! table (left behind when a provider image hash changes, or after a crash
 //! between `put` and `save`).
 //!
-//! Mirrors [`DataSourceUpdateService`]'s ShedLock-style scheduling: it is driven
-//! by the generic cron scheduler through [`ScheduledJobPort`] and tracks itself
-//! as a `asset_cleanup` job.
+//! Mirrors [`DataSourceUpdateService`]'s scheduling: it is driven by the generic
+//! cron scheduler through [`ScheduledJobPort`] and tracks itself as a
+//! `asset_cleanup` job. Multi-instance cancellation follows the shared protocol
+//! (claim the type's `job_locks` row, record a RUNNING job owned by this
+//! instance, heartbeat after each sub-task and honor a cancellation request).
 
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -14,12 +16,13 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use super::job_heartbeat::JobHeartbeat;
 use crate::core::domain::assets::asset::value_objects::ObjectKey;
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
 use crate::core::domain::assets::repository_port::AssetRepository;
 use crate::core::domain::configuration::configuration::Configuration;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::jobs::job::Job;
+use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::jobs::scheduled_job_port::ScheduledJobPort;
 use serde_json::json;
@@ -38,6 +41,7 @@ pub struct AssetCleanupService {
     asset_repository: Arc<dyn AssetRepository>,
     asset_storage: Arc<dyn AssetStorage>,
     configuration: Arc<Configuration>,
+    instance_id: Uuid,
 }
 
 impl AssetCleanupService {
@@ -46,49 +50,35 @@ impl AssetCleanupService {
         asset_repository: Arc<dyn AssetRepository>,
         asset_storage: Arc<dyn AssetStorage>,
         configuration: Arc<Configuration>,
+        instance_id: Uuid,
     ) -> Self {
         Self {
             job_repository,
             asset_repository,
             asset_storage,
             configuration,
+            instance_id,
         }
     }
 
     /// Decides whether the asset cleanup job should run now and executes it if
     /// so. Same always-on rule as the data-source update job: run at startup
     /// (never succeeded) and whenever the last successful run is overdue; skip
-    /// while a RUNNING job is still within its lifetime.
+    /// while an active job is still in flight or being finalized.
     pub fn run_if_due(&self) {
         let now = Utc::now();
 
-        match self
-            .job_repository
-            .expire_running_jobs(ASSET_CLEANUP_JOB_TYPE, now)
-        {
-            Ok(expired) if expired > 0 => {
-                println!("Expired {expired} stale RUNNING asset cleanup job(s)");
-            }
-            Ok(_) => {}
-            Err(error) => {
-                eprintln!("Failed to expire stale asset cleanup jobs: {error:?}");
-            }
-        }
-
-        match self
-            .job_repository
-            .find_running_by_type(ASSET_CLEANUP_JOB_TYPE)
-        {
-            Ok(Some(running)) if !running.lifetime_exceeded(now) => {
+        match self.job_repository.find_active_by_type(ASSET_CLEANUP_JOB_TYPE) {
+            Ok(active) if !active.is_empty() => {
                 println!(
-                    "Asset cleanup job {} is still running (until {}); skipping",
-                    running.id, running.lifetime_until
+                    "Asset cleanup job is still active ({} running/requesting); skipping",
+                    active.len()
                 );
                 return;
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("Failed to check for a running asset cleanup job: {error:?}");
+                eprintln!("Failed to check for an active asset cleanup job: {error:?}");
                 return;
             }
         }
@@ -135,36 +125,79 @@ impl AssetCleanupService {
         }
     }
 
-    /// Runs one cleanup pass as a tracked job.
+    /// Runs one cleanup pass as a job owned by this instance.
     fn execute(&self, now: DateTime<Utc>) {
-        let job = Job::new(
+        let interval = self.configuration.asset_cleanup_max_heartbeat_interval();
+        let instance_id = self.instance_id;
+
+        // 1. Claim the type's lock; only the winning instance proceeds.
+        match self
+            .job_repository
+            .acquire(ASSET_CLEANUP_JOB_TYPE, instance_id, now + interval)
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                println!("Asset cleanup is already running elsewhere; skipping");
+                return;
+            }
+            Err(error) => {
+                eprintln!("Failed to acquire the asset cleanup lock: {error:?}");
+                return;
+            }
+        }
+
+        // 2. Record the RUNNING job owned by this instance.
+        let job = Job::running(
             Uuid::new_v4(),
             ASSET_CLEANUP_JOB_NAME.to_string(),
             ASSET_CLEANUP_JOB_TYPE.to_string(),
-            now + self.configuration.asset_cleanup_max_lifetime(),
+            instance_id,
+            now,
         );
         let job_id = job.id;
         let job_name = job.name.clone();
-
         if let Err(error) = self.job_repository.insert(job) {
+            let _ = self.job_repository.release(ASSET_CLEANUP_JOB_TYPE, instance_id);
             eprintln!("Failed to record asset cleanup job {job_name} ({job_id}): {error:?}");
             return;
         }
-
-        if let Err(error) = self.job_repository.set_running(job_id, now) {
-            let message = format!("failed to start job: {error:?}");
-            if let Err(fail_error) = self.job_repository.set_failed(job_id, Utc::now(), &message) {
-                eprintln!(
-                    "Failed to mark asset cleanup job {job_name} ({job_id}) as failed: {fail_error:?}"
-                );
-            }
-            return;
-        }
-
         println!("Asset cleanup job {job_name} ({job_id}) started");
 
-        match self.run_cleanup(job_id) {
-            Ok(()) => {
+        // 3. A dedicated heartbeat loop keeps the job fresh on a fixed tick,
+        //    independent of how many objects the cleanup has to delete.
+        let heartbeat = JobHeartbeat::start(
+            self.job_repository.clone(),
+            job_id,
+            ASSET_CLEANUP_JOB_TYPE,
+            instance_id,
+            interval,
+        );
+        let outcome = self.run_cleanup(job_id);
+        heartbeat.stop();
+
+        // 4. Finalize based on the resulting status.
+        self.finalize(job_id, &job_name, outcome);
+    }
+
+    /// Finalizes the job according to `outcome` and the current persisted
+    /// status, then always releases the type's lock.
+    fn finalize(&self, job_id: Uuid, job_name: &str, outcome: Result<(), DomainError>) {
+        let status = self
+            .job_repository
+            .find_by_id(job_id)
+            .ok()
+            .flatten()
+            .map(|job| job.status);
+        match (outcome, status) {
+            (_, Some(JobStatus::CancellationRequested)) | (_, Some(JobStatus::Cancelled)) => {
+                match self.job_repository.mark_cancelled(job_id, Utc::now()) {
+                    Ok(()) => println!("Asset cleanup job {job_name} ({job_id}) cancelled"),
+                    Err(error) => eprintln!(
+                        "Could not finalize asset cleanup job {job_name} ({job_id}) as cancelled: {error:?}"
+                    ),
+                }
+            }
+            (Ok(()), _) => {
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
                     eprintln!(
                         "Failed to finish asset cleanup job {job_name} ({job_id}): {error:?}"
@@ -173,7 +206,7 @@ impl AssetCleanupService {
                     println!("Asset cleanup job {job_name} ({job_id}) finished");
                 }
             }
-            Err(error) => {
+            (Err(error), _) => {
                 let message = format!("{error:?}");
                 if let Err(set_failed_error) =
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
@@ -186,11 +219,16 @@ impl AssetCleanupService {
                 }
             }
         }
+        let _ = self.job_repository.release(ASSET_CLEANUP_JOB_TYPE, self.instance_id);
     }
 
     /// Deletes every object key in the bucket that has no `assets` row and
-    /// records the counts in the job metadata.
+    /// records the counts in the job metadata. Each delete is a sub-task
+    /// boundary: the job heartbeats and honors a cancellation request by
+    /// returning [`DomainError::Cancelled`].
     fn run_cleanup(&self, job_id: Uuid) -> Result<(), DomainError> {
+        self.check_cancellation(job_id)?;
+
         let objects: HashSet<String> = self
             .asset_storage
             .list_object_keys()?
@@ -207,6 +245,7 @@ impl AssetCleanupService {
         let orphans: Vec<String> = objects.difference(&known).cloned().collect();
         let mut deleted = 0usize;
         for key in &orphans {
+            self.check_cancellation(job_id)?;
             self.asset_storage.delete(&ObjectKey(key.clone()))?;
             deleted += 1;
         }
@@ -220,6 +259,26 @@ impl AssetCleanupService {
             println!("Asset cleanup deleted {deleted} orphaned object(s)");
         }
         Ok(())
+    }
+
+    /// Heartbeats the job and returns [`DomainError::Cancelled`] when a
+    /// cancellation was requested, so the cleanup loop stops gracefully.
+    fn check_cancellation(&self, job_id: Uuid) -> Result<(), DomainError> {
+        let now = Utc::now();
+        let interval = self.configuration.asset_cleanup_max_heartbeat_interval();
+        match self.job_repository.heartbeat(
+            job_id,
+            ASSET_CLEANUP_JOB_TYPE,
+            self.instance_id,
+            now,
+            now + interval,
+        ) {
+            Ok(JobStatus::CancellationRequested) | Ok(JobStatus::Cancelled) => {
+                Err(DomainError::Cancelled)
+            }
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 

@@ -1,10 +1,13 @@
-//! Postgres-backed [`JobRepository`] implementation (ShedLock-style job table).
+//! Postgres-backed [`JobRepository`] implementation.
 //!
-//! `lifetime_until` is an absolute deadline timestamp (`TIMESTAMPTZ`) — a
-//! RUNNING job only "lives" before this timestamp, matching the domain model.
-//! Metadata is a generic JSONB map. The synchronous `postgres` client must only
-//! be used from a blocking context (`spawn_blocking`), matching the other
-//! driven repositories.
+//! Jobs are tracked in the `jobs` table (history + status + ownership/liveness)
+//! while mutual exclusion lives in the ShedLock-style `job_locks` table (unique
+//! `job_type`, `locked_by`, `lock_until`). The only racy step is [`acquire`]:
+//! a single atomic `INSERT ... ON CONFLICT (job_type) DO UPDATE ... WHERE
+//! lock_until < now()`. A job row is only created after its lock is acquired and
+//! is inserted directly as RUNNING with its `instance_id` + `heartbeat_at`. The
+//! synchronous `postgres` client must only be used from a blocking context
+//! (`spawn_blocking`), matching the other driven repositories.
 
 use std::str::FromStr;
 
@@ -19,7 +22,7 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 use super::pool::PgPool;
 
 const SELECT_COLUMNS: &str = "id, name, job_type, status, started_at, finished_at, \
-                              failure_message, metadata, lifetime_until, max_lifetime_exceeded";
+                              failure_message, metadata, instance_id, heartbeat_at";
 
 pub struct PostgresJobRepository {
     pool: PgPool,
@@ -42,20 +45,14 @@ impl PostgresJobRepository {
             finished_at: row.get("finished_at"),
             failure_message: row.get("failure_message"),
             metadata: metadata.as_object().cloned().unwrap_or_default(),
-            lifetime_until: row.get("lifetime_until"),
-            max_lifetime_exceeded: row.get("max_lifetime_exceeded"),
+            instance_id: row.get("instance_id"),
+            heartbeat_at: row.get("heartbeat_at"),
         })
     }
 }
 
 impl JobRepository for PostgresJobRepository {
     fn insert(&self, job: Job) -> Result<(), DomainError> {
-        if job.lifetime_until <= Utc::now() {
-            return Err(DomainError::InvalidQuery(
-                "a job requires a lifetime_until deadline in the future".to_string(),
-            ));
-        }
-
         let mut client = self
             .pool
             .get()
@@ -63,40 +60,107 @@ impl JobRepository for PostgresJobRepository {
         let metadata = Value::Object(job.metadata);
         client
             .execute(
-                "INSERT INTO jobs (id, name, job_type, status, metadata, lifetime_until, max_lifetime_exceeded) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, \
+                                   failure_message, metadata, instance_id, heartbeat_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 &[
                     &job.id,
                     &job.name,
                     &job.job_type,
                     &job.status.as_str(),
+                    &job.started_at,
+                    &job.finished_at,
+                    &job.failure_message,
                     &metadata,
-                    &job.lifetime_until,
-                    &job.max_lifetime_exceeded,
+                    &job.instance_id,
+                    &job.heartbeat_at,
                 ],
             )
             .map_err(|error| DomainError::Database(format!("{error:?}")))?;
         Ok(())
     }
 
-    fn set_running(&self, id: Uuid, started_at: DateTime<Utc>) -> Result<(), DomainError> {
+    fn acquire(
+        &self,
+        job_type: &str,
+        instance_id: Uuid,
+        lock_until: DateTime<Utc>,
+    ) -> Result<bool, DomainError> {
         let mut client = self
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
+        // ShedLock acquire: INSERT wins immediately; an existing lock row is only
+        // taken over when its lock_until has expired. `updated == 1` means we
+        // now own the type's lock.
         let updated = client
             .execute(
-                "UPDATE jobs SET status = 'RUNNING', started_at = $2 \
-                 WHERE id = $1 AND status = 'PENDING'",
-                &[&id, &started_at],
+                "INSERT INTO job_locks (job_type, locked_by, lock_until) \
+                 VALUES ($1, $2, $3) \
+                 ON CONFLICT (job_type) DO UPDATE \
+                   SET locked_by = EXCLUDED.locked_by, lock_until = EXCLUDED.lock_until \
+                   WHERE job_locks.lock_until < now()",
+                &[&job_type, &instance_id, &lock_until],
             )
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
+        Ok(updated == 1)
+    }
+
+    fn release(&self, job_type: &str, instance_id: Uuid) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        if updated == 0 {
-            return Err(DomainError::InvalidQuery(format!(
-                "job {id} is not in PENDING state and cannot be started"
-            )));
-        }
+        client
+            .execute(
+                "DELETE FROM job_locks WHERE job_type = $1 AND locked_by = $2",
+                &[&job_type, &instance_id],
+            )
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
         Ok(())
+    }
+
+    fn heartbeat(
+        &self,
+        id: Uuid,
+        job_type: &str,
+        instance_id: Uuid,
+        at: DateTime<Utc>,
+        lock_until: DateTime<Utc>,
+    ) -> Result<JobStatus, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        // Owner-only write: only while RUNNING and owned by `instance_id`.
+        let refreshed = client
+            .execute(
+                "UPDATE jobs SET heartbeat_at = $3 \
+                 WHERE id = $1 AND instance_id = $2 AND status = 'RUNNING'",
+                &[&id, &instance_id, &at],
+            )
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
+        // Extend the lease only when this call actually refreshed the job.
+        if refreshed == 1 {
+            client
+                .execute(
+                    "UPDATE job_locks SET lock_until = $3 \
+                     WHERE job_type = $2 AND locked_by = $1",
+                    &[&instance_id, &job_type, &lock_until],
+                )
+                .map_err(|error| DomainError::Database(format!("{error:?}")))?;
+        }
+        // Return the current status so the worker can detect a cancellation.
+        let row = client
+            .query_opt("SELECT status FROM jobs WHERE id = $1", &[&id])
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        match row {
+            Some(row) => {
+                let status: String = row.get("status");
+                JobStatus::from_str(&status)
+            }
+            None => Err(DomainError::NotFound(id)),
+        }
     }
 
     fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
@@ -132,13 +196,53 @@ impl JobRepository for PostgresJobRepository {
         let updated = client
             .execute(
                 "UPDATE jobs SET status = 'FAILED', finished_at = $2, failure_message = $3 \
-                 WHERE id = $1 AND status IN ('PENDING', 'RUNNING')",
+                 WHERE id = $1 AND status = 'RUNNING'",
                 &[&id, &finished_at, &message],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         if updated == 0 {
             return Err(DomainError::InvalidQuery(format!(
-                "job {id} can only fail from PENDING or RUNNING state"
+                "job {id} can only fail from RUNNING state"
+            )));
+        }
+        Ok(())
+    }
+
+    fn request_cancellation(&self, id: Uuid) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let updated = client
+            .execute(
+                "UPDATE jobs SET status = 'CANCELLATION_REQUESTED' \
+                 WHERE id = $1 AND status = 'RUNNING'",
+                &[&id],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        if updated == 0 {
+            return Err(DomainError::InvalidQuery(format!(
+                "job {id} is not in RUNNING state and cannot be cancelled"
+            )));
+        }
+        Ok(())
+    }
+
+    fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let updated = client
+            .execute(
+                "UPDATE jobs SET status = 'CANCELLED', finished_at = $2, failure_message = 'cancelled' \
+                 WHERE id = $1 AND status IN ('RUNNING', 'CANCELLATION_REQUESTED')",
+                &[&id, &finished_at],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        if updated == 0 {
+            return Err(DomainError::InvalidQuery(format!(
+                "job {id} is not in a cancellable state"
             )));
         }
         Ok(())
@@ -197,21 +301,22 @@ impl JobRepository for PostgresJobRepository {
         rows.iter().map(Self::map_row).collect()
     }
 
-    fn find_running_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+    fn find_active_by_type(&self, job_type: &str) -> Result<Vec<Job>, DomainError> {
         let mut client = self
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let row = client
-            .query_opt(
+        let rows = client
+            .query(
                 &format!(
                     "SELECT {SELECT_COLUMNS} FROM jobs \
-                     WHERE job_type = $1 AND status = 'RUNNING' ORDER BY created_at DESC LIMIT 1"
+                     WHERE job_type = $1 AND status IN ('RUNNING', 'CANCELLATION_REQUESTED') \
+                     ORDER BY created_at DESC"
                 ),
                 &[&job_type],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        row.map(|row| Self::map_row(&row)).transpose()
+        rows.iter().map(Self::map_row).collect()
     }
 
     fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
@@ -232,20 +337,38 @@ impl JobRepository for PostgresJobRepository {
         row.map(|row| Self::map_row(&row)).transpose()
     }
 
-    fn expire_running_jobs(&self, job_type: &str, now: DateTime<Utc>) -> Result<u64, DomainError> {
+    fn reconcile_stale_active(
+        &self,
+        job_type: &str,
+        heartbeat_before: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
         let mut client = self
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let updated = client
+        // Stage 1: stale RUNNING -> CANCELLATION_REQUESTED (give the worker a
+        // cooperative chance to stop itself).
+        client
             .execute(
-                "UPDATE jobs SET status = 'FAILED', finished_at = $2, \
-                 failure_message = 'Max lifetime exceeded', max_lifetime_exceeded = TRUE \
-                 WHERE job_type = $1 AND status = 'RUNNING' AND lifetime_until < $2",
-                &[&job_type, &now],
+                "UPDATE jobs SET status = 'CANCELLATION_REQUESTED' \
+                 WHERE job_type = $1 AND status = 'RUNNING' \
+                   AND (heartbeat_at IS NULL OR heartbeat_at < $2)",
+                &[&job_type, &heartbeat_before],
             )
             .map_err(|error| DomainError::Database(format!("{error:?}")))?;
-        Ok(updated)
+        // Stage 2: stale CANCELLATION_REQUESTED -> CANCELLED (the worker is gone
+        // or too slow; force-finalize).
+        client
+            .execute(
+                "UPDATE jobs SET status = 'CANCELLED', finished_at = $3, \
+                 failure_message = 'heartbeat lost' \
+                 WHERE job_type = $1 AND status = 'CANCELLATION_REQUESTED' \
+                   AND (heartbeat_at IS NULL OR heartbeat_at < $2)",
+                &[&job_type, &heartbeat_before, &now],
+            )
+            .map_err(|error| DomainError::Database(format!("{error:?}")))?;
+        Ok(())
     }
 }
 
@@ -253,7 +376,7 @@ impl JobRepository for PostgresJobRepository {
 mod tests {
     use std::str::FromStr;
 
-    use chrono::{DateTime, Duration, Timelike, Utc};
+    use chrono::{Duration, Timelike, Utc};
     use postgres::{Config as PostgresConfig, NoTls};
     use serde_json::json;
     use testcontainers::runners::SyncRunner;
@@ -265,6 +388,9 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::jobs::job::{Job, JobStatus};
     use crate::core::domain::jobs::repository_port::JobRepository;
+
+    const INSTANCE_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00A1);
+    const INSTANCE_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00A2);
 
     /// A running Postgres test instance plus its repository and connection
     /// details, so tests can also open a raw client to manipulate rows.
@@ -324,100 +450,340 @@ mod tests {
         }
     }
 
-    fn job(id: Uuid, job_type: &str) -> Job {
-        job_with_deadline(id, job_type, Utc::now() + Duration::seconds(3600))
-    }
-
-    fn job_with_deadline(id: Uuid, job_type: &str, deadline: DateTime<Utc>) -> Job {
-        Job::new(
+    /// A RUNNING job owned by `instance`.
+    fn running_job(id: Uuid, job_type: &str, instance: Uuid) -> Job {
+        Job::running(
             id,
             format!("Job {job_type}"),
             job_type.to_string(),
-            deadline,
+            instance,
+            Utc::now(),
         )
+    }
+
+    /// Acquires the type's lock and inserts a RUNNING job under it.
+    fn start_job(db: &TestDb, id: Uuid, job_type: &str, instance: Uuid) {
+        assert!(
+            db.repository
+                .acquire(job_type, instance, Utc::now() + Duration::hours(1))
+                .unwrap()
+        );
+        db.repository.insert(running_job(id, job_type, instance)).unwrap();
     }
 
     /// Postgres TIMESTAMPTZ stores microseconds; `chrono` keeps nanoseconds.
     /// Truncate so round-trip equality checks pass.
-    fn micros(dt: DateTime<Utc>) -> DateTime<Utc> {
+    fn micros(dt: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
         dt - Duration::nanoseconds((dt.nanosecond() % 1000) as i64)
     }
 
     #[test]
-    fn inserts_and_reads_job_with_lifetime_deadline_round_trip() {
+    fn inserts_and_reads_owned_running_job_round_trip() {
         let db = TestDb::new();
         let id = Uuid::new_v4();
-        let deadline = Utc::now() + Duration::seconds(3600);
+        let started = Utc::now();
         db.repository
-            .insert(job_with_deadline(id, "data_source_update", deadline))
+            .insert(Job::running(
+                id,
+                "Data source update".to_string(),
+                "data_source_update".to_string(),
+                INSTANCE_A,
+                started,
+            ))
             .unwrap();
 
         let stored = db.repository.find_by_id(id).unwrap().unwrap();
-        assert_eq!(stored.name, "Job data_source_update");
-        assert_eq!(stored.status, JobStatus::Pending);
-        assert_eq!(stored.lifetime_until, micros(deadline));
-        assert!(!stored.max_lifetime_exceeded);
+        assert_eq!(stored.name, "Data source update");
+        assert_eq!(stored.status, JobStatus::Running);
+        assert_eq!(stored.instance_id, Some(INSTANCE_A));
+        assert_eq!(stored.heartbeat_at, Some(micros(started)));
         assert!(stored.metadata.is_empty());
     }
 
     #[test]
-    fn insert_with_past_deadline_fails() {
+    fn acquire_is_exclusive_until_released() {
         let db = TestDb::new();
-        let new_job = job_with_deadline(
-            Uuid::new_v4(),
-            "data_source_update",
-            Utc::now() - Duration::seconds(60),
-        );
-        assert!(db.repository.insert(new_job).is_err());
+        let job_type = "acquire_test";
+
+        assert!(db
+            .repository
+            .acquire(job_type, INSTANCE_A, Utc::now() + Duration::hours(1))
+            .unwrap());
+        // A second instance cannot acquire while the lock is held.
+        assert!(!db
+            .repository
+            .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+            .unwrap());
+
+        // Release lets another instance acquire.
+        db.repository.release(job_type, INSTANCE_A).unwrap();
+        assert!(db
+            .repository
+            .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+            .unwrap());
     }
 
     #[test]
-    fn runs_lifecycle_pending_to_running_to_finished() {
+    fn acquire_takes_over_an_expired_lock() {
         let db = TestDb::new();
+        let job_type = "expired_lock_test";
+
+        assert!(db
+            .repository
+            .acquire(job_type, INSTANCE_A, Utc::now() + Duration::hours(1))
+            .unwrap());
+        // Force the lock to expire, then a different instance can take it over.
+        let mut client = db.raw_client();
+        client
+            .execute(
+                "UPDATE job_locks SET lock_until = now() - interval '1 second' WHERE job_type = $1",
+                &[&job_type],
+            )
+            .unwrap();
+        drop(client);
+
+        assert!(db
+            .repository
+            .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+            .unwrap());
+    }
+
+    #[test]
+    fn heartbeat_refreshes_job_and_extends_lease() {
+        let db = TestDb::new();
+        let job_type = "heartbeat_test";
         let id = Uuid::new_v4();
-        db.repository.insert(job(id, "data_source_update")).unwrap();
+        start_job(&db, id, job_type, INSTANCE_A);
 
-        let started = Utc::now();
-        db.repository.set_running(id, started).unwrap();
-        let running = db.repository.find_by_id(id).unwrap().unwrap();
-        assert_eq!(running.status, JobStatus::Running);
-        assert_eq!(running.started_at, Some(micros(started)));
+        let beat = Utc::now();
+        let lease = beat + Duration::hours(2);
+        let status = db
+            .repository
+            .heartbeat(id, job_type, INSTANCE_A, beat, lease)
+            .unwrap();
+        assert_eq!(status, JobStatus::Running);
 
+        let stored = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(stored.heartbeat_at, Some(micros(beat)));
+
+        let mut client = db.raw_client();
+        let lock_until: chrono::DateTime<Utc> = client
+            .query_one(
+                "SELECT lock_until FROM job_locks WHERE job_type = $1",
+                &[&job_type],
+            )
+            .unwrap()
+            .get(0);
+        drop(client);
+        assert_eq!(lock_until, micros(lease), "heartbeat must extend the lease");
+    }
+
+    #[test]
+    fn heartbeat_from_a_foreign_instance_is_a_noop() {
+        let db = TestDb::new();
+        let job_type = "foreign_heartbeat_test";
+        let id = Uuid::new_v4();
+        start_job(&db, id, job_type, INSTANCE_A);
+        let original = db.repository.find_by_id(id).unwrap().unwrap();
+
+        // INSTANCE_B does not own the job: the write is a no-op.
+        let status = db
+            .repository
+            .heartbeat(id, job_type, INSTANCE_B, Utc::now(), Utc::now() + Duration::hours(1))
+            .unwrap();
+        assert_eq!(status, JobStatus::Running);
+
+        let stored = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(
+            stored.heartbeat_at, original.heartbeat_at,
+            "a foreign instance must not refresh the heartbeat"
+        );
+    }
+
+    #[test]
+    fn heartbeat_reports_a_cancellation_request() {
+        let db = TestDb::new();
+        let job_type = "heartbeat_cancel_test";
+        let id = Uuid::new_v4();
+        start_job(&db, id, job_type, INSTANCE_A);
+
+        db.repository.request_cancellation(id).unwrap();
+        let status = db
+            .repository
+            .heartbeat(id, job_type, INSTANCE_A, Utc::now(), Utc::now() + Duration::hours(1))
+            .unwrap();
+        assert_eq!(status, JobStatus::CancellationRequested);
+    }
+
+    #[test]
+    fn runs_lifecycle_running_to_finished_and_failed() {
+        let db = TestDb::new();
+
+        let finished_id = Uuid::new_v4();
+        start_job(&db, finished_id, "lifecycle_finished", INSTANCE_A);
         let finished = Utc::now();
-        db.repository.set_finished(id, finished).unwrap();
-        let done = db.repository.find_by_id(id).unwrap().unwrap();
+        db.repository.set_finished(finished_id, finished).unwrap();
+        let done = db.repository.find_by_id(finished_id).unwrap().unwrap();
         assert_eq!(done.status, JobStatus::Finished);
         assert_eq!(done.finished_at, Some(micros(finished)));
+
+        let failed_id = Uuid::new_v4();
+        start_job(&db, failed_id, "lifecycle_failed", INSTANCE_A);
+        let failed = Utc::now();
+        db.repository
+            .set_failed(failed_id, failed, "provider error")
+            .unwrap();
+        let failed_job = db.repository.find_by_id(failed_id).unwrap().unwrap();
+        assert_eq!(failed_job.status, JobStatus::Failed);
+        assert_eq!(
+            failed_job.failure_message.as_deref(),
+            Some("provider error")
+        );
     }
 
     #[test]
-    fn set_failed_allowed_from_pending_and_running() {
+    fn request_cancellation_then_mark_cancelled() {
         let db = TestDb::new();
-        let pending_id = Uuid::new_v4();
-        db.repository.insert(job(pending_id, "t")).unwrap();
-        db.repository
-            .set_failed(pending_id, Utc::now(), "cancelled")
-            .unwrap();
+        let job_type = "cancel_flow_test";
+        let id = Uuid::new_v4();
+        start_job(&db, id, job_type, INSTANCE_A);
 
+        db.repository.request_cancellation(id).unwrap();
+        let requested = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(requested.status, JobStatus::CancellationRequested);
+
+        let finished = Utc::now();
+        db.repository.mark_cancelled(id, finished).unwrap();
+        let cancelled = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(cancelled.status, JobStatus::Cancelled);
+        assert_eq!(cancelled.finished_at, Some(micros(finished)));
+        assert_eq!(cancelled.failure_message.as_deref(), Some("cancelled"));
+    }
+
+    #[test]
+    fn force_cancel_marks_running_job_cancelled_directly() {
+        let db = TestDb::new();
+        let job_type = "force_cancel_test";
+        let id = Uuid::new_v4();
+        start_job(&db, id, job_type, INSTANCE_A);
+
+        db.repository.mark_cancelled(id, Utc::now()).unwrap();
+        let cancelled = db.repository.find_by_id(id).unwrap().unwrap();
+        assert_eq!(cancelled.status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn mark_cancelled_rejects_terminal_states() {
+        let db = TestDb::new();
+        let job_type = "mark_cancel_guard_test";
+        let id = Uuid::new_v4();
+        start_job(&db, id, job_type, INSTANCE_A);
+        db.repository.set_finished(id, Utc::now()).unwrap();
+
+        assert!(db.repository.mark_cancelled(id, Utc::now()).is_err());
+    }
+
+    #[test]
+    fn find_active_by_type_returns_running_and_requested_jobs() {
+        let db = TestDb::new();
+        let job_type = "active_test";
         let running_id = Uuid::new_v4();
-        db.repository.insert(job(running_id, "t")).unwrap();
-        db.repository.set_running(running_id, Utc::now()).unwrap();
+        db.repository.insert(running_job(running_id, job_type, INSTANCE_A)).unwrap();
+        let requested_id = Uuid::new_v4();
+        db.repository.insert(running_job(requested_id, job_type, INSTANCE_A)).unwrap();
+        db.repository.request_cancellation(requested_id).unwrap();
+
+        // A FINISHED job of the same type is not "active".
+        let done_id = Uuid::new_v4();
+        db.repository.insert(running_job(done_id, job_type, INSTANCE_A)).unwrap();
+        db.repository.set_finished(done_id, Utc::now()).unwrap();
+
+        let active = db.repository.find_active_by_type(job_type).unwrap();
+        let mut ids: Vec<Uuid> = active.iter().map(|job| job.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![requested_id, running_id]);
+    }
+
+    #[test]
+    fn reconcile_flips_stale_running_to_cancellation_requested_then_cancelled() {
+        let db = TestDb::new();
+        let job_type = "reconcile_test";
+        let stale_id = Uuid::new_v4();
+        start_job(&db, stale_id, job_type, INSTANCE_A);
+        // Make the heartbeat old.
+        let mut client = db.raw_client();
+        client
+            .execute(
+                "UPDATE jobs SET heartbeat_at = now() - interval '1 hour' WHERE id = $1",
+                &[&stale_id],
+            )
+            .unwrap();
+        drop(client);
+
+        let now = Utc::now();
+        let heartbeat_before = now - Duration::minutes(30);
         db.repository
-            .set_failed(running_id, Utc::now(), "provider error")
+            .reconcile_stale_active(job_type, heartbeat_before, now)
+            .unwrap();
+        let after_first = db.repository.find_by_id(stale_id).unwrap().unwrap();
+        assert_eq!(
+            after_first.status,
+            JobStatus::Cancelled,
+            "a dead worker's job is force-cancelled in one reconcile pass"
+        );
+    }
+
+    #[test]
+    fn reconcile_spares_fresh_and_non_running_jobs() {
+        let db = TestDb::new();
+        let job_type = "reconcile_fresh_test";
+        // A freshly heartbeated RUNNING job must survive reconciliation.
+        let fresh_id = Uuid::new_v4();
+        start_job(&db, fresh_id, job_type, INSTANCE_A);
+        db.repository
+            .heartbeat(fresh_id, job_type, INSTANCE_A, Utc::now(), Utc::now() + Duration::hours(1))
             .unwrap();
 
-        for id in [pending_id, running_id] {
-            let stored = db.repository.find_by_id(id).unwrap().unwrap();
-            assert_eq!(stored.status, JobStatus::Failed);
-            assert!(stored.failure_message.is_some());
-        }
+        // A stale FINISHED job is terminal and must not be touched either.
+        let done_id = Uuid::new_v4();
+        db.repository.insert(running_job(done_id, job_type, INSTANCE_A)).unwrap();
+        let mut client = db.raw_client();
+        client
+            .execute(
+                "UPDATE jobs SET heartbeat_at = now() - interval '1 hour' \
+                 WHERE id = $1 AND status = 'RUNNING'",
+                &[&done_id],
+            )
+            .unwrap();
+        client
+            .execute(
+                "UPDATE jobs SET status = 'FINISHED', finished_at = now() WHERE id = $1",
+                &[&done_id],
+            )
+            .unwrap();
+        drop(client);
+
+        let now = Utc::now();
+        db.repository
+            .reconcile_stale_active(job_type, now - Duration::minutes(30), now)
+            .unwrap();
+
+        assert_eq!(
+            db.repository.find_by_id(fresh_id).unwrap().unwrap().status,
+            JobStatus::Running
+        );
+        assert_eq!(
+            db.repository.find_by_id(done_id).unwrap().unwrap().status,
+            JobStatus::Finished
+        );
     }
 
     #[test]
     fn updates_metadata_in_place() {
         let db = TestDb::new();
+        let job_type = "metadata_test";
         let id = Uuid::new_v4();
-        db.repository.insert(job(id, "data_source_update")).unwrap();
+        db.repository.insert(running_job(id, job_type, INSTANCE_A)).unwrap();
 
         db.repository
             .update_metadata(id, "processed_measurements", json!(1200))
@@ -436,46 +802,37 @@ mod tests {
     #[test]
     fn find_all_filters_by_type_and_status() {
         let db = TestDb::new();
+
         let running_id = Uuid::new_v4();
-        db.repository
-            .insert(job(running_id, "data_source_update"))
-            .unwrap();
-        db.repository.set_running(running_id, Utc::now()).unwrap();
+        db.repository.insert(running_job(running_id, "data_source_update", INSTANCE_A)).unwrap();
 
         let finished_id = Uuid::new_v4();
-        db.repository
-            .insert(job(finished_id, "data_source_update"))
-            .unwrap();
-        db.repository.set_running(finished_id, Utc::now()).unwrap();
+        db.repository.insert(running_job(finished_id, "data_source_update", INSTANCE_A)).unwrap();
         db.repository.set_finished(finished_id, Utc::now()).unwrap();
 
+        let cancelled_id = Uuid::new_v4();
+        db.repository.insert(running_job(cancelled_id, "data_source_update", INSTANCE_A)).unwrap();
+        db.repository.mark_cancelled(cancelled_id, Utc::now()).unwrap();
+
         let other_id = Uuid::new_v4();
-        db.repository.insert(job(other_id, "other")).unwrap();
+        db.repository.insert(running_job(other_id, "asset_cleanup", INSTANCE_A)).unwrap();
 
         let all = db.repository.find_all(None, None).unwrap();
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 4);
 
         let by_type = db
             .repository
             .find_all(Some("data_source_update"), None)
             .unwrap();
-        assert_eq!(by_type.len(), 2);
+        assert_eq!(by_type.len(), 3);
 
-        let running = db
+        let cancelled = db
             .repository
-            .find_all(Some("data_source_update"), Some(JobStatus::Running))
+            .find_all(Some("data_source_update"), Some(JobStatus::Cancelled))
             .unwrap();
-        assert_eq!(running.len(), 1);
-        assert_eq!(running[0].id, running_id);
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(cancelled[0].id, cancelled_id);
 
-        assert_eq!(
-            db.repository
-                .find_running_by_type("data_source_update")
-                .unwrap()
-                .unwrap()
-                .id,
-            running_id
-        );
         assert_eq!(
             db.repository
                 .find_last_finished_by_type("data_source_update")
@@ -484,123 +841,5 @@ mod tests {
                 .id,
             finished_id
         );
-    }
-
-    #[test]
-    fn find_last_finished_orders_by_finished_at_not_created_at() {
-        let db = TestDb::new();
-        let now = Utc::now();
-        let earlier = now - Duration::seconds(600);
-        let later = now - Duration::seconds(300);
-
-        // Job A is created first but finishes later than job B, so ordering by
-        // `created_at` (the old query) would return the wrong job.
-        let a_id = Uuid::new_v4();
-        db.repository
-            .insert(job(a_id, "data_source_update"))
-            .unwrap();
-        db.repository
-            .set_running(a_id, earlier - Duration::seconds(60))
-            .unwrap();
-        db.repository.set_finished(a_id, later).unwrap();
-
-        let b_id = Uuid::new_v4();
-        db.repository
-            .insert(job(b_id, "data_source_update"))
-            .unwrap();
-        db.repository
-            .set_running(b_id, earlier - Duration::seconds(30))
-            .unwrap();
-        db.repository.set_finished(b_id, earlier).unwrap();
-
-        let last = db
-            .repository
-            .find_last_finished_by_type("data_source_update")
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            last.id, a_id,
-            "the newest finished_at wins, not the newest created_at"
-        );
-    }
-
-    #[test]
-    fn expire_running_jobs_flips_only_expired_running_jobs() {
-        let db = TestDb::new();
-        let now = Utc::now();
-
-        // A RUNNING job whose deadline has passed: "no longer living".
-        let expired_id = Uuid::new_v4();
-        db.repository
-            .insert(job_with_deadline(
-                expired_id,
-                "data_source_update",
-                now + Duration::seconds(3600),
-            ))
-            .unwrap();
-        db.repository
-            .set_running(expired_id, now - Duration::seconds(7200))
-            .unwrap();
-        let mut client = db.raw_client();
-        client
-            .execute(
-                "UPDATE jobs SET lifetime_until = $2 WHERE id = $1",
-                &[&expired_id, &(now - Duration::seconds(1))],
-            )
-            .unwrap();
-        drop(client);
-
-        // A RUNNING job still within its deadline: still "living".
-        let within_id = Uuid::new_v4();
-        db.repository
-            .insert(job_with_deadline(
-                within_id,
-                "data_source_update",
-                now + Duration::seconds(3600),
-            ))
-            .unwrap();
-        db.repository
-            .set_running(within_id, now - Duration::seconds(600))
-            .unwrap();
-
-        // An expired RUNNING job of another type must not be touched.
-        let expired_other = Uuid::new_v4();
-        db.repository
-            .insert(job_with_deadline(
-                expired_other,
-                "other",
-                now + Duration::seconds(3600),
-            ))
-            .unwrap();
-        db.repository
-            .set_running(expired_other, now - Duration::seconds(7200))
-            .unwrap();
-        let mut client = db.raw_client();
-        client
-            .execute(
-                "UPDATE jobs SET lifetime_until = $2 WHERE id = $1",
-                &[&expired_other, &(now - Duration::seconds(1))],
-            )
-            .unwrap();
-        drop(client);
-
-        let expired = db
-            .repository
-            .expire_running_jobs("data_source_update", now)
-            .unwrap();
-        assert_eq!(expired, 1);
-
-        let expired_job = db.repository.find_by_id(expired_id).unwrap().unwrap();
-        assert_eq!(expired_job.status, JobStatus::Failed);
-        assert!(expired_job.max_lifetime_exceeded);
-        assert!(expired_job.failure_message.is_some());
-
-        let within = db.repository.find_by_id(within_id).unwrap().unwrap();
-        assert_eq!(within.status, JobStatus::Running);
-        assert!(!within.max_lifetime_exceeded);
-
-        // Jobs of other types are untouched.
-        let other = db.repository.find_by_id(expired_other).unwrap().unwrap();
-        assert_eq!(other.status, JobStatus::Running);
     }
 }

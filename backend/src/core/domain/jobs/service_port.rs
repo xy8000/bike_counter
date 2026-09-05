@@ -1,5 +1,5 @@
-//! Driving (inbound) port for job reads. Implemented by `JobService`; consumed
-//! by the REST jobs handlers.
+//! Driving (inbound) port for job reads and cancellation. Implemented by
+//! `JobService`; consumed by the REST jobs handlers.
 
 use uuid::Uuid;
 
@@ -16,4 +16,10 @@ pub trait JobServicePort: Send + Sync {
 
     /// Returns a single job; `DomainError::NotFound` if unknown.
     fn find_by_id(&self, id: Uuid) -> Result<Job, DomainError>;
+
+    /// Cancels a job: with `force = false` a RUNNING job is moved to
+    /// CANCELLATION_REQUESTED (cooperative; the owning worker finalizes
+    /// CANCELLED); with `force = true` it is marked CANCELLED directly.
+    /// Returns the updated job.
+    fn cancel(&self, id: Uuid, force: bool) -> Result<Job, DomainError>;
 }

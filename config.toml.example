@@ -12,12 +12,12 @@ scheduled_jobs_enabled = true
 # CRON expression for the data-source update job (default: every hour).
 data_source_update_cron="0 * * * * *"
 # REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
-data_source_update_max_lifetime_seconds=600
+data_source_update_max_heartbeat_interval_seconds=600
 
 # CRON expression for the asset cleanup job (default: daily at 04:00).
 asset_cleanup_cron="0 0 4 * * *"
 # REQUIRED ShedLock-style max lifetime for the asset cleanup job in seconds (no default).
-asset_cleanup_max_lifetime_seconds=3600
+asset_cleanup_max_heartbeat_interval_seconds=3600
 
 # S3-compatible object storage (MinIO) holding counting-station image binaries.
 # PostgreSQL stores only the metadata; the BFF streams the content to browsers.
@@ -35,7 +35,7 @@ region = "us-east-1"
 # CRON expression for the basemap refresh (default: every two months, 1st at 03:00).
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"
 # ShedLock-style max lifetime for the tiles update job in seconds (default: 2 hours).
-update_max_lifetime_seconds = 7200
+update_max_heartbeat_interval_seconds = 7200
 # Pinned Protomaps daily build (see maps.protomaps.com/builds). Bump periodically.
 protomaps_build_url = "https://build.protomaps.com/20260829.pmtiles"
 # Pinned go-pmtiles CLI version used to extract/merge the basemap.

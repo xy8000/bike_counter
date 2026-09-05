@@ -213,29 +213,30 @@ pub fn sample_measurement_repository() -> MockMeasurementRepository {
     }
 }
 
+/// A fixed instance id used by the deterministic job fixtures.
+pub const JOB_INSTANCE: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00A5);
+
 pub fn job_a() -> Job {
-    let mut job = Job::new(
+    let mut job = Job::running(
         JOB_ID_A,
         "Data source update".to_string(),
         "data_source_update".to_string(),
-        timestamp() + chrono::Duration::hours(1),
+        JOB_INSTANCE,
+        timestamp() - chrono::Duration::minutes(10),
     );
     job.status = JobStatus::Finished;
-    job.started_at = Some(timestamp() - chrono::Duration::minutes(10));
     job.finished_at = Some(timestamp());
     job
 }
 
 pub fn job_b() -> Job {
-    let mut job = Job::new(
+    Job::running(
         JOB_ID_B,
         "Data source update".to_string(),
         "data_source_update".to_string(),
-        timestamp() + chrono::Duration::hours(1),
-    );
-    job.status = JobStatus::Running;
-    job.started_at = Some(timestamp() - chrono::Duration::minutes(5));
-    job
+        JOB_INSTANCE,
+        timestamp() - chrono::Duration::minutes(5),
+    )
 }
 
 /// Repository fixture holding the two sample jobs.

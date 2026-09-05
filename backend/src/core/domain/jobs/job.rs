@@ -1,5 +1,10 @@
 //! Generic ShedLock-style job tracking: the persisted representation of an
 //! asynchronous job together with its lifecycle status.
+//!
+//! A job row is only created after its owning instance has acquired the
+//! `job_locks` row, so every job starts as RUNNING and carries the owning
+//! `instance_id` plus a `heartbeat_at` timestamp the owner refreshes after each
+//! sub-task. There is no transient PENDING state.
 
 use std::str::FromStr;
 
@@ -12,22 +17,27 @@ use crate::core::domain::error::DomainError;
 
 /// Lifecycle status of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobStatus {
-    Pending,
     Running,
     Finished,
     Failed,
+    /// A cooperative cancellation has been requested (via REST or a stale
+    /// heartbeat); the owning worker stops at the next sub-task boundary and
+    /// finalizes `Cancelled`.
+    CancellationRequested,
+    Cancelled,
 }
 
 impl JobStatus {
     /// The canonical wire / database representation.
     pub fn as_str(&self) -> &'static str {
         match self {
-            JobStatus::Pending => "PENDING",
             JobStatus::Running => "RUNNING",
             JobStatus::Finished => "FINISHED",
             JobStatus::Failed => "FAILED",
+            JobStatus::CancellationRequested => "CANCELLATION_REQUESTED",
+            JobStatus::Cancelled => "CANCELLED",
         }
     }
 }
@@ -37,10 +47,11 @@ impl FromStr for JobStatus {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "PENDING" => Ok(JobStatus::Pending),
             "RUNNING" => Ok(JobStatus::Running),
             "FINISHED" => Ok(JobStatus::Finished),
             "FAILED" => Ok(JobStatus::Failed),
+            "CANCELLATION_REQUESTED" => Ok(JobStatus::CancellationRequested),
+            "CANCELLED" => Ok(JobStatus::Cancelled),
             _ => Err(DomainError::InvalidQuery(format!(
                 "unknown job status '{value}'"
             ))),
@@ -51,8 +62,7 @@ impl FromStr for JobStatus {
 /// A generic job tracked through its lifecycle.
 ///
 /// Every run creates a **new** job row so full history is kept. While a job is
-/// RUNNING it blocks other runs of the same type only until its `lifetime_until`
-/// deadline; afterwards the scheduler expires it (see `expire_running_jobs`).
+/// RUNNING it owns the type's `job_locks` row until its terminal transition.
 #[derive(Debug, Clone)]
 pub struct Job {
     pub id: Uuid,
@@ -64,29 +74,34 @@ pub struct Job {
     pub failure_message: Option<String>,
     /// Generic key/value metadata (rendered as a table in the UI later).
     pub metadata: Map<String, serde_json::Value>,
-    /// Absolute deadline (TIMESTAMPTZ) until which a RUNNING job may block
-    /// other runs (ShedLock `lockAtMostFor`). The job only "lives" before this
-    /// timestamp; afterwards it is expired. Must be in the future; there is no
-    /// default anywhere.
-    pub lifetime_until: DateTime<Utc>,
-    pub max_lifetime_exceeded: bool,
+    /// The instance that owns (runs) this job. `None` only for rows that
+    /// predate the ownership model (the watcher cancels those as stale).
+    pub instance_id: Option<Uuid>,
+    /// Last time the owner reported progress (`None` = stale/unknown; the
+    /// watcher treats it as such).
+    pub heartbeat_at: Option<DateTime<Utc>>,
 }
 
 impl Job {
-    /// Creates a new PENDING job. `lifetime_until` is an absolute deadline; the
-    /// repository refuses to persist a job whose deadline is not in the future.
-    pub fn new(id: Uuid, name: String, job_type: String, lifetime_until: DateTime<Utc>) -> Self {
+    /// Creates a new RUNNING job owned by `instance_id`, starting now.
+    pub fn running(
+        id: Uuid,
+        name: String,
+        job_type: String,
+        instance_id: Uuid,
+        started_at: DateTime<Utc>,
+    ) -> Self {
         Self {
             id,
             name,
             job_type,
-            status: JobStatus::Pending,
-            started_at: None,
+            status: JobStatus::Running,
+            started_at: Some(started_at),
             finished_at: None,
             failure_message: None,
             metadata: Map::new(),
-            lifetime_until,
-            max_lifetime_exceeded: false,
+            instance_id: Some(instance_id),
+            heartbeat_at: Some(started_at),
         }
     }
 
@@ -98,10 +113,30 @@ impl Job {
         matches!(self.status, JobStatus::Finished)
     }
 
-    /// Whether this job's `lifetime_until` deadline has been passed by `now`
-    /// (the job only "lives" before its deadline timestamp).
-    pub fn lifetime_exceeded(&self, now: DateTime<Utc>) -> bool {
-        now > self.lifetime_until
+    /// Whether this job may still be cancelled by an external call. A RUNNING
+    /// job can be (cooperatively) cancelled; an already-requested job can still
+    /// be force-cancelled.
+    pub fn is_cancellable(&self) -> bool {
+        matches!(
+            self.status,
+            JobStatus::Running | JobStatus::CancellationRequested
+        )
+    }
+
+    pub fn is_cancellation_requested(&self) -> bool {
+        matches!(self.status, JobStatus::CancellationRequested)
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self.status, JobStatus::Cancelled)
+    }
+
+    /// Whether the job reached a terminal state (no further transitions).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status,
+            JobStatus::Finished | JobStatus::Failed | JobStatus::Cancelled
+        )
     }
 }
 
@@ -114,26 +149,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_job_is_pending_without_lifetime_exceeded() {
-        let job = Job::new(
+    fn running_job_is_running_and_owned() {
+        let instance = Uuid::new_v4();
+        let started = Utc::now();
+        let job = Job::running(
             Uuid::new_v4(),
             "Data source update".to_string(),
             "data_source_update".to_string(),
-            Utc::now() + Duration::seconds(3600),
+            instance,
+            started,
         );
-        assert_eq!(job.status, JobStatus::Pending);
+        assert_eq!(job.status, JobStatus::Running);
+        assert!(job.is_running());
+        assert!(job.is_cancellable());
         assert!(!job.is_successful());
-        assert!(!job.is_running());
-        assert!(!job.max_lifetime_exceeded);
+        assert!(!job.is_cancellation_requested());
+        assert!(!job.is_cancelled());
+        assert!(!job.is_terminal());
+        assert_eq!(job.instance_id, Some(instance));
+        assert_eq!(job.heartbeat_at, Some(started));
+        assert_eq!(job.started_at, Some(started));
     }
 
     #[test]
     fn status_round_trips_through_uppercase_string() {
         for (status, text) in [
-            (JobStatus::Pending, "PENDING"),
             (JobStatus::Running, "RUNNING"),
             (JobStatus::Finished, "FINISHED"),
             (JobStatus::Failed, "FAILED"),
+            (JobStatus::CancellationRequested, "CANCELLATION_REQUESTED"),
+            (JobStatus::Cancelled, "CANCELLED"),
         ] {
             assert_eq!(status.as_str(), text);
             assert_eq!(JobStatus::from_str(text).unwrap(), status);
@@ -149,22 +194,42 @@ mod tests {
     }
 
     #[test]
-    fn lifetime_exceeded_depends_on_deadline() {
-        let now = Utc::now();
-        let expired = Job::new(
+    fn terminal_and_auxiliary_status_helpers() {
+        let mut cancelled = Job::running(
             Uuid::new_v4(),
             "x".to_string(),
             "t".to_string(),
-            now - Duration::seconds(61),
+            Uuid::new_v4(),
+            Utc::now(),
         );
-        assert!(expired.lifetime_exceeded(now));
+        cancelled.status = JobStatus::Cancelled;
+        assert!(cancelled.is_cancelled());
+        assert!(cancelled.is_terminal());
+        assert!(!cancelled.is_cancellable());
 
-        let alive = Job::new(
+        let mut requested = Job::running(
             Uuid::new_v4(),
             "x".to_string(),
             "t".to_string(),
-            now + Duration::seconds(61),
+            Uuid::new_v4(),
+            Utc::now(),
         );
-        assert!(!alive.lifetime_exceeded(now));
+        requested.status = JobStatus::CancellationRequested;
+        assert!(requested.is_cancellation_requested());
+        assert!(!requested.is_terminal());
+        // An already-requested job can still be force-cancelled.
+        assert!(requested.is_cancellable());
+        assert!(!requested.is_cancellable());
+
+        let mut failed = Job::running(
+            Uuid::new_v4(),
+            "x".to_string(),
+            "t".to_string(),
+            Uuid::new_v4(),
+            Utc::now(),
+        );
+        failed.status = JobStatus::Failed;
+        failed.finished_at = Some(Utc::now() - Duration::seconds(1));
+        assert!(failed.is_terminal());
     }
 }

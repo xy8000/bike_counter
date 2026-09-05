@@ -6,6 +6,8 @@ pub mod data_import_service;
 pub mod data_source_analytics_service;
 pub mod data_source_service;
 pub mod data_source_update_service;
+pub mod job_heartbeat;
+pub mod job_reconciliation_service;
 pub mod job_service;
 pub mod measurement_service;
 pub mod persistent_state_service;
