@@ -59,6 +59,39 @@ pub struct DataSourceUpdate {
     pub completed: bool,
 }
 
+/// The import phase a data source is currently in. The parallel job runner
+/// persists it under the job metadata key `{data_source_id}_status` so a caller
+/// can observe each source's progress while all sources import at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataSourceImportPhase {
+    /// The run for the source just began.
+    Starting,
+    /// Counting stations are being synced from the provider.
+    SyncingStations,
+    /// Channels are being synced from the provider.
+    SyncingChannels,
+    /// Source-level measurement pages are being imported.
+    ImportingMeasurements,
+    /// The source import returned successfully (set by the caller).
+    Finished,
+    /// The source import failed (set by the caller).
+    Failed,
+}
+
+impl DataSourceImportPhase {
+    /// The canonical wire representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DataSourceImportPhase::Starting => "STARTING",
+            DataSourceImportPhase::SyncingStations => "SYNCING_STATIONS",
+            DataSourceImportPhase::SyncingChannels => "SYNCING_CHANNELS",
+            DataSourceImportPhase::ImportingMeasurements => "IMPORTING_MEASUREMENTS",
+            DataSourceImportPhase::Finished => "FINISHED",
+            DataSourceImportPhase::Failed => "FAILED",
+        }
+    }
+}
+
 /// A station is considered to still produce data when at least one of its
 /// channels has a measurement within this many hours of `now`; otherwise it is
 /// "not current" and is marked inactive after an import.
@@ -343,8 +376,31 @@ impl DataImportService {
         deadline: Option<DateTime<Utc>>,
         on_batch: impl Fn(usize, u64, Option<DateTime<Utc>>) -> Result<(), DomainError>,
     ) -> Result<DataSourceUpdate, DomainError> {
-        let station_ids = self.sync_counting_stations(runtime)?;
-        let channels = self.sync_channels(runtime, &station_ids)?;
+        self.update_data_source_with_progress(runtime, from, deadline, on_batch, |_| Ok(()))
+    }
+
+    /// [`Self::update_data_source`] variant that additionally reports the source's
+    /// import phase through `on_phase` (the parallel job runner uses it to persist
+    /// the per-data-source `{data_source_id}_status` metadata). `update_data_source`
+    /// delegates here with a no-op phase reporter, so existing callers and tests
+    /// are unaffected.
+    pub fn update_data_source_with_progress(
+        &self,
+        runtime: &DataSourceRuntime,
+        from: Option<DateTime<Utc>>,
+        deadline: Option<DateTime<Utc>>,
+        on_batch: impl Fn(usize, u64, Option<DateTime<Utc>>) -> Result<(), DomainError>,
+        mut on_phase: impl FnMut(DataSourceImportPhase) -> Result<(), DomainError>,
+    ) -> Result<DataSourceUpdate, DomainError> {
+        on_phase(DataSourceImportPhase::Starting)?;
+        let station_ids = {
+            on_phase(DataSourceImportPhase::SyncingStations)?;
+            self.sync_counting_stations(runtime)?
+        };
+        let channels = {
+            on_phase(DataSourceImportPhase::SyncingChannels)?;
+            self.sync_channels(runtime, &station_ids)?
+        };
 
         // Resolve each channel's external id (as the provider tags source-level
         // measurements) to its persisted channel id.
@@ -373,6 +429,7 @@ impl DataImportService {
         // The provider's scanner is anchored at `from` for the whole run; the
         // reported `next_from` is only the checkpoint watermark, never the next
         // call's anchor.
+        on_phase(DataSourceImportPhase::ImportingMeasurements)?;
         loop {
             let batch = runtime
                 .provider
@@ -2047,5 +2104,59 @@ mod tests {
         assert_eq!(station.image_sha256, None);
         assert_eq!(*provider.fetch_calls.lock().unwrap(), 1);
         assert_eq!(*assets.stored_provider.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn update_reports_import_phases_in_order() {
+        let t0 = timestamp("2024-01-01T00:00:00Z");
+        let provider = Arc::new(SourceMockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            batches: Mutex::new(VecDeque::from([source_batch(
+                vec![("channel-1", measurement_record(1, t0))],
+                Some(t0),
+                false,
+            )])),
+            recorded_from: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let (station_repo, _, _) = empty_repos();
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let phases_for_closure = phases.clone();
+        let update = service
+            .update_data_source_with_progress(
+                &runtime(provider.clone()),
+                None,
+                None,
+                |_, _, _| Ok(()),
+                |phase| {
+                    phases_for_closure.lock().unwrap().push(phase);
+                    Ok(())
+                },
+            )
+            .expect("update should succeed");
+
+        assert!(update.completed);
+        assert_eq!(
+            *phases.lock().unwrap(),
+            vec![
+                DataSourceImportPhase::Starting,
+                DataSourceImportPhase::SyncingStations,
+                DataSourceImportPhase::SyncingChannels,
+                DataSourceImportPhase::ImportingMeasurements,
+            ],
+            "the run reports every phase it passes through"
+        );
     }
 }

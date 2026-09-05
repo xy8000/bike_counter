@@ -38,7 +38,10 @@ pub struct JobDto {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub failure_message: Option<String>,
-    /// Generic key/value metadata (e.g. `processed_measurements`).
+    /// Generic key/value metadata. The `data_source_update` job groups every
+    /// source's progress under its data-source UUID, e.g.
+    /// `<data-source-uuid>_processed_measurements`,
+    /// `<data-source-uuid>_added_measurements` and `<data-source-uuid>_status`.
     #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     /// Absolute deadline until which a RUNNING job blocks other runs.
