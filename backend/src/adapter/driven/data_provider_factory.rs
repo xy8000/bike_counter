@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
+use crate::adapter::driven::eco_counter::EcoCounterAdapter;
 use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
 use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
@@ -24,6 +25,8 @@ impl DataProviderFactory for DataProviderFactoryImpl {
             Ok(Arc::new(BonnOpendataAdapter::new(config)?))
         } else if config.provider().provider_type() == HamburgStaAdapter::provider_type() {
             Ok(Arc::new(HamburgStaAdapter::new(config)?))
+        } else if config.provider().provider_type() == EcoCounterAdapter::provider_type() {
+            Ok(Arc::new(EcoCounterAdapter::new(config)?))
         } else {
             Err(ConfigError::InvalidFormat(format!(
                 "unknown data provider type: {}",
@@ -39,6 +42,7 @@ mod tests {
 
     use super::DataProviderFactoryImpl;
     use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
+    use crate::adapter::driven::eco_counter::EcoCounterAdapter;
     use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
     use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
     use crate::core::domain::configuration::configuration::value_objects::{
@@ -87,6 +91,14 @@ mod tests {
             "https://iot.hamburg.de/v1.0/".to_string(),
         );
         let config = data_source(HamburgStaAdapter::provider_type(), vars);
+
+        let factory = DataProviderFactoryImpl;
+        assert!(factory.build(&config).is_ok());
+    }
+
+    #[test]
+    fn builds_eco_counter_provider_type() {
+        let config = data_source(EcoCounterAdapter::provider_type(), HashMap::new());
 
         let factory = DataProviderFactoryImpl;
         assert!(factory.build(&config).is_ok());

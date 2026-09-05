@@ -1,0 +1,80 @@
+# API_V1 mode — Eco-Counter (Eco-Visio) counting stations imported through the
+# legacy publicwebpage API (`www.eco-visio.net`).
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The upstream exposes two access paths:
+#   * `publicwebpageplus/{idOrganisme}` — tenant (city/region) discovery, which
+#     returns every counter of an organisation. As of 2026-09 the German tenants
+#     (Hessen 8080, Bonn 4701, Köln 677, Düsseldorf 857, Rostock 888, …) have
+#     **migrated** to the new Eco-Counter platform (`*.eco-counter.com` +
+#     `api.eco-counter.com/api/v2`, which requires an API key), so the legacy
+#     discovery endpoint no longer lists them (HTTP 404) and per-counter legacy
+#     metadata for those counters comes back empty.
+#   * `publicwebpage/{idPdc}` + `publicwebpage/data/{idPdc}` — the per-counter,
+#     token-based "public webpage" API, which still serves counters that have NOT
+#     been migrated to the new platform (no API key required).
+#
+# Because German stations can no longer be discovered automatically at runtime,
+# the station list is maintained HERE (inside the `v1` mode folder), as an
+# explicit YAML catalog. The runtime TOML config stays small (mode + behaviour
+# knobs) and never lists individual stations.
+#
+# SCOPE (verified live on 2026-09-05)
+# -----------------------------------
+# 1. The whole `publicwebpage` (per-counter token) list — the ~1811 ids bundled
+#    in example/eco-visio-api/idPdc_with_publicwebpage.txt and the matching rows
+#    of eco-visio-api_collection.csv — was probed (`publicwebpage/{idPdc}`). Of
+#    the counters still returning a usable metadata document, the ones that are
+#    German (`langue = DE`), bicycle (`pratique = 2`) and that actually **serve
+#    data** through `publicwebpage/data/{idPdc}` (many still answer metadata but
+#    return HTTP 404/403 or no data on the data endpoint after the platform
+#    migration) are the five listed below.
+# 2. The tenant lists in example/eco-visio-api/eco-visio-api.csv (52 organisations
+#    with German counters: Bonn 4701, Köln 677, Leipzig 5972, Rostock 888, …) were
+#    cross-checked: every German tenant now returns 404 on
+#    `publicwebpageplus/{idOrganisme}` discovery and its counters come back empty
+#    from `publicwebpage/{idPdc}` (fully migrated), so the CSVs add no further
+#    importable stations through this API.
+#
+# Add more by appending their `idPdc` when they become reachable again (or use
+# the `api_v2` mode with an Eco-Counter access token for migrated tenants).
+#
+# FORMAT
+# ------
+# Only this tiny, fixed schema is parsed (see `catalog.rs`):
+#
+#   stations:
+#     - id: 100063085                 # required: the Eco-Visio counter id (idPdc)
+#       name: "Stadt Stein ..."        # optional display name (quotes recommended)
+#       latitude: 49.4163              # optional WGS84 (decimal degrees)
+#       longitude: 11.0188             # optional WGS84 (decimal degrees)
+#       timezone: Europe/Berlin        # optional IANA timezone (default Europe/Berlin)
+#
+# Lines starting with `#` are comments. Unknown keys are rejected (startup error).
+# The station's live metadata (token, domain, coordinates) is fetched from
+# `publicwebpage/{idPdc}` at import time and cached, so the catalog only needs
+# the ids (+ optional display names/coordinates for offline determinism).
+
+stations:
+  - id: 100004165
+    name: "Erbprinzenstraße"
+    latitude: 49.0072864
+    longitude: 8.4027153
+  - id: 100050631
+    name: "Radschnellweg Osnabrück Belm"
+    latitude: 52.27996540308624
+    longitude: 8.0550560783977
+  - id: 100063085
+    name: "Stadt Stein Nürnberger Straße"
+    latitude: 49.4163
+    longitude: 11.0188
+    timezone: Europe/Berlin
+  - id: 100063376
+    name: "Römerhofweg"
+    latitude: 48.25
+    longitude: 11.6544
+  - id: 100063389
+    name: "Horstmannsteg Hennef"
+    latitude: 50.77557
+    longitude: 7.29088
