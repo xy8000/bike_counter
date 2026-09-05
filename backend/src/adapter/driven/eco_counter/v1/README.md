@@ -1,11 +1,10 @@
-# Eco-Counter API_V1 mode (`eco_counter` → `v1`)
+# Eco-Counter V1 adapter (`eco_counter` → `v1`)
 
 Data provider for **Eco-Counter** bicycle counters that are still served by the
 **legacy public Eco-Visio API** (`https://www.eco-visio.net/api/aladdin/1.0.0`),
 implemented as a [`DataProvider`](../../../../../src/core/domain/data_source/provider_port.rs:151)
-driven adapter. This is one of the three switchable modes of the `eco_counter`
-adapter (see the parent [`README.md`](../README.md)); it is the **default** mode
-(a data source with `modes = "api_v1"` — or no `modes` var — runs this mode).
+driven adapter registered under the provider type **`eco_counter_v1_http_provider`**
+(see the parent [`README.md`](../README.md)).
 
 ## Source (verified against the live API, 2026-09-05)
 
@@ -32,23 +31,54 @@ The upstream is **in transition**:
   the site total rather than per-direction flows.
 - Name/coordinates from the live metadata (`titre`, `latitude`/`longitude`);
   timezone `Europe/Berlin`. Measurement timestamps are the epoch-ms `timestamp`
-  (UTC); resolution fixed by `step` (`2` = 15 min, `3` = hourly, `4` = daily).
+  (UTC).
+
+## Resolution (smallest first)
+
+The data endpoint serves several resolutions selected by `step` (`2` = 15 min,
+`3` = hourly, `4` = daily). The resolution is **not configured**: per channel the
+provider probes `[2, 3, 4]` **finest-first** and locks the first step whose day
+window returns data. A counter that only serves hourly (or daily) data is
+therefore imported at that coarser resolution; every row carries the matching
+`resolution_seconds`. The choice is cached per channel and re-probed when the
+discovery index is refreshed.
+
+A step is treated as "not available" when its window returns **no rows** or when
+the API **rejects it with an HTTP 4xx** — verified live: some counters answer a
+finer `step` with `http status: 400` rather than an empty array. Only
+transport/server errors are propagated unchanged. If every step is empty at the
+served steps the finest step is kept (the counter simply has no data in the
+window); a station that rejects **every** step is skipped for the run with a
+`WARNING` and never fails the whole import.
 
 ## Configuration
 
-All vars are read with the `v1_` mode prefix from the data source's provider
-vars (see [`provider.rs`](provider.rs:92)). Stations are **not** in the TOML —
-they live in [`stations.yml`](stations.yml):
+Plain (unprefixed) vars from the data source's provider vars. Stations are
+**not** in the TOML — they live in [`stations.yml`](stations.yml):
 
 | Var | Required | Default | Meaning |
 |---|---|---|---|
-| `v1_stations` | no | bundled `stations.yml` | path to a YAML station catalog |
-| `v1_step` | no | `3` | data resolution (`2` = 15 min, `3` = hourly, `4` = daily) |
-| `v1_base_url` | no | `https://www.eco-visio.net/api/aladdin/1.0.0` | legacy API root |
-| `v1_max_measurement_batch_size` | no | `500` | rows kept per source-level batch |
-| `v1_cache_duration` | no | `300` | seconds to cache the resolved station index |
-| `v1_page_days` | no | `7` | day window requested per HTTP call |
-| `v1_import_days_back` | no | `365` | initial lookback when no watermark exists |
+| `stations` | no | bundled `stations.yml` | path to a YAML station catalog |
+| `base_url` | no | `https://www.eco-visio.net/api/aladdin/1.0.0` | legacy API root |
+| `max_measurement_batch_size` | no | `500` | rows kept per source-level batch |
+| `cache_duration` | no | `300` | seconds to cache the resolved station index |
+| `page_days` | no | `7` | day window requested per HTTP call |
+| `import_days_back` | no | `365` | initial lookback when no watermark exists |
+
+Example:
+
+```toml
+[[data_sources]]
+name = "Eco-Counter"
+[data_sources.provider]
+type = "eco_counter_v1_http_provider"
+[data_sources.provider.vars]
+base_url = "https://www.eco-visio.net/api/aladdin/1.0.0"
+max_measurement_batch_size = "500"
+cache_duration = "300"
+page_days = "7"
+import_days_back = "365"
+```
 
 ## Module layout
 
@@ -58,9 +88,10 @@ they live in [`stations.yml`](stations.yml):
 - [`client.rs`](client.rs:1) — the **V1 API client** (`PublicWebpageClient`):
   request building + fetching for `publicwebpage` metadata/data.
 - [`parsing.rs`](parsing.rs:1) — response parsing and the station/channel index.
-- [`provider.rs`](provider.rs:1) — `EcoCounterV1Provider` (the `DataProvider`
-  impl): config, metadata-cached index, day-window measurement paging over the
-  shared [`SourceScanner`](../../../../src/adapter/driven/source_merge.rs:48).
+- [`adapter.rs`](adapter.rs:1) — `EcoCounterV1Adapter` (the `DataProvider`
+  impl): config, metadata-cached index, resolution probing and day-window
+  measurement paging over the shared
+  [`SourceScanner`](../../../../src/adapter/driven/source_merge.rs:48).
 - [`tests.rs`](tests.rs:1) — unit tests (fixtures + fake fetcher).
 
 ## Design decisions
@@ -73,15 +104,18 @@ they live in [`stations.yml`](stations.yml):
    are skipped with a `WARNING`; if none resolve the source reports itself
    unreachable.
 3. **One channel per station (cumulative)** to avoid double counting.
-4. **Day-window paging** — no server-side pagination; each call requests
+4. **Finest-first resolution per channel** with coarse-ward fallback (an HTTP
+   4xx or an empty window marks a step unavailable).
+5. **Day-window paging** — no server-side pagination; each call requests
    `page_days` whole days over the shared `SourceScanner` (safe `imported_until`
    watermark).
-5. **Bounded first import** — starts `import_days_back` days ago; raise it to
+6. **Bounded first import** — starts `import_days_back` days ago; raise it to
    backfill further.
 
 ## Provider messages
 
-- `INFO` — one-line lifecycle on index refresh.
+- `INFO` — one-line lifecycle on index refresh; a station imported at a coarser
+  resolution than 15 min.
 - `WARNING` — a catalog station whose metadata is missing/empty (migrated) or
   that has no `domaine` is skipped.
 
@@ -89,10 +123,17 @@ they live in [`stations.yml`](stations.yml):
 
 - **No automatic German tenant discovery** (stations are listed in
   [`stations.yml`](stations.yml)); migrated counters (Bonn, Hessen, …) cannot be
-  imported here — use the `api_v2` mode with an Eco-Counter access token.
+  imported here — use `eco_counter_v2_http_provider` with an Eco-Counter access
+  token, or `eco_counter_web_http_provider` to scrape a dashboard.
 - **Cumulative series only** (no per-direction channels).
 - **Bounded backfill** (`import_days_back`).
 - **German timezone assumed** (`Europe/Berlin`).
+- Resolution is chosen from the **first usable window** per cache window, so a
+  counter whose available resolution changes over time (finer data only
+  recently) is read at the coarser resolution that the probe window saw.
+- A station that rejects every supported `step` with an HTTP 4xx is skipped with
+  a `WARNING` for that run (verified live on the data endpoint) and retried on
+  later runs.
 
 ## Testing
 

@@ -1,6 +1,7 @@
-//! **API_V2** mode of the Eco-Counter adapter: imports stations from the
-//! **official Eco-Counter API** (`https://apieco.eco-counter-tools.com/api/1.0`)
-//! authenticated with an OAuth **access token** (`Authorization: Bearer`).
+//! **Eco-Counter V2 adapter** (provider type `eco_counter_v2_http_provider`):
+//! imports stations from the **official Eco-Counter API**
+//! (`https://apieco.eco-counter-tools.com/api/1.0`) authenticated with an OAuth
+//! **access token** (`Authorization: Bearer`).
 //!
 //! Stations are discovered at runtime from `GET /site` (optionally filtered by
 //! the organisation's `domain_id`) and their time series is paged from
@@ -8,11 +9,11 @@
 //! are scoped per organisation: to import a city's counters, the token must be
 //! issued for that organisation.
 
-pub use provider::EcoCounterV2Provider;
+pub use adapter::EcoCounterV2Adapter;
 
+mod adapter;
 mod client;
 mod parsing;
-mod provider;
 
 #[cfg(test)]
 mod tests;

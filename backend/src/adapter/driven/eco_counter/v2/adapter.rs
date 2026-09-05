@@ -1,8 +1,8 @@
-//! The API_V2 mode [`DataProvider`]: imports stations from the **official
-//! Eco-Counter API** with an OAuth access token. Stations are discovered at
-//! runtime from `/site` (optionally restricted to one `domain_id`), so no
-//! per-station catalog is needed; each site's time series is paged from
-//! `/data/site/{id}` over day windows.
+//! The **V2 Eco-Counter adapter** (provider type `eco_counter_v2_http_provider`):
+//! imports stations from the **official Eco-Counter API** with an OAuth access
+//! token. Stations are discovered at runtime from `/site` (optionally restricted
+//! to one `domain_id`), so no per-station catalog is needed; each site's time
+//! series is paged from `/data/site/{id}` over day windows.
 
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -25,11 +25,8 @@ use crate::core::domain::health::HealthStatus;
 use super::client::{DEFAULT_BASE_URL, OfficialApiClient};
 use super::parsing::{V2Index, build_index, parse_point, resolution_for_step, step_token};
 
-/// This mode's key in the `modes` list.
-pub const MODE: &str = "api_v2";
-/// Provider-var prefix for this mode (`v2_…`): each mode reads its own vars
-/// (`v2_access_token`, `v2_base_url`, …) so several modes can share one source.
-pub(crate) const VAR_PREFIX: &str = "v2_";
+/// The provider type this adapter is registered under in the config.
+pub(crate) const PROVIDER_TYPE: &str = "eco_counter_v2_http_provider";
 pub(crate) const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 500;
 pub(crate) const DEFAULT_CACHE_DURATION_SECS: u64 = 300;
 /// Default numeric `step` (3 = hourly).
@@ -37,13 +34,7 @@ pub(crate) const DEFAULT_STEP: i64 = 3;
 pub(crate) const DEFAULT_PAGE_DAYS: i64 = 7;
 pub(crate) const DEFAULT_IMPORT_DAYS_BACK: i64 = 365;
 
-/// Reads a provider var scoped to this mode (`v2_<name>`), so several modes
-/// configured in one data source each read their own value.
-fn mode_var<'a>(config: &'a DataSourceConfiguration, name: &str) -> Option<&'a str> {
-    config.provider().var(&format!("{VAR_PREFIX}{name}"))
-}
-
-pub struct EcoCounterV2Provider {
+pub struct EcoCounterV2Adapter {
     base_url: String,
     domain_id: Option<i64>,
     step: i64,
@@ -73,27 +64,29 @@ struct ScannerState {
     scanner: SourceScanner,
 }
 
-impl EcoCounterV2Provider {
-    pub fn mode() -> &'static str {
-        MODE
+impl EcoCounterV2Adapter {
+    /// The provider type this adapter is registered under in the config.
+    pub fn provider_type() -> &'static str {
+        PROVIDER_TYPE
     }
 
-    /// Builds the provider from the data source's provider vars.
+    /// Builds the adapter from the data source's provider vars.
     ///
-    /// All vars are read with the `v2_` mode prefix. Required var:
-    /// `v2_access_token` (the organisation's OAuth access token). Optional
-    /// vars: `v2_domain_id` (restrict discovery to one domain), `v2_base_url`,
-    /// `v2_step` (`2` = 15 min, `3` = hourly, `4` = daily; default `3`),
-    /// `v2_max_measurement_batch_size`, `v2_cache_duration`, `v2_page_days`,
-    /// `v2_import_days_back`. Missing/invalid values are configuration errors.
+    /// Required var: `access_token` (the organisation's OAuth access token).
+    /// Optional vars: `domain_id` (restrict discovery to one domain), `base_url`,
+    /// `step` (`2` = 15 min, `3` = hourly, `4` = daily; default `3`),
+    /// `max_measurement_batch_size`, `cache_duration`, `page_days`,
+    /// `import_days_back`. Missing/invalid values are configuration errors.
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
-        let access_token = mode_var(config, "access_token")
+        let access_token = config
+            .provider()
+            .var("access_token")
             .map(str::to_string)
             .filter(|t| !t.is_empty())
             .ok_or_else(|| {
                 ConfigError::InvalidFormat(format!(
-                    "{MODE}: var 'v2_access_token' is required (the organisation's Eco-Counter \
-                     access token)"
+                    "{PROVIDER_TYPE}: var 'access_token' is required (the organisation's \
+                     Eco-Counter access token)"
                 ))
             })?;
         Self::with_fetcher(
@@ -106,68 +99,74 @@ impl EcoCounterV2Provider {
         config: &DataSourceConfiguration,
         fetcher: Arc<dyn ResourceFetcher>,
     ) -> Result<Self, ConfigError> {
-        let base_url = mode_var(config, "base_url")
+        let base_url = config
+            .provider()
+            .var("base_url")
             .unwrap_or(DEFAULT_BASE_URL)
             .trim_end_matches('/')
             .to_string();
         if base_url.is_empty() {
             return Err(ConfigError::InvalidFormat(format!(
-                "{MODE}: var 'v2_base_url' must not be empty"
+                "{PROVIDER_TYPE}: var 'base_url' must not be empty"
             )));
         }
 
-        let domain_id = match mode_var(config, "domain_id") {
+        let domain_id = match config.provider().var("domain_id") {
             Some(raw) => Some(raw.parse::<i64>().map_err(|_| {
-                ConfigError::InvalidFormat(format!("{MODE}: var 'v2_domain_id' is not a number"))
+                ConfigError::InvalidFormat(format!(
+                    "{PROVIDER_TYPE}: var 'domain_id' is not a number"
+                ))
             })?),
             None => None,
         };
 
-        let step = match mode_var(config, "step") {
+        let step = match config.provider().var("step") {
             Some(raw) => raw.parse::<i64>().map_err(|_| {
-                ConfigError::InvalidFormat(format!("{MODE}: var 'v2_step' is not a valid number"))
+                ConfigError::InvalidFormat(format!(
+                    "{PROVIDER_TYPE}: var 'step' is not a valid number"
+                ))
             })?,
             None => DEFAULT_STEP,
         };
         let step_token = step_token(step).ok_or_else(|| {
             ConfigError::InvalidFormat(format!(
-                "{MODE}: var 'v2_step' must be 2 (15 min), 3 (hourly) or 4 (daily)"
+                "{PROVIDER_TYPE}: var 'step' must be 2 (15 min), 3 (hourly) or 4 (daily)"
             ))
         })?;
         let resolution_seconds = resolution_for_step(step).expect("validated step");
 
-        let max_measurement_batch_size = match mode_var(config, "max_measurement_batch_size") {
+        let max_measurement_batch_size = match config.provider().var("max_measurement_batch_size") {
             Some(raw) => raw.parse::<usize>().map_err(|_| {
                 ConfigError::InvalidFormat(format!(
-                    "{MODE}: var 'v2_max_measurement_batch_size' is not a valid number"
+                    "{PROVIDER_TYPE}: var 'max_measurement_batch_size' is not a valid number"
                 ))
             })?,
             None => DEFAULT_MAX_MEASUREMENT_BATCH_SIZE,
         };
 
-        let cache_duration = match mode_var(config, "cache_duration") {
+        let cache_duration = match config.provider().var("cache_duration") {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 ConfigError::InvalidFormat(format!(
-                    "{MODE}: var 'v2_cache_duration' is not a valid number"
+                    "{PROVIDER_TYPE}: var 'cache_duration' is not a valid number"
                 ))
             })?,
             None => DEFAULT_CACHE_DURATION_SECS,
         };
 
-        let page_days = match mode_var(config, "page_days") {
+        let page_days = match config.provider().var("page_days") {
             Some(raw) => raw.parse::<i64>().map_err(|_| {
                 ConfigError::InvalidFormat(format!(
-                    "{MODE}: var 'v2_page_days' is not a valid number"
+                    "{PROVIDER_TYPE}: var 'page_days' is not a valid number"
                 ))
             })?,
             None => DEFAULT_PAGE_DAYS,
         }
         .max(1);
 
-        let import_days_back = match mode_var(config, "import_days_back") {
+        let import_days_back = match config.provider().var("import_days_back") {
             Some(raw) => raw.parse::<i64>().map_err(|_| {
                 ConfigError::InvalidFormat(format!(
-                    "{MODE}: var 'v2_import_days_back' is not a valid number"
+                    "{PROVIDER_TYPE}: var 'import_days_back' is not a valid number"
                 ))
             })?,
             None => DEFAULT_IMPORT_DAYS_BACK,
@@ -350,7 +349,7 @@ impl EcoCounterV2Provider {
     }
 }
 
-impl DataProvider for EcoCounterV2Provider {
+impl DataProvider for EcoCounterV2Adapter {
     fn check_health(&self) -> HealthStatus {
         let Some((host, port)) = parse_host_and_port(&self.base_url) else {
             return HealthStatus::Down("invalid base_url in provider config".to_string());

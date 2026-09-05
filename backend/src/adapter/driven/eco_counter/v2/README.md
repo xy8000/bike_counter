@@ -1,11 +1,10 @@
-# Eco-Counter API_V2 mode (`eco_counter` → `v2`)
+# Eco-Counter V2 adapter (`eco_counter` → `v2`)
 
 Data provider for the **official Eco-Counter API**
 (`https://apieco.eco-counter-tools.com/api/1.0`), implemented as a
 [`DataProvider`](../../../../../src/core/domain/data_source/provider_port.rs:151)
-driven adapter. One of the three switchable modes of the `eco_counter` adapter
-(see the parent [`README.md`](../README.md)); a data source enables it by
-listing `api_v2` in its `modes` var.
+driven adapter registered under the provider type **`eco_counter_v2_http_provider`**
+(see the parent [`README.md`](../README.md)).
 
 ## Source (verified against the live API, 2026-09-05)
 
@@ -33,22 +32,18 @@ listing `api_v2` in its `modes` var.
 
 ## Configuration
 
-All vars are read with the `v2_` mode prefix from the data source's provider
-vars (see [`provider.rs`](provider.rs:79) / [`provider.rs`](provider.rs:104)):
+Plain (unprefixed) vars from the data source's provider vars:
 
 | Var | Required | Default | Meaning |
 |---|---|---|---|
-| `v2_access_token` | **yes** | — | the organisation's OAuth access token (`Authorization: Bearer`) |
-| `v2_domain_id` | no | — | restrict discovery to one domain (`/site?domain_id=`) |
-| `v2_step` | no | `3` | data resolution (`2` = 15 min, `3` = hourly, `4` = daily) |
-| `v2_base_url` | no | `https://apieco.eco-counter-tools.com/api/1.0` | official API root |
-| `v2_max_measurement_batch_size` | no | `500` | rows kept per source-level batch |
-| `v2_cache_duration` | no | `300` | seconds to cache the `/site` discovery |
-| `v2_page_days` | no | `7` | day window requested per HTTP call |
-| `v2_import_days_back` | no | `365` | initial lookback when no watermark exists |
-
-The mode itself is enabled by listing `api_v2` in the data source's `modes`
-var (`modes = "api_v2"`, or alongside other modes).
+| `access_token` | **yes** | — | the organisation's OAuth access token (`Authorization: Bearer`) |
+| `domain_id` | no | — | restrict discovery to one domain (`/site?domain_id=`) |
+| `step` | no | `3` | data resolution (`2` = 15 min, `3` = hourly, `4` = daily) |
+| `base_url` | no | `https://apieco.eco-counter-tools.com/api/1.0` | official API root |
+| `max_measurement_batch_size` | no | `500` | rows kept per source-level batch |
+| `cache_duration` | no | `300` | seconds to cache the `/site` discovery |
+| `page_days` | no | `7` | day window requested per HTTP call |
+| `import_days_back` | no | `365` | initial lookback when no watermark exists |
 
 Example:
 
@@ -57,13 +52,12 @@ Example:
 name = "Eco-Counter V2"
 
 [data_sources.provider]
-type = "eco_counter_http_provider"
+type = "eco_counter_v2_http_provider"
 
 [data_sources.provider.vars]
-modes = "api_v2"
-v2_access_token = "<organisation access token>"
-v2_domain_id = "4701"
-v2_step = "3"
+access_token = "<organisation access token>"
+domain_id = "4701"
+step = "3"
 ```
 
 ## Module layout
@@ -73,7 +67,7 @@ v2_step = "3"
   building + fetching for `/site` and `/data/site/{id}` (the fetcher carries the
   Bearer token).
 - [`parsing.rs`](parsing.rs:1) — site/point parsing, timezone extraction, index.
-- [`provider.rs`](provider.rs:1) — `EcoCounterV2Provider`: config,
+- [`adapter.rs`](adapter.rs:1) — `EcoCounterV2Adapter`: config,
   discovery-cached index, day-window measurement paging over the shared
   [`SourceScanner`](../../../../src/adapter/driven/source_merge.rs:48).
 - [`tests.rs`](tests.rs:1) — unit tests (fixtures + fake fetcher).
@@ -88,7 +82,7 @@ v2_step = "3"
 - Requires an organisation-scoped access token; a demo/test token only exposes
   its own sites.
 - The site series is treated as a single channel; if a site returns per-channel
-  `counts`, this mode does not split them yet.
+  `counts`, this adapter does not split them yet.
 - Bounded first import (`import_days_back`).
 
 ## Testing

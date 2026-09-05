@@ -1,27 +1,28 @@
-//! Eco-Counter (Eco-Visio) adapters, offered as **three switchable modes** that
-//! can be enabled in parallel — all merged into **one** data source via the
-//! comma-separated `modes` provider var (`modes = "api_v1, api_v2, screen_scraping"`;
-//! a single mode such as `modes = "api_v1"` is fine):
+//! Eco-Counter (Eco-Visio) adapters — three **independent** provider types that
+//! are configured as separate `[[data_sources]]` entries (one per version):
 //!
-//! - [`v1`](v1) — **API_V1** (`api_v1`, default): the legacy public "aladdin"
-//!   API (`www.eco-visio.net`), importing the counters listed in the per-mode
-//!   YAML catalog [`v1/stations.yml`](v1/stations.yml).
-//! - [`v2`](v2) — **API_V2** (`api_v2`): the official Eco-Counter API
-//!   (`apieco.eco-counter-tools.com/api/1.0`) authenticated with a Bearer access
-//!   token; stations are discovered at runtime from `/site`.
-//! - [`scraping`](scraping) — **ScreenScraping** (`screen_scraping`): scaffold
-//!   for scraping an accessible public web view (no parser yet).
+//! - [`v1`](v1) — **`eco_counter_v1_http_provider`**: the legacy public
+//!   "aladdin" API (`www.eco-visio.net`), importing the counters listed in the
+//!   bundled YAML catalog [`v1/stations.yml`](v1/stations.yml). Measurements are
+//!   imported at the finest available resolution per station (15 min, else
+//!   hourly, else daily).
+//! - [`v2`](v2) — **`eco_counter_v2_http_provider`**: the official Eco-Counter
+//!   API (`apieco.eco-counter-tools.com/api/1.0`) authenticated with a Bearer
+//!   access token; stations are discovered at runtime from `/site`.
+//! - [`scraping`](scraping) — **`eco_counter_web_http_provider`**: scrapes the
+//!   public Next.js dashboards (`*.eco-counter.com`, one tenant per data source
+//!   via `scrape_url`) that have no usable API. The home page embeds the station
+//!   list, each `/site/{id}` page the station's **daily** series.
 //!
-//! The [`EcoCounterAdapter`] dispatcher reads the `modes` list (default `api_v1`
-//! when absent) and delegates to the selected mode provider(s); with several
-//! modes it merges them behind one composite source whose external ids carry
-//! `v1/`/`v2/`/`web/` prefixes. Provider vars are a flat map, so every mode
-//! reads its own values under a mode var prefix (`v1_…`, `v2_…`, `web_…`). All
-//! three share the single provider type `eco_counter_http_provider`.
+//! The three share the shared HTTP/fetcher helpers in [`common`] and [`fetcher`]
+//! but each exposes its own `provider_type()` and reads plain (unprefixed) vars
+//! from its own data source — there is no `modes` dispatcher and no composite
+//! source.
 
-pub use adapter::EcoCounterAdapter;
+pub use scraping::EcoCounterWebAdapter;
+pub use v1::EcoCounterV1Adapter;
+pub use v2::EcoCounterV2Adapter;
 
-mod adapter;
 mod common;
 mod fetcher;
 pub mod scraping;

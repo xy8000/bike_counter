@@ -1,19 +1,16 @@
-# Eco-Counter adapter (`eco_counter`)
+# Eco-Counter adapters (`eco_counter`)
 
-Eco-Counter (Eco-Visio) bicycle counters, exposed through **three switchable
-modes** under the single provider type `eco_counter_http_provider`. A
-`[[data_sources]]` entry runs **one or several modes in parallel** through the
-comma-separated **`modes`** provider var (`modes = "api_v1"` for a single mode
-is fine; `modes = "api_v1, api_v2, screen_scraping"` merges all three behind
-one data source).
+Eco-Counter (Eco-Visio) bicycle counters, imported through **three independent
+adapters**, each with its **own provider type** and its own `[[data_sources]]`
+entry (there is **no `modes` dispatcher** and no composite source):
 
-| Mode | key in `modes` | Source | Station discovery |
+| Adapter | Provider type (`type =`) | Source | Station discovery |
 |---|---|---|---|
-| [`v1`](v1) — legacy publicwebpage API | `api_v1` (default) | `www.eco-visio.net/api/aladdin/1.0.0` | bundled YAML catalog [`v1/stations.yml`](v1/stations.yml) |
-| [`v2`](v2) — official API | `api_v2` | `apieco.eco-counter-tools.com/api/1.0` (Bearer access token) | runtime `GET /site` |
-| [`scraping`](scraping) — public web view | `screen_scraping` | accessible dashboard page | scaffold (parser not implemented yet) |
+| [`v1`](v1) — legacy publicwebpage API | `eco_counter_v1_http_provider` | `www.eco-visio.net/api/aladdin/1.0.0` | bundled YAML catalog [`v1/stations.yml`](v1/stations.yml) |
+| [`v2`](v2) — official API | `eco_counter_v2_http_provider` | `apieco.eco-counter-tools.com/api/1.0` (Bearer access token) | runtime `GET /site` |
+| [`scraping`](scraping) — public web view | `eco_counter_web_http_provider` | `*.eco-counter.com` dashboard (one tenant per data source) | parsed from the home page (`sites[]`) |
 
-## Why three modes
+## Why three providers
 
 Eco-Counter is migrating tenants off its legacy public API to an API-key-gated
 platform, so a single access path no longer covers all counters:
@@ -21,68 +18,58 @@ platform, so a single access path no longer covers all counters:
 - The **legacy `publicwebpage` API** (V1) still serves the few counters that have
   not migrated, but it no longer auto-discovers German tenants (all German
   cities moved to `*.eco-counter.com` + `api.eco-counter.com/api/v2`), so V1
-  uses an explicit per-mode station catalog.
+  uses an explicit per-station catalog.
 - The **official API** (V2) discovers a whole organisation at runtime and needs
   an organisation-scoped OAuth **access token** (`Authorization: Bearer`).
-- The **screen-scraping** mode is where a browser-accessible public view (that
-  has no usable API) would be parsed — currently a scaffold.
+- The **web adapter** parses a browser-accessible public view (that has no
+  usable API): the Next.js RSC payloads of the `*.eco-counter.com` dashboards,
+  fetching the station list from the home page and each site's daily series from
+  its detail page (see [`scraping/README.md`](scraping/README.md)).
 
-The [`EcoCounterAdapter`](adapter.rs:1) reads the **`modes`** list only (default
-`api_v1` when absent; the older single `mode` var was removed). A single
-configured mode is delegated to directly (external ids stay unprefixed). When
-**several modes** are listed, the dispatcher wraps them in a
-[`Composite`](adapter.rs:1) `DataProvider` that unions their stations/channels
-and round-robins their measurement paging in one import run. The modes can
-overlap in station ids, so each composite member gets an external-id **prefix**
-derived from its mode key (`v1/`, `v2/`, `web/`) that keeps the stations,
-channels and measurements of the different access paths apart.
+## Configuration
 
-### Mode-scoped vars
-
-The provider vars are a flat string map, so every mode reads its own values
-with a mode **var prefix** (`v1_…`, `v2_…`, `web_…`): e.g. the V1 `base_url`
-lives in `v1_base_url`, the V2 access token in `v2_access_token`, the scraper
-target in `web_scrape_url`. Unset vars fall back to per-mode defaults. Full key
-lists are in each mode's `README.md`.
-
-## Config example (all three modes in one data source)
+Each adapter is a normal `[[data_sources]]` entry that reads **plain, unprefixed
+vars** (per version the mode-prefixed `v1_…`/`v2_…`/`web_…` vars and the `modes`
+list were removed):
 
 ```toml
 [[data_sources]]
 name = "Eco-Counter"
 [data_sources.provider]
-type = "eco_counter_http_provider"
+type = "eco_counter_v1_http_provider"
 [data_sources.provider.vars]
-# Run all three modes in parallel behind this one data source. Stations get
-# prefixed external ids (v1/100063085, v2/…, web/…). Each mode reads its own
-# v1_/v2_/web_ vars from this flat map.
-modes = "api_v1, api_v2, screen_scraping"
-v2_access_token = "<organisation access token>"   # required by api_v2
-# v2_domain_id = "…"          # optional: restrict V2 discovery to one domain
-# web_scrape_url = "…"        # optional: page to scrape (default placeholder)
+base_url = "https://www.eco-visio.net/api/aladdin/1.0.0"
+max_measurement_batch_size = "500"
+cache_duration = "300"
+page_days = "7"
+import_days_back = "365"
 ```
 
-A single-mode source is the same with one key:
-`modes = "api_v1"` (default; stations from `v1/stations.yml`).
+- V1 stations are **never** in the TOML — they live in
+  [`v1/stations.yml`](v1/stations.yml). Resolution is **not** configured: each
+  counter is imported at the **finest resolution that returns data** (15 min,
+  else hourly, else daily).
+- V2 needs `access_token`; its optional `domain_id`, `step`, `base_url`, … vars
+  are documented in [`v2/README.md`](v2/README.md).
+- The web adapter needs `scrape_url`; one tenant per data source (see
+  [`scraping/README.md`](scraping/README.md)). Example sources are in
+  [`config.toml.example`](../../../config.toml.example).
 
 ## Module layout
 
-- [`mod.rs`](mod.rs:1) — module docs + re-export of the dispatcher.
-- [`adapter.rs`](adapter.rs:1) — `EcoCounterAdapter` dispatcher: parses the
-  `modes` list and builds either the single mode provider or the
-  [`Composite`](adapter.rs:1) that merges several modes in parallel.
-- [`fetcher.rs`](fetcher.rs:1) — shared HTTP abstraction (optional Bearer token).
+- [`mod.rs`](mod.rs:1) — module docs + re-exports of the three adapters.
+- [`v1/`](v1) — `EcoCounterV1Adapter` (`eco_counter_v1_http_provider`).
+- [`v2/`](v2) — `EcoCounterV2Adapter` (`eco_counter_v2_http_provider`).
+- [`scraping/`](scraping) — `EcoCounterWebAdapter` (`eco_counter_web_http_provider`).
+- [`fetcher.rs`](fetcher.rs:1) — shared HTTP abstraction (optional Bearer token),
+  used by V1/V2.
 - [`common.rs`](common.rs:1) — shared UTC/URL helpers.
-- [`v1/`](v1) — API_V1 mode (legacy `publicwebpage` API + bundled catalog).
-- [`v2/`](v2) — API_V2 mode (official API, Bearer access token).
-- [`scraping/`](scraping) — ScreenScraping mode (scaffold).
 
-Each mode has its own `README.md` with the verified API details and config.
+Each adapter has its own `README.md` with the verified API details and config.
+The provider types are registered in
+[`data_provider_factory.rs`](../../data_provider_factory.rs:17).
 
 ## Notes
 
-- Stations are **never** put into the runtime TOML: V1 lists them in
-  [`v1/stations.yml`](v1/stations.yml), V2 discovers them at runtime, scraping
-  would parse them from the page.
-- Verification of the live sources (2026-09-05) is recorded in each mode's
+- Verification of the live sources (2026-09-05) is recorded in each adapter's
   `README.md`.

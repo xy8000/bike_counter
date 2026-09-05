@@ -1,3 +1,10 @@
+Sort sidebar by last-day counts, keep search alphabetical (plans/102_sidebar_sort_by_last_day_counts_plan.md)
+
+- [x] Frontend `frontend/src/features/sidebar/Sidebar.tsx`: order the visible stations by `bikes_last_day` descending (ties broken by name ascending) by joining the shell identities with the stats map — falling back to the shell's alphabetical order while the stats sub-resource is still loading
+- [x] Frontend `frontend/src/features/stations/useStationSearch.ts`: sort the search results alphabetically by name via `localeCompare` (sorts a copy, never mutates the loaded `allStations` state)
+- [x] e2e: `frontend/e2e/sidebar.spec.ts` — rows non-increasing by `bikes / last day` and the busiest seeded Münster station (Gasselstiege) tops a non-alphabetical list; `frontend/e2e/search.spec.ts` — unfiltered results sorted by the browser's own `localeCompare`
+- [x] Gates green: `make check`, frontend `tsc`, `make test-playwright` (71)
+
 Global summary popup dialog (plans/95_global_summary_popup_dialog_plan.md)
 
 - [x] New `frontend/src/features/header/GlobalSummaryDialog.tsx` (shadcn `Dialog`): counting stations, channels, bikes / last day and the update timestamp

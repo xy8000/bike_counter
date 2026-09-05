@@ -222,34 +222,33 @@ Its vars are `base_url` (optional, defaults to the official root),
 `max_measurement_batch_size` / `cache_duration` (optional, defaults `500` / `300`)
 and `include_legacy` (optional, defaults `true`).
 
-The **Eco-Counter** provider (`eco_counter_http_provider`) has **three switchable
-modes** — `api_v1` (default), `api_v2` and `screen_scraping`. A data source
-selects them with the comma-separated **`modes`** list (a single mode such as
-`modes = "api_v1"` is fine) and can run **several modes in parallel inside the
-one data source** (`modes = "api_v1, api_v2, screen_scraping"`); in the
-multi-mode case the modes' stations/channels are merged behind one data source
-and their external ids get `v1/`/`v2/`/`web/` prefixes. Because the vars are a
-flat map, each mode reads its own values under a mode var prefix (`v1_…`,
-`v2_…`, `web_…`) — e.g. the V2 access token lives in `v2_access_token`. See
-[`backend/src/adapter/driven/eco_counter/`](backend/src/adapter/driven/eco_counter/README.md:1)
-for the details.
-- **`api_v1`** reads the **public legacy Eco-Visio API**
+Eco-Counter is imported through **three separate providers**, each with its own
+`type` and its own `[[data_sources]]` entry (there is **no `modes` var**):
+- **`eco_counter_v1_http_provider`** reads the **public legacy Eco-Visio API**
   (`https://www.eco-visio.net/api/aladdin/1.0.0`) for the counters listed in the
-  mode's bundled [`v1/stations.yml`](backend/src/adapter/driven/eco_counter/v1/stations.yml:1)
+  bundled [`v1/stations.yml`](backend/src/adapter/driven/eco_counter/v1/stations.yml:1)
   catalog. Because the German Eco-Visio tenants (Bonn, Hessen, Köln, …) have
   migrated to the new, API-key-gated platform, the legacy API no longer
   auto-discovers them; the operator lists the counters (`idPdc`) in the catalog
   instead of in the TOML config. Each counter is resolved against
   `publicwebpage/{idPdc}` (token/domain, cached) and its **cumulative** count
-  series paged from `publicwebpage/data/{idPdc}` in day windows (`step` =
-  hourly by default). A station maps to one channel (the site total), so values
-  are never double-counted.
-- **`api_v2`** reads the **official Eco-Counter API**
+  series paged from `publicwebpage/data/{idPdc}` in day windows. A station maps
+  to one channel (the site total), so values are never double-counted. The
+  resolution is **auto-detected per counter** — 15 min when available, else
+  hourly, else daily (no `step` var).
+- **`eco_counter_v2_http_provider`** reads the **official Eco-Counter API**
   (`https://apieco.eco-counter-tools.com/api/1.0`) with an organisation OAuth
   **access token**; stations are discovered at runtime from `/site` (no catalog)
   and their series paged from `/data/site/{id}`.
-- **`screen_scraping`** is a scaffold for scraping an accessible public web view
-  (parser not implemented yet).
+- **`eco_counter_web_http_provider`** scrapes a public **`*.eco-counter.com`**
+  dashboard that has no usable API (one tenant per data source, pointed at its
+  root via `scrape_url`) and imports each station's **daily** count series
+  (`resolution_seconds` 86400, DST-aware).
+
+Each provider reads plain (unprefixed) vars from its own data source (e.g. V2's
+`access_token`). See
+[`backend/src/adapter/driven/eco_counter/`](backend/src/adapter/driven/eco_counter/README.md:1)
+for the details.
 
 The measurements import is bounded by a **time window** so even the first
 multi-year import stays responsive: each provider call only reads the monthly

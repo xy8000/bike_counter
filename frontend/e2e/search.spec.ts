@@ -26,3 +26,48 @@ test('searching a station and clicking Find on map opens its overview', async ({
     /^\/stations\//,
   )
 })
+
+test('search lists stations alphabetically by name', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  await page.getByRole('button', { name: SEARCH_TRIGGER_TEXT }).click()
+  const dialog = page.getByRole('dialog')
+  const input = dialog.getByPlaceholder(SEARCH_PLACEHOLDER)
+  await expect(input).toBeVisible()
+
+  // Wait for the station list to load (the transient 'Loading stations…' row
+  // disappears and result rows render), leaving the full, unfiltered set. A
+  // bare `toHaveCount(0)` could pass in the instant before the loading row
+  // renders, so poll for the loaded end state instead.
+  await expect
+    .poll(
+      async () => {
+        const loading = await dialog.getByText('Loading stations…').count()
+        const results = await dialog.locator('li span.font-semibold').count()
+        return loading === 0 && results > 0
+      },
+      { timeout: 10000 },
+    )
+    .toBe(true)
+
+  // The unfiltered search lists every station; grab the station names of the
+  // result rows (each row exposes its name via its font-semibold span).
+  const names = await dialog.locator('li').evaluateAll((items) =>
+    items
+      .map((item) => {
+        const name = (item.querySelector('span.font-semibold') as HTMLElement | null)?.textContent
+        return name ? name.trim() : null
+      })
+      .filter((name): name is string => name !== null),
+  )
+  expect(names.length).toBeGreaterThan(1)
+
+  // Alphabetical order, checked with the browser's own localeCompare so the
+  // assertion matches the comparator the app uses to render the list.
+  const sortedInBrowser = await page.evaluate(
+    (list) => [...list].sort((a, b) => a.localeCompare(b)),
+    names,
+  )
+  expect(names).toEqual(sortedInBrowser)
+})

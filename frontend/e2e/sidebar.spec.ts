@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
+  cityUrl,
   mapMarkers,
   readSidebarCounts,
   sidebar,
@@ -120,4 +121,40 @@ test('the mid-height pull/push handle slides the sidebar in and out', async ({ p
   await pull.click()
   await expect(page.getByRole('button', { name: 'Hide station list' })).toBeVisible()
   await expect(sidebarBadge(page)).toBeVisible()
+})
+
+test('the sidebar lists stations by last-day count, busiest first', async ({ page }) => {
+  // The Münster city view exposes the whole seeded Münster set. Only four of
+  // those stations get synthesized measurements (see e2e-seed.sql): Gasselstiege
+  // has six channels with data, so it is by far the busiest and must top the
+  // list even though its name sorts after Bismarckallee / Bohlweg / Coesfelder
+  // Kreuz alphabetically.
+  await page.goto(cityUrl('Münster'), { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+
+  const rows = sidebarStationItems(page)
+  // The stats sub-resource arrives after the shell; wait until a real count
+  // replaces the per-row stats skeleton before reading the order.
+  await expect(rows.first().getByText('bikes / last day')).toBeVisible()
+
+  // Read each row's station name and its formatted last-day count. Counts use
+  // the de-DE thousands separator, so strip '.'/',' to recover the integer.
+  const entries = await rows.evaluateAll((items) =>
+    items.map((item) => {
+      const name =
+        (item.querySelector('span.font-semibold') as HTMLElement | null)?.textContent?.trim() ?? ''
+      const label = item.textContent ?? ''
+      const raw = label.match(/([\d.,]+)\s+bikes \/ last day/)?.[1] ?? '0'
+      return { name, bikes: Number(raw.replace(/[.,]/g, '')) }
+    }),
+  )
+  expect(entries.length).toBeGreaterThan(1)
+
+  // Busiest first: the last-day counts are non-increasing down the list…
+  for (let index = 1; index < entries.length; index += 1) {
+    expect(entries[index].bikes).toBeLessThanOrEqual(entries[index - 1].bikes)
+  }
+  // …and Gasselstiege (6 channels with data) leads a list that is not the
+  // alphabetical order of the seeded Münster stations.
+  expect(entries[0].name).toBe('Gasselstiege')
 })

@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
-use crate::adapter::driven::eco_counter::EcoCounterAdapter;
+use crate::adapter::driven::eco_counter::{
+    EcoCounterV1Adapter, EcoCounterV2Adapter, EcoCounterWebAdapter,
+};
 use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
 use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
@@ -25,8 +27,12 @@ impl DataProviderFactory for DataProviderFactoryImpl {
             Ok(Arc::new(BonnOpendataAdapter::new(config)?))
         } else if config.provider().provider_type() == HamburgStaAdapter::provider_type() {
             Ok(Arc::new(HamburgStaAdapter::new(config)?))
-        } else if config.provider().provider_type() == EcoCounterAdapter::provider_type() {
-            Ok(Arc::new(EcoCounterAdapter::new(config)?))
+        } else if config.provider().provider_type() == EcoCounterV1Adapter::provider_type() {
+            Ok(Arc::new(EcoCounterV1Adapter::new(config)?))
+        } else if config.provider().provider_type() == EcoCounterV2Adapter::provider_type() {
+            Ok(Arc::new(EcoCounterV2Adapter::new(config)?))
+        } else if config.provider().provider_type() == EcoCounterWebAdapter::provider_type() {
+            Ok(Arc::new(EcoCounterWebAdapter::new(config)?))
         } else {
             Err(ConfigError::InvalidFormat(format!(
                 "unknown data provider type: {}",
@@ -42,7 +48,9 @@ mod tests {
 
     use super::DataProviderFactoryImpl;
     use crate::adapter::driven::bonn_opendata::BonnOpendataAdapter;
-    use crate::adapter::driven::eco_counter::EcoCounterAdapter;
+    use crate::adapter::driven::eco_counter::{
+        EcoCounterV1Adapter, EcoCounterV2Adapter, EcoCounterWebAdapter,
+    };
     use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
     use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
     use crate::core::domain::configuration::configuration::value_objects::{
@@ -97,8 +105,31 @@ mod tests {
     }
 
     #[test]
-    fn builds_eco_counter_provider_type() {
-        let config = data_source(EcoCounterAdapter::provider_type(), HashMap::new());
+    fn builds_v1_eco_counter_provider_type() {
+        let config = data_source(EcoCounterV1Adapter::provider_type(), HashMap::new());
+
+        let factory = DataProviderFactoryImpl;
+        assert!(factory.build(&config).is_ok());
+    }
+
+    #[test]
+    fn builds_v2_eco_counter_provider_type() {
+        let mut vars = HashMap::new();
+        vars.insert("access_token".to_string(), "tok".to_string());
+        let config = data_source(EcoCounterV2Adapter::provider_type(), vars);
+
+        let factory = DataProviderFactoryImpl;
+        assert!(factory.build(&config).is_ok());
+    }
+
+    #[test]
+    fn builds_web_eco_counter_provider_type() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "scrape_url".to_string(),
+            "https://hessen-mobil.eco-counter.com".to_string(),
+        );
+        let config = data_source(EcoCounterWebAdapter::provider_type(), vars);
 
         let factory = DataProviderFactoryImpl;
         assert!(factory.build(&config).is_ok());

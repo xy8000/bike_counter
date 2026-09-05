@@ -1,4 +1,4 @@
-//! Unit tests for the API_V2 mode provider (fixtures + fake fetcher, no network).
+//! Unit tests for the V2 adapter (fixtures + fake fetcher, no network).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use crate::core::domain::data_source::provider_port::{
 };
 use crate::core::domain::health::HealthStatus;
 
-use super::provider::EcoCounterV2Provider;
+use super::adapter::EcoCounterV2Adapter;
 
 const SITES: &str = r#"[
   {"id":7,"name":"Site A","domainId":118,"domain":"Demo Org","latitude":49.0,"longitude":8.0,
@@ -24,7 +24,7 @@ const SITES: &str = r#"[
 ]"#;
 
 fn read_all(
-    a: &EcoCounterV2Provider,
+    a: &EcoCounterV2Adapter,
     from: Option<DateTime<Utc>>,
 ) -> (Vec<MeasurementRecord>, Option<DateTime<Utc>>) {
     let mut measurements = Vec::new();
@@ -87,16 +87,15 @@ fn config(vars: &[(&str, &str)]) -> DataSourceConfiguration {
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    vars.entry("v2_access_token".to_string())
+    vars.entry("access_token".to_string())
         .or_insert_with(|| "tok".to_string());
     let provider =
-        DataProviderConfiguration::new("eco_counter_http_provider".to_string(), vars).unwrap();
+        DataProviderConfiguration::new("eco_counter_v2_http_provider".to_string(), vars).unwrap();
     DataSourceConfiguration::new("Eco-Counter V2".to_string(), provider).unwrap()
 }
 
-fn adapter(vars: &[(&str, &str)], responses: Vec<(&str, &str)>) -> EcoCounterV2Provider {
-    EcoCounterV2Provider::with_fetcher(&config(vars), Arc::new(FakeFetcher::new(responses)))
-        .unwrap()
+fn adapter(vars: &[(&str, &str)], responses: Vec<(&str, &str)>) -> EcoCounterV2Adapter {
+    EcoCounterV2Adapter::with_fetcher(&config(vars), Arc::new(FakeFetcher::new(responses))).unwrap()
 }
 
 fn points_json(rows: &[(DateTime<Utc>, i64)]) -> String {
@@ -129,9 +128,17 @@ fn recent_rows() -> Vec<(DateTime<Utc>, i64)> {
 }
 
 #[test]
+fn provider_type_is_versioned() {
+    assert_eq!(
+        EcoCounterV2Adapter::provider_type(),
+        "eco_counter_v2_http_provider"
+    );
+}
+
+#[test]
 fn discovers_sites_as_stations_with_one_channel_each() {
     let a = adapter(
-        &[("v2_import_days_back", "10"), ("v2_page_days", "30")],
+        &[("import_days_back", "10"), ("page_days", "30")],
         vec![("/site", SITES)],
     );
     let stations = a.get_all_counting_stations().unwrap();
@@ -150,9 +157,9 @@ fn serves_site_series_and_terminates() {
     let json = points_json(&rows);
     let a = adapter(
         &[
-            ("v2_step", "3"),
-            ("v2_import_days_back", "10"),
-            ("v2_page_days", "30"),
+            ("step", "3"),
+            ("import_days_back", "10"),
+            ("page_days", "30"),
         ],
         vec![
             ("/site", SITES),
@@ -171,15 +178,15 @@ fn serves_site_series_and_terminates() {
 fn rejects_missing_access_token() {
     let vars = HashMap::new();
     let provider =
-        DataProviderConfiguration::new("eco_counter_http_provider".to_string(), vars).unwrap();
+        DataProviderConfiguration::new("eco_counter_v2_http_provider".to_string(), vars).unwrap();
     let config = DataSourceConfiguration::new("Eco-Counter V2".to_string(), provider).unwrap();
-    assert!(EcoCounterV2Provider::new(&config).is_err());
+    assert!(EcoCounterV2Adapter::new(&config).is_err());
 }
 
 #[test]
 fn health_is_down_for_an_unreachable_host() {
-    let a = EcoCounterV2Provider::with_fetcher(
-        &config(&[("v2_base_url", "http://127.0.0.1:1/")]),
+    let a = EcoCounterV2Adapter::with_fetcher(
+        &config(&[("base_url", "http://127.0.0.1:1/")]),
         Arc::new(FakeFetcher::new(vec![])),
     )
     .unwrap();
@@ -188,7 +195,7 @@ fn health_is_down_for_an_unreachable_host() {
 
 #[test]
 fn parses_config_defaults() {
-    let a = EcoCounterV2Provider::with_fetcher(&config(&[]), Arc::new(FakeFetcher::new(vec![])))
+    let a = EcoCounterV2Adapter::with_fetcher(&config(&[]), Arc::new(FakeFetcher::new(vec![])))
         .unwrap();
     assert_eq!(a.step(), 3);
     assert_eq!(a.cache_duration_secs(), 300);
@@ -200,9 +207,9 @@ fn filters_from_exclusive() {
     let json = points_json(&rows);
     let a = adapter(
         &[
-            ("v2_step", "3"),
-            ("v2_import_days_back", "10"),
-            ("v2_page_days", "30"),
+            ("step", "3"),
+            ("import_days_back", "10"),
+            ("page_days", "30"),
         ],
         vec![
             ("/site", SITES),

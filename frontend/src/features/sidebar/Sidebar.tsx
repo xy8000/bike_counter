@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { BarChart3, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -49,6 +50,19 @@ export function Sidebar({
   // while tablet/desktop close via the mid-height handle.
   onClose?: () => void
 }) {
+  // The visible stations are listed by their previous-local-day bike count
+  // (busiest first) rather than by name. The counts live in the separate stats
+  // sub-resource, so until they arrive (or when a station has no stats) the
+  // station falls back to its shell order, which is already alphabetical.
+  const sortedItems = useMemo(() => {
+    const items = shell?.items ?? []
+    if (stats === null) return items
+    return [...items].sort((a, b) => {
+      const diff = (stats.get(b.id)?.bikes_last_day ?? 0) - (stats.get(a.id)?.bikes_last_day ?? 0)
+      return diff !== 0 ? diff : a.name.localeCompare(b.name)
+    })
+  }, [shell, stats])
+
   return (
     <>
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
@@ -79,14 +93,14 @@ export function Sidebar({
           </p>
         )}
         {!error && loading && shell === null && <SidebarListSkeleton />}
-        {!error && !loading && shell !== null && shell.items.length === 0 && (
+        {!error && !loading && shell !== null && sortedItems.length === 0 && (
           <p className="p-4 text-sm text-muted-foreground">
             No counting stations visible in this area.
           </p>
         )}
-        {!error && (shell?.items ?? []).length > 0 && (
+        {!error && sortedItems.length > 0 && (
           <ul className="list-none">
-            {(shell?.items ?? []).map((station) => (
+            {sortedItems.map((station) => (
               <SidebarListItem
                 key={station.id}
                 station={station}
@@ -110,7 +124,7 @@ export function Sidebar({
           type="button"
           className="w-full"
           onClick={onSummarize}
-          disabled={!shell || shell.items.length === 0}
+          disabled={sortedItems.length === 0}
           title="Open the aggregated summary of the visible stations"
         >
           <BarChart3 />

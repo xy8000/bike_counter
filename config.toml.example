@@ -96,35 +96,75 @@ concurrency = "8"
 name = "Eco-Counter"
 
 [data_sources.provider]
-type = "eco_counter_http_provider"
+type = "eco_counter_v1_http_provider"
 # Minimum provider-message severity to persist (default: WARNING).
 log_level = "WARNING"
 
 [data_sources.provider.vars]
-# `modes` is a comma-separated list of the modes to run (a single mode is fine):
-#   api_v1           legacy public Eco-Visio API + bundled v1/stations.yml catalog
-#   api_v2           official API (apieco.eco-counter-tools.com) with an access token
-#   screen_scraping  public-web-view scraper (scaffold, parser not implemented yet)
-# Run all three IN PARALLEL behind this one data source with
-#   modes = "api_v1, api_v2, screen_scraping"
-# (external ids then carry v1/ v2/ web/ prefixes so the same station reached via
-# several paths stays distinct).
-# Every mode reads its own vars from this flat map, prefixed by mode:
-# v1_… | v2_… | web_… (v2 needs `v2_access_token`; the older bare `mode`/`access_token`
-# vars are no longer supported). Unset vars fall back to per-mode defaults.
-modes = "api_v1"
-# Public legacy Eco-Visio API (api_v1). Stations are NOT configured here: the
-# counters to import live in the bundled
+# Eco-Counter is imported through three SEPARATE provider types — one
+# [[data_sources]] entry per version (there is no `modes` var anymore):
+#   eco_counter_v1_http_provider  legacy public Eco-Visio API + bundled
+#                                 v1/stations.yml catalog (this example)
+#   eco_counter_v2_http_provider  official API (apieco.eco-counter-tools.com)
+#                                 with an organisation access token (see below)
+#   eco_counter_web_http_provider public-web-view scraper of a
+#                                 *.eco-counter.com dashboard, daily only, one
+#                                 tenant per data source (see below)
+# Each provider reads plain (unprefixed) vars from its own data source.
+#
+# Public legacy Eco-Visio API (eco_counter_v1_http_provider). Stations are NOT
+# configured here: the counters to import live in the bundled
 # backend/src/adapter/driven/eco_counter/v1/stations.yml catalog (the upstream
 # no longer auto-discovers German tenants on this API).
-v1_base_url = "https://www.eco-visio.net/api/aladdin/1.0.0"
-# Data resolution: 2 = 15 min, 3 = hourly, 4 = daily (default 3).
-v1_step = "3"
+base_url = "https://www.eco-visio.net/api/aladdin/1.0.0"
+# Resolution is auto-detected per counter: 15 min when available, else hourly,
+# else daily (no `step` var).
 # Rows kept per source-level batch (default 500).
-v1_max_measurement_batch_size = "500"
+max_measurement_batch_size = "500"
 # Cache window for the resolved station index, in seconds (default 300).
-v1_cache_duration = "300"
+cache_duration = "300"
 # Day window requested per HTTP call (default 7).
-v1_page_days = "7"
+page_days = "7"
 # Initial lookback without an imported_until watermark, in days (default 365).
-v1_import_days_back = "365"
+import_days_back = "365"
+
+# …or use the official Eco-Counter API (eco_counter_v2_http_provider), which
+# discovers an organisation's sites at runtime with an access token:
+# [[data_sources]]
+# name = "Eco-Counter V2"
+# [data_sources.provider]
+# type = "eco_counter_v2_http_provider"
+# log_level = "WARNING"
+# [data_sources.provider.vars]
+# # The organisation's OAuth access token (required; Authorization: Bearer).
+# access_token = "<organisation access token>"
+# # Optional: restrict discovery to one domain (`/site?domain_id=`).
+# domain_id = "4701"
+# # Data resolution: 2 = 15 min, 3 = hourly, 4 = daily (default 3).
+# step = "3"
+# # Official API root (default below).
+# # base_url = "https://apieco.eco-counter-tools.com/api/1.0"
+# max_measurement_batch_size = "500"
+# cache_duration = "300"
+# page_days = "7"
+# import_days_back = "365"
+
+# …or scrape a public Eco-Counter dashboard that has no usable API
+# (eco_counter_web_http_provider). Screen scraping runs ONE tenant per data
+# source: add one [[data_sources]] per root URL.
+# [[data_sources]]
+# name = "Hessen Mobil"
+# [data_sources.provider]
+# type = "eco_counter_web_http_provider"
+# log_level = "WARNING"
+# [data_sources.provider.vars]
+# # The tenant root page (required).
+# scrape_url = "https://hessen-mobil.eco-counter.com"
+# # Requests to the dashboard per second (default 1). Resolution is daily only.
+# rate_limit_requests_per_second = "1"
+# # IANA timezone of the station daily series (default Europe/Berlin).
+# timezone = "Europe/Berlin"
+# # Cache window for the scraped station list, in seconds (default 300).
+# cache_duration = "300"
+# # Initial lookback without an imported_until watermark, in days (default 365).
+# import_days_back = "365"

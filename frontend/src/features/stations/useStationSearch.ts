@@ -22,12 +22,17 @@ export function useStationSearch() {
 
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    if (!normalized) return allStations ?? []
-    return (allStations ?? []).filter(
-      (station) =>
-        station.name.toLowerCase().includes(normalized) ||
-        station.description.toLowerCase().includes(normalized),
-    )
+    const filtered = normalized
+      ? (allStations ?? []).filter(
+          (station) =>
+            station.name.toLowerCase().includes(normalized) ||
+            station.description.toLowerCase().includes(normalized),
+        )
+      : allStations
+    // The search dialog always lists stations alphabetically (by name), no
+    // matter the order the BFF returns them in. Sort a copy so the loaded
+    // `allStations` state is never mutated in place.
+    return [...(filtered ?? [])].sort((a, b) => a.name.localeCompare(b.name))
   }, [allStations, query])
 
   // The find-on-map and open-detail actions come from the BFF action map; for
