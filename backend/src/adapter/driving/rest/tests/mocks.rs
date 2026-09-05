@@ -625,12 +625,12 @@ impl JobRepository for MockJobRepository {
 
     fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
-            if job.status == JobStatus::Running {
-                job.status = JobStatus::Finished;
-                job.finished_at = Some(finished_at);
-                return Ok(());
-            }
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+            && job.status == JobStatus::Running
+        {
+            job.status = JobStatus::Finished;
+            job.finished_at = Some(finished_at);
+            return Ok(());
         }
         Err(DomainError::InvalidQuery("not running".to_string()))
     }
@@ -642,40 +642,40 @@ impl JobRepository for MockJobRepository {
         message: &str,
     ) -> Result<(), DomainError> {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
-            if job.status == JobStatus::Running {
-                job.status = JobStatus::Failed;
-                job.finished_at = Some(finished_at);
-                job.failure_message = Some(message.to_string());
-                return Ok(());
-            }
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+            && job.status == JobStatus::Running
+        {
+            job.status = JobStatus::Failed;
+            job.finished_at = Some(finished_at);
+            job.failure_message = Some(message.to_string());
+            return Ok(());
         }
         Err(DomainError::InvalidQuery("not running".to_string()))
     }
 
     fn request_cancellation(&self, id: Uuid) -> Result<(), DomainError> {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
-            if job.status == JobStatus::Running {
-                job.status = JobStatus::CancellationRequested;
-                return Ok(());
-            }
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+            && job.status == JobStatus::Running
+        {
+            job.status = JobStatus::CancellationRequested;
+            return Ok(());
         }
         Err(DomainError::InvalidQuery("not running".to_string()))
     }
 
     fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
-            if matches!(
+        if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+            && matches!(
                 job.status,
                 JobStatus::Running | JobStatus::CancellationRequested
-            ) {
-                job.status = JobStatus::Cancelled;
-                job.finished_at = Some(finished_at);
-                job.failure_message = Some("cancelled".to_string());
-                return Ok(());
-            }
+            )
+        {
+            job.status = JobStatus::Cancelled;
+            job.finished_at = Some(finished_at);
+            job.failure_message = Some("cancelled".to_string());
+            return Ok(());
         }
         Err(DomainError::InvalidQuery("not cancellable".to_string()))
     }

@@ -94,7 +94,7 @@ pub async fn cancel_job(
                 return Err(map_domain_error(DomainError::InvalidQuery(
                     "cancel request body must be a JSON object with an optional \"force\" flag"
                         .to_string(),
-                )))
+                )));
             }
         }
     };

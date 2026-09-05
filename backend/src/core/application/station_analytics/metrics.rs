@@ -206,14 +206,14 @@ mod tests {
     }
 
     fn finished_job(finished_at: DateTime<Utc>) -> Job {
-        let mut job = Job::new(
+        let mut job = Job::running(
             Uuid::new_v4(),
             "Data source update".to_string(),
             DATA_SOURCE_UPDATE_JOB_TYPE.to_string(),
-            finished_at + chrono::Duration::hours(1),
+            Uuid::new_v4(),
+            finished_at - chrono::Duration::minutes(5),
         );
         job.status = JobStatus::Finished;
-        job.started_at = Some(finished_at - chrono::Duration::minutes(5));
         job.finished_at = Some(finished_at);
         job
     }
@@ -265,7 +265,25 @@ mod tests {
         fn insert(&self, _job: Job) -> Result<(), DomainError> {
             unimplemented!()
         }
-        fn set_running(&self, _id: Uuid, _started_at: DateTime<Utc>) -> Result<(), DomainError> {
+        fn acquire(
+            &self,
+            _job_type: &str,
+            _instance_id: Uuid,
+            _lock_until: DateTime<Utc>,
+        ) -> Result<bool, DomainError> {
+            unimplemented!()
+        }
+        fn release(&self, _job_type: &str, _instance_id: Uuid) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn heartbeat(
+            &self,
+            _id: Uuid,
+            _job_type: &str,
+            _instance_id: Uuid,
+            _at: DateTime<Utc>,
+            _lock_until: DateTime<Utc>,
+        ) -> Result<JobStatus, DomainError> {
             unimplemented!()
         }
         fn set_finished(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
@@ -276,6 +294,16 @@ mod tests {
             _id: Uuid,
             _finished_at: DateTime<Utc>,
             _message: &str,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn request_cancellation(&self, _id: Uuid) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        fn mark_cancelled(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
         ) -> Result<(), DomainError> {
             unimplemented!()
         }
@@ -292,17 +320,18 @@ mod tests {
         ) -> Result<Vec<Job>, DomainError> {
             unimplemented!()
         }
-        fn find_running_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
+        fn find_active_by_type(&self, _job_type: &str) -> Result<Vec<Job>, DomainError> {
             unimplemented!()
         }
         fn find_last_finished_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
             Ok(self.finished.clone())
         }
-        fn expire_running_jobs(
+        fn reconcile_stale_active(
             &self,
             _job_type: &str,
+            _heartbeat_before: DateTime<Utc>,
             _now: DateTime<Utc>,
-        ) -> Result<u64, DomainError> {
+        ) -> Result<(), DomainError> {
             unimplemented!()
         }
     }

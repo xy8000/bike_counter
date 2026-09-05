@@ -117,17 +117,17 @@ WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelde
 -- can never fire). The jobs are belt-and-braces: the Playwright orchestrator
 -- additionally disables the schedulers via scheduled_jobs_enabled = false, so the
 -- stack boots without importing from the providers.
-INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, failure_message, metadata, lifetime_until, max_lifetime_exceeded, created_at)
+INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, failure_message, metadata, instance_id, heartbeat_at, created_at)
 VALUES
   (gen_random_uuid(), 'Data source update', 'data_source_update', 'FINISHED',
    now() - interval '1 minute', now() + interval '1 hour', NULL, '{}'::jsonb,
-   now() + interval '2 hours', FALSE, now() - interval '1 minute'),
+   gen_random_uuid(), now() - interval '1 minute', now() - interval '1 minute'),
   (gen_random_uuid(), 'asset cleanup', 'asset_cleanup', 'FINISHED',
    now() - interval '1 hour', now() - interval '1 hour', NULL, '{}'::jsonb,
-   now() + interval '1 hour', FALSE, now() - interval '1 hour'),
+   gen_random_uuid(), now() - interval '1 hour', now() - interval '1 hour'),
   (gen_random_uuid(), 'tiles update', 'tiles_update', 'FINISHED',
    now() - interval '2 hours', now() - interval '2 hours', NULL, '{}'::jsonb,
-   now() + interval '1 hour', FALSE, now() - interval '2 hours');
+   gen_random_uuid(), now() - interval '2 hours', now() - interval '2 hours');
 
 -- The rolling data is generated up to now(); anchor the imported_until cursor so
 -- a later manual import resumes from the fixture's most recent data.

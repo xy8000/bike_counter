@@ -3,12 +3,13 @@
 #
 # Boots PostgreSQL + backend + frontend, waits for readiness, then asserts:
 #   * GET /api/v1/jobs and GET /api/v1/data-sources return 200
-#   * The scheduler recorded a FINISHED data_source_update job (it runs at
-#     startup because the job has never succeeded) exposing lifetime_until
+#   * The scheduler recorded a data_source_update job (it runs at startup
+#     because the job has never succeeded) exposing instance_id / heartbeat_at
 #   * GET /api/bff/stations returns the BFF station list (frontend-facing BFF API)
 #   * The frontend page is served
 #   * The database schema is correct:
-#       - jobs.lifetime_until is TIMESTAMPTZ NOT NULL (absolute deadline)
+#       - jobs.instance_id / heartbeat_at exist (nullable ownership/liveness)
+#       - the job_locks ShedLock table exists
 #       - data_sources.imported_until exists as TIMESTAMPTZ
 #
 # A temporary config.toml is created at the repo root (the backend service
@@ -69,11 +70,11 @@ database_name="${DB_NAME}"
 
 # Data-source update job settings (cron default is hourly).
 data_source_update_cron="0 0 * * * *"
-data_source_update_max_lifetime_seconds=3600
+data_source_update_max_heartbeat_interval_seconds=3600
 
 # Asset cleanup job settings (cron default is daily at 04:00).
 asset_cleanup_cron="0 0 4 * * *"
-asset_cleanup_max_lifetime_seconds=3600
+asset_cleanup_max_heartbeat_interval_seconds=3600
 
 [asset_storage]
 endpoint = "http://minio:9000"
@@ -84,7 +85,7 @@ region = "us-east-1"
 
 [maps]
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"
-update_max_lifetime_seconds = 3600
+update_max_heartbeat_interval_seconds = 3600
 protomaps_build_url = "https://build.protomaps.com/20260829.pmtiles"
 go_pmtiles_version = "1.31.2"
 EOF
@@ -166,34 +167,49 @@ fi
 echo "Verified nginx proxies /api/bff/stations to the backend"
 
 # The scheduler runs the data-source update at startup (it has never succeeded),
-# so a data_source_update job with a lifetime_until deadline must exist.
+# so a data_source_update job owned by an instance must exist.
 JOBS_JSON="$(curl --silent "${APP_URL}/api/v1/jobs")"
 if ! echo "${JOBS_JSON}" | grep -q "data_source_update"; then
   echo "ERROR: expected at least one data_source_update job in /api/v1/jobs" >&2
   echo "${JOBS_JSON}" >&2
   exit 1
 fi
-if ! echo "${JOBS_JSON}" | grep -q "lifetime_until"; then
-  echo "ERROR: expected jobs to expose lifetime_until" >&2
+if ! echo "${JOBS_JSON}" | grep -q "instance_id"; then
+  echo "ERROR: expected jobs to expose instance_id" >&2
   echo "${JOBS_JSON}" >&2
   exit 1
 fi
-echo "Verified data_source_update job with lifetime_until in /api/v1/jobs"
+echo "Verified data_source_update job with instance_id in /api/v1/jobs"
 
 psql_query() {
   docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
     psql -U "${DB_USER}" -d "${DB_NAME}" -tAc "$1"
 }
 
-# jobs.lifetime_until must be a NOT NULL TIMESTAMPTZ column (absolute deadline).
-LIFETIME_TYPE="$(
-  psql_query "SELECT data_type || '|' || is_nullable FROM information_schema.columns WHERE table_name='jobs' AND column_name='lifetime_until'"
+# jobs must expose the ownership/liveness columns (nullable uuid / TIMESTAMPTZ).
+INSTANCE_TYPE="$(
+  psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='jobs' AND column_name='instance_id'"
 )"
-if [ "${LIFETIME_TYPE}" != "timestamp with time zone|NO" ]; then
-  echo "ERROR: jobs.lifetime_until is not TIMESTAMPTZ NOT NULL (got '${LIFETIME_TYPE}')" >&2
+if [ "${INSTANCE_TYPE}" != "uuid" ]; then
+  echo "ERROR: jobs.instance_id is missing or not uuid (got '${INSTANCE_TYPE}')" >&2
   exit 1
 fi
-echo "Verified jobs.lifetime_until is TIMESTAMPTZ NOT NULL"
+HEARTBEAT_TYPE="$(
+  psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='jobs' AND column_name='heartbeat_at'"
+)"
+if [ "${HEARTBEAT_TYPE}" != "timestamp with time zone" ]; then
+  echo "ERROR: jobs.heartbeat_at is missing or not TIMESTAMPTZ (got '${HEARTBEAT_TYPE}')" >&2
+  exit 1
+fi
+# The job_locks ShedLock table must exist (atomic multi-instance claim).
+JOB_LOCKS_TABLE="$(
+  psql_query "SELECT to_regclass('job_locks')"
+)"
+if [ "${JOB_LOCKS_TABLE}" != "job_locks" ]; then
+  echo "ERROR: the job_locks table is missing (got '${JOB_LOCKS_TABLE}')" >&2
+  exit 1
+fi
+echo "Verified jobs.instance_id/heartbeat_at and the job_locks table"
 
 # data_sources.imported_until must exist as TIMESTAMPTZ (nullable, DB-only).
 IMPORTED_UNTIL_TYPE="$(

@@ -178,9 +178,7 @@ mod tests {
                 .find(|job| job.id == id)
                 .ok_or(DomainError::NotFound(id))?;
             if job.status != JobStatus::Running {
-                return Err(DomainError::InvalidQuery(
-                    "not running".to_string(),
-                ));
+                return Err(DomainError::InvalidQuery("not running".to_string()));
             }
             job.status = JobStatus::Finished;
             job.finished_at = Some(finished_at);
@@ -230,9 +228,7 @@ mod tests {
                 job.status,
                 JobStatus::Running | JobStatus::CancellationRequested
             ) {
-                return Err(DomainError::InvalidQuery(
-                    "not cancellable".to_string(),
-                ));
+                return Err(DomainError::InvalidQuery("not cancellable".to_string()));
             }
             job.status = JobStatus::Cancelled;
             job.finished_at = Some(finished_at);
@@ -308,13 +304,9 @@ mod tests {
                 if job.job_type != job_type {
                     continue;
                 }
-                let stale = job
-                    .heartbeat_at
-                    .is_none_or(|beat| beat < heartbeat_before);
+                let stale = job.heartbeat_at.is_none_or(|beat| beat < heartbeat_before);
                 match job.status {
-                    JobStatus::Running if stale => {
-                        job.status = JobStatus::CancellationRequested
-                    }
+                    JobStatus::Running if stale => job.status = JobStatus::CancellationRequested,
                     JobStatus::CancellationRequested if stale => {
                         job.status = JobStatus::Cancelled;
                         job.failure_message = Some("heartbeat lost".to_string());
@@ -467,9 +459,7 @@ mod tests {
             "data_source_update"
         );
         assert_eq!(
-            port.cancel(Uuid::from_u128(0x32), false)
-                .unwrap()
-                .status,
+            port.cancel(Uuid::from_u128(0x32), false).unwrap().status,
             JobStatus::CancellationRequested
         );
     }

@@ -37,7 +37,8 @@ impl JobReconciliationService {
         vec![
             (
                 DATA_SOURCE_UPDATE_JOB_TYPE,
-                self.configuration.data_source_update_max_heartbeat_interval(),
+                self.configuration
+                    .data_source_update_max_heartbeat_interval(),
             ),
             (
                 ASSET_CLEANUP_JOB_TYPE,
@@ -80,10 +81,10 @@ mod tests {
     use crate::core::application::asset_cleanup_service::ASSET_CLEANUP_JOB_TYPE;
     use crate::core::application::data_source_update_service::DATA_SOURCE_UPDATE_JOB_TYPE;
     use crate::core::application::tiles_update_service::TILES_UPDATE_JOB_TYPE;
+    use crate::core::domain::configuration::configuration::Configuration;
     use crate::core::domain::configuration::configuration::value_objects::{
         AssetStorageConfiguration, DatabaseConfiguration, MapsConfiguration,
     };
-    use crate::core::domain::configuration::configuration::Configuration;
     use crate::core::domain::error::DomainError;
     use crate::core::domain::jobs::job::{Job, JobStatus};
     use crate::core::domain::jobs::repository_port::JobRepository;
@@ -158,7 +159,11 @@ mod tests {
             Ok(())
         }
 
-        fn mark_cancelled(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+        fn mark_cancelled(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -190,7 +195,13 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|job| job.job_type == job_type)
+                .filter(|job| {
+                    job.job_type == job_type
+                        && matches!(
+                            job.status,
+                            JobStatus::Running | JobStatus::CancellationRequested
+                        )
+                })
                 .cloned()
                 .collect())
         }
@@ -294,20 +305,28 @@ mod tests {
         let stale_ids: Vec<Uuid> = jobs.iter().take(3).map(|job| job.id).collect();
         let service = service(jobs);
 
+        // First pass: a stale RUNNING job is advanced to CANCELLATION_REQUESTED.
         service.reconcile_all(Utc::now());
-
-        for id in stale_ids {
-            let job = service
-                .job_repository
-                .find_by_id(id)
-                .unwrap()
-                .unwrap();
+        for id in &stale_ids {
+            let job = service.job_repository.find_by_id(*id).unwrap().unwrap();
             assert!(
-                job.is_cancelled(),
-                "a stale job ({id}) must be force-cancelled, was {:?}",
+                job.is_cancellation_requested(),
+                "a stale job ({id}) must be requested on the first pass, was {:?}",
                 job.status
             );
         }
+
+        // Second pass: a still-stale CANCELLATION_REQUESTED job is force-cancelled.
+        service.reconcile_all(Utc::now());
+        for id in stale_ids {
+            let job = service.job_repository.find_by_id(id).unwrap().unwrap();
+            assert!(
+                job.is_cancelled(),
+                "a stale job ({id}) must be force-cancelled on the second pass, was {:?}",
+                job.status
+            );
+        }
+
         // The fresh job is still RUNNING.
         let fresh_jobs = service
             .job_repository

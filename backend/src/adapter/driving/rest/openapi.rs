@@ -33,8 +33,8 @@ use crate::adapter::driving::rest::handlers::{
     __path_get_job_by_id, __path_get_measurement_by_id, __path_get_persistent_state,
     __path_list_channels, __path_list_counting_stations, __path_list_data_sources,
     __path_list_jobs, __path_list_measurements, __path_list_measurements_raw,
-    __path_list_provider_messages, __path_patch_counting_station, __path_put_persistent_state_entry,
-    __path_reset_imported_until,
+    __path_list_provider_messages, __path_patch_counting_station,
+    __path_put_persistent_state_entry, __path_reset_imported_until,
 };
 
 #[derive(OpenApi)]

@@ -53,8 +53,8 @@ pub async fn run_scheduler(service: Arc<dyn ScheduledJobPort>, cron_expression: 
 pub async fn run_job_watcher(service: Arc<JobReconciliationService>, interval: StdDuration) {
     loop {
         let service_for_tick = service.clone();
-        let _ = tokio::task::spawn_blocking(move || service_for_tick.reconcile_all(Utc::now()))
-            .await;
+        let _ =
+            tokio::task::spawn_blocking(move || service_for_tick.reconcile_all(Utc::now())).await;
         tokio::time::sleep(interval).await;
     }
 }

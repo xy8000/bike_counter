@@ -99,10 +99,10 @@ database_name="bike_counter"
 scheduled_jobs_enabled = false
 
 data_source_update_cron="0 0 * * * *"
-data_source_update_max_lifetime_seconds=3600
+data_source_update_max_heartbeat_interval_seconds=3600
 
 asset_cleanup_cron="0 0 4 * * *"
-asset_cleanup_max_lifetime_seconds=3600
+asset_cleanup_max_heartbeat_interval_seconds=3600
 
 [asset_storage]
 endpoint = "http://minio:9000"
@@ -113,7 +113,7 @@ region = "us-east-1"
 
 [maps]
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"
-update_max_lifetime_seconds = 3600
+update_max_heartbeat_interval_seconds = 3600
 protomaps_build_url = "https://build.protomaps.com/20260829.pmtiles"
 go_pmtiles_version = "1.31.2"
 

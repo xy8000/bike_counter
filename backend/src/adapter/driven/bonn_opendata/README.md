@@ -129,7 +129,8 @@ Example block in [`config.toml.example`](../../../../../config.toml.example:39).
   (sparse hours), and `Joseph-Beuys-Allee` / `Rheinweg` (new in 2026) import fewer
   rows than the busiest stations because Bonn simply does not publish more.
 - **First import is large.** The 2023–2025 backfill is ~0.4M rows; the
-  `data_source_update_max_lifetime_seconds` may need to be raised for the first run.
+  `data_source_update_max_heartbeat_interval_seconds` may need to be raised for the
+  first run.
 - **Name-based join is brittle by nature** — a station rename not covered by the
   alias table degrades to a `WARNING` and its rows are skipped (no invented data).
 - **Health check only verifies network reachability**, not content validity.

@@ -308,7 +308,10 @@ mod tests {
             3600
         );
         assert_eq!(configuration.asset_cleanup_cron(), "0 0 4 * * *");
-        assert_eq!(configuration.asset_cleanup_max_heartbeat_interval_seconds(), 3600);
+        assert_eq!(
+            configuration.asset_cleanup_max_heartbeat_interval_seconds(),
+            3600
+        );
         assert_eq!(
             configuration.asset_storage().endpoint(),
             "http://minio:9000"
@@ -498,7 +501,10 @@ mod tests {
             1800
         );
         assert_eq!(configuration.asset_cleanup_cron(), "0 15 * * * *");
-        assert_eq!(configuration.asset_cleanup_max_heartbeat_interval_seconds(), 3600);
+        assert_eq!(
+            configuration.asset_cleanup_max_heartbeat_interval_seconds(),
+            3600
+        );
     }
 
     #[test]
@@ -694,7 +700,10 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
         assert_eq!(configuration.maps().update_cron(), "0 0 3 1 1,3,5,7,9,11 *");
-        assert_eq!(configuration.maps().update_max_heartbeat_interval_seconds(), 1800);
+        assert_eq!(
+            configuration.maps().update_max_heartbeat_interval_seconds(),
+            1800
+        );
         assert_eq!(
             configuration.maps().protomaps_build_url(),
             "https://example.com/source.pmtiles"
@@ -719,7 +728,10 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
         assert_eq!(configuration.maps().update_cron(), DEFAULT_MAPS_UPDATE_CRON);
-        assert_eq!(configuration.maps().update_max_heartbeat_interval_seconds(), 7200);
+        assert_eq!(
+            configuration.maps().update_max_heartbeat_interval_seconds(),
+            7200
+        );
         assert_eq!(
             configuration.maps().protomaps_build_url(),
             "https://build.protomaps.com/20260829.pmtiles"
@@ -751,7 +763,10 @@ mod tests {
 
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
-        assert_eq!(configuration.maps().update_max_heartbeat_interval_seconds(), 7200);
+        assert_eq!(
+            configuration.maps().update_max_heartbeat_interval_seconds(),
+            7200
+        );
     }
 
     #[test]

@@ -219,6 +219,17 @@ CREATE TABLE public.data_sources (
 
 
 --
+-- Name: job_locks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.job_locks (
+    job_type text NOT NULL,
+    locked_by uuid NOT NULL,
+    lock_until timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -231,10 +242,10 @@ CREATE TABLE public.jobs (
     finished_at timestamp with time zone,
     failure_message text,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    lifetime_until timestamp with time zone NOT NULL,
-    max_lifetime_exceeded boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['PENDING'::text, 'RUNNING'::text, 'FINISHED'::text, 'FAILED'::text])))
+    instance_id uuid,
+    heartbeat_at timestamp with time zone,
+    CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['RUNNING'::text, 'FINISHED'::text, 'FAILED'::text, 'CANCELLATION_REQUESTED'::text, 'CANCELLED'::text])))
 );
 
 
@@ -338,6 +349,14 @@ ALTER TABLE ONLY public.data_sources
 
 
 --
+-- Name: job_locks job_locks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_locks
+    ADD CONSTRAINT job_locks_pkey PRIMARY KEY (job_type);
+
+
+--
 -- Name: jobs jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -438,6 +457,13 @@ CREATE INDEX idx_jobs_status ON public.jobs USING btree (status);
 --
 
 CREATE INDEX idx_jobs_type_status ON public.jobs USING btree (job_type, status);
+
+
+--
+-- Name: idx_jobs_type_status_heartbeat; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_jobs_type_status_heartbeat ON public.jobs USING btree (job_type, status, heartbeat_at);
 
 
 --
@@ -603,6 +629,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 19	add_data_source_imports	2026-09-02T09:11:39.512238974Z	6357574970810645470
 20	add_measurements_timestamp_index	2026-09-03T08:03:18.914135575Z	317077820093727940
 21	add_data_source_measurement_bounds	2026-09-03T08:36:46.793533633Z	644983370569446308
+22	add_job_cancellation	2026-09-05T20:20:00.000000000Z	238502165988053264
 \.
 
 
@@ -2683,17 +2710,17 @@ WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelde
 -- can never fire). The jobs are belt-and-braces: the Playwright orchestrator
 -- additionally disables the schedulers via scheduled_jobs_enabled = false, so the
 -- stack boots without importing from the providers.
-INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, failure_message, metadata, lifetime_until, max_lifetime_exceeded, created_at)
+INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, failure_message, metadata, instance_id, heartbeat_at, created_at)
 VALUES
   (gen_random_uuid(), 'Data source update', 'data_source_update', 'FINISHED',
    now() - interval '1 minute', now() + interval '1 hour', NULL, '{}'::jsonb,
-   now() + interval '2 hours', FALSE, now() - interval '1 minute'),
+   gen_random_uuid(), now() - interval '1 minute', now() - interval '1 minute'),
   (gen_random_uuid(), 'asset cleanup', 'asset_cleanup', 'FINISHED',
    now() - interval '1 hour', now() - interval '1 hour', NULL, '{}'::jsonb,
-   now() + interval '1 hour', FALSE, now() - interval '1 hour'),
+   gen_random_uuid(), now() - interval '1 hour', now() - interval '1 hour'),
   (gen_random_uuid(), 'tiles update', 'tiles_update', 'FINISHED',
    now() - interval '2 hours', now() - interval '2 hours', NULL, '{}'::jsonb,
-   now() + interval '1 hour', FALSE, now() - interval '2 hours');
+   gen_random_uuid(), now() - interval '2 hours', now() - interval '2 hours');
 
 -- The rolling data is generated up to now(); anchor the imported_until cursor so
 -- a later manual import resumes from the fixture's most recent data.

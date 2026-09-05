@@ -68,11 +68,20 @@ impl AssetCleanupService {
     pub fn run_if_due(&self) {
         let now = Utc::now();
 
-        match self.job_repository.find_active_by_type(ASSET_CLEANUP_JOB_TYPE) {
+        match self
+            .job_repository
+            .find_active_by_type(ASSET_CLEANUP_JOB_TYPE)
+        {
             Ok(active) if !active.is_empty() => {
+                let count = active.len();
+                let ids = active
+                    .iter()
+                    .map(|job| job.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 println!(
-                    "Asset cleanup job is still active ({} running/requesting); skipping",
-                    active.len()
+                    "Asset cleanup job is still active ({count} running/requesting: {ids}); \
+                     skipping"
                 );
                 return;
             }
@@ -94,7 +103,8 @@ impl AssetCleanupService {
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
                     println!(
-                        "Asset cleanup job is overdue (last run at {}); running",
+                        "Asset cleanup job is overdue (last run {} at {}); running",
+                        last.id,
                         last.finished_at
                             .map(|ts| ts.to_rfc3339())
                             .unwrap_or_else(|| "unknown".to_string())
@@ -137,7 +147,7 @@ impl AssetCleanupService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("Asset cleanup is already running elsewhere; skipping");
+                println!("Asset cleanup is already active elsewhere (job_locks held); skipping");
                 return;
             }
             Err(error) => {
@@ -157,7 +167,9 @@ impl AssetCleanupService {
         let job_id = job.id;
         let job_name = job.name.clone();
         if let Err(error) = self.job_repository.insert(job) {
-            let _ = self.job_repository.release(ASSET_CLEANUP_JOB_TYPE, instance_id);
+            let _ = self
+                .job_repository
+                .release(ASSET_CLEANUP_JOB_TYPE, instance_id);
             eprintln!("Failed to record asset cleanup job {job_name} ({job_id}): {error:?}");
             return;
         }
@@ -219,7 +231,9 @@ impl AssetCleanupService {
                 }
             }
         }
-        let _ = self.job_repository.release(ASSET_CLEANUP_JOB_TYPE, self.instance_id);
+        let _ = self
+            .job_repository
+            .release(ASSET_CLEANUP_JOB_TYPE, self.instance_id);
     }
 
     /// Deletes every object key in the bucket that has no `assets` row and
@@ -290,7 +304,7 @@ impl ScheduledJobPort for AssetCleanupService {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::str::FromStr;
     use std::sync::{Arc, Mutex};
 
@@ -308,6 +322,8 @@ mod tests {
         Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
     };
     use crate::core::domain::jobs::job::JobStatus;
+
+    const INSTANCE: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00A1);
 
     fn configuration() -> Arc<Configuration> {
         Arc::new(
@@ -432,12 +448,14 @@ mod tests {
 
     struct MemoryJobRepository {
         jobs: Mutex<Vec<Job>>,
+        locks: Mutex<HashMap<String, (Uuid, DateTime<Utc>)>>,
     }
 
     impl MemoryJobRepository {
         fn new(jobs: Vec<Job>) -> Self {
             Self {
                 jobs: Mutex::new(jobs),
+                locks: Mutex::new(HashMap::new()),
             }
         }
     }
@@ -447,13 +465,46 @@ mod tests {
             self.jobs.lock().unwrap().push(job);
             Ok(())
         }
-        fn set_running(&self, id: Uuid, started_at: DateTime<Utc>) -> Result<(), DomainError> {
-            let mut jobs = self.jobs.lock().unwrap();
-            if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
-                job.status = JobStatus::Running;
-                job.started_at = Some(started_at);
+        fn acquire(
+            &self,
+            job_type: &str,
+            instance_id: Uuid,
+            lock_until: DateTime<Utc>,
+        ) -> Result<bool, DomainError> {
+            let mut locks = self.locks.lock().unwrap();
+            match locks.get(job_type) {
+                Some((_, until)) if *until >= Utc::now() => Ok(false),
+                _ => {
+                    locks.insert(job_type.to_string(), (instance_id, lock_until));
+                    Ok(true)
+                }
+            }
+        }
+        fn release(&self, job_type: &str, instance_id: Uuid) -> Result<(), DomainError> {
+            let mut locks = self.locks.lock().unwrap();
+            if locks
+                .get(job_type)
+                .is_some_and(|(owner, _)| *owner == instance_id)
+            {
+                locks.remove(job_type);
             }
             Ok(())
+        }
+        fn heartbeat(
+            &self,
+            id: Uuid,
+            _job_type: &str,
+            _instance_id: Uuid,
+            at: DateTime<Utc>,
+            _lock_until: DateTime<Utc>,
+        ) -> Result<JobStatus, DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
+                job.heartbeat_at = Some(at);
+                Ok(job.status)
+            } else {
+                Err(DomainError::NotFound(id))
+            }
         }
         fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
             let mut jobs = self.jobs.lock().unwrap();
@@ -474,6 +525,29 @@ mod tests {
                 job.status = JobStatus::Failed;
                 job.finished_at = Some(finished_at);
                 job.failure_message = Some(message.to_string());
+            }
+            Ok(())
+        }
+        fn request_cancellation(&self, id: Uuid) -> Result<(), DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+                && job.status == JobStatus::Running
+            {
+                job.status = JobStatus::CancellationRequested;
+            }
+            Ok(())
+        }
+        fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+                && matches!(
+                    job.status,
+                    JobStatus::Running | JobStatus::CancellationRequested
+                )
+            {
+                job.status = JobStatus::Cancelled;
+                job.finished_at = Some(finished_at);
+                job.failure_message = Some("cancelled".to_string());
             }
             Ok(())
         }
@@ -500,14 +574,21 @@ mod tests {
         ) -> Result<Vec<Job>, DomainError> {
             Ok(self.jobs.lock().unwrap().clone())
         }
-        fn find_running_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+        fn find_active_by_type(&self, job_type: &str) -> Result<Vec<Job>, DomainError> {
             Ok(self
                 .jobs
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|job| job.job_type == job_type && job.status == JobStatus::Running)
-                .cloned())
+                .filter(|job| {
+                    job.job_type == job_type
+                        && matches!(
+                            job.status,
+                            JobStatus::Running | JobStatus::CancellationRequested
+                        )
+                })
+                .cloned()
+                .collect())
         }
         fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
             Ok(self
@@ -519,32 +600,26 @@ mod tests {
                 .max_by_key(|job| job.finished_at)
                 .cloned())
         }
-        fn expire_running_jobs(
+        fn reconcile_stale_active(
             &self,
             _job_type: &str,
+            _heartbeat_before: DateTime<Utc>,
             _now: DateTime<Utc>,
-        ) -> Result<u64, DomainError> {
-            Ok(0)
+        ) -> Result<(), DomainError> {
+            Ok(())
         }
     }
 
-    /// A [`JobRepository`] that fails (or reports expired runs) on demand.
+    /// A [`JobRepository`] that fails on demand.
     struct FailingJobRepository {
         fail: Mutex<HashSet<&'static str>>,
-        expire_result: u64,
     }
 
     impl FailingJobRepository {
         fn new(fail: &[&'static str]) -> Self {
             Self {
                 fail: Mutex::new(fail.iter().copied().collect()),
-                expire_result: 0,
             }
-        }
-
-        fn with_expire_result(mut self, result: u64) -> Self {
-            self.expire_result = result;
-            self
         }
 
         fn should_fail(&self, op: &str) -> bool {
@@ -560,11 +635,33 @@ mod tests {
                 Ok(())
             }
         }
-        fn set_running(&self, _id: Uuid, _started_at: DateTime<Utc>) -> Result<(), DomainError> {
-            if self.should_fail("set_running") {
+        fn acquire(
+            &self,
+            _job_type: &str,
+            _instance_id: Uuid,
+            _lock_until: DateTime<Utc>,
+        ) -> Result<bool, DomainError> {
+            if self.should_fail("acquire") {
                 Err(DomainError::Database("boom".to_string()))
             } else {
-                Ok(())
+                Ok(true)
+            }
+        }
+        fn release(&self, _job_type: &str, _instance_id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+        fn heartbeat(
+            &self,
+            _id: Uuid,
+            _job_type: &str,
+            _instance_id: Uuid,
+            _at: DateTime<Utc>,
+            _lock_until: DateTime<Utc>,
+        ) -> Result<JobStatus, DomainError> {
+            if self.should_fail("heartbeat") {
+                Err(DomainError::Database("boom".to_string()))
+            } else {
+                Ok(JobStatus::Running)
             }
         }
         fn set_finished(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
@@ -586,6 +683,16 @@ mod tests {
                 Ok(())
             }
         }
+        fn request_cancellation(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+        fn mark_cancelled(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
         fn update_metadata(&self, _id: Uuid, _key: &str, _value: Value) -> Result<(), DomainError> {
             Ok(())
         }
@@ -599,11 +706,11 @@ mod tests {
         ) -> Result<Vec<Job>, DomainError> {
             Ok(Vec::new())
         }
-        fn find_running_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
-            if self.should_fail("find_running") {
+        fn find_active_by_type(&self, _job_type: &str) -> Result<Vec<Job>, DomainError> {
+            if self.should_fail("find_active") {
                 Err(DomainError::Database("boom".to_string()))
             } else {
-                Ok(None)
+                Ok(Vec::new())
             }
         }
         fn find_last_finished_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
@@ -613,16 +720,13 @@ mod tests {
                 Ok(None)
             }
         }
-        fn expire_running_jobs(
+        fn reconcile_stale_active(
             &self,
             _job_type: &str,
+            _heartbeat_before: DateTime<Utc>,
             _now: DateTime<Utc>,
-        ) -> Result<u64, DomainError> {
-            if self.should_fail("expire") {
-                Err(DomainError::Database("boom".to_string()))
-            } else {
-                Ok(self.expire_result)
-            }
+        ) -> Result<(), DomainError> {
+            Ok(())
         }
     }
 
@@ -666,11 +770,12 @@ mod tests {
     }
 
     fn finished_job(finished_at: DateTime<Utc>) -> Job {
-        let mut job = Job::new(
+        let mut job = Job::running(
             Uuid::new_v4(),
             ASSET_CLEANUP_JOB_NAME.to_string(),
             ASSET_CLEANUP_JOB_TYPE.to_string(),
-            Utc::now() + Duration::minutes(10),
+            INSTANCE,
+            finished_at - Duration::minutes(10),
         );
         job.status = JobStatus::Finished;
         job.finished_at = Some(finished_at);
@@ -678,15 +783,13 @@ mod tests {
     }
 
     fn running_job() -> Job {
-        let mut job = Job::new(
+        Job::running(
             Uuid::new_v4(),
             ASSET_CLEANUP_JOB_NAME.to_string(),
             ASSET_CLEANUP_JOB_TYPE.to_string(),
-            Utc::now() + Duration::minutes(10),
-        );
-        job.status = JobStatus::Running;
-        job.started_at = Some(Utc::now());
-        job
+            INSTANCE,
+            Utc::now(),
+        )
     }
 
     #[test]
@@ -711,6 +814,7 @@ mod tests {
             asset_repo.clone(),
             storage.clone(),
             configuration(),
+            INSTANCE,
         );
 
         service.run_if_due();
@@ -749,6 +853,7 @@ mod tests {
             asset_repo.clone(),
             storage.clone(),
             configuration(),
+            INSTANCE,
         );
 
         service.run_if_due();
@@ -783,6 +888,7 @@ mod tests {
             asset_repo.clone(),
             storage.clone(),
             configuration(),
+            INSTANCE,
         );
 
         service.run_if_due();
@@ -817,6 +923,7 @@ mod tests {
             asset_repo.clone(),
             storage.clone(),
             configuration(),
+            INSTANCE,
         );
 
         service.run_if_due();
@@ -847,6 +954,7 @@ mod tests {
                 objects: Mutex::new(HashSet::new()),
             }),
             config.clone(),
+            INSTANCE,
         );
 
         let recent = finished_job(Utc::now());
@@ -870,21 +978,22 @@ mod tests {
             }),
             storage,
             configuration(),
+            INSTANCE,
         )
     }
 
     #[test]
     fn survives_repository_lookup_errors() {
-        // Expire and find_running both fail -> log and skip without panicking.
+        // find_active fails -> log and skip without panicking.
         let service = error_service(
-            Arc::new(FailingJobRepository::new(&["expire", "find_running"])),
+            Arc::new(FailingJobRepository::new(&["find_active"])),
             Arc::new(MemoryAssetStorage {
                 objects: Mutex::new(HashSet::new()),
             }),
         );
         service.run_if_due();
 
-        // find_running error returns early, so nothing was deleted.
+        // find_last error returns early, so nothing was deleted.
         let service = error_service(
             Arc::new(FailingJobRepository::new(&["find_last"])),
             Arc::new(MemoryAssetStorage {
@@ -896,19 +1005,78 @@ mod tests {
     }
 
     #[test]
-    fn records_expired_stale_running_jobs() {
+    fn skips_when_another_instance_holds_the_lock() {
         let storage = Arc::new(MemoryAssetStorage {
-            objects: Mutex::new(HashSet::new()),
+            objects: Mutex::new(HashSet::from(["provider/orphan.jpg".to_string()])),
         });
-        let job_repo = Arc::new(FailingJobRepository::new(&[]).with_expire_result(1));
-        let service = error_service(job_repo, storage);
+        let asset_repo = Arc::new(MemoryAssetRepository {
+            known: Mutex::new(HashSet::new()),
+        });
+        let job_repo = Arc::new(MemoryJobRepository::new(Vec::new()));
+        // Another instance already owns the type's lock.
+        job_repo
+            .acquire(
+                ASSET_CLEANUP_JOB_TYPE,
+                Uuid::new_v4(),
+                Utc::now() + Duration::hours(1),
+            )
+            .unwrap();
+        let service = AssetCleanupService::new(
+            job_repo.clone(),
+            asset_repo.clone(),
+            storage.clone(),
+            configuration(),
+            INSTANCE,
+        );
+
         service.run_if_due();
+
+        assert_eq!(
+            storage.list_object_keys().unwrap().len(),
+            1,
+            "must not delete when another instance owns the lock"
+        );
+        assert!(
+            !job_repo
+                .jobs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|job| job.status == JobStatus::Finished)
+        );
     }
 
     #[test]
-    fn marks_job_failed_when_start_fails() {
+    fn records_cancelled_when_a_request_arrives_during_cleanup() {
+        let job_repo = Arc::new(MemoryJobRepository::new(Vec::new()));
+        let service = AssetCleanupService::new(
+            job_repo.clone(),
+            Arc::new(MemoryAssetRepository {
+                known: Mutex::new(HashSet::new()),
+            }),
+            Arc::new(MemoryAssetStorage {
+                objects: Mutex::new(HashSet::new()),
+            }),
+            configuration(),
+            INSTANCE,
+        );
+
+        // Seed a RUNNING job and request cancellation while it is "running",
+        // then drive the finalize path directly against it.
+        let job = running_job();
+        job_repo.insert(job.clone()).unwrap();
+        job_repo.request_cancellation(job.id).unwrap();
+
+        service.finalize(job.id, &job.name, Ok(()));
+
+        let stored = job_repo.find_by_id(job.id).unwrap().unwrap();
+        assert_eq!(stored.status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn logs_when_acquire_fails() {
         let service = error_service(
-            Arc::new(FailingJobRepository::new(&["set_running"])),
+            Arc::new(FailingJobRepository::new(&["acquire"])),
             Arc::new(MemoryAssetStorage {
                 objects: Mutex::new(HashSet::new()),
             }),

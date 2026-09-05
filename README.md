@@ -75,13 +75,15 @@ database_name="bike_counter"
 
 # CRON expression for the data-source update job (default: every hour).
 data_source_update_cron="0 * * * * *"
-# REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).
-data_source_update_max_lifetime_seconds=600
+# REQUIRED max heartbeat interval for the update job in seconds (no default).
+# A dedicated loop refreshes a running job every few seconds, so a few minutes
+# is plenty; a worker silent for longer is treated as dead and its lock reclaimed.
+data_source_update_max_heartbeat_interval_seconds=300
 
 # CRON expression for the asset cleanup job (default: daily at 04:00).
 asset_cleanup_cron="0 0 4 * * *"
-# REQUIRED ShedLock-style max lifetime for the asset cleanup job in seconds (no default).
-asset_cleanup_max_lifetime_seconds=3600
+# REQUIRED max heartbeat interval for the asset cleanup job in seconds (no default).
+asset_cleanup_max_heartbeat_interval_seconds=300
 
 # S3-compatible object storage (MinIO) holding counting-station image binaries.
 # PostgreSQL stores only the metadata; the BFF streams the content to browsers.
@@ -150,17 +152,21 @@ and health checks still work).
 ### Background data-source updates
 
 A cron-driven scheduler keeps the configured data sources up to date. Every run
-is recorded as a generic ShedLock-style **job** in the `jobs` table and goes
-through a lifecycle: `PENDING -> RUNNING -> FINISHED` (or `FAILED`).
+is recorded as a generic ShedLock-style **job** in the `jobs` table: the run
+first claims the job type's `job_locks` row (an atomic `INSERT ... ON CONFLICT
+... WHERE lock_until < now()`), then inserts a `RUNNING` job owned by this
+backend's random `instance_id` and moves it to `FINISHED` / `FAILED` /
+`CANCELLED`. Only one instance can own a job type at a time.
 
 - `data_source_update_cron` – CRON expression that re-triggers the update job.
   Defaults to `"0 0 * * * *"` (every hour) and is validated at startup.
-- `data_source_update_max_lifetime_seconds` – **required** (no default): the max
-  lifetime of an update job. Each job gets an absolute `lifetime_until` deadline
-  (`insert time + max lifetime`) stored as `TIMESTAMPTZ`. A `RUNNING` job blocks
-  other runs of the same type **only until** that deadline; a stale `RUNNING` job
-  past its deadline is expired to `FAILED` with `max_lifetime_exceeded = true`,
-  so the next run can proceed even after a crash.
+- `data_source_update_max_heartbeat_interval_seconds` – **required** (no
+  default): the max time between two heartbeats before a job is treated as dead.
+  While a job runs, a dedicated loop refreshes its `heartbeat_at` (and the lock
+  lease) roughly every `min(interval/3, 5 s)`; a stale `RUNNING` job (heartbeat
+  older than the interval) is moved to `CANCELLATION_REQUESTED` by the periodic
+  watcher and, if it still does not heartbeat, force-finalized as `CANCELLED`,
+  so a crashed worker cannot block the type forever.
 
 Scheduling semantics:
 
@@ -169,8 +175,18 @@ Scheduling semantics:
   scheduled trigger after its `finished_at` has already passed). A missed slot
   while the process was down is therefore caught up on the next startup.
 - Afterwards it runs on the CRON schedule.
-- While a job of the same type is `RUNNING` and within its `lifetime_until`, new
-  runs are skipped (a warning is printed).
+- While an active job of the same type (`RUNNING` or `CANCELLATION_REQUESTED`)
+  exists, new runs are skipped (a warning is printed).
+- Every job type is cancellable through
+  `POST /api/v1/jobs/{id}/cancel` (see the [API overview](#api-overview)): a
+  non-`force` request sets `CANCELLATION_REQUESTED` so the worker stops
+  gracefully at the next sub-task boundary, `{"force": true}` sets `CANCELLED`
+  immediately, and stale jobs are recovered by the periodic watcher. Every
+  terminal transition (`FINISHED`/`FAILED` by the worker, `CANCELLED` by the
+  cancel endpoint, the worker's cooperative stop or the watcher's force-cancel)
+  frees the type's `job_locks` row in the same database transaction, so a
+  terminal job — including one whose worker is gone — can never keep the next
+  run waiting with a stale "already active elsewhere" lock.
 - Updates are **incremental**: each data source's `imported_until` advances to
   the last processed measurement timestamp, so consecutive runs do not reprocess
   data. Per data source the order is strict: counting stations, then channels,
@@ -204,7 +220,7 @@ alias table for the stations Bonn renamed between years). The three
 are excluded so the global summary is not double-counted. The first import serves
 the backfill plus the current data; the `imported_until` watermark then keeps
 only the current data flowing — that first run may require raising
-`data_source_update_max_lifetime_seconds`. Older Bonn years (2015–2022) are
+`data_source_update_max_heartbeat_interval_seconds`. Older Bonn years (2015–2022) are
 published on govdata but their resources resolve to HTML pages, so they are not
 enabled by default.
 
@@ -312,8 +328,8 @@ station↔asset link; the binary bytes never touch the database.
   after a crash between `put` and `save`):
   - `asset_cleanup_cron` – validated CRON expression, defaults to
     `"0 0 4 * * *"`.
-  - `asset_cleanup_max_lifetime_seconds` – **required** (no default), same
-    ShedLock-style deadline semantics as the data-source update job.
+  - `asset_cleanup_max_heartbeat_interval_seconds` – **required** (no default),
+    same ShedLock-style heartbeat semantics as the data-source update job.
 
 ### Persistent provider state
 
@@ -488,10 +504,10 @@ docker compose logs -f           # make logs
   database_name="bike_counter"
 
   data_source_update_cron="0 0 * * * *"
-  data_source_update_max_lifetime_seconds=3600
+  data_source_update_max_heartbeat_interval_seconds=300
 
   asset_cleanup_cron="0 0 4 * * *"
-  asset_cleanup_max_lifetime_seconds=3600
+  asset_cleanup_max_heartbeat_interval_seconds=300
 
   [asset_storage]
   endpoint = "http://minio:9000"
@@ -538,6 +554,7 @@ counting-station endpoint supports `PATCH` to set a station's GPS coordinates:
 - `DELETE /api/v1/data-sources/{id}/persistent_state` – clear the whole store (`204`; `404` unknown data source)
 - `GET /api/v1/data-sources/{id}/messages` – read-only provider messages for a data source, newest first
 - `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
+- `POST /api/v1/jobs/{id}/cancel` with optional body `{"force": true}` – cancel a job: `RUNNING` → `CANCELLATION_REQUESTED` (the worker stops at the next sub-task boundary) or, with `force`, directly `CANCELLED`; `200` returns the updated job, `404` unknown job, `400` terminal job
 - `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}` — stations carry optional `latitude`/`longitude` (WGS84)
 - `PATCH /api/v1/counting-stations/{id}` with body `{"latitude": ..., "longitude": ...}` (fields optional; `null` clears a coordinate) — sets a station's GPS coordinates
 - `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
@@ -753,8 +770,9 @@ Under the hood the scripts are:
 - [`scripts/docker-compose-test.sh`](scripts/docker-compose-test.sh) – boots the
   real docker-compose stack (PostgreSQL + app), waits for readiness, asserts the
   jobs + data-sources APIs return `200`, verifies a `data_source_update` job with
-  `lifetime_until` was recorded, and checks `jobs.lifetime_until TIMESTAMPTZ NOT
-  NULL` and `data_sources.imported_until` via `psql`, then tears everything down.
+  an `instance_id` was recorded, and checks `jobs.instance_id`/`heartbeat_at`,
+  the `job_locks` table and `data_sources.imported_until` via `psql`, then tears
+  everything down.
 - [`scripts/e2e-playwright.sh`](scripts/e2e-playwright.sh) – Playwright browser
   e2e tests against the real stack, seeded from the committed
   [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) fixture via the

@@ -82,14 +82,14 @@ fn measurement(channel_id: u128, value: i64, when: DateTime<Utc>) -> Measurement
 }
 
 fn finished_job(id: u128, finished_at: DateTime<Utc>) -> Job {
-    let mut job = Job::new(
+    let mut job = Job::running(
         Uuid::from_u128(id),
         "Data source update".to_string(),
         DATA_SOURCE_UPDATE_JOB_TYPE.to_string(),
-        finished_at + chrono::Duration::hours(1),
+        Uuid::new_v4(),
+        finished_at - chrono::Duration::minutes(5),
     );
     job.status = JobStatus::Finished;
-    job.started_at = Some(finished_at - chrono::Duration::minutes(5));
     job.finished_at = Some(finished_at);
     job
 }
@@ -574,8 +574,26 @@ impl JobRepository for MemoryJobRepository {
     fn insert(&self, _job: Job) -> Result<(), DomainError> {
         Ok(())
     }
-    fn set_running(&self, _id: Uuid, _started_at: DateTime<Utc>) -> Result<(), DomainError> {
+    fn acquire(
+        &self,
+        _job_type: &str,
+        _instance_id: Uuid,
+        _lock_until: DateTime<Utc>,
+    ) -> Result<bool, DomainError> {
+        Ok(true)
+    }
+    fn release(&self, _job_type: &str, _instance_id: Uuid) -> Result<(), DomainError> {
         Ok(())
+    }
+    fn heartbeat(
+        &self,
+        _id: Uuid,
+        _job_type: &str,
+        _instance_id: Uuid,
+        _at: DateTime<Utc>,
+        _lock_until: DateTime<Utc>,
+    ) -> Result<JobStatus, DomainError> {
+        Ok(JobStatus::Running)
     }
     fn set_finished(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
         Ok(())
@@ -586,6 +604,12 @@ impl JobRepository for MemoryJobRepository {
         _finished_at: DateTime<Utc>,
         _message: &str,
     ) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn request_cancellation(&self, _id: Uuid) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn mark_cancelled(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
         Ok(())
     }
     fn update_metadata(
@@ -606,8 +630,8 @@ impl JobRepository for MemoryJobRepository {
     ) -> Result<Vec<Job>, DomainError> {
         Ok(self.jobs.clone())
     }
-    fn find_running_by_type(&self, _job_type: &str) -> Result<Option<Job>, DomainError> {
-        Ok(None)
+    fn find_active_by_type(&self, _job_type: &str) -> Result<Vec<Job>, DomainError> {
+        Ok(vec![])
     }
     fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
         Ok(self
@@ -617,12 +641,13 @@ impl JobRepository for MemoryJobRepository {
             .max_by_key(|job| job.finished_at)
             .cloned())
     }
-    fn expire_running_jobs(
+    fn reconcile_stale_active(
         &self,
         _job_type: &str,
+        _heartbeat_before: DateTime<Utc>,
         _now: DateTime<Utc>,
-    ) -> Result<u64, DomainError> {
-        Ok(0)
+    ) -> Result<(), DomainError> {
+        Ok(())
     }
 }
 

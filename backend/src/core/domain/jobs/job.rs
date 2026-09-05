@@ -217,9 +217,9 @@ mod tests {
         requested.status = JobStatus::CancellationRequested;
         assert!(requested.is_cancellation_requested());
         assert!(!requested.is_terminal());
-        // An already-requested job can still be force-cancelled.
+        // An already-requested job can still be force-cancelled (HATEOAS keeps
+        // the cancel link until the job is actually terminal).
         assert!(requested.is_cancellable());
-        assert!(!requested.is_cancellable());
 
         let mut failed = Job::running(
             Uuid::new_v4(),

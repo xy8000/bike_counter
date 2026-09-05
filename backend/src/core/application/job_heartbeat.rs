@@ -9,8 +9,8 @@
 //! the job is no longer RUNNING, so the worker gets prompt cancellation
 //! detection bounded by the tick rather than by sub-task duration.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration as StdDuration;
 
@@ -54,13 +54,7 @@ impl JobHeartbeat {
                     return;
                 }
                 let now = Utc::now();
-                match job_repository.heartbeat(
-                    job_id,
-                    job_type,
-                    instance_id,
-                    now,
-                    now + interval,
-                ) {
+                match job_repository.heartbeat(job_id, job_type, instance_id, now, now + interval) {
                     // Still RUNNING: keep beating.
                     Ok(JobStatus::Running) => {}
                     // Cancellation requested / already cancelled / terminal: signal
@@ -181,7 +175,11 @@ mod tests {
             Ok(())
         }
 
-        fn mark_cancelled(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+        fn mark_cancelled(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
 

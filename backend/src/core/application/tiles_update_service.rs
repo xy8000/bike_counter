@@ -65,11 +65,20 @@ impl TilesUpdateService {
     pub fn run_if_due(&self) {
         let now = Utc::now();
 
-        match self.job_repository.find_active_by_type(TILES_UPDATE_JOB_TYPE) {
+        match self
+            .job_repository
+            .find_active_by_type(TILES_UPDATE_JOB_TYPE)
+        {
             Ok(active) if !active.is_empty() => {
+                let count = active.len();
+                let ids = active
+                    .iter()
+                    .map(|job| job.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 println!(
-                    "Tiles update job is still active ({} running/requesting); skipping",
-                    active.len()
+                    "Tiles update job is still active ({count} running/requesting: {ids}); \
+                     skipping"
                 );
                 return;
             }
@@ -91,7 +100,8 @@ impl TilesUpdateService {
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
                     println!(
-                        "Tiles update job is overdue (last run at {}); running",
+                        "Tiles update job is overdue (last run {} at {}); running",
+                        last.id,
                         last.finished_at
                             .map(|ts| ts.to_rfc3339())
                             .unwrap_or_else(|| "unknown".to_string())
@@ -134,7 +144,7 @@ impl TilesUpdateService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("Tiles update is already running elsewhere; skipping");
+                println!("Tiles update is already active elsewhere (job_locks held); skipping");
                 return;
             }
             Err(error) => {
@@ -154,7 +164,9 @@ impl TilesUpdateService {
         let job_id = job.id;
         let job_name = job.name.clone();
         if let Err(error) = self.job_repository.insert(job) {
-            let _ = self.job_repository.release(TILES_UPDATE_JOB_TYPE, instance_id);
+            let _ = self
+                .job_repository
+                .release(TILES_UPDATE_JOB_TYPE, instance_id);
             eprintln!("Failed to record tiles update job {job_name} ({job_id}): {error:?}");
             return;
         }
@@ -196,7 +208,9 @@ impl TilesUpdateService {
                 } else {
                     eprintln!("Tiles update job {job_name} ({job_id}) failed: {error:?}");
                 }
-                let _ = self.job_repository.release(TILES_UPDATE_JOB_TYPE, self.instance_id);
+                let _ = self
+                    .job_repository
+                    .release(TILES_UPDATE_JOB_TYPE, self.instance_id);
             }
         }
     }
@@ -236,7 +250,9 @@ impl TilesUpdateService {
         } else {
             println!("Tiles update job {job_name} ({job_id}) finished");
         }
-        let _ = self.job_repository.release(TILES_UPDATE_JOB_TYPE, self.instance_id);
+        let _ = self
+            .job_repository
+            .release(TILES_UPDATE_JOB_TYPE, self.instance_id);
     }
 
     /// Marks the job CANCELLED and releases the type's lock.
@@ -245,10 +261,14 @@ impl TilesUpdateService {
             Ok(()) => println!("Tiles update job {job_name} ({job_id}) cancelled"),
             Err(error) => {
                 // Already terminal (e.g. force-cancelled elsewhere): fine.
-                eprintln!("Could not finalize tiles update job {job_name} ({job_id}) as cancelled: {error:?}");
+                eprintln!(
+                    "Could not finalize tiles update job {job_name} ({job_id}) as cancelled: {error:?}"
+                );
             }
         }
-        let _ = self.job_repository.release(TILES_UPDATE_JOB_TYPE, self.instance_id);
+        let _ = self
+            .job_repository
+            .release(TILES_UPDATE_JOB_TYPE, self.instance_id);
     }
 
     /// Delegates the actual (atomic) rebuild to the provisioning adapter.
@@ -460,15 +480,15 @@ mod tests {
 
         fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
             let mut jobs = self.jobs.lock().unwrap();
-            if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
-                if matches!(
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+                && matches!(
                     job.status,
                     JobStatus::Running | JobStatus::CancellationRequested
-                ) {
-                    job.status = JobStatus::Cancelled;
-                    job.finished_at = Some(finished_at);
-                    job.failure_message = Some("cancelled".to_string());
-                }
+                )
+            {
+                job.status = JobStatus::Cancelled;
+                job.finished_at = Some(finished_at);
+                job.failure_message = Some("cancelled".to_string());
             }
             Ok(())
         }
@@ -560,7 +580,10 @@ mod tests {
         )
     }
 
-    fn service(repo: Arc<MemoryJobRepository>, provisioning: Arc<MockTilesProvisioning>) -> TilesUpdateService {
+    fn service(
+        repo: Arc<MemoryJobRepository>,
+        provisioning: Arc<MockTilesProvisioning>,
+    ) -> TilesUpdateService {
         TilesUpdateService::new(repo, provisioning, configuration(), INSTANCE)
     }
 
@@ -654,8 +677,12 @@ mod tests {
     fn does_not_claim_when_another_instance_holds_the_lock() {
         let repo = Arc::new(MemoryJobRepository::new(vec![]));
         // Another instance already owns the lock.
-        repo.acquire(TILES_UPDATE_JOB_TYPE, Uuid::new_v4(), Utc::now() + Duration::hours(1))
-            .unwrap();
+        repo.acquire(
+            TILES_UPDATE_JOB_TYPE,
+            Uuid::new_v4(),
+            Utc::now() + Duration::hours(1),
+        )
+        .unwrap();
         let provisioning = Arc::new(MockTilesProvisioning::new(false));
 
         service(repo.clone(), provisioning.clone()).run_if_due();

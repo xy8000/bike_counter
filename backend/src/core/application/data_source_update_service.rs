@@ -1,10 +1,12 @@
 //! Application job runner that keeps the configured data sources up to date.
 //!
 //! Every run is tracked as a generic ShedLock-style job (see the `jobs` domain):
-//! a PENDING job is inserted with a `lifetime_until` deadline, moved to RUNNING,
-//! then to FINISHED (or FAILED). While a job is RUNNING and within its lifetime
-//! it blocks other runs of the same type; stale RUNNING jobs past their
-//! lifetime are expired (flagged with `max_lifetime_exceeded`).
+//! the type's `job_locks` row is claimed first, then a RUNNING job owned by this
+//! instance is inserted and moved to FINISHED/FAILED/CANCELLED. Only one
+//! instance may own a job type at a time; while a job is RUNNING (or
+//! CANCELLATION_REQUESTED) it blocks other runs of the same type. A dedicated
+//! heartbeat loop keeps the job fresh, and the periodic watcher reconciles stale
+//! RUNNING jobs (see [`JobReconciliationService`]).
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -89,20 +91,30 @@ impl DataSourceUpdateService {
     /// The same always-on rule applies on every invocation (startup and cron
     /// ticks): run if the job has never succeeded or the last successful run is
     /// overdue (at least one scheduled cron trigger was missed since it
-    /// finished). A RUNNING job within its lifetime always blocks: print a
-    /// warning and do NOT start a second run. Stale RUNNING jobs past their
-    /// `lifetime_until` are expired first, so the next job can proceed even
-    /// after a worker crash.
+    /// finished). An active job (RUNNING or CANCELLATION_REQUESTED) always
+    /// blocks: print a warning and do NOT start a second run. Stale RUNNING
+    /// jobs are reconciled by the periodic watcher (see
+    /// [`JobReconciliationService`]) so a crashed worker cannot block the type
+    /// forever.
     pub fn run_if_due(&self) {
         let now = Utc::now();
 
         // A RUNNING (or cancellation-requested) job blocks a new run; the
         // periodic watcher reconciles stale ones (see JobReconciliationService).
-        match self.job_repository.find_active_by_type(DATA_SOURCE_UPDATE_JOB_TYPE) {
+        match self
+            .job_repository
+            .find_active_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
+        {
             Ok(active) if !active.is_empty() => {
+                let count = active.len();
+                let ids = active
+                    .iter()
+                    .map(|job| job.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 println!(
-                    "Data source update job is still active ({} running/requesting); skipping",
-                    active.len()
+                    "Data source update job is still active ({count} running/requesting: {ids}); \
+                     skipping"
                 );
                 return;
             }
@@ -126,7 +138,8 @@ impl DataSourceUpdateService {
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
                     println!(
-                        "Data source update job is overdue (last run at {}); running",
+                        "Data source update job is overdue (last run {} at {}); running",
+                        last.id,
                         last.finished_at
                             .map(|ts| ts.to_rfc3339())
                             .unwrap_or_else(|| "unknown".to_string())
@@ -162,7 +175,9 @@ impl DataSourceUpdateService {
 
     /// Runs one full data-source update as a job owned by this instance.
     fn execute(&self, now: DateTime<Utc>) {
-        let interval = self.configuration.data_source_update_max_heartbeat_interval();
+        let interval = self
+            .configuration
+            .data_source_update_max_heartbeat_interval();
         let instance_id = self.instance_id;
 
         // 1. Claim the type's lock; only the winning instance proceeds.
@@ -172,7 +187,9 @@ impl DataSourceUpdateService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("Data source update is already running elsewhere; skipping");
+                println!(
+                    "Data source update is already active elsewhere (job_locks held); skipping"
+                );
                 return;
             }
             Err(error) => {
@@ -192,7 +209,9 @@ impl DataSourceUpdateService {
         let job_id = job.id;
         let job_name = job.name.clone();
         if let Err(error) = self.job_repository.insert(job) {
-            let _ = self.job_repository.release(DATA_SOURCE_UPDATE_JOB_TYPE, instance_id);
+            let _ = self
+                .job_repository
+                .release(DATA_SOURCE_UPDATE_JOB_TYPE, instance_id);
             eprintln!("Failed to record data-source update job {job_name} ({job_id}): {error:?}");
             return;
         }
@@ -255,21 +274,23 @@ impl DataSourceUpdateService {
                 }
             }
         }
-        let _ = self.job_repository.release(DATA_SOURCE_UPDATE_JOB_TYPE, self.instance_id);
+        let _ = self
+            .job_repository
+            .release(DATA_SOURCE_UPDATE_JOB_TYPE, self.instance_id);
     }
 
     /// Updates **every configured data source in parallel**, one blocking thread
     /// per source, while keeping the aggregate job single. Each source runs
     /// through its source-level read ([`DataImportService::update_data_source`],
     /// which pages across the whole source via
-    /// [`DataProvider::get_measurements_source`]): the run stops gracefully at
-    /// the job `deadline` (`lifetime_until`) and the reported safe watermark is
-    /// checkpointed into `imported_until` after every batch — so an interrupted
-    /// (deadline/crash) run resumes instead of reprocessing.
+    /// [`DataProvider::get_measurements_source`]). After every batch the run
+    /// checkpoints the safe watermark into `imported_until` and honors a
+    /// cancellation request, so an interrupted (cancelled/crash) run resumes
+    /// instead of reprocessing.
     ///
-    /// A deadline stop returns `Ok` (a partial but valid success): `execute`
-    /// then marks the job FINISHED and the next scheduled run resumes from the
-    /// checkpoint.
+    /// A cooperative cancellation stop returns `Ok` (a partial but valid
+    /// success): the aggregate job is finalized as CANCELLED and the next
+    /// scheduled run resumes from the checkpoint.
     ///
     /// All sources are started even when one fails; the returned error (which
     /// fails the aggregate job) summarizes every failing source.
@@ -458,7 +479,9 @@ impl DataSourceUpdateService {
     /// cancellation was requested, so the batch loop stops gracefully.
     fn check_cancellation(&self, job_id: Uuid) -> Result<(), DomainError> {
         let now = Utc::now();
-        let interval = self.configuration.data_source_update_max_heartbeat_interval();
+        let interval = self
+            .configuration
+            .data_source_update_max_heartbeat_interval();
         match self.job_repository.heartbeat(
             job_id,
             DATA_SOURCE_UPDATE_JOB_TYPE,
@@ -522,6 +545,8 @@ mod tests {
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
     use crate::core::domain::measurements::repository_port::MeasurementRepository;
+
+    const INSTANCE: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00B1);
 
     fn asset_storage() -> AssetStorageConfiguration {
         AssetStorageConfiguration::new(
@@ -602,8 +627,8 @@ mod tests {
     /// An in-memory job repository that records the full lifecycle.
     struct MockJobRepository {
         jobs: Mutex<Vec<Job>>,
-        fail_set_running: bool,
-        fail_expire: bool,
+        locks: Mutex<HashMap<String, (Uuid, DateTime<Utc>)>>,
+        fail_acquire: bool,
         fail_insert: bool,
         fail_find_running: bool,
         fail_find_last_finished: bool,
@@ -615,8 +640,8 @@ mod tests {
         fn new(jobs: Vec<Job>) -> Self {
             Self {
                 jobs: Mutex::new(jobs),
-                fail_set_running: false,
-                fail_expire: false,
+                locks: Mutex::new(HashMap::new()),
+                fail_acquire: false,
                 fail_insert: false,
                 fail_find_running: false,
                 fail_find_last_finished: false,
@@ -625,12 +650,8 @@ mod tests {
             }
         }
 
-        fn set_fail_set_running(&mut self, fail: bool) {
-            self.fail_set_running = fail;
-        }
-
-        fn set_fail_expire(&mut self, fail: bool) {
-            self.fail_expire = fail;
+        fn set_fail_acquire(&mut self, fail: bool) {
+            self.fail_acquire = fail;
         }
 
         fn set_fail_insert(&mut self, fail: bool) {
@@ -663,32 +684,55 @@ mod tests {
             if self.fail_insert {
                 return Err(DomainError::Database("insert failed".to_string()));
             }
-            if job.lifetime_until <= Utc::now() {
-                return Err(DomainError::InvalidQuery(
-                    "a job requires a lifetime_until deadline in the future".to_string(),
-                ));
-            }
             self.jobs.lock().unwrap().push(job);
             Ok(())
         }
 
-        fn set_running(&self, id: Uuid, started_at: DateTime<Utc>) -> Result<(), DomainError> {
-            if self.fail_set_running {
-                return Err(DomainError::InvalidQuery("cannot start".to_string()));
+        fn acquire(
+            &self,
+            job_type: &str,
+            instance_id: Uuid,
+            lock_until: DateTime<Utc>,
+        ) -> Result<bool, DomainError> {
+            if self.fail_acquire {
+                return Err(DomainError::Database("acquire failed".to_string()));
             }
-            let mut jobs = self.jobs.lock().unwrap();
-            let job = jobs
-                .iter_mut()
-                .find(|job| job.id == id)
-                .ok_or(DomainError::NotFound(id))?;
-            if job.status != JobStatus::Pending {
-                return Err(DomainError::InvalidQuery(format!(
-                    "job {id} is not in PENDING state"
-                )));
+            let mut locks = self.locks.lock().unwrap();
+            match locks.get(job_type) {
+                Some((_, until)) if *until >= Utc::now() => Ok(false),
+                _ => {
+                    locks.insert(job_type.to_string(), (instance_id, lock_until));
+                    Ok(true)
+                }
             }
-            job.status = JobStatus::Running;
-            job.started_at = Some(started_at);
+        }
+
+        fn release(&self, job_type: &str, instance_id: Uuid) -> Result<(), DomainError> {
+            let mut locks = self.locks.lock().unwrap();
+            if locks
+                .get(job_type)
+                .is_some_and(|(owner, _)| *owner == instance_id)
+            {
+                locks.remove(job_type);
+            }
             Ok(())
+        }
+
+        fn heartbeat(
+            &self,
+            id: Uuid,
+            _job_type: &str,
+            _instance_id: Uuid,
+            at: DateTime<Utc>,
+            _lock_until: DateTime<Utc>,
+        ) -> Result<JobStatus, DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
+                job.heartbeat_at = Some(at);
+                Ok(job.status)
+            } else {
+                Err(DomainError::NotFound(id))
+            }
         }
 
         fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
@@ -725,6 +769,31 @@ mod tests {
             Ok(())
         }
 
+        fn request_cancellation(&self, id: Uuid) -> Result<(), DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+                && job.status == JobStatus::Running
+            {
+                job.status = JobStatus::CancellationRequested;
+            }
+            Ok(())
+        }
+
+        fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
+                && matches!(
+                    job.status,
+                    JobStatus::Running | JobStatus::CancellationRequested
+                )
+            {
+                job.status = JobStatus::Cancelled;
+                job.finished_at = Some(finished_at);
+                job.failure_message = Some("cancelled".to_string());
+            }
+            Ok(())
+        }
+
         fn update_metadata(
             &self,
             id: Uuid,
@@ -758,7 +827,7 @@ mod tests {
             Ok(self.jobs.lock().unwrap().clone())
         }
 
-        fn find_running_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+        fn find_active_by_type(&self, job_type: &str) -> Result<Vec<Job>, DomainError> {
             if self.fail_find_running {
                 return Err(DomainError::Database("find running failed".to_string()));
             }
@@ -767,8 +836,15 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|job| job.job_type == job_type && job.status == JobStatus::Running)
-                .cloned())
+                .filter(|job| {
+                    job.job_type == job_type
+                        && matches!(
+                            job.status,
+                            JobStatus::Running | JobStatus::CancellationRequested
+                        )
+                })
+                .cloned()
+                .collect())
         }
 
         fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
@@ -785,29 +861,13 @@ mod tests {
                 .cloned())
         }
 
-        fn expire_running_jobs(
+        fn reconcile_stale_active(
             &self,
-            job_type: &str,
-            now: DateTime<Utc>,
-        ) -> Result<u64, DomainError> {
-            if self.fail_expire {
-                return Err(DomainError::Database("expire failed".to_string()));
-            }
-            let mut jobs = self.jobs.lock().unwrap();
-            let mut expired = 0u64;
-            for job in jobs.iter_mut() {
-                if job.job_type == job_type
-                    && job.status == JobStatus::Running
-                    && now > job.lifetime_until
-                {
-                    job.status = JobStatus::Failed;
-                    job.finished_at = Some(now);
-                    job.failure_message = Some("Max lifetime exceeded".to_string());
-                    job.max_lifetime_exceeded = true;
-                    expired += 1;
-                }
-            }
-            Ok(expired)
+            _job_type: &str,
+            _heartbeat_before: DateTime<Utc>,
+            _now: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            Ok(())
         }
     }
 
@@ -1242,28 +1302,26 @@ mod tests {
         }
     }
 
-    fn running_job(job_type: &str, started: DateTime<Utc>, lifetime_until: DateTime<Utc>) -> Job {
-        let mut job = Job::new(
+    fn running_job(job_type: &str, started: DateTime<Utc>) -> Job {
+        Job::running(
             Uuid::new_v4(),
-            "Data source update".to_string(),
+            DATA_SOURCE_UPDATE_JOB_NAME.to_string(),
             job_type.to_string(),
-            lifetime_until,
-        );
-        job.status = JobStatus::Running;
-        job.started_at = Some(started);
-        job
+            INSTANCE,
+            started,
+        )
     }
 
     fn finished_job(job_type: &str) -> Job {
         let now = Utc::now();
-        let mut job = Job::new(
+        let mut job = Job::running(
             Uuid::new_v4(),
-            "Data source update".to_string(),
+            DATA_SOURCE_UPDATE_JOB_NAME.to_string(),
             job_type.to_string(),
-            now + Duration::seconds(3600),
+            INSTANCE,
+            now - Duration::seconds(60),
         );
         job.status = JobStatus::Finished;
-        job.started_at = Some(now - Duration::seconds(60));
         job.finished_at = Some(now);
         job
     }
@@ -1271,14 +1329,14 @@ mod tests {
     /// A FINISHED job whose `finished_at` is the given instant, so tests can
     /// control whether the last successful run is overdue.
     fn finished_job_at(job_type: &str, finished_at: DateTime<Utc>) -> Job {
-        let mut job = Job::new(
+        let mut job = Job::running(
             Uuid::new_v4(),
-            "Data source update".to_string(),
+            DATA_SOURCE_UPDATE_JOB_NAME.to_string(),
             job_type.to_string(),
-            finished_at + Duration::seconds(3600),
+            INSTANCE,
+            finished_at - Duration::seconds(60),
         );
         job.status = JobStatus::Finished;
-        job.started_at = Some(finished_at - Duration::seconds(60));
         job.finished_at = Some(finished_at);
         job
     }
@@ -1375,6 +1433,7 @@ mod tests {
             data_import,
             Arc::new(configuration()),
             runtimes,
+            INSTANCE,
         )
     }
 
@@ -1408,17 +1467,13 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].job_type, DATA_SOURCE_UPDATE_JOB_TYPE);
         assert_eq!(jobs[0].status, JobStatus::Finished);
-        assert!(!jobs[0].max_lifetime_exceeded);
+        assert_eq!(jobs[0].instance_id, Some(INSTANCE));
     }
 
     #[test]
     fn skips_when_another_run_is_still_within_lifetime() {
         let now = Utc::now();
-        let running = running_job(
-            DATA_SOURCE_UPDATE_JOB_TYPE,
-            now,
-            now + Duration::seconds(3600),
-        );
+        let running = running_job(DATA_SOURCE_UPDATE_JOB_TYPE, now);
         let job_repo = Arc::new(MockJobRepository::new(vec![running]));
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
@@ -1482,64 +1537,68 @@ mod tests {
     }
 
     #[test]
-    fn expires_stale_running_job_then_runs() {
-        let now = Utc::now();
-        // A RUNNING job past its lifetime_until: the scheduler must expire it
-        // (FAILED + boolean) and then run a fresh job.
-        let stale = running_job(
-            DATA_SOURCE_UPDATE_JOB_TYPE,
-            now - Duration::seconds(7200),
-            now - Duration::seconds(60),
-        );
-        let job_repo = Arc::new(MockJobRepository::new(vec![stale]));
-        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
-        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
-
-        service.run_if_due();
-
-        let jobs = job_repo.jobs();
-        assert_eq!(jobs.len(), 2, "stale job expired + new job inserted");
-        let stale_job = jobs
-            .iter()
-            .find(|job| job.status == JobStatus::Failed)
+    fn skips_when_another_instance_holds_the_lock() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        // Another instance already owns the type's lock.
+        job_repo
+            .acquire(
+                DATA_SOURCE_UPDATE_JOB_TYPE,
+                Uuid::new_v4(),
+                Utc::now() + Duration::hours(1),
+            )
             .unwrap();
-        assert!(stale_job.max_lifetime_exceeded);
-        assert_eq!(
-            stale_job.failure_message.as_deref(),
-            Some("Max lifetime exceeded")
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        assert!(
+            job_repo.jobs().is_empty(),
+            "a foreign lock prevents claiming a new job"
         );
-        assert!(jobs.iter().any(|job| job.status == JobStatus::Finished));
     }
 
     #[test]
-    fn marks_job_failed_when_start_fails() {
+    fn skips_when_acquire_fails() {
         let mut job_repo = MockJobRepository::new(Vec::new());
-        job_repo.set_fail_set_running(true);
+        job_repo.set_fail_acquire(true);
         let job_repo = Arc::new(job_repo);
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
         service.run_if_due();
 
-        // PENDING -> FAILED is a valid transition.
-        let jobs = job_repo.jobs();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].status, JobStatus::Failed);
-        assert!(jobs[0].failure_message.is_some());
+        // The acquire error is logged and no job is recorded.
+        assert!(job_repo.jobs().is_empty());
     }
 
     #[test]
-    fn run_if_due_handles_expire_running_jobs_error() {
-        let mut job_repo = MockJobRepository::new(Vec::new());
-        job_repo.set_fail_expire(true);
-        let job_repo = Arc::new(job_repo);
-        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
-        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+    fn records_cancelled_when_a_cancellation_request_arrives() {
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        // Seed a RUNNING aggregate job whose cancellation has been requested.
+        let job = running_job(DATA_SOURCE_UPDATE_JOB_TYPE, Utc::now());
+        job_repo.insert(job.clone()).unwrap();
+        job_repo.request_cancellation(job.id).unwrap();
 
-        // The expire error is logged and the service still proceeds: the job has
-        // never succeeded, so a new run starts anyway.
-        service.run_if_due();
-        assert_eq!(job_repo.jobs().len(), 1);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        // The import loop honors the request at the next batch boundary and the
+        // source is recorded as a graceful (partial) success...
+        let outcome = service.run_updates(job.id);
+        assert!(outcome.is_ok());
+
+        // ...and the aggregate job is finalized as CANCELLED.
+        service.finalize(job.id, &job.name, outcome);
+        let stored = job_repo.find_by_id(job.id).unwrap().unwrap();
+        assert_eq!(stored.status, JobStatus::Cancelled);
     }
 
     #[test]
@@ -1562,7 +1621,6 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].status, JobStatus::Failed);
         assert!(jobs[0].failure_message.is_some());
-        assert!(!jobs[0].max_lifetime_exceeded);
     }
 
     #[test]
@@ -1760,23 +1818,6 @@ mod tests {
 
         // The insert failure is logged; no job was recorded.
         assert!(job_repo.jobs().is_empty());
-    }
-
-    #[test]
-    fn execute_logs_when_failed_marking_fails_after_start_failure() {
-        let mut job_repo = MockJobRepository::new(Vec::new());
-        job_repo.set_fail_set_running(true);
-        job_repo.set_fail_set_failed(true);
-        let job_repo = Arc::new(job_repo);
-        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
-        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
-
-        service.run_if_due();
-
-        // The job stays PENDING because both the start and the failed-marking fail.
-        let jobs = job_repo.jobs();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].status, JobStatus::Pending);
     }
 
     #[test]

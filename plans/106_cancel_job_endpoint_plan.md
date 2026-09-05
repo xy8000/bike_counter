@@ -1,6 +1,6 @@
 # 106 - Cancel job REST endpoint, multi-instance heartbeat + HATEOAS update
 
-Status: drafted
+Status: implemented
 
 ## Problem
 
@@ -79,6 +79,14 @@ stateDiagram-v2
 - Cross-instance transitions (`request_cancellation`, force `mark_cancelled`)
   are safe because each is one atomic conditional `UPDATE`; whoever wins the
   status guard wins, and the loser observes the resulting terminal state.
+- **Terminal transitions release the type's lock themselves**: `set_finished`,
+  `set_failed` and `mark_cancelled` (worker finalize or the cancel endpoint)
+  delete the job's own `job_locks` row (scoped to its `instance_id`) in the same
+  transaction as the status change, and the watcher's stage-2 force-cancel does
+  the same for a dead owner in one statement. A terminal job — including one
+  whose worker is gone — can therefore never block the next run with a stale
+  "already active elsewhere" lock; the service's later explicit `release()` call
+  becomes a harmless no-op.
 
 ## Heartbeat frequency (revised)
 
@@ -345,20 +353,20 @@ Common `execute` shape per service:
 
 ## Definition of done
 
-- [ ] Plan registered in [`plans/README.md`](../plans/README.md:1)
-- [ ] `POST /api/v1/jobs/{id}/cancel` (with optional `{"force": true}`) cancels
+- [x] Plan registered in [`plans/README.md`](../plans/README.md:1)
+- [x] `POST /api/v1/jobs/{id}/cancel` (with optional `{"force": true}`) cancels
       every job type; unknown → 404, terminal → 400
-- [ ] `job_locks` table provides atomic, ShedLock-style claim (no hand-rolled
+- [x] `job_locks` table provides atomic, ShedLock-style claim (no hand-rolled
       `NOT EXISTS` race); `PENDING` removed
-- [ ] Jobs carry `instance_id` + `heartbeat_at`; workers heartbeat each sub-task
+- [x] Jobs carry `instance_id` + `heartbeat_at`; workers heartbeat each sub-task
       and stop on `CANCELLATION_REQUESTED`
-- [ ] Watcher reconciles stale RUNNING / CANCELLATION_REQUESTED jobs
-- [ ] `lifetime_until`/`max_lifetime_exceeded` and the `*_max_lifetime_seconds`
+- [x] Watcher reconciles stale RUNNING / CANCELLATION_REQUESTED jobs
+- [x] `lifetime_until`/`max_lifetime_exceeded` and the `*_max_lifetime_seconds`
       configs replaced by heartbeat equivalents
-- [ ] `JobDto` exposes `instance_id`/`heartbeat_at` and a conditional `cancel`
+- [x] `JobDto` exposes `instance_id`/`heartbeat_at` and a conditional `cancel`
       HATEOAS link
-- [ ] `make check` green
-- [ ] `make test-rest` green
-- [ ] `make test` green
-- [ ] `make coverage` green
-- [ ] README / plan docs updated
+- [x] `make check` green
+- [x] `make test-rest` green
+- [x] `make test` green
+- [x] `make coverage` green
+- [x] README / plan docs updated

@@ -168,7 +168,10 @@ impl JobRepository for PostgresJobRepository {
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let updated = client
+        let mut tx = client
+            .transaction()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let updated = tx
             .execute(
                 "UPDATE jobs SET status = 'FINISHED', finished_at = $2, failure_message = NULL \
                  WHERE id = $1 AND status = 'RUNNING'",
@@ -180,6 +183,18 @@ impl JobRepository for PostgresJobRepository {
                 "job {id} is not in RUNNING state and cannot be finished"
             )));
         }
+        // The job is now terminal: free the type's lock it owned in the same
+        // transaction so a FINISHED job can never leave an orphaned lock (the
+        // worker's later explicit `release` becomes a harmless no-op).
+        tx.execute(
+            "DELETE FROM job_locks jl USING jobs j \
+             WHERE j.id = $1 AND jl.job_type = j.job_type \
+               AND (j.instance_id IS NULL OR jl.locked_by = j.instance_id)",
+            &[&id],
+        )
+        .map_err(|error| DomainError::Database(error.to_string()))?;
+        tx.commit()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -193,7 +208,10 @@ impl JobRepository for PostgresJobRepository {
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let updated = client
+        let mut tx = client
+            .transaction()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let updated = tx
             .execute(
                 "UPDATE jobs SET status = 'FAILED', finished_at = $2, failure_message = $3 \
                  WHERE id = $1 AND status = 'RUNNING'",
@@ -205,6 +223,16 @@ impl JobRepository for PostgresJobRepository {
                 "job {id} can only fail from RUNNING state"
             )));
         }
+        // Same as `set_finished`: terminal transitions free the job's own lock.
+        tx.execute(
+            "DELETE FROM job_locks jl USING jobs j \
+             WHERE j.id = $1 AND jl.job_type = j.job_type \
+               AND (j.instance_id IS NULL OR jl.locked_by = j.instance_id)",
+            &[&id],
+        )
+        .map_err(|error| DomainError::Database(error.to_string()))?;
+        tx.commit()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -233,19 +261,50 @@ impl JobRepository for PostgresJobRepository {
             .pool
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        let updated = client
+        let mut tx = client
+            .transaction()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let updated = tx
             .execute(
-                "UPDATE jobs SET status = 'CANCELLED', finished_at = $2, failure_message = 'cancelled' \
+                "UPDATE jobs SET status = 'CANCELLED', finished_at = $2, \
+                 failure_message = 'cancelled' \
                  WHERE id = $1 AND status IN ('RUNNING', 'CANCELLATION_REQUESTED')",
                 &[&id, &finished_at],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
-        if updated == 0 {
-            return Err(DomainError::InvalidQuery(format!(
-                "job {id} is not in a cancellable state"
-            )));
+        if updated == 1 {
+            // The job is now terminal: free the type's lock it owned so a
+            // cancelled job can never keep claiming "running elsewhere" when its
+            // worker (the usual release path) is gone. Scoped to this job's own
+            // instance so a lock that a newer job of the same type acquired is
+            // never removed.
+            tx.execute(
+                "DELETE FROM job_locks jl USING jobs j \
+                 WHERE j.id = $1 AND jl.job_type = j.job_type \
+                   AND (j.instance_id IS NULL OR jl.locked_by = j.instance_id)",
+                &[&id],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+            tx.commit()
+                .map_err(|error| DomainError::Database(error.to_string()))?;
+            return Ok(());
         }
-        Ok(())
+        // No transition happened. A worker's own finalize can re-observe a job
+        // that a force-cancel already set to CANCELLED: treat that as an
+        // idempotent success. Anything else is not cancellable.
+        let row = tx
+            .query_opt("SELECT status FROM jobs WHERE id = $1", &[&id])
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        match row {
+            Some(row) if row.get::<_, String>("status") == "CANCELLED" => {
+                tx.commit()
+                    .map_err(|error| DomainError::Database(error.to_string()))?;
+                Ok(())
+            }
+            _ => Err(DomainError::InvalidQuery(format!(
+                "job {id} is not in a cancellable state"
+            ))),
+        }
     }
 
     fn update_metadata(&self, id: Uuid, key: &str, value: Value) -> Result<(), DomainError> {
@@ -358,13 +417,21 @@ impl JobRepository for PostgresJobRepository {
             )
             .map_err(|error| DomainError::Database(format!("{error:?}")))?;
         // Stage 2: stale CANCELLATION_REQUESTED -> CANCELLED (the worker is gone
-        // or too slow; force-finalize).
+        // or too slow; force-finalize). The dead owner will never call `release`,
+        // so also free the type lock it held (scoped to its instance so a lock a
+        // newer job acquired is never removed).
         client
             .execute(
-                "UPDATE jobs SET status = 'CANCELLED', finished_at = $3, \
-                 failure_message = 'heartbeat lost' \
-                 WHERE job_type = $1 AND status = 'CANCELLATION_REQUESTED' \
-                   AND (heartbeat_at IS NULL OR heartbeat_at < $2)",
+                "WITH cancelled AS ( \
+                    UPDATE jobs SET status = 'CANCELLED', finished_at = $3, \
+                     failure_message = 'heartbeat lost' \
+                     WHERE job_type = $1 AND status = 'CANCELLATION_REQUESTED' \
+                       AND (heartbeat_at IS NULL OR heartbeat_at < $2) \
+                     RETURNING job_type, instance_id \
+                 ) \
+                 DELETE FROM job_locks jl USING cancelled c \
+                 WHERE jl.job_type = c.job_type \
+                   AND (c.instance_id IS NULL OR jl.locked_by = c.instance_id)",
                 &[&job_type, &heartbeat_before, &now],
             )
             .map_err(|error| DomainError::Database(format!("{error:?}")))?;
@@ -468,7 +535,9 @@ mod tests {
                 .acquire(job_type, instance, Utc::now() + Duration::hours(1))
                 .unwrap()
         );
-        db.repository.insert(running_job(id, job_type, instance)).unwrap();
+        db.repository
+            .insert(running_job(id, job_type, instance))
+            .unwrap();
     }
 
     /// Postgres TIMESTAMPTZ stores microseconds; `chrono` keeps nanoseconds.
@@ -505,22 +574,25 @@ mod tests {
         let db = TestDb::new();
         let job_type = "acquire_test";
 
-        assert!(db
-            .repository
-            .acquire(job_type, INSTANCE_A, Utc::now() + Duration::hours(1))
-            .unwrap());
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_A, Utc::now() + Duration::hours(1))
+                .unwrap()
+        );
         // A second instance cannot acquire while the lock is held.
-        assert!(!db
-            .repository
-            .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
-            .unwrap());
+        assert!(
+            !db.repository
+                .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+                .unwrap()
+        );
 
         // Release lets another instance acquire.
         db.repository.release(job_type, INSTANCE_A).unwrap();
-        assert!(db
-            .repository
-            .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
-            .unwrap());
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+                .unwrap()
+        );
     }
 
     #[test]
@@ -528,10 +600,11 @@ mod tests {
         let db = TestDb::new();
         let job_type = "expired_lock_test";
 
-        assert!(db
-            .repository
-            .acquire(job_type, INSTANCE_A, Utc::now() + Duration::hours(1))
-            .unwrap());
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_A, Utc::now() + Duration::hours(1))
+                .unwrap()
+        );
         // Force the lock to expire, then a different instance can take it over.
         let mut client = db.raw_client();
         client
@@ -542,10 +615,11 @@ mod tests {
             .unwrap();
         drop(client);
 
-        assert!(db
-            .repository
-            .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
-            .unwrap());
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+                .unwrap()
+        );
     }
 
     #[test]
@@ -589,7 +663,13 @@ mod tests {
         // INSTANCE_B does not own the job: the write is a no-op.
         let status = db
             .repository
-            .heartbeat(id, job_type, INSTANCE_B, Utc::now(), Utc::now() + Duration::hours(1))
+            .heartbeat(
+                id,
+                job_type,
+                INSTANCE_B,
+                Utc::now(),
+                Utc::now() + Duration::hours(1),
+            )
             .unwrap();
         assert_eq!(status, JobStatus::Running);
 
@@ -610,7 +690,13 @@ mod tests {
         db.repository.request_cancellation(id).unwrap();
         let status = db
             .repository
-            .heartbeat(id, job_type, INSTANCE_A, Utc::now(), Utc::now() + Duration::hours(1))
+            .heartbeat(
+                id,
+                job_type,
+                INSTANCE_A,
+                Utc::now(),
+                Utc::now() + Duration::hours(1),
+            )
             .unwrap();
         assert_eq!(status, JobStatus::CancellationRequested);
     }
@@ -626,6 +712,16 @@ mod tests {
         let done = db.repository.find_by_id(finished_id).unwrap().unwrap();
         assert_eq!(done.status, JobStatus::Finished);
         assert_eq!(done.finished_at, Some(micros(finished)));
+        assert!(
+            db.repository
+                .acquire(
+                    "lifecycle_finished",
+                    INSTANCE_B,
+                    Utc::now() + Duration::hours(1)
+                )
+                .unwrap(),
+            "FINISHED must free the type's lock"
+        );
 
         let failed_id = Uuid::new_v4();
         start_job(&db, failed_id, "lifecycle_failed", INSTANCE_A);
@@ -638,6 +734,16 @@ mod tests {
         assert_eq!(
             failed_job.failure_message.as_deref(),
             Some("provider error")
+        );
+        assert!(
+            db.repository
+                .acquire(
+                    "lifecycle_failed",
+                    INSTANCE_B,
+                    Utc::now() + Duration::hours(1)
+                )
+                .unwrap(),
+            "FAILED must free the type's lock"
         );
     }
 
@@ -658,6 +764,14 @@ mod tests {
         assert_eq!(cancelled.status, JobStatus::Cancelled);
         assert_eq!(cancelled.finished_at, Some(micros(finished)));
         assert_eq!(cancelled.failure_message.as_deref(), Some("cancelled"));
+        // Cancelling frees the type's lock, so the next run can claim right away
+        // even though the (gone) worker never called `release`.
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+                .unwrap(),
+            "a CANCELLED job must release its job_locks row"
+        );
     }
 
     #[test]
@@ -670,6 +784,28 @@ mod tests {
         db.repository.mark_cancelled(id, Utc::now()).unwrap();
         let cancelled = db.repository.find_by_id(id).unwrap().unwrap();
         assert_eq!(cancelled.status, JobStatus::Cancelled);
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+                .unwrap(),
+            "a force-cancelled job must release its job_locks row"
+        );
+    }
+
+    #[test]
+    fn mark_cancelled_is_idempotent_when_already_cancelled() {
+        let db = TestDb::new();
+        let job_type = "cancel_idempotent_test";
+        let id = Uuid::new_v4();
+        start_job(&db, id, job_type, INSTANCE_A);
+        db.repository.mark_cancelled(id, Utc::now()).unwrap();
+        // A worker's own finalize can re-observe a job a force-cancel already
+        // set to CANCELLED: that must be a no-op success, not an error.
+        db.repository.mark_cancelled(id, Utc::now()).unwrap();
+        assert_eq!(
+            db.repository.find_by_id(id).unwrap().unwrap().status,
+            JobStatus::Cancelled
+        );
     }
 
     #[test]
@@ -688,20 +824,28 @@ mod tests {
         let db = TestDb::new();
         let job_type = "active_test";
         let running_id = Uuid::new_v4();
-        db.repository.insert(running_job(running_id, job_type, INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(running_id, job_type, INSTANCE_A))
+            .unwrap();
         let requested_id = Uuid::new_v4();
-        db.repository.insert(running_job(requested_id, job_type, INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(requested_id, job_type, INSTANCE_A))
+            .unwrap();
         db.repository.request_cancellation(requested_id).unwrap();
 
         // A FINISHED job of the same type is not "active".
         let done_id = Uuid::new_v4();
-        db.repository.insert(running_job(done_id, job_type, INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(done_id, job_type, INSTANCE_A))
+            .unwrap();
         db.repository.set_finished(done_id, Utc::now()).unwrap();
 
         let active = db.repository.find_active_by_type(job_type).unwrap();
         let mut ids: Vec<Uuid> = active.iter().map(|job| job.id).collect();
         ids.sort();
-        assert_eq!(ids, vec![requested_id, running_id]);
+        let mut expected = vec![requested_id, running_id];
+        expected.sort();
+        assert_eq!(ids, expected);
     }
 
     #[test]
@@ -731,6 +875,14 @@ mod tests {
             JobStatus::Cancelled,
             "a dead worker's job is force-cancelled in one reconcile pass"
         );
+        // Force-cancelling on behalf of the dead worker also frees its lock, so
+        // the type is claimable again immediately.
+        assert!(
+            db.repository
+                .acquire(job_type, INSTANCE_B, Utc::now() + Duration::hours(1))
+                .unwrap(),
+            "the watcher's force-cancel must release the dead worker's lock"
+        );
     }
 
     #[test]
@@ -741,12 +893,20 @@ mod tests {
         let fresh_id = Uuid::new_v4();
         start_job(&db, fresh_id, job_type, INSTANCE_A);
         db.repository
-            .heartbeat(fresh_id, job_type, INSTANCE_A, Utc::now(), Utc::now() + Duration::hours(1))
+            .heartbeat(
+                fresh_id,
+                job_type,
+                INSTANCE_A,
+                Utc::now(),
+                Utc::now() + Duration::hours(1),
+            )
             .unwrap();
 
         // A stale FINISHED job is terminal and must not be touched either.
         let done_id = Uuid::new_v4();
-        db.repository.insert(running_job(done_id, job_type, INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(done_id, job_type, INSTANCE_A))
+            .unwrap();
         let mut client = db.raw_client();
         client
             .execute(
@@ -783,7 +943,9 @@ mod tests {
         let db = TestDb::new();
         let job_type = "metadata_test";
         let id = Uuid::new_v4();
-        db.repository.insert(running_job(id, job_type, INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(id, job_type, INSTANCE_A))
+            .unwrap();
 
         db.repository
             .update_metadata(id, "processed_measurements", json!(1200))
@@ -804,18 +966,28 @@ mod tests {
         let db = TestDb::new();
 
         let running_id = Uuid::new_v4();
-        db.repository.insert(running_job(running_id, "data_source_update", INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(running_id, "data_source_update", INSTANCE_A))
+            .unwrap();
 
         let finished_id = Uuid::new_v4();
-        db.repository.insert(running_job(finished_id, "data_source_update", INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(finished_id, "data_source_update", INSTANCE_A))
+            .unwrap();
         db.repository.set_finished(finished_id, Utc::now()).unwrap();
 
         let cancelled_id = Uuid::new_v4();
-        db.repository.insert(running_job(cancelled_id, "data_source_update", INSTANCE_A)).unwrap();
-        db.repository.mark_cancelled(cancelled_id, Utc::now()).unwrap();
+        db.repository
+            .insert(running_job(cancelled_id, "data_source_update", INSTANCE_A))
+            .unwrap();
+        db.repository
+            .mark_cancelled(cancelled_id, Utc::now())
+            .unwrap();
 
         let other_id = Uuid::new_v4();
-        db.repository.insert(running_job(other_id, "asset_cleanup", INSTANCE_A)).unwrap();
+        db.repository
+            .insert(running_job(other_id, "asset_cleanup", INSTANCE_A))
+            .unwrap();
 
         let all = db.repository.find_all(None, None).unwrap();
         assert_eq!(all.len(), 4);
