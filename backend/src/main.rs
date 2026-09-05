@@ -303,21 +303,24 @@ fn main() {
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     if let Err(err) = runtime.block_on(async {
-        // Background schedulers: one per scheduled job type, each running at
-        // startup (if the job never succeeded) and then on its own CRON
-        // schedule.
-        tokio::spawn(job_scheduler::run_scheduler(
-            data_source_update_service,
-            configuration.data_source_update_cron().to_string(),
-        ));
-        tokio::spawn(job_scheduler::run_scheduler(
-            asset_cleanup_service,
-            configuration.asset_cleanup_cron().to_string(),
-        ));
-        tokio::spawn(job_scheduler::run_scheduler(
-            tiles_update_service,
-            configuration.maps().update_cron().to_string(),
-        ));
+        if configuration.scheduled_jobs_enabled() {
+            // Background schedulers: one per scheduled job type, each running at
+            // startup (if the job never succeeded) and then on its own CRON
+            // schedule. Skipped entirely when scheduled_jobs_enabled = false
+            // (e.g. the offline Playwright e2e setup).
+            tokio::spawn(job_scheduler::run_scheduler(
+                data_source_update_service,
+                configuration.data_source_update_cron().to_string(),
+            ));
+            tokio::spawn(job_scheduler::run_scheduler(
+                asset_cleanup_service,
+                configuration.asset_cleanup_cron().to_string(),
+            ));
+            tokio::spawn(job_scheduler::run_scheduler(
+                tiles_update_service,
+                configuration.maps().update_cron().to_string(),
+            ));
+        }
         rest_adapter.run(addr).await
     }) {
         eprintln!("REST API server error: {:?}", err);

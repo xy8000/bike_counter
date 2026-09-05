@@ -3,6 +3,12 @@ database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
 
+# Whether the scheduled background jobs (data-source update, asset cleanup,
+# tiles update) run at all. Defaults to true (omitting the key keeps the jobs
+# enabled); set to false for test/e2e setups that must never reach the
+# providers.
+scheduled_jobs_enabled = true
+
 # CRON expression for the data-source update job (default: every hour).
 data_source_update_cron="0 * * * * *"
 # REQUIRED ShedLock-style max lifetime for the update job in seconds (no default).

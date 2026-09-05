@@ -148,7 +148,7 @@ test('the bikes-per-month chart is the last section and shows the settings hint'
 
 // Gasselstiege (Münster) has 6 channels; the e2e fixture synthesizes data for
 // all of them so every per-channel nerd-stats chart exceeds the 5-stream limit.
-const GASSELSTIEGE_ID = '97514fa2-2a21-4a17-b85c-6ec4aa74db27'
+const GASSELSTIEGE_ID = '04f14edd-8f7e-45b7-91c6-6c451e39dd22'
 
 test('the per-channel nerd-stats charts show the info note for a station with more than 5 channels', async ({
   page,

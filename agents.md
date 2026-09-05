@@ -30,7 +30,7 @@ this repository. **Read this file before making any change.**
 | `make test` | Full test suite (Postgres repository tests spin up a Docker test container) |
 | `make test-rest` | REST endpoint tests only (in-memory mocks, no Docker required) |
 | `make coverage` | **Coverage gate — fails when overall *production* line coverage is below `COVERAGE_THRESHOLD` (default 80%) or the core (`src/core/`) is below `CORE_COVERAGE_THRESHOLD` (default 95%)** |
-| `make test-playwright` | **Frontend browser e2e — Playwright against the real Docker Compose stack seeded from a committed SQL fixture (Münster, Bonn, Hamburg; no provider import — see [Frontend e2e](#frontend-e2e-playwright) below)** |
+| `make test-playwright` | **Frontend browser e2e — Playwright against the real Docker Compose stack seeded from a committed SQL fixture (all seven data sources; scheduled jobs disabled via config, no provider import — see [Frontend e2e](#frontend-e2e-playwright) below)** |
 
 ### Coverage
 
@@ -70,9 +70,12 @@ Notes:
 `make test-playwright` runs the browser e2e suite against the **real** Docker
 Compose stack (nginx → backend BFF → Postgres) seeded from the committed
 [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) fixture (schema + refinery
-migration history + all counting stations/channels + synthesized recent
-measurements + pre-finished jobs). The run is **fully offline**: no provider
-import, no Protomaps/tile download, and the backend healthcheck is overridden to
+migration history + all seven data sources + every counting station/channel +
+synthesized recent measurements + pre-finished jobs). The run is **fully
+offline**: the scheduled background jobs are disabled via
+`scheduled_jobs_enabled = false` in the temporary config the orchestrator writes
+(so the backend can never start a data-import, asset-cleanup or tiles job), no
+Protomaps/tile download is needed, and the backend healthcheck is overridden to
 `/health/live` so readiness never pings the providers. The specs live in
 [`frontend/e2e/`](frontend/e2e) with the config in
 [`frontend/playwright.config.ts`](frontend/playwright.config.ts); the

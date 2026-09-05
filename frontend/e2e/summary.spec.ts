@@ -3,17 +3,37 @@ import { mapMarkers, sidebar, waitForStations } from './helpers'
 
 const SUMMARIZE_BUTTON = 'Summarize visible stations'
 
-/// A summary URL around the first positioned station. The real map view can
+/// The seeded stations whose channels carry synthesized measurements (see
+/// scripts/dump-e2e-fixture.sh). The summary key-facts and charts derive from a
+/// station's data, so the summary URL must scope to one of these — the search
+/// covers all seven sources, including data-less Hessen/Köln/Eco-Counter
+/// stations that sort first.
+const DATA_STATION_NAMES = new Set([
+  'Bismarckallee',
+  'Bohlweg',
+  'Coesfelder Kreuz',
+  'Gasselstiege',
+  'BN - Bröltalbahnweg',
+  'BN - Brühler Straße',
+  'BN - Estermannufer',
+  'MQ1.2',
+  'MQ1.3',
+  'MQ10.1+10.2',
+])
+
+/// A summary URL around one data-bearing station. The real map view can
 /// aggregate the whole cluster (which is heavy and intentionally shows the
 /// loading page), so the tests scope the summary to one station to keep the
 /// browser fast and deterministic while still exercising the full feature.
 async function smallSummaryUrl(page: Page): Promise<string> {
   const response = await page.request.get('/api/bff/stations/search')
   const data = await response.json()
-  const station = (data.items ?? []).find(
+  const positioned = (data.items ?? []).filter(
     (s: { latitude?: number | null; longitude?: number | null }) =>
       s.latitude != null && s.longitude != null,
   )
+  const station =
+    positioned.find((s: { name: string }) => DATA_STATION_NAMES.has(s.name)) ?? positioned[0]
   if (!station) throw new Error('no positioned station for the summary e2e')
   const span = 0.002
   const params = new URLSearchParams({
@@ -151,6 +171,8 @@ test.describe('station summary', () => {
     // A bounds spanning Münster + Bonn covers the 7 stations the fixture
     // synthesizes data for (4 Münster + 3 Bonn; Hamburg stays outside), so every
     // per-station chart exceeds the 5-stream limit and must show the info note.
+    // (Köln/Eco-Counter stations also fall in these bounds, but they have no
+    // synthesized data and therefore add no data-streams.)
     const params = new URLSearchParams({
       min_lat: '50.5',
       min_lng: '6.9',

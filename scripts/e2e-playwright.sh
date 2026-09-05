@@ -2,15 +2,18 @@
 # Playwright end-to-end browser tests against the real Docker Compose stack, using
 # a committed SQL fixture instead of a live provider import.
 #
-# Boots PostgreSQL + backend + frontend with all three data sources configured
-# (Münster, Bonn, Hamburg) but SEEDS the database from frontend/e2e/e2e-seed.sql
+# Boots PostgreSQL + backend + frontend with all seven data sources configured
+# (Münster, Bonn, Hamburg, Eco-Counter, Hessen Mobil, Düsseldorf, Köln — mirroring
+# config.toml) and SEEDS the database from frontend/e2e/e2e-seed.sql
 # (docker-entrypoint-initdb.d via frontend/e2e/docker-compose.e2e.yml). The seed
 # contains the schema, the refinery history, every counting station/channel and
-# synthesized recent measurements, plus pre-finished jobs so the backend skips
-# the startup import — the run is fully offline w.r.t. the open-data providers.
-# The backend healthcheck is overridden to /health/live so readiness never pings
-# the providers either, and the committed tiles/map.pmtiles archive means no
-# Protomaps download is needed.
+# synthesized recent measurements. The scheduled background jobs are disabled via
+# `scheduled_jobs_enabled = false` in the temporary config below (and the seed
+# carries pre-finished jobs as well), so the backend never starts a data-import,
+# asset-cleanup or tiles job — the run is fully offline w.r.t. the open-data
+# providers. The backend healthcheck is overridden to /health/live so readiness
+# never pings the providers either, and the committed tiles/map.pmtiles archive
+# means no Protomaps download is needed.
 #
 # NOTE: the e2e is fully isolated from development data. It uses the dedicated
 # `postgres_data_e2e`/`minio_data_e2e` volumes (see frontend/e2e/docker-compose.e2e.yml);
@@ -79,14 +82,21 @@ if [ -f "${CONFIG_FILE}" ]; then
   HAD_CONFIG=1
 fi
 
-# Test config: the database via the compose service name `db` + all three data
-# sources. The providers are only there so the startup sync keeps the seeded
-# data_sources; the seeded FINISHED jobs prevent any import from running.
+# Test config: the database via the compose service name `db` + all seven data
+# sources (the same set as config.toml). The providers are only there so the
+# startup sync keeps the seeded data_sources (a configured source that is missing
+# from the seed would otherwise be created, and a seeded source that is missing
+# from the config would be cascade-deleted); the scheduled jobs are disabled via
+# `scheduled_jobs_enabled = false`, so the backend never reaches a provider.
 cat > "${CONFIG_FILE}" <<EOF
 database_url="postgres://db:5432"
 database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
+
+# Scheduled background jobs (data-source update, asset cleanup, tiles update)
+# are disabled for the offline e2e run.
+scheduled_jobs_enabled = false
 
 data_source_update_cron="0 0 * * * *"
 data_source_update_max_lifetime_seconds=3600
@@ -109,39 +119,55 @@ go_pmtiles_version = "1.31.2"
 
 [[data_sources]]
 name = "Münster"
-
 [data_sources.provider]
 type = "münster_opendata_github_provider"
-
 [data_sources.provider.vars]
 url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
-max_measurement_batch_size = "500"
-max_measurement_timeframe_hours = "168"
 
 [[data_sources]]
 name = "Bonn"
-
 [data_sources.provider]
 type = "bonn_opendata_http_provider"
-
 [data_sources.provider.vars]
 stations_url = "https://stadtplan.bonn.de/geojson?Thema=22640"
 measurements_url = "https://stadtplan.bonn.de/csv?OD=4285"
 historical_urls = "https://opendata.bonn.de/sites/default/files/Fahrradzaehlstellen2023_stuendlich.csv https://opendata.bonn.de/sites/default/files/MessergebnisseFahrradzaehlstationenStundenauswertung2024.csv https://opendata.bonn.de/sites/default/files/fahrradzaehldatenbonn2025.csv"
-max_measurement_batch_size = "500"
-cache_duration = "300"
 
 [[data_sources]]
 name = "Hamburg"
-
 [data_sources.provider]
 type = "hamburg_sta_http_provider"
-
 [data_sources.provider.vars]
-base_url = "https://iot.hamburg.de/v1.0/"
 max_measurement_batch_size = "500"
-cache_duration = "300"
-include_legacy = "true"
+
+[[data_sources]]
+name = "Eco-Counter"
+[data_sources.provider]
+type = "eco_counter_v1_http_provider"
+
+[[data_sources]]
+name = "Hessen Mobil"
+[data_sources.provider]
+type = "eco_counter_web_http_provider"
+[data_sources.provider.vars]
+scrape_url = "https://hessen-mobil.eco-counter.com"
+cache_duration = "3000"
+
+[[data_sources]]
+name = "Landeshauptstadt Düsseldorf | Dauerzählstellen Radverkehr"
+[data_sources.provider]
+type = "eco_counter_web_http_provider"
+[data_sources.provider.vars]
+scrape_url = "https://duesseldorf.eco-counter.com/"
+cache_duration = "3000"
+
+[[data_sources]]
+name = "Stadt Köln"
+[data_sources.provider]
+type = "eco_counter_web_http_provider"
+[data_sources.provider.vars]
+scrape_url = "https://stadtkoeln.eco-counter.com/"
+cache_duration = "3000"
 EOF
 
 echo "--- Clearing any leftover e2e containers and volumes from a previous run"
@@ -176,10 +202,10 @@ if [ "${READY}" -ne 1 ]; then
 fi
 echo "--- Stack started (app ready)."
 
-# The backend applies V17 (the counting_stations `status` column) during
-# startup, before the health endpoint is ready. Mark one seeded Münster station
-# inactive so the e2e suite can assert the inactive flag (status = inactive).
-# The seed itself can not do this: at initdb time the column does not exist yet.
+# Mark one seeded Münster station inactive so the e2e suite can assert the
+# inactive flag (status = inactive). The fixture itself carries the V21 schema
+# (including the status column), but the seeded rows are all active — marking
+# Gartenstraße here keeps the inactive-flag spec deterministic.
 echo "--- Marking one seeded Münster station inactive (inactive-flag e2e test)"
 docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE}" exec -T db psql -U postgres -d bike_counter \
   -c "UPDATE counting_stations SET status = 'inactive' WHERE name = 'Gartenstraße';" >/dev/null 2>&1 \

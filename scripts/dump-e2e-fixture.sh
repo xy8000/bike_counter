@@ -5,15 +5,17 @@
 # The fixture is derived from the running stack's database (docker compose):
 #   * the full schema + refinery migration history, so `create_pool` skips the
 #     migrations,
-#   * the three data_sources (deterministic UUIDv5 ids matching the config names),
+#   * all seven data_sources (deterministic UUIDv5 ids matching the config names),
 #   * every counting station + channel (image links stripped so the builtin
-#     fallback bike icon is used, since the e2e MinIO bucket only holds builtins),
+#     fallback bike icon is used, since the e2e MinIO bucket only holds builtins;
+#     the per-source logos are unlinked too so the bundled SVG fallback is used),
 #   * synthesized recent measurements for the alphabetically-first stations of
 #     each city — the BFF returns stations name-ordered, so the first map marker /
 #     search hit per city always has data; timestamps are generated relative to
 #     load time (now() - interval ...) so the fixture never ages,
-#   * pre-finished jobs for the three schedulers, so the backend skips the
-#     startup import, the asset cleanup and the tile rebuild.
+#   * pre-finished jobs for the three schedulers — a belt-and-braces measure; the
+#     Playwright orchestrator also sets scheduled_jobs_enabled = false, so the
+#     backend skips the startup import, the asset cleanup and the tile rebuild.
 #
 # The e2e stack loads the fixture on a fresh DB volume (docker-entrypoint-initdb.d
 # via frontend/e2e/docker-compose.e2e.yml), making the run fully offline w.r.t.
@@ -71,8 +73,11 @@ PGDUMP=(docker compose exec -T db pg_dump -U postgres -d bike_counter --no-owner
   echo "-- unqualified statements below resolve the tables."
   echo "SET search_path = public;"
   echo
-  echo "-- Unlink provider images so the builtin fallback bike icon is used."
+  echo "-- Unlink provider images so the builtin fallback bike icon is used, and"
+  echo "-- unlink the per-source logo assets (not present in the e2e MinIO bucket)"
+  echo "-- so the bundled data-source SVG fallback is rendered instead."
   echo "UPDATE counting_stations SET image_asset_id = NULL, image_sha256 = NULL;"
+  echo "UPDATE data_sources SET logo_asset_id = NULL, logo_sha256 = NULL;"
 
   cat <<'SQL'
 
@@ -100,13 +105,18 @@ CROSS JOIN LATERAL generate_series(
     now(),
     make_interval(secs => CASE d.name WHEN 'Münster' THEN 900 WHEN 'Bonn' THEN 3600 ELSE 300 END)
 ) AS ts
-WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelder Kreuz'))
+-- Gasselstiege (6 channels) is included so the detail-page e2e can exercise the
+-- >5 data-stream chart limit (the per-channel nerd-stats charts must show the
+-- info note instead of rendering).
+WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelder Kreuz', 'Gasselstiege'))
    OR (d.name = 'Bonn'    AND s.name IN ('BN - Bröltalbahnweg', 'BN - Brühler Straße', 'BN - Estermannufer'))
    OR (d.name = 'Hamburg' AND s.name IN ('MQ1.2', 'MQ1.3', 'MQ10.1+10.2'));
 
 -- Pre-finished jobs: the schedulers skip their startup run (never overdue — the
 -- data_source_update finished_at is in the future so the cron-based overdue test
--- can never fire) and the stack boots without importing from the providers.
+-- can never fire). The jobs are belt-and-braces: the Playwright orchestrator
+-- additionally disables the schedulers via scheduled_jobs_enabled = false, so the
+-- stack boots without importing from the providers.
 INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, failure_message, metadata, lifetime_until, max_lifetime_exceeded, created_at)
 VALUES
   (gen_random_uuid(), 'Data source update', 'data_source_update', 'FINISHED',

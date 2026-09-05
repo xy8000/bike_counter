@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test'
 
 /// The data-sources pages: the overview lists one section per configured data
-/// source (seeded Münster/Bonn/Hamburg) with its counts, and clicking one opens
-/// the detail page (image + map + Data-Overview + badges).
+/// source (seeded all seven: Münster, Bonn, Hamburg, Eco-Counter, Hessen Mobil,
+/// Düsseldorf and Köln) with its counts, and clicking one opens the detail page
+/// (image + map + Data-Overview + badges).
 test.beforeEach(async ({ page }) => {
   await page.goto('/data-sources')
   await expect(page.getByRole('heading', { name: /Data sources/ })).toBeVisible()
@@ -10,11 +11,15 @@ test.beforeEach(async ({ page }) => {
 
 test('overview shows one section per data source with counts', async ({ page }) => {
   const cards = page.locator('a[href^="/data-sources/"]')
-  await expect(cards).toHaveCount(3)
+  await expect(cards).toHaveCount(7)
 
   await expect(cards.filter({ hasText: 'Münster' })).toBeVisible()
   await expect(cards.filter({ hasText: 'Bonn' })).toBeVisible()
   await expect(cards.filter({ hasText: 'Hamburg' })).toBeVisible()
+  await expect(cards.filter({ hasText: 'Eco-Counter' })).toBeVisible()
+  await expect(cards.filter({ hasText: 'Hessen Mobil' })).toBeVisible()
+  await expect(cards.filter({ hasText: 'Düsseldorf' })).toBeVisible()
+  await expect(cards.filter({ hasText: 'Stadt Köln' })).toBeVisible()
 
   // Every section shows a small image (the SVG fallback until a provider
   // serves a logo) and the "Last successful import" label.

@@ -6,8 +6,10 @@
 #     on its fresh volume (Postgres runs it from docker-entrypoint-initdb.d),
 #   * points the backend healthcheck at `/health/live` so readiness never pings
 #     the data providers — the e2e run is fully offline (data comes from the seed;
-#     the HTTP server only binds after migrations + tiles + startup sync, so a
-#     healthy `/health/live` already implies those are done).
+#     the scheduled background jobs are disabled via `scheduled_jobs_enabled =
+#     false` in the temporary config written by ../scripts/e2e-playwright.sh; the
+#     HTTP server only binds after migrations + tiles + startup sync, so a healthy
+#     `/health/live` already implies those are done).
 #
 # The e2e run is isolated from the development data: `db` and `minio` use the
 # dedicated `postgres_data_e2e` / `minio_data_e2e` volumes instead of the dev

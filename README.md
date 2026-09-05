@@ -730,7 +730,7 @@ make audit      # backend: cargo audit (fails on any advisory)
 make test       # backend: all tests (repository tests spin up a Postgres test container via Docker)
 make test-rest  # backend: only the REST endpoint tests (in-memory mocks, no database required)
 make test-e2e   # end-to-end smoke test against the real docker-compose stack (requires Docker)
-make test-playwright # frontend Playwright browser e2e (Münster/Hamburg/Bonn) against the real stack seeded from a SQL fixture (no provider import)
+make test-playwright # frontend Playwright browser e2e (all seven data sources) against the real stack seeded from a SQL fixture (jobs disabled, no provider import)
 make playwright-install # install the Playwright Chromium browser once
 make test-all   # make check + make test
 make coverage   # backend coverage gate: overall (production) >= 80% AND core (src/core) >= 95% via cargo-llvm-cov
@@ -759,11 +759,12 @@ Under the hood the scripts are:
   e2e tests against the real stack, seeded from the committed
   [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) fixture via the
   [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml)
-  override (all three data sources configured, no provider import; backend
-  healthcheck is `/health/live`). Waits for readiness and the seeded stations per
-  city, then runs the specs in [`frontend/e2e/`](frontend/e2e): map markers +
-  popup/overview, search → find-on-map, sidebar visible stations, the detail page
-  and the per-city map/overview/detail flows. Tears the stack down (dropping the
+  override (all seven data sources configured, scheduled jobs disabled via
+  `scheduled_jobs_enabled = false`, no provider import; backend healthcheck is
+  `/health/live`). Waits for readiness and the seeded stations per city, then
+  runs the specs in [`frontend/e2e/`](frontend/e2e): map markers + popup/overview,
+  search → find-on-map, sidebar visible stations, the detail page and the
+  per-city map/overview/detail flows. Tears the stack down (dropping the
   dedicated e2e DB volume, never the dev `postgres_data`) and restores any
   pre-existing `config.toml`.
 - [`scripts/coverage.sh`](scripts/coverage.sh) – coverage gate: runs the full

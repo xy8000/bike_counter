@@ -7,7 +7,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict m03oKNnNmJbark0dFZw7nQiniaXjN0ubgXmILvguHqa4pgCnbzcscXv5ZPLqe5G
+\restrict pLBRXZLzxfWeZjMsqUkmKdXbDC85MpuODEfceua2MdQa6T0buTwtoirlZMFFYbe
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -151,7 +151,26 @@ CREATE TABLE public.counting_stations (
     longitude double precision,
     timezone text DEFAULT 'UTC'::text NOT NULL,
     image_asset_id uuid,
-    image_sha256 text
+    image_sha256 text,
+    status text DEFAULT 'active'::text NOT NULL,
+    CONSTRAINT counting_stations_status_check CHECK ((status = ANY (ARRAY['active'::text, 'inactive'::text])))
+);
+
+
+--
+-- Name: data_source_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_source_imports (
+    id uuid NOT NULL,
+    data_source_id uuid NOT NULL,
+    job_id uuid,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    status text NOT NULL,
+    failure_message text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_source_imports_status_check CHECK ((status = ANY (ARRAY['RUNNING'::text, 'FINISHED'::text, 'FAILED'::text])))
 );
 
 
@@ -190,7 +209,12 @@ CREATE TABLE public.data_sources (
     id uuid NOT NULL,
     name text NOT NULL,
     provider_type text NOT NULL,
-    imported_until timestamp with time zone
+    imported_until timestamp with time zone,
+    last_updated_at timestamp with time zone,
+    logo_asset_id uuid,
+    logo_sha256 text,
+    first_measurement_at timestamp with time zone,
+    last_measurement_at timestamp with time zone
 );
 
 
@@ -271,6 +295,14 @@ ALTER TABLE ONLY public.channels
 
 ALTER TABLE ONLY public.counting_stations
     ADD CONSTRAINT counting_stations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_source_imports data_source_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_source_imports
+    ADD CONSTRAINT data_source_imports_pkey PRIMARY KEY (id);
 
 
 --
@@ -374,6 +406,13 @@ CREATE UNIQUE INDEX idx_counting_stations_external_datasource_id ON public.count
 
 
 --
+-- Name: idx_data_source_imports_source_started; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_data_source_imports_source_started ON public.data_source_imports USING btree (data_source_id, started_at DESC);
+
+
+--
 -- Name: idx_data_source_persistent_state_data_source_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -406,6 +445,13 @@ CREATE INDEX idx_jobs_type_status ON public.jobs USING btree (job_type, status);
 --
 
 CREATE INDEX measurements_channel_resolution_time_idx ON public.measurements USING btree (channel_id, resolution_seconds, "timestamp");
+
+
+--
+-- Name: measurements_timestamp_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX measurements_timestamp_idx ON public.measurements USING btree ("timestamp") INCLUDE (channel_id, resolution_seconds, value);
 
 
 --
@@ -454,6 +500,22 @@ ALTER TABLE ONLY public.counting_stations
 
 
 --
+-- Name: data_source_imports data_source_imports_data_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_source_imports
+    ADD CONSTRAINT data_source_imports_data_source_id_fkey FOREIGN KEY (data_source_id) REFERENCES public.data_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_source_imports data_source_imports_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_source_imports
+    ADD CONSTRAINT data_source_imports_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE SET NULL;
+
+
+--
 -- Name: data_source_persistent_state data_source_persistent_state_data_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -470,6 +532,14 @@ ALTER TABLE ONLY public.data_source_provider_messages
 
 
 --
+-- Name: data_sources data_sources_logo_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_sources
+    ADD CONSTRAINT data_sources_logo_asset_id_fkey FOREIGN KEY (logo_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
+
+
+--
 -- Name: measurements measurements_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -481,7 +551,7 @@ ALTER TABLE ONLY public.measurements
 -- PostgreSQL database dump complete
 --
 
-\unrestrict m03oKNnNmJbark0dFZw7nQiniaXjN0ubgXmILvguHqa4pgCnbzcscXv5ZPLqe5G
+\unrestrict pLBRXZLzxfWeZjMsqUkmKdXbDC85MpuODEfceua2MdQa6T0buTwtoirlZMFFYbe
 
 
 -- Refinery migration history (all migrations already applied, so
@@ -490,7 +560,7 @@ ALTER TABLE ONLY public.measurements
 -- PostgreSQL database dump
 --
 
-\restrict PIOa8TuoIfMMNdrL19Dyt67tihsW5fFcWdZtriKvoZVvt8iHCEcHTp4SibdBsnw
+\restrict gGMIhqZTVNM3JYdCFPa8xMUPGPVAusL1mIDELv6Ezn7fqVRruz8GnaiyrfcnI9d
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -512,21 +582,27 @@ SET row_security = off;
 --
 
 COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM stdin;
-1	create_measurements	2026-08-30T08:38:56.257119317Z	8622847100207901870
-2	add_data_sources	2026-08-30T08:38:56.257138813Z	6567334475562128753
-3	add_jobs	2026-08-30T08:38:56.257141528Z	15390129696469103818
-4	add_data_source_persistent_state	2026-08-30T08:38:56.257143592Z	15758722528664156792
-5	add_measurements_natural_key	2026-08-30T08:38:56.257145806Z	1999414264249358598
-6	add_data_source_provider_messages	2026-08-30T08:38:56.25714816Z	5905893334390426312
-7	rename_data_source_imported_until	2026-08-30T08:38:56.257149973Z	6696896444443084434
-8	add_counting_station_and_channel_name_uniqueness	2026-08-30T08:38:56.257151687Z	5517352386707224021
-9	backfill_counting_stations_data_source_id	2026-08-30T08:38:56.257153149Z	10135614421211987660
-10	add_counting_station_coordinates	2026-08-30T08:38:56.257189727Z	6963708176890999551
-11	add_counting_station_timezone	2026-08-30T08:38:56.257191881Z	18362629720064168148
-12	add_assets	2026-08-30T08:38:56.257193483Z	10320621265531602734
-13	cap_data_source_provider_messages	2026-08-30T08:38:56.257195337Z	5015366324297314359
-14	add_measurements_resolution	2026-08-30T08:38:56.25719694Z	9819676339213479407
-15	optimize_measurements_overlap_guard	2026-08-30T08:38:56.257203322Z	3722695952449670237
+1	create_measurements	2026-08-30T19:44:45.579382559Z	8622847100207901870
+2	add_data_sources	2026-08-30T19:44:45.579395462Z	6567334475562128753
+3	add_jobs	2026-08-30T19:44:45.579397155Z	15390129696469103818
+4	add_data_source_persistent_state	2026-08-30T19:44:45.57939962Z	15758722528664156792
+5	add_measurements_natural_key	2026-08-30T19:44:45.579401153Z	1999414264249358598
+6	add_data_source_provider_messages	2026-08-30T19:44:45.579402645Z	5905893334390426312
+7	rename_data_source_imported_until	2026-08-30T19:44:45.579403798Z	6696896444443084434
+8	add_counting_station_and_channel_name_uniqueness	2026-08-30T19:44:45.579404719Z	5517352386707224021
+9	backfill_counting_stations_data_source_id	2026-08-30T19:44:45.579422482Z	10135614421211987660
+10	add_counting_station_coordinates	2026-08-30T19:44:45.579431889Z	6963708176890999551
+11	add_counting_station_timezone	2026-08-30T19:44:45.579433091Z	18362629720064168148
+12	add_assets	2026-08-30T19:44:45.579434023Z	10320621265531602734
+13	cap_data_source_provider_messages	2026-08-30T19:44:45.579435325Z	5015366324297314359
+14	add_measurements_resolution	2026-08-30T19:44:45.579439232Z	9819676339213479407
+15	optimize_measurements_overlap_guard	2026-08-30T19:44:45.57944346Z	3722695952449670237
+16	add_data_source_last_updated	2026-08-31T11:40:12.540590844Z	3377629116821760793
+17	add_counting_station_status	2026-08-31T14:11:24.074260326Z	7768556789214153185
+18	add_data_source_logo	2026-09-02T09:11:39.512234215Z	10020647202892669685
+19	add_data_source_imports	2026-09-02T09:11:39.512238974Z	6357574970810645470
+20	add_measurements_timestamp_index	2026-09-03T08:03:18.914135575Z	317077820093727940
+21	add_data_source_measurement_bounds	2026-09-03T08:36:46.793533633Z	644983370569446308
 \.
 
 
@@ -534,7 +610,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 -- PostgreSQL database dump complete
 --
 
-\unrestrict PIOa8TuoIfMMNdrL19Dyt67tihsW5fFcWdZtriKvoZVvt8iHCEcHTp4SibdBsnw
+\unrestrict gGMIhqZTVNM3JYdCFPa8xMUPGPVAusL1mIDELv6Ezn7fqVRruz8GnaiyrfcnI9d
 
 
 -- Data sources (ids are deterministic UUIDv5 of the config names).
@@ -542,7 +618,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 -- PostgreSQL database dump
 --
 
-\restrict U0LjIOcnnTDJ2cjRAbD0BpgleGCd17NaEtFumgN66SG5Rmm452MbijuueCyhyvy
+\restrict oCGT4gBW84gp1KHTk3f7aZPau3I2jttlsn5MRyxKiIpUUjf6j0F2fnW5JE6HJNA
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -563,10 +639,14 @@ SET row_security = off;
 -- Data for Name: data_sources; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.data_sources (id, name, provider_type, imported_until) FROM stdin;
-a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	2026-08-29 21:45:00+00
-10f34f2e-5b11-5314-81b3-159d0e3a0556	Bonn	bonn_opendata_http_provider	2026-08-29 21:00:00+00
-48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	Hamburg	hamburg_sta_http_provider	\N
+COPY public.data_sources (id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at) FROM stdin;
+b9145b59-ec36-52da-9343-bde7f49d6046	Landeshauptstadt Düsseldorf | Dauerzählstellen Radverkehr	eco_counter_web_http_provider	2026-09-03 22:00:00+00	2026-09-05 16:01:39.195426+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+2750a682-90bd-5d2c-8b86-c9038c228d9c	Hessen Mobil	eco_counter_web_http_provider	2026-09-03 22:00:00+00	2026-09-05 14:14:10.167406+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2026-09-03 22:00:00+00	2026-09-05 16:02:15.388129+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+10f34f2e-5b11-5314-81b3-159d0e3a0556	Bonn	bonn_opendata_http_provider	2026-09-04 21:00:00+00	2026-09-05 16:00:40.273133+00	\N	\N	2022-12-31 23:00:00+00	2026-09-04 21:00:00+00
+81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	Eco-Counter	eco_counter_v1_http_provider	2026-09-05 16:00:00+00	2026-09-05 16:00:42.365398+00	\N	\N	2025-09-05 01:00:00+00	2026-09-05 16:00:00+00
+a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	2026-09-04 21:45:00+00	2026-09-05 16:00:48.565951+00	\N	\N	2018-12-31 23:00:00+00	2026-09-04 21:45:00+00
+48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	Hamburg	hamburg_sta_http_provider	2026-09-05 15:50:00+00	2026-09-05 16:00:56.405592+00	\N	\N	2020-04-23 12:05:00+00	2026-09-05 15:50:00+00
 \.
 
 
@@ -574,7 +654,7 @@ a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	
 -- PostgreSQL database dump complete
 --
 
-\unrestrict U0LjIOcnnTDJ2cjRAbD0BpgleGCd17NaEtFumgN66SG5Rmm452MbijuueCyhyvy
+\unrestrict oCGT4gBW84gp1KHTk3f7aZPau3I2jttlsn5MRyxKiIpUUjf6j0F2fnW5JE6HJNA
 
 
 -- Assets (metadata only; provider objects are not synced into the e2e
@@ -584,7 +664,7 @@ a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	
 -- PostgreSQL database dump
 --
 
-\restrict 52NUMh5d4P7LE6zeIopMreXYkqUshhlfJYEUXhJ4JLB7gJxLPGDrpXsDbIzPhTx
+\restrict djbkauGhq9zfrglI0tDZK67LFnzeSHzr0exBR6FmowEE6EcSjTIyg9dbBYufkUp
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -606,7 +686,7 @@ SET row_security = off;
 --
 
 COPY public.assets (id, object_key, content_type, byte_size, sha256, origin, created_at, updated_at) FROM stdin;
-7e3da419-edf5-4f27-bc65-c268020c1b27	builtin/bike-icon-black-transparent.svg	image/svg+xml	1634	041111a1d7ec0303ced31e4f2b641ea1e570d44f4bcc1eeb4d5609d3bb09b10f	builtin	2026-08-30 08:38:56.397727+00	2026-08-30 08:38:56.397727+00
+dc0af10d-7f50-4763-9639-ab4a5a3f773c	builtin/bike-icon-black-transparent.svg	image/svg+xml	1634	041111a1d7ec0303ced31e4f2b641ea1e570d44f4bcc1eeb4d5609d3bb09b10f	builtin	2026-08-30 19:44:45.6869+00	2026-08-30 19:44:45.6869+00
 \.
 
 
@@ -614,7 +694,7 @@ COPY public.assets (id, object_key, content_type, byte_size, sha256, origin, cre
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 52NUMh5d4P7LE6zeIopMreXYkqUshhlfJYEUXhJ4JLB7gJxLPGDrpXsDbIzPhTx
+\unrestrict djbkauGhq9zfrglI0tDZK67LFnzeSHzr0exBR6FmowEE6EcSjTIyg9dbBYufkUp
 
 
 -- Counting stations and channels (all).
@@ -622,7 +702,7 @@ COPY public.assets (id, object_key, content_type, byte_size, sha256, origin, cre
 -- PostgreSQL database dump
 --
 
-\restrict EFtAl0RGrMhXDxBAWu56NVqx4MO6lM3CzzHE25gUYbfVV6rC2q2TbdaIl4xLh60
+\restrict shC33G8ioC42U8BZeocahstpgag1GvMfV4UECDi1WVUHbp36PVTJ8Ji1if0j1Z1
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -643,222 +723,812 @@ SET row_security = off;
 -- Data for Name: counting_stations; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256) FROM stdin;
-71b941df-0c7a-4db6-bc4c-b551a33ed74f	Bismarckallee		300038855	a023b021-9754-56c7-8c4e-9c391069aff5	51.956	7.6186	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-baeb1263-4ec0-48db-b36a-ed73af103ccc	Bohlweg		300037926	a023b021-9754-56c7-8c4e-9c391069aff5	51.9688	7.6435	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6615df93-4d29-4636-b848-cd9740087dac	Coesfelder Kreuz		300039328	a023b021-9754-56c7-8c4e-9c391069aff5	51.9659	7.6012	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-06278fe5-c70b-4487-8a8b-4a68a75814cc	Gartenstraße		100034978	a023b021-9754-56c7-8c4e-9c391069aff5	51.9715	7.6356	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege		300037931	a023b021-9754-56c7-8c4e-9c391069aff5	51.9796	7.6065	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-07bd531e-1af9-4b40-ad10-19163eba9f26	Goldstraße		300037925	a023b021-9754-56c7-8c4e-9c391069aff5	51.968	7.638	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-7d275c99-b946-4ba5-88ab-d999474dda38	Grevener Straße		300039331	a023b021-9754-56c7-8c4e-9c391069aff5	51.975	7.612	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b3c82471-0212-464e-b8aa-febb77f00b01	Hafenstraße		100031300	a023b021-9754-56c7-8c4e-9c391069aff5	51.9549	7.6289	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-afa9d8cb-21fb-4855-a818-a0b6eb0ac216	Hammer Straße		100034980	a023b021-9754-56c7-8c4e-9c391069aff5	51.9545	7.6263	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-7b263d87-9b77-4dc3-a349-3f6c847530d6	Hüfferstraße		100034982	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6109	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade Abschnitt 1 (Dingstiege)		300037544	a023b021-9754-56c7-8c4e-9c391069aff5	51.9795	7.6632	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade Abschnitt 5		100053305	a023b021-9754-56c7-8c4e-9c391069aff5	51.9181	7.6497	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade Abschnitt 6		300037936	a023b021-9754-56c7-8c4e-9c391069aff5	51.8895	7.65	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-45e63e38-40b7-4b8d-b4c2-66ebbc8affbb	Kinderhauser Str.		300037928	a023b021-9754-56c7-8c4e-9c391069aff5	51.979	7.621	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2ddc8b5e-9fb8-4067-a1ff-73b098a61e71	Lütkenbecker Weg		300037920	a023b021-9754-56c7-8c4e-9c391069aff5	51.943	7.6485	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6f278529-1a13-4f29-8079-3b40e7abf788	Neutor		100035541	a023b021-9754-56c7-8c4e-9c391069aff5	51.967	7.6154	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade (nördlich Salzstraße)		100031297	a023b021-9754-56c7-8c4e-9c391069aff5	51.9606	7.634	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westlicher Hals)		300037405	a023b021-9754-56c7-8c4e-9c391069aff5	51.9589	7.6195	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-a24f5e4e-6336-4076-bfef-53f45125bacc	Schmeddingstraße		300037932	a023b021-9754-56c7-8c4e-9c391069aff5	51.955	7.595	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c9890748-f684-4cd1-bea7-92fd5b63a837	Warendorfer Straße		100034983	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6375	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c2794c99-51d0-47ef-9bf3-c202d41aa88a	Weißenburg Str.		300037933	a023b021-9754-56c7-8c4e-9c391069aff5	51.9475	7.6295	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b317228f-ec46-4f8d-999b-a944ca970ab6	Weseler Straße		100034981	a023b021-9754-56c7-8c4e-9c391069aff5	51.9506	7.6177	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c53a4c52-22b9-472e-a5d1-1b46810668e3	Wolbecker Straße		100020113	a023b021-9754-56c7-8c4e-9c391069aff5	51.957	7.64	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-3a4e7d22-9dd4-4aca-8e5d-333691c9df5e	BN - Brühler Straße		11	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.74042933	7.0695014145	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-28cdd1f8-6fa7-40e0-a77d-d62db7028209	BN - Nordbrücke (Südseite)		3	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.758688588	7.1042793525	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1d05c141-b981-4842-944c-ac2240374f64	BN - Straßburger Weg		12	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7193231194	7.1134228228	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d638db73-d6aa-4e41-945c-99370d10df9e	BN - Wilhelm-Spiritus-Ufer		13	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.728124333	7.1120745095	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-aac27300-4f45-4de0-a5e7-eefd2f096ae6	BN - Kennedybrücke (Nordseite)		1	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7390301848	7.1152570731	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d45f16b4-4246-440f-b125-b2d209c3ae41	BN - Kennedybrücke (Südseite)		2	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7374853528	7.1059408371	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8ee2d1e0-403d-4c9d-b737-a794a8ec2ac9	BN - Nordbrücke (Nordseite)		4	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7590811376	7.1038102283	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-294f8b0f-15de-42ff-a828-c6665cbb3f6a	BN - Südbrücke (Südseite)		5	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7121532099	7.140091817	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-e0c9f737-c3ff-4999-9a93-075d62807310	BN - Südbrücke (Nordseite)		6	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7199570855	7.1445975348	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-caf54c1c-15c8-45cb-8245-6f3f3c86788d	BN - Von-Sandt-Ufer		8	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7008288026	7.1668880896	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c5e6d7ff-efc1-4cf5-87b3-a204622e095d	BN - John-J.-McCloy-Ufer		14	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.6710361979	7.187889234	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-212ec0cd-078d-438f-886c-1552ae3a4b51	BN - Bröltalbahnweg		10	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7424892925	7.1134669781	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f3d90fa8-56b6-40a6-b434-7550967fa11f	BN - Estermannufer		7	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7681019456	7.0688012735	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c0b127f6-735b-40fa-bb6a-8a0d0b33fc06	BN - Hochwasserdamm Beuel		15	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7334176473	7.1150669195	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-cd9f9ca3-4201-4606-8ac4-2eba16ffd45d	BN - Rhenusallee		9	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7222859932	7.1336086832	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2fad2b6d-8db5-43f8-ae57-a2f28ed0e7ac	BN - Rheinweg		19	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7158900448	7.116439997	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ea83d709-d8fd-4fbc-91a4-b947964b851e	BN - Joseph-Beuys-Allee		18	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7152400448	7.117649997	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ef9ba3be-71a0-4336-9f75-5becf24f42ee	MQ1.2	Messquerschnitt (Zählfeld-Gruppe) MQ1.2	MQ1.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559502	9.989767	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-fbcf0bdf-bb55-4c34-b1ac-82b09cdcec25	MQ1.3	Messquerschnitt (Zählfeld-Gruppe) MQ1.3	MQ1.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559542	9.990131	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-4fff0458-4158-49d3-857b-d636e2e40adb	MQ10.1+10.2	Messquerschnitt (Zählfeld-Gruppe) MQ10.1+10.2	MQ10.1+10.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.528877	10.068003	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2dd63896-a459-466b-9369-e449edad4270	MQ11.1	Messquerschnitt (Zählfeld-Gruppe) MQ11.1	MQ11.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5332298	10.0276723	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b4f16079-a745-4fa4-9bb9-f63efd444dbc	MQ11.2	Messquerschnitt (Zählfeld-Gruppe) MQ11.2	MQ11.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.533474	10.027118	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ce6b9f80-fc3f-4725-a57c-f82a0418a0f8	MQ13.1	Messquerschnitt (Zählfeld-Gruppe) MQ13.1	MQ13.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536659	10.028893	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-87c116b5-c7d2-4a64-a99b-1ef0dee18aaf	MQ15.1	Messquerschnitt (Zählfeld-Gruppe) MQ15.1	MQ15.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534806	10.023657	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8494e346-08dd-4912-8f65-379068ce3143	MQ15.2	Messquerschnitt (Zählfeld-Gruppe) MQ15.2	MQ15.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534968	10.024064	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-086c7c6d-2ecc-4f20-bf07-ebfef6717e35	MQ16.1	Messquerschnitt (Zählfeld-Gruppe) MQ16.1	MQ16.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491056	10.018815	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-eeb683e0-b68a-4594-aabc-e1bca35e2a5c	MQ16.2	Messquerschnitt (Zählfeld-Gruppe) MQ16.2	MQ16.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490771	10.019263	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-df91bd97-b6c6-4ade-be34-563db50046f7	MQ16.3	Messquerschnitt (Zählfeld-Gruppe) MQ16.3	MQ16.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.4915841	10.0187062	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5bade359-4c13-43ec-8302-39c88a1a14e5	MQ16.4	Messquerschnitt (Zählfeld-Gruppe) MQ16.4	MQ16.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491983	10.018692	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c9d6c5c0-b506-4f6b-b941-f90567cbe69c	MQ16.5	Messquerschnitt (Zählfeld-Gruppe) MQ16.5	MQ16.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492149	10.014794	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-99e594bb-fe81-42c0-8b29-1cbc5f913ae8	MQ16.6	Messquerschnitt (Zählfeld-Gruppe) MQ16.6	MQ16.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492061	10.014586	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-215a7435-6355-486d-bd64-578ce44a5985	MQ17.2	Messquerschnitt (Zählfeld-Gruppe) MQ17.2	MQ17.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.499384	9.999714	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2ba7d180-ef72-4425-bde8-5aa33b56b09b	MQ19.1	Messquerschnitt (Zählfeld-Gruppe) MQ19.1	MQ19.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555697	9.93429	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b522e377-db3a-482d-b14f-fa1309cec081	MQ19.2	Messquerschnitt (Zählfeld-Gruppe) MQ19.2	MQ19.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555714	9.935825	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5c7b05f8-f5ef-42b8-ae8a-1db073340941	MQ2.2	Messquerschnitt (Zählfeld-Gruppe) MQ2.2	MQ2.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557324	9.966427	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d013fd18-10e3-42c7-8d6b-b554635ff4c8	MQ2.3	Messquerschnitt (Zählfeld-Gruppe) MQ2.3	MQ2.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558287	9.967125	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-517b0bd1-281d-441e-808c-fe6235ad23d2	MQ2.4	Messquerschnitt (Zählfeld-Gruppe) MQ2.4	MQ2.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557423	9.96769	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-a72ed750-d3ea-44f5-81a0-6ee7f9eab4da	MQ2.5	Messquerschnitt (Zählfeld-Gruppe) MQ2.5	MQ2.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557282	9.96841	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d1d1de24-7a8e-44c3-8b13-81d4d88f0cf4	MQ20.1	Messquerschnitt (Zählfeld-Gruppe) MQ20.1	MQ20.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551849	9.942183	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-4125e009-437b-4ca4-b1e3-7cb68121dbd3	MQ20.2	Messquerschnitt (Zählfeld-Gruppe) MQ20.2	MQ20.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551914	9.942567	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5a4a1d45-dae5-453c-9721-7ffa9412962b	MQ20.3	Messquerschnitt (Zählfeld-Gruppe) MQ20.3	MQ20.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5518	9.942182	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6729aa22-2049-40ad-b60b-80a44b87a393	MQ21.1	Messquerschnitt (Zählfeld-Gruppe) MQ21.1	MQ21.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550347	9.937152	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5a74ee6c-2791-4360-a6d0-72ceb75b4dec	MQ21.2	Messquerschnitt (Zählfeld-Gruppe) MQ21.2	MQ21.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55015	9.936802	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-0920762d-ce58-4d35-b39f-479bc2d5872e	MQ21.3+21.4	Messquerschnitt (Zählfeld-Gruppe) MQ21.3+21.4	MQ21.3+21.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550317	9.934094	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d467eca8-fad8-44f4-96c4-8001ed1a9caf	MQ22.1	Messquerschnitt (Zählfeld-Gruppe) MQ22.1	MQ22.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5713729	9.8687564	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-64015caa-3af8-41de-95fe-0123f0f86db0	MQ22.2	Messquerschnitt (Zählfeld-Gruppe) MQ22.2	MQ22.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571228	9.867894	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-448f16c5-8766-4680-9f51-04dd00f34ad7	MQ24.2	Messquerschnitt (Zählfeld-Gruppe) MQ24.2	MQ24.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5633	9.811997	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-870b2d7f-3b2e-4359-9c23-afb8c881a8d1	MQ24.3	Messquerschnitt (Zählfeld-Gruppe) MQ24.3	MQ24.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.56323	9.811675	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8916a2fa-7feb-4439-b2ee-dafeb588198e	MQ24.4	Messquerschnitt (Zählfeld-Gruppe) MQ24.4	MQ24.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563846	9.812288	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f524a800-d616-42cb-ac87-207ec35cf8fc	MQ24.5	Messquerschnitt (Zählfeld-Gruppe) MQ24.5	MQ24.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563695	9.812502	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-7c0af1f4-a7e1-4598-8b60-49d7d259f2d7	MQ24.6	Messquerschnitt (Zählfeld-Gruppe) MQ24.6	MQ24.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.562749	9.81221	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-249ef77b-1cc5-4f38-9dd1-77d86a574c7e	MQ25.1	Messquerschnitt (Zählfeld-Gruppe) MQ25.1	MQ25.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557633	9.998646	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-14bba2ec-f9e0-46b4-beb7-d7040c411c6e	MQ25.2	Messquerschnitt (Zählfeld-Gruppe) MQ25.2	MQ25.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558098	9.996308	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c2c815f7-a9b9-412a-899c-5190f769fa10	MQ26.1	Messquerschnitt (Zählfeld-Gruppe) MQ26.1	MQ26.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5613056	9.9903889	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-25c98c13-6bd8-4cdc-a42d-6cb2fe8b8f6d	MQ26.2	Messquerschnitt (Zählfeld-Gruppe) MQ26.2	MQ26.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.561347	9.989535	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f39bc2c2-8540-40e1-bc48-e34be7eb3c7c	MQ27.1	Messquerschnitt (Zählfeld-Gruppe) MQ27.1	MQ27.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5593836	9.99578881	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-19583fc1-8700-4abc-93ab-0b3ad26041be	MQ27.2#1	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#1	MQ27.2#1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558178	9.993338	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-db8bf121-f602-4108-af1d-42c03b74cd76	MQ27.2#2	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#2	MQ27.2#2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558288	9.993451	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9bb270cc-6da2-4dea-81f5-4ccd5f4f4525	MQ27.3	Messquerschnitt (Zählfeld-Gruppe) MQ27.3	MQ27.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55835	9.993696	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-cacf195e-4dae-4408-a8a0-1e95e0178aa6	MQ28.1	Messquerschnitt (Zählfeld-Gruppe) MQ28.1	MQ28.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567134	9.970557	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-50e76d0e-a80c-40ed-b3fc-3dd3089e3a25	MQ28.6	Messquerschnitt (Zählfeld-Gruppe) MQ28.6	MQ28.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567014	9.971653	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-e083f835-7962-4e9f-a20f-d4de90207ca2	MQ29.1	Messquerschnitt (Zählfeld-Gruppe) MQ29.1	MQ29.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575746	9.970223	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-94bd8bf6-a432-4c50-b10c-6059b5da52bc	MQ29.2	Messquerschnitt (Zählfeld-Gruppe) MQ29.2	MQ29.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576193	9.970251	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-240b6f98-f8a2-4160-8cd7-1c65a8968aa1	MQ29.4	Messquerschnitt (Zählfeld-Gruppe) MQ29.4	MQ29.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576142	9.970148	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-370436fa-5097-4b4f-bf55-79097a8a826a	MQ3.1	Messquerschnitt (Zählfeld-Gruppe) MQ3.1	MQ3.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549739	9.974404	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5d14c1b5-f45f-426a-9e6a-7c4f3700ef99	MQ3.2	Messquerschnitt (Zählfeld-Gruppe) MQ3.2	MQ3.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549444	9.973766	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6c1096ff-d5fb-4baa-b3e1-2fd060dd2c10	MQ30.1+30.2	Messquerschnitt (Zählfeld-Gruppe) MQ30.1+30.2	MQ30.1+30.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580137	9.999324	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-a6dc9158-023a-4acf-b2cb-a0cfe0754d2a	MQ31.1	Messquerschnitt (Zählfeld-Gruppe) MQ31.1	MQ31.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582629	9.9714	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6f422e6f-a51b-4836-85c3-f3ef07ead011	MQ31.2	Messquerschnitt (Zählfeld-Gruppe) MQ31.2	MQ31.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582224	9.972698	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-e035541d-141f-42a2-bdc0-bf576492877d	MQ31.3	Messquerschnitt (Zählfeld-Gruppe) MQ31.3	MQ31.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58237	9.97116	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-7aa5d0a1-e3c9-40f7-b5d5-f7f50722a99b	MQ31.4	Messquerschnitt (Zählfeld-Gruppe) MQ31.4	MQ31.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581422	9.970706	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d0caf4b5-a954-494d-b4ed-88da4427763a	MQ31.5	Messquerschnitt (Zählfeld-Gruppe) MQ31.5	MQ31.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581576	9.972654	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ed477c62-4447-48d8-b024-b2851b05898e	MQ31.6	Messquerschnitt (Zählfeld-Gruppe) MQ31.6	MQ31.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581274	9.972468	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-4f55cf09-5a29-4c87-b77d-cf467191dff3	MQ32.1	Messquerschnitt (Zählfeld-Gruppe) MQ32.1	MQ32.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575775	9.953637	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d9842b6c-50c6-4bc6-8e7e-6d7838d283c1	MQ32.2	Messquerschnitt (Zählfeld-Gruppe) MQ32.2	MQ32.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575613	9.954004	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-58b7239f-9f6c-4955-bfec-d7696d8ad2c1	MQ33.1	Messquerschnitt (Zählfeld-Gruppe) MQ33.1	MQ33.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602845	9.891511	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-0d1abc09-79f2-4ab0-bb56-ce4e3b0dcb49	MQ33.2	Messquerschnitt (Zählfeld-Gruppe) MQ33.2	MQ33.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.60194	9.89026	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-399725be-13c9-45cd-8fe2-6b63c3fb7cc2	MQ34.1	Messquerschnitt (Zählfeld-Gruppe) MQ34.1	MQ34.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628653	9.93175	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b7a492a5-88ea-49c4-b216-a4470a2a3866	MQ34.2	Messquerschnitt (Zählfeld-Gruppe) MQ34.2	MQ34.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628498	9.932425	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ad12e891-f225-4041-af30-5d478d9c7f3b	MQ35.1	Messquerschnitt (Zählfeld-Gruppe) MQ35.1	MQ35.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6170439	9.9504622	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d11f6ed7-b8c5-4491-9a9a-58f2bc85e39c	MQ35.2	Messquerschnitt (Zählfeld-Gruppe) MQ35.2	MQ35.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.616118	9.951241	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1255c5e6-1c96-4877-855d-ecda7df82f7d	MQ36.1	Messquerschnitt (Zählfeld-Gruppe) MQ36.1	MQ36.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580543499	9.999595627	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9ad49971-4f14-49b3-a156-35e6e465ce21	MQ37.1	Messquerschnitt (Zählfeld-Gruppe) MQ37.1	MQ37.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564829	10.018398	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ab2488e0-91fd-4bc9-8f6d-7d3ff914b1a4	MQ37.2	Messquerschnitt (Zählfeld-Gruppe) MQ37.2	MQ37.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564519	10.018337	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9beceb68-de06-415c-bf43-3e534b013afd	MQ37.3	Messquerschnitt (Zählfeld-Gruppe) MQ37.3	MQ37.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.566198	10.020138	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f8acc9ac-a45f-41f2-9e24-de7632a090dc	MQ38.1	Messquerschnitt (Zählfeld-Gruppe) MQ38.1	MQ38.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576818	10.010544	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6c298a8c-e826-4cdf-9d99-3b70b29796dd	MQ38.2	Messquerschnitt (Zählfeld-Gruppe) MQ38.2	MQ38.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.577056	10.010206	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-155381f5-edb4-44de-8f53-a9130cb8ce20	MQ39.1	Messquerschnitt (Zählfeld-Gruppe) MQ39.1	MQ39.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575603	10.034868	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ffb41b93-faa5-48c2-b4d7-ab43c713a372	MQ39.2	Messquerschnitt (Zählfeld-Gruppe) MQ39.2	MQ39.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575833	10.034069	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c44158ad-ee9e-43bd-8fa7-24fd29fec2f3	MQ39.3	Messquerschnitt (Zählfeld-Gruppe) MQ39.3	MQ39.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574726	10.034438	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-88868a15-d727-46b2-acb5-66281a17ec31	MQ39.4	Messquerschnitt (Zählfeld-Gruppe) MQ39.4	MQ39.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574555	10.035141	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f5c7f8a8-5511-4821-863a-f999a1ea2b9c	MQ39.5	Messquerschnitt (Zählfeld-Gruppe) MQ39.5	MQ39.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575758	10.036348	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-71b08db3-4478-41d4-9213-ff1e172ab685	MQ39.6	Messquerschnitt (Zählfeld-Gruppe) MQ39.6	MQ39.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575342	10.036291	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8005c500-e3ef-4431-a93f-f8189598fc04	MQ39.7	Messquerschnitt (Zählfeld-Gruppe) MQ39.7	MQ39.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574753	10.036206	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1b3c381c-4d84-4d01-90ab-25ebaaf3fa84	MQ39.8	Messquerschnitt (Zählfeld-Gruppe) MQ39.8	MQ39.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574649	10.035881	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c8e02aab-17b5-4fd9-aefc-1e6bc66dacb5	MQ4.1	Messquerschnitt (Zählfeld-Gruppe) MQ4.1	MQ4.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54552	9.971877	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2a64598b-4abc-41ec-b115-6dcffb8e19a2	MQ4.2	Messquerschnitt (Zählfeld-Gruppe) MQ4.2	MQ4.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545348	9.971869	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-dfc088a5-2b18-4cb5-959e-31dc2fff816f	MQ40.1+40.2	Messquerschnitt (Zählfeld-Gruppe) MQ40.1+40.2	MQ40.1+40.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598792	10.042896	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-aa551fd9-1b8a-4078-bc75-7f397732a3c5	MQ40.4	Messquerschnitt (Zählfeld-Gruppe) MQ40.4	MQ40.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597921	10.042453	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ea7beeb0-279b-4db9-8314-ddb7826f900b	MQ40.5	Messquerschnitt (Zählfeld-Gruppe) MQ40.5	MQ40.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59801	10.0421266	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-bbfe3d5f-2c6c-41a1-9f0f-f08e38279fcf	MQ40.6	Messquerschnitt (Zählfeld-Gruppe) MQ40.6	MQ40.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598353	10.040616	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-20855979-32ab-46a6-b1b3-d2f1e55deccc	MQ40.7	Messquerschnitt (Zählfeld-Gruppe) MQ40.7	MQ40.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598456	10.040752	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8e6b93d1-4db3-4068-bcb7-d28b1e0281a1	MQ40.8	Messquerschnitt (Zählfeld-Gruppe) MQ40.8	MQ40.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599466	10.041376	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f2242f0d-77d7-4014-a5f7-c41936db9d0d	MQ40.9	Messquerschnitt (Zählfeld-Gruppe) MQ40.9	MQ40.9	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599749	10.041109	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6611a133-1316-4656-a0f6-b6e622cd17ad	MQ41.1	Messquerschnitt (Zählfeld-Gruppe) MQ41.1	MQ41.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649518	10.017232	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-77e53145-41ad-4a53-b5a3-45055521eb8d	MQ41.2	Messquerschnitt (Zählfeld-Gruppe) MQ41.2	MQ41.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649258	10.017161	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-4027a890-6001-488f-92c7-1b0129c9c767	MQ41.3	Messquerschnitt (Zählfeld-Gruppe) MQ41.3	MQ41.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.648629	10.017824	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c5354f99-756b-4227-9372-7e8654fbb667	MQ41.4	Messquerschnitt (Zählfeld-Gruppe) MQ41.4	MQ41.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649257	10.018631	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-94e8be3d-157d-464e-906c-380103897eec	MQ41.5	Messquerschnitt (Zählfeld-Gruppe) MQ41.5	MQ41.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649513	10.018663	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f9c76e4e-0155-42dd-816a-56799572194a	MQ41.6	Messquerschnitt (Zählfeld-Gruppe) MQ41.6	MQ41.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650325	10.017771	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-76d6130e-0a48-431d-b217-1f947b941c9b	MQ41.7	Messquerschnitt (Zählfeld-Gruppe) MQ41.7	MQ41.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650046	10.01798	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-60f4b2c7-6e97-49f3-b034-8f7e9cdedce7	MQ42.1+42.2	Messquerschnitt (Zählfeld-Gruppe) MQ42.1+42.2	MQ42.1+42.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564546	10.045668	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9da0bb93-f1be-44ef-bdd5-dfb26905f260	MQ42.7+42.8	Messquerschnitt (Zählfeld-Gruppe) MQ42.7+42.8	MQ42.7+42.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563912	10.044655	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9855add8-857f-4667-b118-65cdc15ae6a4	MQ43.1	Messquerschnitt (Zählfeld-Gruppe) MQ43.1	MQ43.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571186	10.064556	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-56ac9d80-5d97-459b-b85f-f8b92c98e4b5	MQ43.2	Messquerschnitt (Zählfeld-Gruppe) MQ43.2	MQ43.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571528	10.065005	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-09a7f71d-3f6a-46d6-bea1-440bd121e635	MQ44.1+44.2	Messquerschnitt (Zählfeld-Gruppe) MQ44.1+44.2	MQ44.1+44.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.595287	10.146631	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ee264bd9-b785-494a-bd5f-406c20a65c48	MQ44.3+44.4	Messquerschnitt (Zählfeld-Gruppe) MQ44.3+44.4	MQ44.3+44.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.594784	10.146565	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-06595e41-03be-4fdd-b711-e387371d6b94	MQ45.3	Messquerschnitt (Zählfeld-Gruppe) MQ45.3	MQ45.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605673	10.119519	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f8cd406f-fb98-439f-a220-7de0fa2451c4	MQ45.4	Messquerschnitt (Zählfeld-Gruppe) MQ45.4	MQ45.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605632	10.119057	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d4708ef0-8965-4da0-aa92-6cd79b68214d	MQ46.1	Messquerschnitt (Zählfeld-Gruppe) MQ46.1	MQ46.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656396	10.094956	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-bd0f227f-ada0-4bb3-985d-d85524913f49	MQ46.2	Messquerschnitt (Zählfeld-Gruppe) MQ46.2	MQ46.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656217	10.094338	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8385618c-2531-4981-88d7-a438854b1869	MQ46.3	Messquerschnitt (Zählfeld-Gruppe) MQ46.3	MQ46.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656607	10.094081	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c4aad667-4211-4255-82e4-17f510e942d1	MQ46.4	Messquerschnitt (Zählfeld-Gruppe) MQ46.4	MQ46.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.657029	10.094174	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-23e4a4f0-da57-4743-85e6-bab7d3edddea	MQ46.5	Messquerschnitt (Zählfeld-Gruppe) MQ46.5	MQ46.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656398	10.092844	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1ca2182b-6051-478d-925e-c84b67512e55	MQ46.6	Messquerschnitt (Zählfeld-Gruppe) MQ46.6	MQ46.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656126	10.093074	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-69b61272-869a-4d0d-9a01-8158a2559dc9	MQ46.7	Messquerschnitt (Zählfeld-Gruppe) MQ46.7	MQ46.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.65604	10.093221	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b13224c8-a6ef-493d-a6c2-b3a147bd39ed	MQ46.8	Messquerschnitt (Zählfeld-Gruppe) MQ46.8	MQ46.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6558936	10.0937151	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2767a83e-1634-4fb9-8839-471810ce5fe4	MQ47.1	Messquerschnitt (Zählfeld-Gruppe) MQ47.1	MQ47.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491224	10.207669	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b5ac5eef-1dca-49fe-adf8-19da6ed17a4a	MQ48.1	Messquerschnitt (Zählfeld-Gruppe) MQ48.1	MQ48.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489577	10.186242	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6433a6f9-514b-4ea9-9ebb-45e0b9f381cf	MQ48.2	Messquerschnitt (Zählfeld-Gruppe) MQ48.2	MQ48.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489552	10.18657	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b21f20f1-1fa0-4879-ad33-08015ec0b76b	MQ49.1	Messquerschnitt (Zählfeld-Gruppe) MQ49.1	MQ49.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.470913	9.993656	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ed1d204f-41ab-490d-9ed6-99857b6bacbe	MQ50.1	Messquerschnitt (Zählfeld-Gruppe) MQ50.1	MQ50.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456969	9.985025	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f5b468c1-e812-4e3c-83be-4f35b89fcee8	MQ50.2	Messquerschnitt (Zählfeld-Gruppe) MQ50.2	MQ50.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456928	9.986936	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5f97085b-7223-4dbd-a3a0-3f95018d0ebd	MQ50.3	Messquerschnitt (Zählfeld-Gruppe) MQ50.3	MQ50.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456396	9.985592	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-903cc87f-77a2-4769-bf6a-4b8af52af690	MQ50.4	Messquerschnitt (Zählfeld-Gruppe) MQ50.4	MQ50.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456908	9.985975	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5966fcd8-cb1c-450d-b22c-4c484c402393	MQ50.5	Messquerschnitt (Zählfeld-Gruppe) MQ50.5	MQ50.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.45644	9.985882	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-0a2442be-7d7c-44ba-9c94-3814cbf16ff3	MQ50.6	Messquerschnitt (Zählfeld-Gruppe) MQ50.6	MQ50.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456992	9.984587	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-68008f57-049c-47e9-9a50-ab3dfdc1c176	MQ52.1	Messquerschnitt (Zählfeld-Gruppe) MQ52.1	MQ52.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.461624	9.978958	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c287c484-280c-4cc6-a23e-83db8f9d3e89	MQ53.2	Messquerschnitt (Zählfeld-Gruppe) MQ53.2	MQ53.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555794	9.949541	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-330ab162-a3a5-41a5-a06c-9a6042cc7ac2	MQ54.1	Messquerschnitt (Zählfeld-Gruppe) MQ54.1	MQ54.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.553388	9.897991	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-0d67b863-05a2-4519-acaa-7ac0e649e9a9	MQ55.2	Messquerschnitt (Zählfeld-Gruppe) MQ55.2	MQ55.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548809	9.947219	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-20a741fe-c726-48ef-bed1-d6b8df0f5e87	MQ55.3	Messquerschnitt (Zählfeld-Gruppe) MQ55.3	MQ55.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548736	9.947563	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f988fe94-624f-4343-8b6c-b2552c99611a	MQ56.1	Messquerschnitt (Zählfeld-Gruppe) MQ56.1	MQ56.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555075	9.999794	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-397d16fa-f448-478c-89bb-a546d44d9df3	MQ56.2	Messquerschnitt (Zählfeld-Gruppe) MQ56.2	MQ56.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.554296	9.998839	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-f197df02-f66a-4b2f-b700-0fe433aa78c5	MQ57.1	Messquerschnitt (Zählfeld-Gruppe) MQ57.1	MQ57.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549987	9.966551	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-7dd4abc1-8fa7-40bb-89e0-f9c3e74210f6	MQ57.2	Messquerschnitt (Zählfeld-Gruppe) MQ57.2	MQ57.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549883	9.966789	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c73b2ee8-e5b0-4975-ae7f-9541dc0d0587	MQ58.2	Messquerschnitt (Zählfeld-Gruppe) MQ58.2	MQ58.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588565	10.074989	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-4b7f9094-74d7-482f-87b8-2e78adcf1735	MQ58.3	Messquerschnitt (Zählfeld-Gruppe) MQ58.3	MQ58.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588683	10.075165	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-09ef934f-4baf-4649-8d1b-a5733ca315e4	MQ59.1	Messquerschnitt (Zählfeld-Gruppe) MQ59.1	MQ59.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579863	9.93956	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-58219bc1-6f42-4eef-a51a-f582b98c1d02	MQ59.2	Messquerschnitt (Zählfeld-Gruppe) MQ59.2	MQ59.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579671	9.939617	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-16bbe2aa-6392-4686-a870-a6c8ec51749c	MQ6.1+6.2	Messquerschnitt (Zählfeld-Gruppe) MQ6.1+6.2	MQ6.1+6.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.541074	9.966599	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-ee629315-6083-463a-8108-c720f942f3bb	MQ60.1	Messquerschnitt (Zählfeld-Gruppe) MQ60.1	MQ60.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.63297	10.025849	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-243307e9-2eec-4ff0-8732-aaf9f950f1a0	MQ61.1	Messquerschnitt (Zählfeld-Gruppe) MQ61.1	MQ61.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55437	10.013955	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d869f874-c19e-4e7b-9d9a-890cdaf48d5b	MQ61.2	Messquerschnitt (Zählfeld-Gruppe) MQ61.2	MQ61.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55423	10.014049	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-87076da6-1721-4ae3-976a-f6f79bbae3ab	MQ62.1	Messquerschnitt (Zählfeld-Gruppe) MQ62.1	MQ62.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490752	10.158439	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-99956799-3d70-4f29-a5d7-367bb0ce8f4d	MQ63.1	Messquerschnitt (Zählfeld-Gruppe) MQ63.1	MQ63.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.570707	9.958068	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c1a0b88e-4af6-4cca-aed7-d8ea7ebe503a	MQ64.1	Messquerschnitt (Zählfeld-Gruppe) MQ64.1	MQ64.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.466293	9.986074	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-a4bfaef5-a256-46fe-91e2-c89f8c1a6d40	MQ65.1	Messquerschnitt (Zählfeld-Gruppe) MQ65.1	MQ65.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460342	9.975723	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-acf9d8a0-8712-4235-9814-d31fde482059	MQ65.2	Messquerschnitt (Zählfeld-Gruppe) MQ65.2	MQ65.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460248	9.975731	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5bfa63d5-54c9-4bce-80bb-4096443816c5	MQ66.1	Messquerschnitt (Zählfeld-Gruppe) MQ66.1	MQ66.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558882	9.962624	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-752e9f3e-97cb-4d3a-b6b3-a7d727dc7b8e	MQ66.2	Messquerschnitt (Zählfeld-Gruppe) MQ66.2	MQ66.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558984	9.961814	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-e5c070c5-022c-47e0-b795-b431b9d2516d	MQ68.1	Messquerschnitt (Zählfeld-Gruppe) MQ68.1	MQ68.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494852	10.20662	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b96f7f0a-3710-473b-8587-f414be3eae4d	MQ68.2	Messquerschnitt (Zählfeld-Gruppe) MQ68.2	MQ68.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494705	10.206855	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-cf12ed0f-4582-45fc-a748-9d8a153b9a54	MQ69.1	Messquerschnitt (Zählfeld-Gruppe) MQ69.1	MQ69.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5222	10.015052	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9079c4f7-ec55-46d9-bbe1-5345d5a6fcf3	MQ69.2	Messquerschnitt (Zählfeld-Gruppe) MQ69.2	MQ69.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.521604	10.014901	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8c343b86-d2b1-44eb-be18-76caa6755794	MQ70.1	Messquerschnitt (Zählfeld-Gruppe) MQ70.1	MQ70.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602904	10.029791	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d9864a04-b58b-40d3-9b73-616a5fae89aa	MQ71.1	Messquerschnitt (Zählfeld-Gruppe) MQ71.1	MQ71.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54532	9.99732	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-efb02c6d-c2d7-4b62-b691-6846cf436237	MQ71.2	Messquerschnitt (Zählfeld-Gruppe) MQ71.2	MQ71.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545308	9.997238	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-7a59c026-7e33-46f9-844d-9fb41bbf85ad	MQ72.1	Messquerschnitt (Zählfeld-Gruppe) MQ72.1	MQ72.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569591	9.97361	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-a3e56884-e6c3-4b1e-8286-f0d594125505	MQ72.2	Messquerschnitt (Zählfeld-Gruppe) MQ72.2	MQ72.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569716	9.973282	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8ed36a54-883b-4901-a2a8-9ab4eafaf43b	MQ73.1+73.2	Messquerschnitt (Zählfeld-Gruppe) MQ73.1+73.2	MQ73.1+73.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.631293	9.950951	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8b87558b-8c13-45b1-98a0-e2489d1aaf00	MQ74.1	Messquerschnitt (Zählfeld-Gruppe) MQ74.1	MQ74.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597476	9.932351	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-980cb835-8329-4988-8dc1-d2a4bc73c069	MQ74.2	Messquerschnitt (Zählfeld-Gruppe) MQ74.2	MQ74.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59698	9.932577	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-bad1830b-96ec-47a1-a7c8-e2792a05a16d	MQ76.1	Messquerschnitt (Zählfeld-Gruppe) MQ76.1	MQ76.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59838	9.958425	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-b3beff21-8198-4268-815b-276eb1c501c0	MQ77.1	Messquerschnitt (Zählfeld-Gruppe) MQ77.1	MQ77.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598286	9.941963	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c81b8f96-d5ae-4ae2-8b7d-990aa8628667	MQ78.1	Messquerschnitt (Zählfeld-Gruppe) MQ78.1	MQ78.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563392	9.976375	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-3401c05d-09ba-47e8-ac15-8bf77c269a98	MQ78.2	Messquerschnitt (Zählfeld-Gruppe) MQ78.2	MQ78.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563345	9.976814	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-c1be4805-1af1-488e-a5a0-586b506d9ff8	MQ79.1	Messquerschnitt (Zählfeld-Gruppe) MQ79.1	MQ79.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564579	9.986991	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1d7b20eb-2d09-4291-b716-366f68f60aa4	MQ8.1	Messquerschnitt (Zählfeld-Gruppe) MQ8.1	MQ8.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55561	10.038192	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-5e42bdbb-b342-4c3b-af98-973f4f3b90d3	MQ80.1	Messquerschnitt (Zählfeld-Gruppe) MQ80.1	MQ80.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.583661	9.995193	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-6e385cce-bd45-4617-9b48-753c5c887c9b	MQ80.2	Messquerschnitt (Zählfeld-Gruppe) MQ80.2	MQ80.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.995601	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8047f424-6f63-468c-929f-ab32cc3bafd7	MQ81.1	Messquerschnitt (Zählfeld-Gruppe) MQ81.1	MQ81.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.932026	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-e9ec304d-9cc4-4863-aa03-550dae475265	MQ85.1	Messquerschnitt (Zählfeld-Gruppe) MQ85.1	MQ85.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598475	9.965094	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2984c4e4-bef0-4c8f-aeb0-5861df556670	MQ85.2	Messquerschnitt (Zählfeld-Gruppe) MQ85.2	MQ85.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598244	9.965587	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-2c8515d2-c136-49fa-bfe7-7d3ab4f11608	MQ86.1	Messquerschnitt (Zählfeld-Gruppe) MQ86.1	MQ86.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559758	10.010613	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-1b459ae7-d311-401a-a270-8593cac5443b	MQ87.1	Messquerschnitt (Zählfeld-Gruppe) MQ87.1	MQ87.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.560293	9.912201	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-79617035-1bb6-49c5-83d7-ad746d2ea0b3	MQ9.1	Messquerschnitt (Zählfeld-Gruppe) MQ9.1	MQ9.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.53762575	10.107728436	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-8a50fa3d-ca19-4646-a212-41cb16cff9ce	MQ9.2	Messquerschnitt (Zählfeld-Gruppe) MQ9.2	MQ9.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537557	10.107269	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-80dbe98b-69ce-45ae-a711-a76beedbb7e0	MQ9.3	Messquerschnitt (Zählfeld-Gruppe) MQ9.3	MQ9.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537886	10.108873	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d7bcfc8f-85e1-452d-a6e3-5b65b85cab29	MQ9.4	Messquerschnitt (Zählfeld-Gruppe) MQ9.4	MQ9.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.538032	10.109565	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-d4ae8d41-909f-4ac4-8edd-aa2d8ed53688	MQ9.5	Messquerschnitt (Zählfeld-Gruppe) MQ9.5	MQ9.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537127	10.108677	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
-9ab58739-3a83-41dd-bcbb-30ec15cc29c9	MQ9.6	Messquerschnitt (Zählfeld-Gruppe) MQ9.6	MQ9.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536605	10.109432	Europe/Berlin	7e3da419-edf5-4f27-bc65-c268020c1b27	\N
+COPY public.counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256, status) FROM stdin;
+09f3dc59-40c7-4527-982c-86e42a7f4e8b	Bismarckallee		300038855	a023b021-9754-56c7-8c4e-9c391069aff5	51.956	7.6186	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e58da4d9-b781-4873-9479-e67a97fe464e	Bohlweg		300037926	a023b021-9754-56c7-8c4e-9c391069aff5	51.9688	7.6435	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+85c48593-03a5-477a-8df0-fa3ba53bf6b2	Coesfelder Kreuz		300039328	a023b021-9754-56c7-8c4e-9c391069aff5	51.9659	7.6012	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße		100034978	a023b021-9754-56c7-8c4e-9c391069aff5	51.9715	7.6356	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege		300037931	a023b021-9754-56c7-8c4e-9c391069aff5	51.9796	7.6065	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße		300037925	a023b021-9754-56c7-8c4e-9c391069aff5	51.968	7.638	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1866c3c6-02ff-4178-9afe-0871c9eb0302	Grevener Straße		300039331	a023b021-9754-56c7-8c4e-9c391069aff5	51.975	7.612	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d1b2d952-5724-4b0f-b6cf-931828c03ec3	Hafenstraße		100031300	a023b021-9754-56c7-8c4e-9c391069aff5	51.9549	7.6289	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+10456344-748c-4ae6-9108-f986092d0e37	Hammer Straße		100034980	a023b021-9754-56c7-8c4e-9c391069aff5	51.9545	7.6263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+86b93643-80ea-4ab9-abf5-c5f8c88363bd	Hüfferstraße		100034982	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6109	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade Abschnitt 1 (Dingstiege)		300037544	a023b021-9754-56c7-8c4e-9c391069aff5	51.9795	7.6632	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade Abschnitt 5		100053305	a023b021-9754-56c7-8c4e-9c391069aff5	51.9181	7.6497	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade Abschnitt 6		300037936	a023b021-9754-56c7-8c4e-9c391069aff5	51.8895	7.65	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7e23d159-5899-4c55-957a-d89963173fdc	Lütkenbecker Weg		300037920	a023b021-9754-56c7-8c4e-9c391069aff5	51.943	7.6485	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor		100035541	a023b021-9754-56c7-8c4e-9c391069aff5	51.967	7.6154	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade (nördlich Salzstraße)		100031297	a023b021-9754-56c7-8c4e-9c391069aff5	51.9606	7.634	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westlicher Hals)		300037405	a023b021-9754-56c7-8c4e-9c391069aff5	51.9589	7.6195	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße		300037932	a023b021-9754-56c7-8c4e-9c391069aff5	51.955	7.595	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8bc74780-c0dd-4e71-97f0-e0ada75a0e41	Warendorfer Straße		100034983	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6375	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fed9ecfe-72ac-4098-b99d-a6597965fe90	Weißenburg Str.		300037933	a023b021-9754-56c7-8c4e-9c391069aff5	51.9475	7.6295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f7a545f1-4d17-49d0-9c19-e36d5340da49	Weseler Straße		100034981	a023b021-9754-56c7-8c4e-9c391069aff5	51.9506	7.6177	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f2661888-fad4-4ffe-be44-a0e4ef7df0e0	Wolbecker Straße		100020113	a023b021-9754-56c7-8c4e-9c391069aff5	51.957	7.64	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1d91486f-ed15-4eb1-811d-4f6779d760b0	BN - Brühler Straße		11	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.74042933	7.0695014145	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b39332ac-f545-499f-a0e0-3a371a5a5839	BN - Nordbrücke (Südseite)		3	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.758688588	7.1042793525	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+edeef68f-2110-4648-ab10-12d181780847	BN - Wilhelm-Spiritus-Ufer		13	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.728124333	7.1120745095	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2cc780a8-48b5-47dc-8492-0cc0dcc6e560	BN - Kennedybrücke (Nordseite)		1	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7390301848	7.1152570731	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3c9e9903-f357-4569-a757-ee1b4177c8e3	BN - Nordbrücke (Nordseite)		4	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7590811376	7.1038102283	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+05717a4e-df8e-4a99-9f2e-a8a4f386030d	BN - Südbrücke (Südseite)		5	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7121532099	7.140091817	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+31e21830-145b-4c59-8199-37c8eb3c2f85	BN - Südbrücke (Nordseite)		6	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7199570855	7.1445975348	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f8e36b25-2165-4a6d-afde-c13c67df65ac	BN - Von-Sandt-Ufer		8	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7008288026	7.1668880896	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0867be14-2aca-4396-b4c6-dc6b554d715f	BN - Bröltalbahnweg		10	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7424892925	7.1134669781	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3fe282f7-f725-4bfa-b534-2d53dd42431b	BN - Estermannufer		7	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7681019456	7.0688012735	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c5b739c5-b831-47ba-9e6e-dcb6d012e8d2	BN - Hochwasserdamm Beuel		15	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7334176473	7.1150669195	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+625a6e6b-bd00-454d-9984-2cc674491219	BN - Rhenusallee		9	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7222859932	7.1336086832	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1a9de3f3-9dca-4e84-8cb9-06f3ff5bb920	BN - Rheinweg		19	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7158900448	7.116439997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5198bd82-f11b-46ce-84a2-094e1a96da2b	BN - Joseph-Beuys-Allee		18	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7152400448	7.117649997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+635e3ed1-65d0-47b5-952a-dffefdada546	MQ1.2	Messquerschnitt (Zählfeld-Gruppe) MQ1.2	MQ1.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559502	9.989767	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fcae169d-de64-4d2d-a792-66a00423bdca	MQ1.3	Messquerschnitt (Zählfeld-Gruppe) MQ1.3	MQ1.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559542	9.990131	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8a366bf2-f714-40c2-8a54-f8722d96400b	MQ10.1+10.2	Messquerschnitt (Zählfeld-Gruppe) MQ10.1+10.2	MQ10.1+10.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.528877	10.068003	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d555d386-8664-4683-80b4-7c258912093d	MQ11.1	Messquerschnitt (Zählfeld-Gruppe) MQ11.1	MQ11.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5332298	10.0276723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+998268eb-f5f5-4f45-83aa-60effb497175	MQ11.2	Messquerschnitt (Zählfeld-Gruppe) MQ11.2	MQ11.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.533474	10.027118	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+70482357-f2a6-44c9-ae8e-ac086840c50e	MQ13.1	Messquerschnitt (Zählfeld-Gruppe) MQ13.1	MQ13.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536659	10.028893	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b3e125a6-f275-44a5-a493-9d9e0b96b352	MQ15.1	Messquerschnitt (Zählfeld-Gruppe) MQ15.1	MQ15.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534806	10.023657	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0c9b5df9-a269-4096-8cce-181a09456e9a	MQ15.2	Messquerschnitt (Zählfeld-Gruppe) MQ15.2	MQ15.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534968	10.024064	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1bf368ed-790e-4565-8445-1721f2ba2060	MQ16.1	Messquerschnitt (Zählfeld-Gruppe) MQ16.1	MQ16.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491056	10.018815	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eefa0525-6191-46ad-9c9a-fd5e0de84beb	MQ16.2	Messquerschnitt (Zählfeld-Gruppe) MQ16.2	MQ16.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490771	10.019263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7b161005-f138-4714-9ae8-5c093eb0e74b	MQ16.3	Messquerschnitt (Zählfeld-Gruppe) MQ16.3	MQ16.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.4915841	10.0187062	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+194dff83-9672-44cc-a3a9-d8069389a12c	MQ16.4	Messquerschnitt (Zählfeld-Gruppe) MQ16.4	MQ16.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491983	10.018692	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str.		300037928	a023b021-9754-56c7-8c4e-9c391069aff5	51.979	7.621	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+baae3578-829f-4680-8d0b-ccced489e56e	MQ16.5	Messquerschnitt (Zählfeld-Gruppe) MQ16.5	MQ16.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492149	10.014794	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1a5da770-5f21-459f-b497-ae3029f7523c	MQ16.6	Messquerschnitt (Zählfeld-Gruppe) MQ16.6	MQ16.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492061	10.014586	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5289f3b1-8ab3-400d-89a6-08cb0ee8b15e	MQ17.2	Messquerschnitt (Zählfeld-Gruppe) MQ17.2	MQ17.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.499384	9.999714	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7a38034f-9bd5-44af-963e-26d9b736f6b1	MQ19.1	Messquerschnitt (Zählfeld-Gruppe) MQ19.1	MQ19.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555697	9.93429	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+15244802-0b50-4857-aac7-2cf9384541fa	MQ19.2	Messquerschnitt (Zählfeld-Gruppe) MQ19.2	MQ19.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555714	9.935825	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+26575ab9-f8c5-48f0-aedb-182be7e79fa3	MQ2.2	Messquerschnitt (Zählfeld-Gruppe) MQ2.2	MQ2.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557324	9.966427	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+668f312f-6960-4078-bc0c-36089af4a603	MQ2.3	Messquerschnitt (Zählfeld-Gruppe) MQ2.3	MQ2.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558287	9.967125	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bf845988-3bdd-4511-b3bc-fb09bad70276	MQ2.4	Messquerschnitt (Zählfeld-Gruppe) MQ2.4	MQ2.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557423	9.96769	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+47f0cdec-2f2c-48f9-8e79-aca33f2bd17d	MQ2.5	Messquerschnitt (Zählfeld-Gruppe) MQ2.5	MQ2.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557282	9.96841	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bbcb9757-aadc-4ab4-a2bd-cbece98bbfb9	MQ21.1	Messquerschnitt (Zählfeld-Gruppe) MQ21.1	MQ21.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550347	9.937152	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e3267ba2-ec09-45ad-b31d-8dd0bbe62d2e	MQ21.2	Messquerschnitt (Zählfeld-Gruppe) MQ21.2	MQ21.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55015	9.936802	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+886cbc86-1788-4d99-afdd-dad68f1084f1	MQ21.3+21.4	Messquerschnitt (Zählfeld-Gruppe) MQ21.3+21.4	MQ21.3+21.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550317	9.934094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9542c3c1-4436-4a36-99cf-d2dca965ed2b	MQ22.1	Messquerschnitt (Zählfeld-Gruppe) MQ22.1	MQ22.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5713729	9.8687564	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0d19b786-27af-44aa-81a5-2d5657ef5f36	MQ22.2	Messquerschnitt (Zählfeld-Gruppe) MQ22.2	MQ22.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571228	9.867894	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+017bbf49-47d4-47dd-a252-6ba093fbeb22	MQ24.2	Messquerschnitt (Zählfeld-Gruppe) MQ24.2	MQ24.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5633	9.811997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e9bfc08e-8925-470a-adae-40c904e1fda9	MQ24.3	Messquerschnitt (Zählfeld-Gruppe) MQ24.3	MQ24.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.56323	9.811675	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b7293c19-5c8c-4d5a-af06-a468ec299b62	MQ24.4	Messquerschnitt (Zählfeld-Gruppe) MQ24.4	MQ24.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563846	9.812288	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cba14d7e-69bb-4443-b0aa-9c80c3d0cb3b	MQ24.5	Messquerschnitt (Zählfeld-Gruppe) MQ24.5	MQ24.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563695	9.812502	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2d430191-5148-4000-9f38-9264de575911	MQ24.6	Messquerschnitt (Zählfeld-Gruppe) MQ24.6	MQ24.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.562749	9.81221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cc1b0068-f2f4-49da-b059-a4f9635f7f4b	MQ25.1	Messquerschnitt (Zählfeld-Gruppe) MQ25.1	MQ25.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557633	9.998646	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0c930397-8b1e-4e13-9455-82f70550833a	MQ25.2	Messquerschnitt (Zählfeld-Gruppe) MQ25.2	MQ25.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558098	9.996308	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+889f932a-cefc-4bdc-b4ff-9ff5630dafc8	MQ26.1	Messquerschnitt (Zählfeld-Gruppe) MQ26.1	MQ26.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5613056	9.9903889	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a4f2be3d-95b0-4404-aeb0-3aedc8c07ecf	MQ26.2	Messquerschnitt (Zählfeld-Gruppe) MQ26.2	MQ26.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.561347	9.989535	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+595839f1-bfa3-4f94-8fc8-bbc23373eb19	MQ27.1	Messquerschnitt (Zählfeld-Gruppe) MQ27.1	MQ27.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5593836	9.99578881	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e5c3ad5a-3d1e-4cd7-b657-72b26651132c	MQ27.2#1	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#1	MQ27.2#1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558178	9.993338	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b1923170-7866-4a80-8487-c22850f6efe4	MQ27.2#2	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#2	MQ27.2#2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558288	9.993451	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+afb35ef4-a641-4965-a717-730e782e2432	MQ27.3	Messquerschnitt (Zählfeld-Gruppe) MQ27.3	MQ27.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55835	9.993696	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d00a5f81-88b4-450f-bf2f-e49d063d0d9d	MQ28.1	Messquerschnitt (Zählfeld-Gruppe) MQ28.1	MQ28.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567134	9.970557	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+12aff17e-afac-4cd3-8dff-1f94db662930	MQ28.6	Messquerschnitt (Zählfeld-Gruppe) MQ28.6	MQ28.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567014	9.971653	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ef44abd2-386a-4b47-99cf-4793ea1894bf	MQ29.1	Messquerschnitt (Zählfeld-Gruppe) MQ29.1	MQ29.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575746	9.970223	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2b4a35f1-4983-41ec-8d42-acfac2a2935c	MQ29.2	Messquerschnitt (Zählfeld-Gruppe) MQ29.2	MQ29.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576193	9.970251	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+19fe5121-2590-4ff9-9ca8-6412a815fa19	MQ29.4	Messquerschnitt (Zählfeld-Gruppe) MQ29.4	MQ29.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576142	9.970148	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1dfef925-989f-4786-85d9-5c91d2191d89	MQ3.1	Messquerschnitt (Zählfeld-Gruppe) MQ3.1	MQ3.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549739	9.974404	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6c908933-50ab-4e93-86eb-be9a02ae26b0	MQ3.2	Messquerschnitt (Zählfeld-Gruppe) MQ3.2	MQ3.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549444	9.973766	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+68bd4cf2-b2ab-4e89-ba21-a764421789b2	MQ30.1+30.2	Messquerschnitt (Zählfeld-Gruppe) MQ30.1+30.2	MQ30.1+30.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580137	9.999324	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+66656cfe-7b46-463f-ab61-446975497073	MQ31.1	Messquerschnitt (Zählfeld-Gruppe) MQ31.1	MQ31.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582629	9.9714	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c77b5fdb-f885-4874-bb07-68da0e4c0375	MQ31.2	Messquerschnitt (Zählfeld-Gruppe) MQ31.2	MQ31.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582224	9.972698	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b83ca7a6-8eca-4b97-bb21-4c03c7788138	MQ31.3	Messquerschnitt (Zählfeld-Gruppe) MQ31.3	MQ31.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58237	9.97116	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7283419f-e56a-443a-bce7-7e6303e3c2aa	MQ31.4	Messquerschnitt (Zählfeld-Gruppe) MQ31.4	MQ31.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581422	9.970706	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1096c768-e862-4248-ba0b-61271e1c36cf	MQ31.6	Messquerschnitt (Zählfeld-Gruppe) MQ31.6	MQ31.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581274	9.972468	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dbfa3e2a-f2ed-4075-874a-a93941aac4d6	MQ32.1	Messquerschnitt (Zählfeld-Gruppe) MQ32.1	MQ32.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575775	9.953637	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9a453733-19aa-4dc4-8764-5ab2027c268c	MQ32.2	Messquerschnitt (Zählfeld-Gruppe) MQ32.2	MQ32.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575613	9.954004	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5ba4fc53-19a2-4071-ae02-55de1a0767fe	MQ33.1	Messquerschnitt (Zählfeld-Gruppe) MQ33.1	MQ33.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602845	9.891511	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+77e0772d-b481-4b1b-ab0f-0a2e8cd83138	MQ20.2	Messquerschnitt (Zählfeld-Gruppe) MQ20.2	MQ20.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551914	9.942567	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+0da1ed56-5073-4143-9da5-51b9364196f9	MQ33.2	Messquerschnitt (Zählfeld-Gruppe) MQ33.2	MQ33.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.60194	9.89026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+016b5f5d-dd27-4ff8-a23f-ef8c85f25712	MQ34.1	Messquerschnitt (Zählfeld-Gruppe) MQ34.1	MQ34.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628653	9.93175	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1d0e5994-72cf-4e57-8581-3b0c06fd9cda	MQ34.2	Messquerschnitt (Zählfeld-Gruppe) MQ34.2	MQ34.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628498	9.932425	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c2415aae-e97a-497f-9ad0-9b144214da82	MQ35.1	Messquerschnitt (Zählfeld-Gruppe) MQ35.1	MQ35.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6170439	9.9504622	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+510367da-29cc-4746-9ba2-349cebfeb44b	MQ35.2	Messquerschnitt (Zählfeld-Gruppe) MQ35.2	MQ35.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.616118	9.951241	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1e515b7e-d856-4aaf-af8a-c7f4b7856af7	MQ36.1	Messquerschnitt (Zählfeld-Gruppe) MQ36.1	MQ36.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580543499	9.999595627	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8a93eb34-c409-4d76-bbb6-216b9f09ba32	MQ37.1	Messquerschnitt (Zählfeld-Gruppe) MQ37.1	MQ37.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564829	10.018398	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bc3b7abc-681f-45d8-868e-20e5a2ad396e	MQ37.2	Messquerschnitt (Zählfeld-Gruppe) MQ37.2	MQ37.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564519	10.018337	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0a83facf-5d95-46de-90af-b5d1e935d7ae	MQ37.3	Messquerschnitt (Zählfeld-Gruppe) MQ37.3	MQ37.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.566198	10.020138	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bd1aa173-8048-4587-9b4e-d5544bd92772	MQ38.1	Messquerschnitt (Zählfeld-Gruppe) MQ38.1	MQ38.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576818	10.010544	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e3408d9a-b86b-4a7a-8c96-b4f8b4934aa6	MQ38.2	Messquerschnitt (Zählfeld-Gruppe) MQ38.2	MQ38.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.577056	10.010206	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4fd23adf-e422-4f7d-9447-df6238bd7c72	MQ39.1	Messquerschnitt (Zählfeld-Gruppe) MQ39.1	MQ39.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575603	10.034868	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f8b9cdeb-2edf-419a-88c8-6e68b4ec112f	MQ39.2	Messquerschnitt (Zählfeld-Gruppe) MQ39.2	MQ39.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575833	10.034069	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+562190bd-0d6a-40c7-9c5c-b6c78d6b7715	MQ39.3	Messquerschnitt (Zählfeld-Gruppe) MQ39.3	MQ39.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574726	10.034438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+54faaa05-4f0c-44e9-af64-90d174521ac5	MQ39.4	Messquerschnitt (Zählfeld-Gruppe) MQ39.4	MQ39.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574555	10.035141	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e578a68b-f9be-42d2-b1df-9034c9b8fc64	MQ39.5	Messquerschnitt (Zählfeld-Gruppe) MQ39.5	MQ39.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575758	10.036348	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fbfac096-29f4-459b-ab4a-b26bc1d497b4	MQ39.6	Messquerschnitt (Zählfeld-Gruppe) MQ39.6	MQ39.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575342	10.036291	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b0c972c5-924f-4df8-909f-8f8024acd767	MQ39.7	Messquerschnitt (Zählfeld-Gruppe) MQ39.7	MQ39.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574753	10.036206	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+80f154b5-7f96-4abc-86ee-f611f460a3c8	MQ39.8	Messquerschnitt (Zählfeld-Gruppe) MQ39.8	MQ39.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574649	10.035881	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+66fc0691-137b-4e1f-9de7-b61f67b20e9b	MQ4.1	Messquerschnitt (Zählfeld-Gruppe) MQ4.1	MQ4.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54552	9.971877	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1c8ac7ea-e0a8-4434-a640-144319c45a72	MQ4.2	Messquerschnitt (Zählfeld-Gruppe) MQ4.2	MQ4.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545348	9.971869	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+977a27e6-f014-49a7-b9e3-3c60561492aa	MQ40.1+40.2	Messquerschnitt (Zählfeld-Gruppe) MQ40.1+40.2	MQ40.1+40.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598792	10.042896	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+029c0f2e-b221-4572-afea-d21b60b9de01	MQ40.4	Messquerschnitt (Zählfeld-Gruppe) MQ40.4	MQ40.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597921	10.042453	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9f4ffa2b-f465-48cd-934a-ec33e649cfd2	MQ40.5	Messquerschnitt (Zählfeld-Gruppe) MQ40.5	MQ40.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59801	10.0421266	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a2163a49-3d46-4158-a470-2c1fb73ff554	MQ40.6	Messquerschnitt (Zählfeld-Gruppe) MQ40.6	MQ40.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598353	10.040616	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+990a13e0-d11a-4154-83bf-b62b1e14a950	MQ40.7	Messquerschnitt (Zählfeld-Gruppe) MQ40.7	MQ40.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598456	10.040752	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9abc559e-05e6-467b-a8b5-2de7c271e1f7	MQ40.8	Messquerschnitt (Zählfeld-Gruppe) MQ40.8	MQ40.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599466	10.041376	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5e11aa77-b127-40f9-b2f1-4769b2febc13	MQ40.9	Messquerschnitt (Zählfeld-Gruppe) MQ40.9	MQ40.9	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599749	10.041109	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+097fc8d1-a0fc-49fd-a345-1d1eb647b380	MQ41.1	Messquerschnitt (Zählfeld-Gruppe) MQ41.1	MQ41.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649518	10.017232	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fc7c8417-2e38-400d-9ad0-2c69a4819a2d	MQ41.2	Messquerschnitt (Zählfeld-Gruppe) MQ41.2	MQ41.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649258	10.017161	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+125359db-d6f7-4ead-8489-d69e125f90fb	MQ41.3	Messquerschnitt (Zählfeld-Gruppe) MQ41.3	MQ41.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.648629	10.017824	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c01ada55-c3fd-4b4e-b6b1-436f1107dfb1	MQ41.4	Messquerschnitt (Zählfeld-Gruppe) MQ41.4	MQ41.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649257	10.018631	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f699f15d-c4f4-4f1e-ad30-059c7b1f0dfb	MQ41.5	Messquerschnitt (Zählfeld-Gruppe) MQ41.5	MQ41.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649513	10.018663	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3f02fea6-0595-4ee4-ae34-7b3444ab5079	MQ41.6	Messquerschnitt (Zählfeld-Gruppe) MQ41.6	MQ41.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650325	10.017771	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7fd6b4d5-4508-4f7b-b610-5c1e476a4914	MQ41.7	Messquerschnitt (Zählfeld-Gruppe) MQ41.7	MQ41.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650046	10.01798	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+69544b4a-f8a6-4c3a-a2de-7736634778a9	MQ42.1+42.2	Messquerschnitt (Zählfeld-Gruppe) MQ42.1+42.2	MQ42.1+42.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564546	10.045668	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a5d2fb4b-011c-4cd7-8d45-ea18886bdfa0	MQ42.7+42.8	Messquerschnitt (Zählfeld-Gruppe) MQ42.7+42.8	MQ42.7+42.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563912	10.044655	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0b429d14-66af-4826-bf8e-1b13b18e2887	MQ43.1	Messquerschnitt (Zählfeld-Gruppe) MQ43.1	MQ43.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571186	10.064556	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3217aeed-e380-44d0-8b04-751701f97ba7	MQ43.2	Messquerschnitt (Zählfeld-Gruppe) MQ43.2	MQ43.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571528	10.065005	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a88bf1ba-0e9f-416d-bbea-b56e1863e3fd	MQ44.1+44.2	Messquerschnitt (Zählfeld-Gruppe) MQ44.1+44.2	MQ44.1+44.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.595287	10.146631	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bbdcd18c-0585-4a1a-9ec9-b04a78113ca8	MQ44.3+44.4	Messquerschnitt (Zählfeld-Gruppe) MQ44.3+44.4	MQ44.3+44.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.594784	10.146565	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b9f0c58c-3dcb-45ef-88e6-c163173e92df	MQ45.3	Messquerschnitt (Zählfeld-Gruppe) MQ45.3	MQ45.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605673	10.119519	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2d1dbe5d-bc8d-47ab-916a-6a749245d101	MQ45.4	Messquerschnitt (Zählfeld-Gruppe) MQ45.4	MQ45.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605632	10.119057	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4f1662f1-d2a1-4d6f-8104-7a218b6ce83f	MQ46.1	Messquerschnitt (Zählfeld-Gruppe) MQ46.1	MQ46.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656396	10.094956	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7214a2a3-f139-4ef6-aa6e-33e7194138ce	MQ46.2	Messquerschnitt (Zählfeld-Gruppe) MQ46.2	MQ46.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656217	10.094338	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+22d55dde-7d1f-4d1b-85fc-faf685542902	MQ46.3	Messquerschnitt (Zählfeld-Gruppe) MQ46.3	MQ46.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656607	10.094081	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9be76c54-7fbb-41e0-a0a6-c8a1d8bcfc3f	MQ46.4	Messquerschnitt (Zählfeld-Gruppe) MQ46.4	MQ46.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.657029	10.094174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e172eed9-9d6f-4ceb-91da-98e3f7170ecf	MQ46.5	Messquerschnitt (Zählfeld-Gruppe) MQ46.5	MQ46.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656398	10.092844	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f6bfb17e-9e13-40aa-b243-97fcda01a0b6	MQ46.6	Messquerschnitt (Zählfeld-Gruppe) MQ46.6	MQ46.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656126	10.093074	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7e5beffd-8445-484d-ac51-2bd9d8e3a214	MQ46.7	Messquerschnitt (Zählfeld-Gruppe) MQ46.7	MQ46.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.65604	10.093221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+88e21d93-2183-4a05-a2cf-3cc2d730a7d6	MQ46.8	Messquerschnitt (Zählfeld-Gruppe) MQ46.8	MQ46.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6558936	10.0937151	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d37b8931-e1ad-46e1-ac65-f6a593da61ca	MQ47.1	Messquerschnitt (Zählfeld-Gruppe) MQ47.1	MQ47.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491224	10.207669	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+485b1f4e-86b4-4e61-bfaa-7040370aa893	MQ48.1	Messquerschnitt (Zählfeld-Gruppe) MQ48.1	MQ48.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489577	10.186242	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9ad79121-31cd-4948-9914-08b385301e1f	MQ48.2	Messquerschnitt (Zählfeld-Gruppe) MQ48.2	MQ48.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489552	10.18657	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+677127de-d3a9-4a33-8ecd-cf794f6fddec	MQ49.1	Messquerschnitt (Zählfeld-Gruppe) MQ49.1	MQ49.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.470913	9.993656	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d0638c5e-db0f-4274-870c-2e3605e8355f	MQ50.1	Messquerschnitt (Zählfeld-Gruppe) MQ50.1	MQ50.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456969	9.985025	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+07d18993-983a-4d82-9217-5fdc93255953	MQ50.2	Messquerschnitt (Zählfeld-Gruppe) MQ50.2	MQ50.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456928	9.986936	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4a905f69-f28d-4138-84c9-b5cbd29ed88d	MQ50.3	Messquerschnitt (Zählfeld-Gruppe) MQ50.3	MQ50.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456396	9.985592	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e4b45ee8-cb4f-4947-9f3e-b1679a4aac8d	MQ50.4	Messquerschnitt (Zählfeld-Gruppe) MQ50.4	MQ50.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456908	9.985975	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0d614c5c-5d5f-4d7f-8cb4-178765874647	MQ50.5	Messquerschnitt (Zählfeld-Gruppe) MQ50.5	MQ50.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.45644	9.985882	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a9699225-3ee9-481c-a3cc-f156745238bb	MQ50.6	Messquerschnitt (Zählfeld-Gruppe) MQ50.6	MQ50.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456992	9.984587	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+075d0a14-5e2a-4442-bce7-2a2fa84716c3	MQ52.1	Messquerschnitt (Zählfeld-Gruppe) MQ52.1	MQ52.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.461624	9.978958	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2a74d2f5-ee45-48a5-b068-057be374fa8f	MQ53.2	Messquerschnitt (Zählfeld-Gruppe) MQ53.2	MQ53.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555794	9.949541	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e9ae5f96-83ce-40db-99e5-04412eca1e43	MQ54.1	Messquerschnitt (Zählfeld-Gruppe) MQ54.1	MQ54.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.553388	9.897991	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e5955033-155b-456b-b9e9-15ffc9dbc4c0	MQ55.2	Messquerschnitt (Zählfeld-Gruppe) MQ55.2	MQ55.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548809	9.947219	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1cef93d5-3005-463d-b70f-cf3930c198f0	MQ55.3	Messquerschnitt (Zählfeld-Gruppe) MQ55.3	MQ55.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548736	9.947563	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e1486d48-8de6-4e8f-b13f-af0aa12cd6d2	MQ56.1	Messquerschnitt (Zählfeld-Gruppe) MQ56.1	MQ56.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555075	9.999794	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1e4f9fed-c71e-40c1-a9fc-d37894d1309a	MQ56.2	Messquerschnitt (Zählfeld-Gruppe) MQ56.2	MQ56.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.554296	9.998839	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2e3b31a0-a308-45d5-af08-869155b0e488	MQ57.1	Messquerschnitt (Zählfeld-Gruppe) MQ57.1	MQ57.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549987	9.966551	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bf1f01ae-eb8c-475f-8e21-959a012059ff	MQ57.2	Messquerschnitt (Zählfeld-Gruppe) MQ57.2	MQ57.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549883	9.966789	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+df101039-59f6-46e5-a59f-05fb71d641ab	MQ58.2	Messquerschnitt (Zählfeld-Gruppe) MQ58.2	MQ58.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588565	10.074989	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8757950c-caed-412c-ac99-ba176dd1acc4	MQ58.3	Messquerschnitt (Zählfeld-Gruppe) MQ58.3	MQ58.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588683	10.075165	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4b99f7f9-c9e5-40e4-b24c-39f64f87ecf4	MQ59.1	Messquerschnitt (Zählfeld-Gruppe) MQ59.1	MQ59.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579863	9.93956	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7b7ec8b8-d426-4f2f-81c0-29265b2be2a4	MQ59.2	Messquerschnitt (Zählfeld-Gruppe) MQ59.2	MQ59.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579671	9.939617	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+30d66148-696f-470a-9a96-1bad5ceec307	MQ6.1+6.2	Messquerschnitt (Zählfeld-Gruppe) MQ6.1+6.2	MQ6.1+6.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.541074	9.966599	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6ec07dec-7c4f-463d-9bec-ba0ea26a3b9b	MQ60.1	Messquerschnitt (Zählfeld-Gruppe) MQ60.1	MQ60.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.63297	10.025849	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c361a9a8-ca59-42f1-a1f8-138cfda05b67	MQ61.1	Messquerschnitt (Zählfeld-Gruppe) MQ61.1	MQ61.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55437	10.013955	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3ed49c63-e1d3-4e3a-a1ed-0b99fc99c71d	MQ61.2	Messquerschnitt (Zählfeld-Gruppe) MQ61.2	MQ61.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55423	10.014049	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+61768a1d-0367-48f6-b87b-1c2b90e7fa99	MQ62.1	Messquerschnitt (Zählfeld-Gruppe) MQ62.1	MQ62.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490752	10.158439	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ac4b360d-5cb1-4558-adac-e1a0f6b17611	MQ63.1	Messquerschnitt (Zählfeld-Gruppe) MQ63.1	MQ63.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.570707	9.958068	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9b2bdd44-3c3d-4dec-a10f-62f4b5d292d8	MQ64.1	Messquerschnitt (Zählfeld-Gruppe) MQ64.1	MQ64.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.466293	9.986074	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+23615cb6-5a28-470a-9569-60d7a2a8b5c5	MQ65.1	Messquerschnitt (Zählfeld-Gruppe) MQ65.1	MQ65.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460342	9.975723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b8306794-1a8e-4d6e-baf2-6c7c4b5c0ebb	MQ65.2	Messquerschnitt (Zählfeld-Gruppe) MQ65.2	MQ65.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460248	9.975731	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9f26a8b2-7ce6-4f36-b4eb-f6d7a20355f5	MQ66.1	Messquerschnitt (Zählfeld-Gruppe) MQ66.1	MQ66.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558882	9.962624	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+97aea76f-ba6b-4dc3-a6dc-0fd2eb0bc397	MQ66.2	Messquerschnitt (Zählfeld-Gruppe) MQ66.2	MQ66.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558984	9.961814	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d904a6f0-5dcc-46e9-8573-433a619089d0	MQ68.1	Messquerschnitt (Zählfeld-Gruppe) MQ68.1	MQ68.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494852	10.20662	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7234e762-c5a0-41a6-8904-35e44cb69087	MQ68.2	Messquerschnitt (Zählfeld-Gruppe) MQ68.2	MQ68.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494705	10.206855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6178eab3-5231-427c-a4e0-57b310f6c077	MQ69.1	Messquerschnitt (Zählfeld-Gruppe) MQ69.1	MQ69.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5222	10.015052	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bebc1a3b-74e2-470e-9a96-c1ca970551a3	MQ69.2	Messquerschnitt (Zählfeld-Gruppe) MQ69.2	MQ69.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.521604	10.014901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+820f3c6f-e838-469c-873d-f0e833a9ccc1	MQ70.1	Messquerschnitt (Zählfeld-Gruppe) MQ70.1	MQ70.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602904	10.029791	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8ae8f801-9ab1-4ee3-9973-15a07f67d284	MQ71.1	Messquerschnitt (Zählfeld-Gruppe) MQ71.1	MQ71.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54532	9.99732	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8921abf3-401e-49d0-a83f-bb8d92e02628	MQ71.2	Messquerschnitt (Zählfeld-Gruppe) MQ71.2	MQ71.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545308	9.997238	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4121befc-c0a0-43e6-8a42-5cb5fc0843ae	MQ72.1	Messquerschnitt (Zählfeld-Gruppe) MQ72.1	MQ72.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569591	9.97361	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0bbe8772-a504-49ca-9649-a52c65678163	MQ72.2	Messquerschnitt (Zählfeld-Gruppe) MQ72.2	MQ72.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569716	9.973282	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a80f6806-8443-4013-bbd5-e4b5ff013828	MQ73.1+73.2	Messquerschnitt (Zählfeld-Gruppe) MQ73.1+73.2	MQ73.1+73.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.631293	9.950951	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7772ed13-90d1-40d2-80d7-715ea9b31079	MQ74.1	Messquerschnitt (Zählfeld-Gruppe) MQ74.1	MQ74.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597476	9.932351	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+176b8e62-a6d7-4404-ad52-828bbc765756	MQ74.2	Messquerschnitt (Zählfeld-Gruppe) MQ74.2	MQ74.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59698	9.932577	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7bd84b64-46d2-4959-bdad-730b0c013003	MQ76.1	Messquerschnitt (Zählfeld-Gruppe) MQ76.1	MQ76.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59838	9.958425	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d83d6097-875b-4617-9999-17fd8546c386	MQ77.1	Messquerschnitt (Zählfeld-Gruppe) MQ77.1	MQ77.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598286	9.941963	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c8d71786-655f-4ebd-9bc3-15f182c38821	MQ78.1	Messquerschnitt (Zählfeld-Gruppe) MQ78.1	MQ78.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563392	9.976375	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+52d1d96d-6d99-4faa-9cbd-be7bd2823b3c	MQ78.2	Messquerschnitt (Zählfeld-Gruppe) MQ78.2	MQ78.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563345	9.976814	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8ddcaec5-e00a-4e80-b320-65569bd7408b	MQ79.1	Messquerschnitt (Zählfeld-Gruppe) MQ79.1	MQ79.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564579	9.986991	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9c1522e1-b6ef-4239-a463-afba09fc6ec3	MQ8.1	Messquerschnitt (Zählfeld-Gruppe) MQ8.1	MQ8.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55561	10.038192	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+94f61afd-3a3a-4edb-b125-3fe4db4e9481	MQ80.1	Messquerschnitt (Zählfeld-Gruppe) MQ80.1	MQ80.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.583661	9.995193	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+00d8fa50-0192-4866-89db-a3f5ef364d2a	MQ80.2	Messquerschnitt (Zählfeld-Gruppe) MQ80.2	MQ80.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.995601	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2e02b374-63ec-450b-8fa6-52d146fcc3ed	MQ81.1	Messquerschnitt (Zählfeld-Gruppe) MQ81.1	MQ81.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.932026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+077157be-fbf1-4ab0-9c00-ba5d12ee9686	MQ85.1	Messquerschnitt (Zählfeld-Gruppe) MQ85.1	MQ85.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598475	9.965094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7455f858-9703-4527-8693-73b4c624763d	MQ85.2	Messquerschnitt (Zählfeld-Gruppe) MQ85.2	MQ85.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598244	9.965587	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1999951b-d0d5-4605-82a5-99948d2faab1	MQ86.1	Messquerschnitt (Zählfeld-Gruppe) MQ86.1	MQ86.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559758	10.010613	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+07907880-9dfc-4349-aa5e-fc9a40aa0db5	MQ87.1	Messquerschnitt (Zählfeld-Gruppe) MQ87.1	MQ87.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.560293	9.912201	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+04979100-9e64-4ed6-95c3-bec20ab22d09	MQ9.1	Messquerschnitt (Zählfeld-Gruppe) MQ9.1	MQ9.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.53762575	10.107728436	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4552ab93-28e4-42a2-af8c-46d5790a950f	MQ9.2	Messquerschnitt (Zählfeld-Gruppe) MQ9.2	MQ9.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537557	10.107269	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+79601896-2c58-40ff-9e28-7ce12aee9d41	MQ9.3	Messquerschnitt (Zählfeld-Gruppe) MQ9.3	MQ9.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537886	10.108873	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e663e3be-f262-4f4e-9c4a-efd8444b4f9f	MQ9.4	Messquerschnitt (Zählfeld-Gruppe) MQ9.4	MQ9.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.538032	10.109565	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ede561df-d84e-4e80-88d9-7d7406622cbd	MQ9.5	Messquerschnitt (Zählfeld-Gruppe) MQ9.5	MQ9.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537127	10.108677	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8ddae2e9-8035-42e4-b152-91e380bc828d	MQ9.6	Messquerschnitt (Zählfeld-Gruppe) MQ9.6	MQ9.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536605	10.109432	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+18077a4e-dc01-43b6-b408-ecb321d2f5d9	BN - John-J.-McCloy-Ufer		14	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.6710361979	7.187889234	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+743e7c29-0940-4011-bf2a-3f5e44446a28	BN - Straßburger Weg		12	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7193231194	7.1134228228	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+f6ce388b-6401-4fb6-a2ba-a71124ba7ad4	Stadt Stein Nürnberger Straße	Eco-Counter Zählerstandort (kumulierte Zählung)	100063085	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	49.4163	11.0188	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+13c3c641-e1f7-4ded-8a8f-dc2c1904ca6a	MQ20.1	Messquerschnitt (Zählfeld-Gruppe) MQ20.1	MQ20.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551849	9.942183	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+5f127565-6b7f-42ee-9155-913a0db396cd	MQ20.3	Messquerschnitt (Zählfeld-Gruppe) MQ20.3	MQ20.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5518	9.942182	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+7d624589-fc5a-422b-a35f-28380acfff14	MQ31.5	Messquerschnitt (Zählfeld-Gruppe) MQ31.5	MQ31.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581576	9.972654	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+d7059ec7-b7c1-4a15-9eef-97ea35a69180	064b	Im Mundklingen 2, 64342 Seeheim-Jugenheim	300022489	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.780459	8.648295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+25f34d59-8798-409c-b5d2-124cb3b41b2f	121	K 31, 64653 Lorsch	300022501	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.661562	8.576529	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7844e667-8569-4814-9235-f37b6f7f3196	122	In Den Langen Ruten 10, 64653 Lorsch	300022502	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.651834	8.588048	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4dc4be7d-38b3-423b-89ce-b2b05665cbd5	BN - Kennedybrücke (Südseite)		2	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7374853528	7.1059408371	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b7721b6b-b7c0-45b6-be6e-d4719bb9950d	123	Am Sportplatz 1, 68642 Bürstadt	300022506	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.648463	8.505124	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+13ae5275-9622-4811-9a80-f52faae01aef	051	Darmstädter Straße 75, 64572 Büttelborn	300022516	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.904475	8.536846	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+934465bc-9c04-41c7-8f0c-d46daac3309c	028	Hahner Straße 4, 64372 Ober-Ramstadt	300022578	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.82076694459276	8.750551342964174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+caa7e16c-6946-4974-adf0-47360c0a12b9	059	Rheinstraße 2, 65391 Lorch	300022608	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.040216	7.811698	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1f9e5140-ae97-4750-90c7-d40526933c78	084	Aarstraße 5, 65232 Taunusstein	300022633	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.13081	8.11911	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+796c56e7-6305-4187-824f-45b9a4a2b84c	085	Mainzer Straße 2, 65205 Wiesbaden	300022664	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.052994	8.277912	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+57a6db75-7f2c-4c91-aa49-6c02ad7fa599	086	Auweg 4, 65347 Eltville am Rhein	300022666	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.012307	8.064773	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4c963be6-8d7d-4d9b-86fd-150c29a8ad43	117	Am Schwarzen Berg 9a, 64521 Groß-Gerau	300022699	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.867808	8.487299	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8de4f3e1-fcdc-4035-a487-8d7d77c9786e	043	Lenzenbergstraße 118a, 65931 Frankfurt	300022870	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10407	8.50174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fdcdf742-8f49-4a06-a149-c5c847e35f75	044	Schmalkaldener Straße 19, 65929 Frankfurt	300022899	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10444400452868	8.504185080528261	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f9a81a12-8ca8-424a-85d3-a426328b2679	137a	K 705, 65527 Niedernhausen	300023017	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17381296360336	8.294790387153627	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6f4e996d-56f7-4483-8f88-e196e6b3ceb0	137b	K 705, 65527 Niedernhausen	300023018	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17370989251206	8.294683098793032	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8771705f-a9f8-434e-8037-634f400379e8	138a	Lochmühle 2, 65527 Niedernhausen	300023019	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17702179903081	8.298384547233583	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+79a0c451-96f8-4b86-be8b-62e671609c44	138b	Lochmühle 2, 65527 Niedernhausen	300023020	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17706989556704	8.29848110675812	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7e615aa8-638e-4f96-9815-e5fef24ecd0c	063	Am Höllberg 41, 64625 Bensheim	300023021	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.714285	8.615094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+abeb1c53-849e-4d18-8586-0cc059e3f019	047	Schneiderstraße 9, 65931 Frankfurt	300023023	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.088241	8.513669	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c4e8d7ba-9f65-40c4-840e-545c840f0d5a	135a	Bensheimer Straße 2, 65428 Rüsselsheim	300023024	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968742	8.441705	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3f13f2e0-90f0-4da9-9d7b-0a299c0ad8d8	135b	Bensheimer Straße 2, 65428 Rüsselsheim	300023025	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968707	8.441448	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8a4b1fb7-85d7-4e25-b109-47d46f15d97c	135c	Bensheimer Straße 2, 65428 Rüsselsheim	300023027	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968777	8.441926	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fdb5eff6-eda0-4655-a219-b0d2bdbffec3	087b	Im Lorsbachtal 52, 65719 Hofheim am Taunus	300023094	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124062	8.417656	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4abb336c-6515-4ad5-92bd-01703f648a7c	087a	Im Lorsbachtal 52, 65719 Hofheim am Taunus	300023095	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124074	8.417782	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+782a65c3-1e76-4abe-b7e1-a4f5823a7b4b	045	Rudolfstraße 2, 65830 Kriftel	300023096	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.093464	8.473581	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0b6edea7-60cd-4f59-9c74-682400ed2fcf	052	Heusenstammer Schneise, 63069 Offenbach	300023219	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.071312	8.735104	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c20ad583-505c-4583-9e4c-c38a44d2bcd8	054	Bornwaldweg 8, 63303 Dreieich	300023225	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.027194	8.721126	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bbfef302-d937-4691-ab38-a4c97de02951	071a	Pfungstädter Straße 191, 64297 Darmstadt	300023417	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.814585	8.622561	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e93bf808-4d5b-4b0c-b403-f873263ec6d1	071c	Pfungstädter Straße 180, 64297 Darmstadt	300023418	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.81438786508744	8.622631430625917	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eeb7b2a3-5c2b-4d15-b723-799f9d7e2724	073	Schwimmbadstraße 33, 64732 Bad König	300023481	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.74447792954899	8.996660113334658	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6fa44868-6158-4e3e-9240-26858c048c0a	056	An Der Lettkaut 46, 63303 Dreieich	300023562	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00804	8.674593	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+161bfaa5-18ea-404f-be68-fec3721a4bd0	032	Schleusenweg 18, 65549 Limburg an der Lahn	300023574	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.38997378228848	8.08198928833008	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fbcbfc0b-78b0-4c30-9710-a0007a3a4853	055b	An Der Lettkaut 2, 63303 Dreieich	300023583	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00555525756325	8.685740767032259	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4a3447cd-bdfb-42e1-82ba-07d3b8d5a993	033	L 3020, 65549 Limburg an der Lahn	300023585	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.38841417645314	8.082085847854616	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f2e308d2-9524-491e-8d11-3a07967becb2	026	Erzgebirgstraße 42, 65520 Bad Camberg	300023603	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.287158	8.269894	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1925bd59-8561-4605-accc-2faed4ae6aa2	055a	An Der Lettkaut 2, 63303 Dreieich	300023605	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00540836271789	8.685679435729982	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d027dc36-5870-41e6-a42c-02354bbdce8b	034	Bahnhofstraße 9, 65594 Runkel	300023608	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.40388141892312	8.160535097122194	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d29b3154-26bb-410c-8a55-caa390c632d7	005	Sodener Weg 80, 36396 Steinau an der Straße	300023629	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.304011	9.426305	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4f9db2b0-9704-4693-bcbb-1c851e326075	110	L 3121, 63110 Rodgau	300023639	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.020005	8.927682	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f74a886d-6448-4779-90d7-66081b84eb53	049b	Neckarstraße 46, 64569 Nauheim	300023654	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.94133705545538	8.444877459114652	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+756966a0-54b5-4459-8735-0609d0668f9b	049a	Mainzer Landstraße 18, 64569 Nauheim	300023655	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.94128419433152	8.444802962985706	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f0b46c81-a7e3-452c-98d8-8f17305983c8	128	Rumpenheimer Straße 73a, 63165 Mühlheim am Main	300023661	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.131972	8.820444	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3afd2de3-2038-4db3-9235-ecb82220698e	062	A 66, 63526 Erlensee	300023683	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.144837332681874	8.959830295352733	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d50a62fd-6302-4be8-9ca6-4297b63b276b	127	Pfaffenbrunnenweg 149, 63165 Mühlheim am Main	300023706	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.120881	8.878231	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1e37e863-47e8-42f2-ae27-30a22c383916	119a	Friedberger Landstraße 427a, 60389 Frankfurt	300023733	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.14907	8.70976	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+50d37bd3-9056-4f98-aca5-da6f72ae2631	027	Rheinufer 10, 55252 Wiesbaden	300023897	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.007881	8.280194	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c37ad5b6-96d1-4b24-90f7-ddfadcfee16d	107c	Pionierweg, 61381 Friedrichsdorf	300023972	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.279968	8.612589	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7264ec8f-e8a5-4be7-96ee-784531b362fa	093	B 252, 34477 Twistetal	300023989	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3229507	8.9213161	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1183b62d-0ee9-4c8d-a059-331090e34eaf	142	Am Keseberg 1, 34516 Vöhl	300024019	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.13044714725219	8.877794265681588	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+081f3be1-74d3-4b26-bb63-79a3660bf382	008	Kasseler Straße 22, 34388 Trendelburg	300024063	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.559219	9.415306	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f26b5aaf-8465-4068-94c4-7fbc82308aed	018	Landgraf-Carl-Weg 7, 34388 Trendelburg	300024065	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.559182	9.411189	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0331cf1c-3903-43f0-8bfb-49e660b7030c	126b	Wittmarstraße 25, 34414 Volkmarsen	300024072	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.44414927256679	9.120879649854034	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f0faa72b-9a9e-46c6-951f-8653f57fabe9	124	Hochsauerlandstraße 32, 34508 Willingen	300024079	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2786086	8.6380424	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+271a52cc-c5ed-4813-a5f3-9166632a05ce	097	Birkenallee 32, 34225 Baunatal	300024100	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.260135	9.421791	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+55dcc8ed-54b9-44b7-898c-9f52063499dd	098	Kasseler Straße 79, 34281 Gudensberg	300024108	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.186396	9.393864	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d2eff03a-ca6b-426b-ad25-e4814ca86760	107a	Köpperner Tal, 61381 Friedrichsdorf	300024124	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.281251	8.614871	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4784c44d-a5b9-4c08-8620-bf77f6dc968e	107b	Köpperner Tal, 61381 Friedrichsdorf	300024125	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.281159	8.614847	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e1c69e99-ca4d-4e25-9ebb-70b758051537	126a	Wittmarstraße 25, 34414 Volkmarsen	300024689	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.444184	9.121025	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+342bec76-2274-4aff-8adc-5cbd1d29c14b	074	Lindenstraße 31, 61279 Grävenwiesbach	300024729	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.397502	8.460949	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c214516b-6dd3-466d-aa29-5d6e49ac8553	130	Mühlenweg 19, 61239 Ober-Mörlen	300024746	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.363008	8.64232	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+759ee2f4-f637-481e-b1b7-a0980e5f0ca6	134	Bürgerhausstraße 10, 35410 Hungen	300024832	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.43989	8.925089	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+118364d6-c428-40cc-a82f-142ba1c6a888	023	Mühlweg 5, 35633 Lahnau	300024956	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.575041	8.562544	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8157d17e-d128-4b79-bccb-3d1cbb40dfae	115	Alte Straße 5, 35578 Wetzlar	300024971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.550363	8.46732	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e28ad6d1-52d1-4cb9-8d12-b2ece9ff1049	076	B 277, 35614 Aßlar	300025055	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.59437	8.43609	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eb54aed8-a4f1-4109-83cc-04e5e6562a77	099	Alte Frankfurter Straße 29, 34281 Gudensberg	300025106	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.164951	9.318208	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+78fb239c-0b0c-4767-b194-0f1d19f27025	031a	Berghof 1, 34399 Wesertal	300025131	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.5975583	9.5836931	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+48a6f365-e128-4451-8f98-0e79b238548e	029a	B 80, 34399 Wesertal	300025144	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.5914917	9.5753041	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e2d8ba1b-05a0-4f7b-8448-836adb7a0f12	125	Krugweg 1, 34454 Bad Arolsen	300025166	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.435057	8.958232	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c5afe716-1b14-4620-a6a2-93af08c414eb	094	Rocklinghausen 2, 34477 Twistetal	300025186	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3210971	8.9448834	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ac575611-f0ca-40ef-8f7f-4435a5288e29	141	Orketalstraße 2, 34516 Vöhl	300025203	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.131306	8.874157	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+28ba9852-1bbf-442c-82cb-6aff4a4688e6	092	Am Bahnhof 1, 35108 Allendorf	300025221	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.032988	8.72721	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9ac55f32-c40f-4ba1-bef4-cc109d36e8d4	091	Siegener Straße 62, 35066 Frankenberg	300025228	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.043818	8.766338	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+99594c91-6d9c-4cb7-b503-ccda852b69d0	102	B 253, 34560 Fritzlar	300025264	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.124106	9.235686	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+077fdccb-9e09-4dff-a781-112eb64e69cc	131	B 253, 34560 Fritzlar	300025274	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.124212	9.235291	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+193b5dfd-987f-4c86-a559-cb51f91ab0dc	039	B 455, 63667 Nidda	300025305	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45092	9.04229	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ef9ecef1-bf1c-4245-8b4b-8c666dc813c5	040	Schlaggasse 44, 63667 Nidda	300025313	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.449481	9.048017	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9e6c84dd-5d5e-4f57-acd3-e5086317536d	104	Hain-Gründauer Straße 64, 63584 Gründau	300025339	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2414095	9.1197638	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+59c3fdc7-dbad-4187-82d2-e7cba8780a7a	069	B 276, 35321 Laubach	300025387	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.519292	9.09324	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2aaf8f27-2f36-4815-aa48-52c7dbade718	106	L 3184, 63667 Nidda	300025483	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3853577	9.0281281	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+26bba575-ba30-423e-ab03-788e8d9e097f	038	B 455, 63667 Nidda	300025528	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45188	9.043449	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fef8f50d-9038-4455-9cbc-e0ce167ab1dc	119b	Friedberger Landstraße 427a, 60389 Frankfurt	300025551	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.149228	8.709188	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+879afcc0-2021-451b-88f6-5915ed4515f1	041	B 455, 63667 Nidda	300025604	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45188	9.043449	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+24fc07d9-7cf5-4958-b0e0-bf5feb72a85f	024	Hof Niederfeld 1, 35428 Langgöns	300025661	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.509734	8.654937	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ddfe16ff-ea93-4c6c-a31e-6d87a9cd67c3	075	Sportplatzstraße 20, 61279 Grävenwiesbach	300025675	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.383807	8.406892	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+075fe118-01da-4288-a18c-7aac09e7ac61	025	Greizer Straße 18, 35447 Reiskirchen	300025725	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.595277	8.854319	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d0ba0a5a-9c7f-494b-9133-d25a85f2e8ec	133	Hochwarte 11, 35394 Gießen	300025734	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.564968	8.7405	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e1a3fb2e-0771-4bdb-9c46-dfc742a75f5d	095	Junkerhofstraße 9, 34466 Wolfhagen	300025773	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.358935	9.12251	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0fd17977-7290-4db6-85d5-f0e94db2f360	096	B 83, 34393 Grebenstein	300025779	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.413788	9.440625	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3bfa3b48-d4af-41fd-b6c5-67c956651627	100	Kasseler Straße 59, 37217 Witzenhausen	300025902	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.326411	9.774644	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+53655ed8-bd96-4cf6-9999-f130618c1f4d	078	B 255, 35649 Bischoffen	300025977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.713592	8.499111	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+82173b64-2595-4da7-9a97-10157ec9b2ef	083	Lange Wiese 7, 35708 Haiger	300025986	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.740632	8.239213	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3ffa50b8-02b9-467a-88bf-0fe91ac0a143	081	Berliner Straße 17, 35683 Dillenburg	300026004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.729255	8.292364	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2209b58a-91a1-47c8-96a1-26d430155d83	088	Hüttenstraße 1, 35232 Biedenkopf	300026028	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.867733	8.558567	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+098be9c2-70dd-4b98-a854-3eac4eead362	058	Bert-Brecht-Straße 66, 64291 Darmstadt	300026735	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.932738	8.659898	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+daa443fe-2238-4527-ab43-c1ddde3e4cac	057	Erzhäuser Straße 77, 64291 Darmstadt	300026742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.938147856440935	8.649208221759183	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b5673c88-f075-453c-a9f2-004b53184f37	066	Gut Plausdorf 1, 35287 Amöneburg	300026763	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.808167	8.970818	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+52b8ea39-3fe5-4b96-b0ff-64f1a521c05c	090	Hauptstraße 2, 35083 Wetter	300026859	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.918268	8.708246	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+429a3aa7-f4b7-4158-9dfc-4f5556a5bd73	013	Zimmerplatzweg 14, 35043 Marburg	300026914	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.77422495646949	8.75800146794063	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c0f7f1b7-1870-40b3-b862-7a7fbac7f24b	082	Hauptstraße 1, 35083 Wetter	300026964	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.9189428	8.7050098	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+314c33ac-46e5-4f30-a11c-5651895f4fbf	068	Lauterbacher Straße 30, 34628 Willingshausen	300027016	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.863937	9.192529	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+25ddd35a-cd0b-48b0-a36c-30482ee2166d	009	Zu Den Auewiesen 2, 34613 Schwalmstadt	300027026	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.895875	9.160975	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f6b4ce13-5cd9-4092-868c-a21a73b4e356	112	Kasseler Straße 2, 34621 Frielendorf	300027095	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.939551	9.274604	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8fcbb132-0f3d-4942-b70f-f73f66de834a	015	An Der Schleuse 14, 35606 Solms	300027135	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549419	8.427021	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+61c3d671-61d2-4cab-90b9-3e5372bf8b4d	077	Im Brühl 1, 35614 Aßlar	300027143	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.592154	8.436444	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d67115ab-896f-4d77-85ec-1089b9dc4245	020	Landgrafenstraße 5a, 34326 Morschen	300027303	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.064514	9.619295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1b87db16-4286-48c1-968d-a13da1c7af32	021	L 3067, 34599 Neuental	300027319	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.979054	9.206268	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a64d09d6-1cba-46f4-a9a7-5483004b9673	060	Am Hopfenberg 24, 36286 Neuenstein	300027341	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.907589	9.515396	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1cabb1ab-8470-48dc-b491-0b58f4fbe334	065	Zollstockerweg 12, 36304 Alsfeld	300027385	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.757205	9.241374	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+64a353b8-d6ca-4a2a-b8e8-7f56b6938458	007	Brückenstraße 8b, 36341 Lauterbach	300027418	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.644775	9.363825	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d052f3c3-b84c-42e8-a15c-ca87fe9419aa	067	Schrecksbacher Straße 14, 34637 Schrecksbach	300027432	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.847818	9.291475	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d3190914-3961-499e-9ee2-f03da3551018	006	Am Bahnhof 5, 36318 Schwalmtal	300027443	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.703938	9.306125	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+340a803e-adf9-420a-9b58-708ea667d33e	070	Grünberger Straße 20, 36325 Feldatal	300027451	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.64527	9.13058	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+81e0ead9-e0fc-4065-b099-59ea9bfce61a	143	Milseburg 9, 36115 Hilders	300027562	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.559557	9.910363	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c52f849a-cd11-4128-80ab-02f4b4576188	035	Brunnenstraße 21, 36282 Hauneck	300027601	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.820718	9.727752	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+75103e2c-ec5e-4872-b676-bd702b2a71f7	036	Oberhauner Straße 26, 36282 Hauneck	300027638	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.821562	9.73528	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bd7c41c0-afe2-4e41-a75c-55ebdcae8428	002	Akazienweg 6, 36269 Philippsthal	300027672	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.858373	9.977205	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d6392ba3-e17c-4c4e-bffc-ae4199656617	001	Hof Lämmerthal 1, 36277 Schenklengsfeld	300027685	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.857235	9.805901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3e38fe42-08fb-4a52-8fb7-ab3ce4a1c45a	150	Eichenweg 8, 35794 Mengerskirchen	300027925	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.54305	8.14732	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3f85a534-dfe6-4f91-8719-8428d98abab2	016	Weilburger Straße 9, 35792 Weilburg	300027948	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.506557	8.271959	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+73d70c47-8545-485c-a8dd-7f1625942f5b	003	An Der Aspe 7, 36137 Großenlüder	300028013	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.583187	9.551504	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+284a09a7-4ef2-44a8-9ee2-f2b019aa7e87	061	An Der Wasserscheide 6, 36280 Oberaula	300028438	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.852587	9.434167	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ebe20483-b252-4c93-aa3a-383e336c4983	101	Waldecker Straße 31, 35110 Frankenau	300028442	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.089396	8.950159	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8ac25f47-06ab-4a3d-a847-c3e8cb680cbf	010	Am Graben 5, 34582 Borken	300028467	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.035235	9.250291	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0da6914c-20bf-43c7-a5ef-48a0f975cbec	072	Höchster Straße 14, 64853 Otzberg	300028469	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.806852	8.948973	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+40d2c002-e610-4292-87e1-9c9f1a964720	139	Am Holzweg 28, 65830 Kriftel	300028473	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.077970945397595	8.480629920959474	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b8b96451-3a42-423a-8c40-43d45e3532db	103	Landstraße 86, 37284 Waldkappel	300028665	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.145373	9.920657	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e9eedbb7-9059-4638-8da6-cf1ea21c6d6b	113	Alter Graben 16, 36205 Sontra	300028667	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.103591	9.960599	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+26c69280-47ba-43ce-8fc3-9f96825c1431	105	Am Berg 16, 63683 Ortenberg	300029624	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.333868	9.038855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5bfef0d0-3194-41e8-aefe-e50103d8f5a3	129	Butzbacher Straße 110a, 35510 Butzbach	300029628	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.424771	8.678182	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0e88cc14-8959-4eba-868d-dbad16975bad	011	Zum Steinkreuz 8, 34466 Wolfhagen	300029976	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.334768	9.252955	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7fb24229-4ea3-440a-b390-ced97da8f01e	Leipziger Straße	Industriestraße 26, 34260 Kaufungen	300032693	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.285710416300944	9.583924012622449	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1186af82-2dc4-484d-85ae-cac8c44a4715	800	Auf Der Mainspitze 21, 65462 Ginsheim-Gustavsburg	300032707	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99376	8.30474	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+71a454c9-df1f-420c-89a1-bfb6a709ebb0	801	Mainzer Straße 153, 65428 Rüsselsheim	300032708	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99700880391229	8.385154008865358	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8dbb2929-d6eb-4f8a-82d7-8e669fb42219	802	Mönchhofallee 20, 65479 Raunheim	300032709	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.03636646906296	8.475088477134706	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2de3773a-a4ca-4f9e-b42b-77bcc9eadd0f	804	Hauptstraße 65, 65462 Ginsheim-Gustavsburg	300032710	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.962412	8.346344	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7e411607-8937-48de-aae0-5517c41b7ad2	808	Mönchbruchallee, 65428 Rüsselsheim	300032711	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99927434669023	8.514758348464968	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+45fd5f40-fa54-4afd-baa0-96e81265b6a4	810		300032712	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.767857	8.4789693	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a3999497-2430-499b-ba0b-9a1b0404e637	850	Im Espen 1, 35091 Cölbe	300032713	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.856805	8.788355	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+36382e5b-68d2-4ee5-ac30-4eb7f5df8448	851	Alsfelder Straße 102, 35274 Kirchhain	300032714	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.807566	8.937352	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e0c822b4-7c9b-4a54-ac82-f6435150653e	852	Falkenweg 24, 35260 Stadtallendorf	300032715	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.82699	9.040242	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7ac4d911-9233-4d17-90db-cf0346f7d386	853	Mühlweg 7, 35274 Kirchhain	300032716	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.842431	8.868084	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ef36ec74-1471-4ecc-820f-8fc8bdb96539	854	Perfstraße 4, 35216 Biedenkopf	300032717	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.9090387	8.4621254	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+197e7b14-8636-4f6c-8d1c-2567e124564d	855	Alter Kirchhainer Weg 16, 35039 Marburg	300032718	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.805601	8.784028	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+35534dc0-809d-44c5-8752-7b327be0f389	856	Auf Dem Krummacker 8, 35216 Biedenkopf	300032719	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.922005	8.460612	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b6df7f36-f989-4916-a85c-48ff93ea64b3	857	Binge 40, 35083 Wetter	300032720	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.908797	8.718868	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a94169f3-6926-4dec-b192-98806f763629	858	Auestraße 35, 35288 Wohratal	300032721	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.915813	8.942747	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ab69519b-4fd0-4f81-874e-04e048097333	859	Mühlstraße 68a, 35075 Gladenbach	300032722	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7526626	8.527576	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a815e643-3839-4f96-9d31-60e4c9e2609c	860	Hüttenmühlweg 14, 35075 Gladenbach	300032723	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7513449	8.589884	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+aaab1011-193f-411f-b9ef-89dc1198bdf2	861	Strassmühle 2, 35085 Ebsdorfergrund	300032724	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.714012	8.777644	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fdae896e-279a-4618-9518-b47639ad7306	862	Gießener Landstraße 27, 35102 Lohra	300032725	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.68537	8.606149	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e649f59f-9485-4ef0-af86-2449d890e558	863	Kälbachtalbrücke, 35279 Neustadt	300032726	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.87421275347331	9.1214969658904	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+143cf41a-37da-4afc-ac5c-dd88079cc981	864	Am Hopfen 3, 35096 Weimar	300032727	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.725780541659766	8.716765426215717	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+98559781-5c10-464d-9b24-b4fb2f46a625	865	Auf Dem Kreuz 1, 35719 Angelburg	300032728	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.832451	8.453297	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8fb7692d-ed75-42ba-a024-1ee3547bbf3f	880	Frankfurter Straße 129, 61231 Bad Nauheim	300032729	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.375038	8.740434	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d3815963-6d88-4b57-ae56-ee8e8e936443	881	Elsegrund 6, 63654 Büdingen	300032730	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.292119	9.03581	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1e847f8c-bcd7-494c-8107-38866b5e1d4e	883	Parkweg 3, 61197 Florstadt	300032731	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.332634988227554	8.907256070233418	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+53210d4c-46a3-4da1-87bd-bb0b35863f72	884	Frankfurter Straße 35, 61169 Friedberg	300032732	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.320836	8.746944	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9702a0f3-824f-4f19-ac24-6ccb3f9852e8	885		300032733	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.413406	9.223973	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bd3eb677-3935-4d36-8e04-4e991338c9b8	886	Schlinkenweg 14, 61184 Karben	300032734	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.236573	8.71221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8e7fe179-070b-43af-860b-be4321671d27	887	Dieselstraße 32, 61184 Karben	300032735	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.221151	8.763435	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3521269a-1c90-483c-8122-d1759d67acc8	888	Max-Planck-Straße 40, 61184 Karben	300032736	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.220821	8.767392	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4008f308-ae2e-426a-bc3c-879a97320bb9	889	Seewiese 17, 63667 Nidda	300032737	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.407297	9.009599	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+985da359-a693-495f-8f9a-5ad74a13ddda	834	Außerhalb 1, 64859 Eppertshausen	300032739	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.950067	8.827531	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b33acdea-ecb9-430d-9c25-eb144c879068	830	Jenaer Straße 21, 64372 Ober-Ramstadt	300032740	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.838404	8.763913	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+84e3396d-c706-4891-abae-01586e3bda37	832	Waldstraße 79n, 64846 Dieburg	300032742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.887503	8.8201899	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fc3ffc5f-8deb-414d-893a-fccc15226677	833	Ober-Beerbacher Straße, 64342 Seeheim-Jugenheim	300032743	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.762613	8.660226	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4242120d-b46c-47a5-9b8b-afcfd8c4d891	831	Eichelsweg 16, 64367 Mühltal	300032744	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.790314	8.702873	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9f361fef-1f79-4a02-ac7d-2e9f6ad04dfd	420	Frankfurter Straße 115a, 65779 Kelkheim	300032745	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12953	8.45905	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8d792d28-ad29-4d52-993e-cfccd041e0ef	430	Wallstraße 20, 61462 Königstein im Taunus	300032747	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17556	8.453883	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+00931e5f-904e-4f73-b26c-a90e1a101aac	807	Am Hegbachsee 46, 64569 Nauheim	300032748	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.945796	8.468996	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+21f7b47e-73af-419d-8dda-f6e311d44bd5	780	Obere Schulstraße 7, 61273 Wehrheim	300032749	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.27779	8.549736	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f6de9763-bbf4-479a-a54a-0efcc36fda33	771	Bahnstraße 79, 65843 Sulzbach	300032751	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.126039753149776	8.521517515182497	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7a26ef5b-65c7-451a-8760-6a35f2b12995	772	Oberliederbacher Weg 44, 65843 Sulzbach	300032752	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1316	8.51419	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1eff667a-c829-4c29-adfb-e23823ef1a7e	770	Dunantring 71, 65936 Sulzbach	300032753	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12323	8.55277	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ab276087-f730-4f40-8f09-0de2d4d26cb1	740	Gut Bodenhausen 11, 34317 Habichtswald	300032802	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.33162	9.30741	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+92f1c023-e93e-45d5-9518-a55b910ad7b6	390	Massenheimer Landstraße 15, 65239 Hochheim am Main	300032803	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.02751	8.36506	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d2e011c8-32aa-483f-9322-e9bca76d15e2	391	Rheinstraße 43, 65239 Hochheim am Main	300032804	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00241213676519	8.35916340351105	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eec2579d-08b4-4efc-b68e-7f0519e05d78	410	Königstor 50, 34117 Kassel	300032805	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.313523	9.48088	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6d79294e-899a-44a0-998d-9b9452e0e699	411	Fiedlerstraße 5, 34127 Kassel	300032806	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.328154	9.503701	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5fb124c9-b76d-44e6-a8a7-455243ce6d1a	412	Menzelstraße 46, 34121 Kassel	300032807	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.301025	9.483848	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9c81b688-1bf6-440b-8190-f856f3290105	413	Brüder-Grimm-Straße 139, 34134 Kassel	300032808	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.292278	9.460877	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cf3b3dcd-e679-4bef-9434-0ffbf1f85142	414	Landaustraße 1a, 34121 Kassel	300032809	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.307063	9.49073	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5d902fba-b94c-4146-851c-55998c1f3d43	510a	Berliner Straße 76, 63065 Offenbach	300032810	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.105873	8.763238	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d57cc522-1d78-436e-9190-4349c026c6f8	510b	Berliner Straße 80, 63065 Offenbach	300032811	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.106109	8.762816	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e03dfcd6-0f0d-4b0c-8bbd-2c5e4c187979	511	Richard-Wagner-Straße 71, 63069 Offenbach	300032812	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.087803	8.752807	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+492955b5-8598-4c87-b52e-2c608766200e	512	Lämmerspieler Weg 27, 63071 Offenbach	300032813	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.102226	8.781639	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+263b3e10-8c17-49b6-bb12-e2b2e05ea10b	513	Luisenstraße 78, 63067 Offenbach	300032814	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.105046	8.756004	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0cf28682-c7cf-47b1-8239-8590e290bd4f	514a	Mühlheimer Straße 425, 63075 Offenbach	300032815	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.114905	8.809187	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7fd02962-8534-412d-b9fe-61b6558f17f6	514b		300032816	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115142	8.809067	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eb473a51-db8a-49c5-b5ae-21e76bb73bf9	515	Rumpenheimer Straße 143, 63075 Offenbach	300032817	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12573	8.792634	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+559ea59f-3341-4b8f-9982-977725e4d2b8	514	Mühlheimer Straße 425, 63075 Offenbach	300032818	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115009182002304	8.80908250808716	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fdde778a-cd52-45e7-bad0-6abda459ab8e	370		300032820	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.55862	9.66381	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f810fd04-d5bf-44f4-a905-5a06a92f7b3b	371	Karl-Storch-Straße 4, 36041 Fulda	300032821	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.534088	9.668252	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bb7d740c-9838-48d3-963a-b7e56f4a950b	372	Wasserkuppenstraße 29-31, 36043 Fulda	300032822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.535947	9.698615	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f826f524-00f0-47bc-9c22-3d7f89a456b8	373	Gallasiniring 20a, 36043 Fulda	300032823	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549972	9.699978	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6510a11b-da9b-41e8-a728-afc07440c110	374	Birkenallee 8, 36037 Fulda	300032824	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.559141	9.693172	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+488e07cb-e8d1-4325-a4bc-2a9d5f3fd80c	470	Frankfurter Landstraße 1, 64546 Mörfelden-Walldorf	300032825	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.999922610215464	8.588443994522097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+348c4cb5-9761-431f-aeea-c1ddbc6847b4	471	Elisabeth-Selbert-Straße 8, 64546 Mörfelden-Walldorf	300032826	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.98228879729856	8.564963936805727	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0416cc06-15b3-4ddb-83b8-afb8eb3d6c72	500	Frankfurter Landstraße 72, 61440 Oberursel	300032829	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.192623149347774	8.594720363616945	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+21f57f27-9176-4242-bd4c-43e25c60174a	501	Gattenhöferweg 43, 61440 Oberursel	300032830	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191307776477046	8.583487272262575	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2f25395e-709c-4356-8f42-fd17d2fcaee5	502	Herzbergstraße 11, 61440 Oberursel	300032831	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.204332835198606	8.585793972015383	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8ecdaa56-5a74-4901-ae02-ca35f4a4e7dd	574	Volpertshäuser Straße 38, 35578 Wetzlar	300032833	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.540046	8.525261	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9f0527f3-90b3-4e55-84de-7d92fe8691e7	573	Solmserstraße 75, 35578 Wetzlar	300032834	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.54537	8.501787	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4886f3f3-b5b7-4de7-a1e2-6fad21f72748	572	Wolfgang-Kühle-Straße 10, 35576 Wetzlar	300032835	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5659731	8.5106459	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8c1534d3-a284-4ce9-af50-3fb6a9e683d1	570	Dillufer 40, 35576 Wetzlar	300032836	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5548821	8.49048	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+882b463f-9fe7-41e5-af22-0a415d680ca4	533	Kreisquerverbindung, 63110 Rodgau	300032839	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.01519	8.851267	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+40fbce8a-ce5e-4c73-b4a8-4a439b0f95d5	532	Nieuwpoorter Straße, 63110 Rodgau	300032840	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.015754	8.890968	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+28669ad8-c16b-4b41-8615-d10f2ad220fd	531		300032841	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.012575791017355	8.883588910102846	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2ca366da-df86-4c9d-b6c9-e5ba936a0e34	530	Hauptstraße 50a, 63110 Rodgau	300032842	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.04992	8.87793	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+142f7b13-5976-4800-8e72-def0d120c2ac	360	Rheinstraße 72, 63303 Dreieich	300032867	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9910717	8.736355	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+486dc72b-4eca-40c7-b490-7e81cbeecb18	361	Kurt-Schumacher-Ring 110, 63303 Dreieich	300032868	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.036387	8.695243	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d1616daf-7293-4afc-b884-21a20be748f6	362	Liebknechtstraße 144, 63303 Dreieich	300032869	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.020415	8.674265	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+64e285cb-9662-49ce-9082-920e2a3ad871	340	Fehlheimer Straße 9, 64625 Bensheim	300032871	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.683512925332494	8.619681000709535	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+69e8c71b-b528-47e8-8e62-4a033703cb4f	400	Niederhofheimer Straße 60a, 65719 Hofheim am Taunus	300032873	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.09562	8.46079	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0a80f571-5d67-4ca4-9e12-1f3bed5b8826	401		300032874	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.08021	8.43859	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bea5a6ba-e4af-422b-ac00-ee736242742b	402	Zeilsheimer Straße 20, 65719 Hofheim am Taunus	300032875	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.08837675341379	8.452633023262026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f26659eb-b0e7-4d23-ada1-b58b168489ed	403	Casteller Straße 97g, 65719 Hofheim am Taunus	300032876	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.05614	8.4052	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+346bd82a-12da-4895-8c65-a59bdd2f8d52	404	Oberer Haingraben 28a, 65719 Hofheim am Taunus	300032877	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0627882	8.4202249	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6680a00f-f351-4c8d-b756-baaa595a8448	440	Frankenberger Landstraße 11, 34497 Korbach	300032878	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.263137	8.884441	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6c30218a-29e9-492a-aff3-9afa96cb6f95	450	Frankfurter Straße 93, 61476 Kronberg	300032879	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17262419684514	8.525733947753908	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+89250ae5-c973-49ce-9e30-a41a4ca6968d	451	Im Haak 6, 61476 Kronberg	300032880	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.18692866314112	8.493794202804567	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+77051cde-02cb-4ae8-8d3c-de983e29d717	452	Sodener Straße 36, 61476 Kronberg	300032881	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1802	8.53783	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c2ed6976-b494-4f88-97f1-7cbe6d8cdd72	490	Leipziger Straße 35, 63179 Obertshausen	300032884	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.07737	8.852167	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+413e7ccb-9ac8-4656-beba-dc8cee58add0	310a	Zum Niddersteg 2, 63674 Altenstadt	300032885	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.283053	8.940106	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7eaa7e60-7f54-4393-8f82-05e4adba14af	310b	Zum Niddersteg 7, 63674 Altenstadt	300032886	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.282786	8.940033	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+393d0c78-6ddb-4790-a653-14dd75c494cb	540		300032887	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.307169	8.732088	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bea85abc-4b1e-4930-a1b1-d1183c2a5e04	541	Gutenbergstraße 8b, 61191 Rosbach vor der Höhe	300032888	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.271702	8.705564	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+adb56df9-b34f-4fa2-838b-8dbaadca98ca	550	Ascheröder Straße 57, 34613 Schwalmstadt	300032890	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.909912	9.203595	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c9c440de-5192-4642-940e-bf8cc6289e03	551	Festungsstraße 6, 34613 Schwalmstadt	300032891	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.908842	9.234421	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9c77af6b-6be4-4fc0-8871-c396fb801b84	553	Zwalmstraße 2, 34613 Schwalmstadt	300032892	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.914943	9.19679	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+081c6056-3426-437b-ae55-a4f7ce96cb74	900		300032993	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.112920247359	8.75178334164736	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8df9fed0-10b8-4276-a298-d998d529262d	910	Einsteinstraße 1, 64285 Darmstadt	300032994	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.84743	8.64602	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+de472b6f-4390-4396-8f74-41e9fd533251	710	Eichenhang 18, 34277 Fuldabrück	300032995	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.257009	9.503334	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+981302af-cf0d-49d3-ba1d-e5cd029dfa97	701	Am Heegbach 16, 63329 Egelsbach	300032996	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.954739	8.651637	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f740bb4a-b8b0-40f8-a9b7-47c161d0106a	554	Ludwig-Jahn-Straße 2, 34626 Neukirchen	300032997	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.866981	9.339741	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d9f3f8ae-9cf0-42d1-a1b8-b4d9b43fe13c	560	Kreuzstraße 72, 64331 Weiterstadt	300032998	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9079428	8.5864387	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a203ddf1-c984-4797-b070-2698b4ef398e	561	Rudolf-Diesel-Straße 26a, 64331 Weiterstadt	300032999	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.903192	8.609398	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ec164ceb-70fd-498d-b4c3-65c0db14124b	562	Münchweg 1a, 64331 Weiterstadt	300033000	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.91302	8.61726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5e60daa2-74cf-48b0-b1d1-a339c65fdf94	590	Frankfurter Straße 215, 61118 Bad Vilbel	300033002	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.171578	8.731607	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3da51535-6f23-47d1-9199-1799bc62d90c	591	Hermann-Gmeiner-Str. 3, 61118 Bad Vilbel	300033003	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.171462	8.731707	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+07db0e94-867a-42a7-ac73-7b63ddd7672b	592	Huizener Straße 76, 61118 Bad Vilbel	300033004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17991	8.72212	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+97fdaf1e-1b05-48c9-813b-bf977dae3830	320	Berliner Straße 3, 34537 Bad Wildungen	300033005	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.121158	9.137177	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b6e2e9b0-b57c-4391-a3df-127c008cd5b1	330	Auhammer 7, 35088 Battenberg	300033006	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.03617906279141	8.61930656439654	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f5f366ef-ce91-447a-a2fa-cba1c3057608	380	Darmstädter Straße 102, 64646 Heppenheim	300033007	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6591501	8.630257	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cf2f327e-de7d-4d3a-bd5b-81a6e5b22003	381	Ernst-Schneider-Straße 17, 64646 Heppenheim	300033008	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.640949	8.635017	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0a244517-d4eb-4d2d-b636-be5235768d1e	300a	Bockenheimer Landstraße 3, 60325 Frankfurt	300033286	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115535	8.67047	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+753900ab-ed80-49d2-bbe3-b8bab3b3a5b1	300b	Bockenheimer Landstraße 3, 60325 Frankfurt	300033287	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115455	8.670261	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c65fb70c-edc1-4664-83e0-a0f5eb6d275b	301a	Friedberger Landstraße 115, 60318 Frankfurt	300033288	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12671	8.6919	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+568d041f-1adb-45b3-9ecf-b5883c247e60	301b	Friedberger Landstraße 121, 60318 Frankfurt	300033289	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12712	8.69183	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+87b4cb20-bc3a-4662-b8e1-a862985f00fa	302a	Schaumainkai 50, 60596 Frankfurt	300033290	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.104972	8.675413	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3215fd5d-c2ac-446b-8f40-ae9abce612d0	302b	Schaumainkai 55, 60596 Frankfurt	300033291	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.104585	8.674973	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5d1d6a40-c106-4177-8762-8acd3fbce53b	303	Alexander-Riese-Weg 2, 60439 Frankfurt	300033292	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.162759	8.652591	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7f68b240-043a-4d4a-9462-fe6253aad0a9	304	Ziegelhüttenweg 333, 60598 Frankfurt	300033293	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.079886	8.672052	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9140b93b-70d2-4901-8324-97c1629d0143	350	Weidenweg 1, 64289 Darmstadt	300033295	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8950573	8.6654254	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6c27897d-e045-4156-a1f5-b0050fd55d50	351	Havelstraße 1, 64295 Darmstadt	300033296	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8678561642216	8.64139833043737	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+29e54d5d-bf3f-4adc-97f0-b1bf7136c5ad	352		300033297	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.874005	8.672037	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9938d090-3a96-4cef-b300-090928648899	353	Rheinstraße 24, 64283 Darmstadt	300033298	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.872126	8.646659	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f013bf27-c3af-48c3-90a0-17f20c787f45	354	Robert-Bosch-Straße 14, 64293 Darmstadt	300033299	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.869377	8.623713	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+01ce127c-b117-4e88-9658-42b9eb9902f6	Steinbacher Straße		300034327	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.161369	8.55826	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2a79a816-b05f-4cb8-99d8-0d3618f085d9	920	Grabenstraße 36, 65428 Rüsselsheim	300039700	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9928	8.41684	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b7d1a05b-d34c-4068-af62-36ad89766001	921	Oppenheimer Straße 2, 65428 Rüsselsheim	300039701	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9816	8.40201	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5268b5ed-d4d6-4189-9cc0-7d333f2d9a35	922	Burggrafenlacher Weg 35, 65428 Rüsselsheim	300039702	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.98741354697087	8.416708856821062	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a4275e6d-27b3-4f19-8fae-1b30be1d5749	923	Robert-Bunsen-Straße 49, 65428 Rüsselsheim	300039703	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.97728252024877	8.437306618411899	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f123b162-cc38-417e-8d5c-beabe52f419e	924	Lucas-Cranach-Straße 2, 65428 Rüsselsheim	300039704	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9873	8.44169	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+df337c62-c1d6-4953-b7fe-663c20c4005b	1072 R	Ober-Rodener Straße 60, 63322 Rödermark	300042071	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.977368	8.806373	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7c47ff8d-c0e0-4d7b-8e00-46a7a30919d8	1072 M	Ober-Rodener Straße 60, 63322 Rödermark	300042697	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.977462	8.806311	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4bf69ec2-4d4d-42ee-ba92-e47dceb1b267	1083	Waldhaus 1, 64397 Modautal	300042698	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.764273	8.726217	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5b5a1a4a-b0ce-4dda-8e8b-2ab89fd12494	1084	Im Betzel 18, 64401 Groß-Bieberau	300042699	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.78502	8.81122	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5a3e4ac5-73f4-40bc-b6e3-f3a6a32f24e2	1073 R	Seestraße 13, 63533 Mainhausen	300043174	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.01769	9.017761	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f369ccf1-aea0-4240-9c3c-50b5f40b48c3	1085	Beethovenweg 21, 64823 Groß-Umstadt	300043176	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.88877	8.935672	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+44e32424-17bd-4bcb-882f-b0f8884c8b08	1086	Viehtrieb 16, 64832 Babenhausen	300043177	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.972973	8.942131	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fdf6593f-e2b8-4d65-9bcd-9e8b75eb9670	1066 M	Nassgewann 7, 65329 Hohenstein	300043179	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191193	8.120215	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+622e27ec-9817-455e-943e-d244e7b359f0	1065 M	Bärstadter Straße 4b, 65388 Schlangenbad	300043180	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10889	8.096001	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f086f768-5b37-40ff-bd93-664d6c10ddd6	1081	Birkenhöhe 29, 64760 Oberzent	300043185	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.556911	8.955133	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+31cece4a-42d7-4841-b885-6eef726d9f78	1079 M	Birkenauer Talstraße 101, 69469 Weinheim	300043186	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.561631	8.691441	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+58039960-e562-44ed-b4ed-b12ec2fe13a5	1079 R	Birkenauer Talstraße 101, 69469 Weinheim	300043189	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.561573	8.691438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+46eb79ca-43ff-4b12-8919-230e107f2db2	1001	Hainaer Straße 20, 35066 Frankenberg	300043196	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.050865	8.853943	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2c924bc8-d4ad-4d85-a9b3-c9b74755c0af	1029	Industriestraße 1, 35716 Dietzhölztal	300043260	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.835304	8.329263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6d451a4b-e73a-441a-9c46-db840bbe2010	1006	Hof Hammer 1, 35119 Rosenthal	300043408	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.957336	8.900755	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+64acad4b-d5ab-477a-a7aa-be74d5d41704	1067 M	Am Hümes 2, 65510 Hünstetten	300043450	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.246001	8.185778	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ba05a758-e30f-4fb1-84ac-cd42dfd66349	1067 R	Am Hümes 2, 65510 Hünstetten	300043465	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.246032	8.185663	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+04fd952a-6b96-42d3-bf74-f7fb3b9b67ea	1031	L 3289, 35085 Ebsdorfergrund	300043646	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.779588	8.853643	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+560b3f1d-0ada-4193-ae7e-9f5a0f373c23	1032	Cyriaxstraße 1, 35043 Marburg	300043720	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.77278	8.713625	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4800e341-8609-4338-b1a7-538ab1841694	1047	Siemensstraße 2, 35041 Marburg	300043825	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.837503	8.773578	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+060c32ed-609d-48d7-a9e2-b18c763ffe21	563	Am Rotböll 4b, 64331 Weiterstadt	300044983	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.93068494682793	8.62157464027405	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4750596f-d1d2-4625-bea9-d52ae8ac41c9	1004	Südring 8, 34497 Korbach	300045290	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2696309	8.8490651	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9a85dfc4-65f4-47d3-9db8-1eb41ecf9216	1013	Teichweg 19a, 34376 Immenhausen	300045358	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.44898	9.4854412	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2325905d-0f46-45ca-9cf3-1d4d4b6acd30	1005	Randstraße, 34513 Waldeck	300045415	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1960138	9.006177	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5b75249f-495f-4c4d-afa2-b477f4e08ba7	1520	Alte Dieburger Straße 56, 64380 Roßdorf	300045452	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.867939	8.766951	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dbdb54a6-4710-4aaf-a8bd-714ec8a96d82	1028M	L 2304, 36148 Kalbach	300045851	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3669907	9.718062	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cfc2c527-22f8-4fa2-91bc-d4f88aace631	1051	Am Kirchenpfad 8, 36323 Grebenau	300045880	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7469662	9.4809148	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fbfcf59e-3f33-42b6-99bf-aef50360580c	1024	Am Hasenberg 12, 36088 Hünfeld	300045892	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6653403	9.6518163	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3273d796-bdbb-40ff-870a-18334287ed10	1026 M	Frankfurter Straße 1, 36154 Hosenfeld	300045912	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5045628	9.4793628	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3575d69e-c445-4df0-9031-ab1f1287ca15	1027	Frankfurter Straße 45, 36119 Neuhof	300045940	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.446158	9.608311	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cccd371e-dade-4b81-b53e-7f23471a2ef9	1055	Distelrasen 7, 36381 Schlüchtern	300045960	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.383832	9.5306774	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bc27f81e-01d6-4fb3-86d5-8277dcb48de4	1063 M	Am Hoherodskopf 8, 63679 Schotten	300046000	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5124652	9.2332783	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+04203c32-5c18-40f4-8fb9-4df501bf7731	1670	Untermühle 2, 63526 Erlensee	300046031	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1795324	8.9873495	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8450c032-b732-4266-b08b-8be6ed665289	1009	Flugplatzstraße 33, 34379 Calden	300046345	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4068852	9.3891604	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+be718cec-e0d2-41b2-9b47-41419c6a1c25	1076	L 3096, 64560 Riedstadt	300046413	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8559893	8.4733123	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+51370ed8-84d6-455c-a17d-8ca59b7af7d0	1035	Erlesbergstraße 20, 35423 Lich	300046505	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5361605	8.8815571	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d38d9082-d64b-4087-bc46-2471ff937886	1050	Am Kaiserberg 11, 35396 Gießen	300046591	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6156271	8.7035822	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+663810df-e777-4e54-8484-1beb883f8ba9	1049	Tannenweg 58c, 35440 Linden	300046658	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5440017	8.6762582	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+502480bf-b57e-479c-bae6-dbcc05c30b18	1037	Gießener Pforte 41, 35440 Linden	300046664	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.544131	8.6497596	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+180a354d-ba4c-4f05-a993-4b97642d326b	1038	Gießener Straße, 35444 Biebertal	300046693	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6076676	8.6206634	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e7eefdd5-6777-41a5-aa83-427c519f1ab2	1064	Windhäuser Straße, 36325 Feldatal	300046809	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6569914	9.2261222	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e87be3c1-9e5c-4e2b-9c63-8165d58415ff	1058	Gartenstraße 3a, 63571 Gelnhausen	300046815	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2070403	9.1548104	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2b6de37d-cd2a-4429-a11c-d09022e8cf3f	1061	Jahnstraße 23a, 63589 Gelnhausen	300046822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1722912	9.1830578	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+da51b1b3-24fe-4908-8872-d0c541f43eda	1062	Aschaffenburger Straße 121, 63457 Hanau	300046860	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1134429	8.9705378	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cdf208fe-e5b7-4cd5-b18a-a4314c25283c	1044	Auf Der Grenz 2, 65589 Hadamar	300046894	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4281841	8.0348989	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4a257926-6bbd-4e0e-b29d-ec213f9e0c6b	1041	Weilstraße 12, 35781 Weilburg	300046946	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4723611	8.2690121	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0a717821-fd97-4420-8f06-3d270f24c225	1043	Flachsberg 2, 35789 Weilmünster	300046977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4109948	8.3471293	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1a7e4e9a-bd73-464e-b102-d9e91933a05e	1039	A 45 111, 35630 Ehringshausen	300046979	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.616234	8.3886198	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5b0020cc-bbe8-43c6-9652-0204f473ef0e	1048	Otto-Wels-Straße 32, 35586 Wetzlar	300046981	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5822636	8.4838097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3d04aaf8-eb8e-4c66-bbbc-ac07fcc220ed	1053 M	Ringstraße 19, 36399 Freiensteinau	300047012	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4197343	9.4182513	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fc6f992f-3c19-4467-a5e2-f45d1b1e4920	1056 M	Wehrtbornstraße 62, 63654 Büdingen	300047050	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3376612	9.2043842	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eea62949-40ec-4c69-ab85-f5404da37d3d	1060	Kilianstädter Straße 10, 63454 Hanau	300047104	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1823803	8.8857316	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e2f64428-f162-4cb7-8aea-a4aa0f18bac0	1054 M	L 3053, 35510 Butzbach	300047138	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4347481	8.6091302	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f257865a-5d02-4993-b7d3-52fa4a9112ba	1046	Wermertshäuser Straße 36, 35466 Ebsdorfergrund	300047631	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6930378	8.9093913	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6c8690b9-896f-439f-9258-859e5858fcc2	1052	Heegstraße 40, 35325 Mücke	300047639	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6308459	9.0284824	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5b67acca-e623-4f68-a465-e547a2b53287	1057	Herrnhuter Straße 2, 63654 Büdingen	300047688	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2784293	9.097436	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bdfab3e3-8764-4123-afef-08a7f1d6e6bb	1033	Rehmühle 1, 35745 Herborn	300047741	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6596793	8.30679	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e55fda14-11e2-4310-ad9c-df5965eb06a6	1040	Beilsteiner Straße 29, 35753 Greifenstein	300047754	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596431	8.2766605	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+397fb59f-6cd0-410c-9cc3-a3c8dc9ff536	1042	Unterer Grimms 27a, 35647 Waldsolms	300047800	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.435542	8.4852309	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d0ec96b1-cd67-4c96-ba2c-0428c46aa11d	1034	Großgasse 28, 35460 Staufenberg	300047875	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6546273	8.7366839	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+264029da-1d87-459f-9a6a-541831d25000	1020 M	Untersuhler Straße 14, 36208 Wildeck	300047923	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.970553	10.019531	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5a7496a9-b320-41a5-85d4-0dd3c1969666	1016 M	Hunsrückstraße 4, 36199 Rotenburg an der Fulda	300047959	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.026477	9.771942	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a61e0e32-dda7-4779-a471-5599c33c9024	1019	Zum Lichtloch 3, 36214 Nentershausen	300048048	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.991452	9.941334	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9fb67f9c-04ca-43a6-b57a-908e741d2ea7	1023	L 3258, 36088 Hünfeld	300048049	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6970542	9.841369	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a5c5d587-456e-44be-817c-695f8fe1a2a5	1022	L 3170, 36132 Eiterfeld	300048067	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7445495	9.8402852	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bd09e3c6-67e8-4ef6-b421-06dc4f3157f1	1015 R	Alte Zeche 7, 37247 Großalmerode	300048093	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.222618	9.805446	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+34e8579b-0383-43ac-8673-cbb884e27071	1069 R	Keltenstraße 2, 65439 Flörsheim am Main	300048125	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.048272	8.438446	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+426f79f3-4260-410f-adfa-3e3efa7c6edc	140	Keltenstraße 2, 65439 Flörsheim am Main	300048131	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.048047	8.438127	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ceb6a1cc-1441-4f26-bb2b-ad4b624607b6	1059	L 3008 2, 61118 Bad Vilbel	300048159	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1913567	8.7630219	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+64a4eba6-505b-4c3b-bd84-bc2f9cee1be3	1077	L 3112, 64579 Gernsheim	300048181	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.7463615	8.537532	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a98c3528-8477-4275-9339-a9c240607a95	1014 M	L 3422, 37242 Bad Sooden-Allendorf	300048844	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.268037	9.9316068	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+67da6191-3145-4d21-bd75-bac2b16e124f	1530	Hauptstraße 19, 34302 Guxhagen	300048857	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1784143	9.4812236	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+165d9c3d-f053-4cb2-9159-b95c14814c7f	1025	Am Tannenküppel 9, 36100 Petersberg	300049446	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5641667	9.7412746	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bd4dd5f4-da1b-4685-a187-88233322d0c1	Woogsweg	Scharounweg 6, 64289 Darmstadt	300049541	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.90125858055004	8.672665357589723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+84356a1a-3188-4d0b-9d3e-47a772a6f519	Arheilger Straße	Schreberweg 15, 64289 Darmstadt	300049542	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.89192848119509	8.661609292030336	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+51f3633f-538d-4fd2-9f95-fb71432a1ae7	1150	Auf Der Binn 7, 64658 Fürth	300052661	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.644122	8.7513688	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cddd862d-28e2-4e79-82fb-c0b6d6b7622e	1146	Nibelungenstraße 81, 68623 Lampertheim	300052686	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6360971	8.4026784	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8dc071b8-32ee-4b22-af7c-bf619a4b94d7	1151	In Den Schadenhecken 51, 64747 Breuberg	300052811	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8243325	9.0449247	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1c1e6bef-4561-471d-bdc3-0a48ac296997	1154	Industriestraße 23, 69239 Neckarsteinach	300052836	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.4012076	8.8588234	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7f7a7c5d-1d59-4a18-8441-508bba210d14	1145	Außerhalb 26, 68642 Bürstadt	300052874	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6732395	8.4515298	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+27a68e7e-8d3c-4689-b559-3fa2609c3be1	1124	B 253, 35684 Dillenburg	300052977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.768008	8.289006	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7c33ab21-a589-4e03-ad02-dd1cea60e6ec	1135	Im Langen Garten 1, 36304 Alsfeld	300053004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7236569	9.2311169	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d5af3a5a-357b-4cd6-93ef-77f9ada20d40	1125	Alsfelder Straße 55, 35305 Grünberg	300053036	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5913799	8.971904	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8dcdf93b-4dd8-4033-93f4-9cf4bd596df8	1140 M	B 8, 61479 Glashütten	300053092	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2102686	8.4136294	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dfa75be7-c7b0-498e-80d8-d39c7c341cf4	1138 M	Im Aartal 18e, 65326 Aarbergen	300053153	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2393581	8.0599672	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+95d240aa-3810-4d06-a499-d412c5503e45	1138 R	Im Aartal 18e, 65326 Aarbergen	300053166	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2393713	8.0599427	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+69f05caa-d4a6-45f6-95eb-8e0b1d0dd076	1111	Ahornstraße 2, 34513 Waldeck	300053210	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2452541	9.0105512	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+980babb8-2d01-4754-b730-cb555e3df28b	1106	Ziegelhütte 4, 34497 Korbach	300053236	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2877975	8.8330129	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+22045a05-2bd9-4d0f-831b-6ea99642c42a	1107	Helser Höhe 1, 34454 Bad Arolsen	300053298	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4028351	9.015716	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ba68375e-89aa-4dfd-afec-f14ffca9411f	1112	Mündener Straße 49, 34385 Gutsbezirk Reinhardswald	300053300	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.6504128	9.4632616	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+78791f43-f7e1-485e-bc82-9a65f02a6f2f	1105	Alte Wiesen 2, 35108 Allendorf	300053370	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0701175	8.6354442	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+457ba19e-53c6-41d5-a0e1-3f448ef5a5f4	1102	Mündener Straße 37, 34233 Fuldatal	300053371	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4014742	9.5922985	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4ecffbbc-58b6-45cc-acbe-d4cd95061334	1108	Hüttenstraße 5, 34516 Vöhl	300053372	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2167541	8.896405	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+13ea6ed7-4a2b-4b23-9f15-5b10dd71d4b7	1101	B 3, 34582 Borken	300053424	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.065443	9.228901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6f5c6317-9eeb-4bb7-8e53-3fc784f8da76	1153	Außerhalb 11 2, 64354 Reinheim	300054607	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8534114	8.7963936	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9fec7562-1e76-42b1-ac4b-b669bc1703a3	1903	Kloster-Eberbach-Straße 2, 65346 Eltville am Rhein	300054692	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0374333	8.0670528	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d9ed2d48-26d2-4e1d-9ad6-bc013d942bc0	1143	Außerhalb 4, 64347 Riedstadt	300054880	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8563673	8.516892	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5cfc6ce4-db1f-46e8-89b2-a7a7eb02e6e8	1920	B 276, 63633 Birstein	300054912	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4129382	9.3214125	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+db86eeb1-d0c3-4041-a08c-13eed593bf07	1129	Bahnhofstraße 6, 63633 Birstein	300054923	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3503293	9.3100846	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7edfe95e-1710-48d7-b7cd-12f0c3a2782f	1130	B 275, 61197 Florstadt	300055208	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.328914	8.8956174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2b5071c1-dd2c-4f25-8cb5-d14c72faa730	1132	Insterburger Straße 19a, 63486 Bruchköbel	300055231	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1629616	8.9119185	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3ed89acb-c255-4bc7-ae2b-86f922f4a382	1139	New-York-Straße 101, 65191 Wiesbaden	300060310	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.07965482737	8.2737	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5c5c5243-b316-4ed2-9e54-5a3b857e9121	1148	Forstrat Louis-Weg, 64720 Michelstadt	300060329	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6767389	9.0704308	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0bb2534d-861a-4e62-8fc4-f2cfd98c80e5	1142	B 44, 64521 Groß-Gerau	300060338	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9581907	8.5424752	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1f1e152e-9125-4ac4-a01b-dfb621d09208	1144	Frankenfelder Weg 21, 64579 Gernsheim	300060374	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.7773437	8.5110391	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8bcdeba0-2c91-4fb5-a932-49148fbdd069	1133	Röhrig 26, 63599 Biebergemünd	300060380	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1594649	9.3492116	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9261b9d9-0a9f-44ea-bec9-8b09811174a4	1134	Lohrer Straße 29, 63639 Flörsbachtal	300060402	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0942454	9.4634822	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6afe008a-70c4-4840-916a-a8e29865f187	1137 R	Taunusstraße 8, 65344 Eltville am Rhein	300060406	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0566449	8.119155	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d25cd5bd-668b-45c6-aa1b-b1aad34b984c	1122	Wartburgstraße 1, 36142 Tann	300060439	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6556745	10.0064162	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+919cc4d5-8153-4a4d-b048-8b512a8ccc7a	1119	Lingeloh 1, 36088 Hünfeld	300060452	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6560985	9.7530218	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+27fb06be-30f6-4d40-abe4-252e44000682	1121	Rodenbach 29, 36129 Gersfeld	300060521	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.421611	9.9374113	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6efe9dd8-ca6f-4848-90a8-2410db91c428	1141	Köhlerweg, 60528 Frankfurt	300060609	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0559836	8.6434042	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+918d4b32-24db-43bd-ae12-aa9e91fdcd1b	1900	Rückerweg 6, 34477 Twistetal	300060779	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.315806	9.0077939	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+468e4279-0d6b-4cc4-a28a-e40003d29600	1117	Riedmühle 1, 36205 Sontra	300060818	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.029858	10.0105993	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8511587b-ab47-421d-83f5-061c47aea6c3	1115	Leipziger Straße 203, 37235 Hessisch Lichtenau	300060826	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.19874	9.7467875	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7e20214f-273e-450b-9a3e-4975f9810764	1116 R	Am Ehrenmal 16, 36205 Sontra	300060851	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1148754	9.9786473	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c0e6d3ed-e0b0-420f-b03e-d29996f289eb	1114	An Der Werra 10, 37215 Witzenhausen	300060887	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3235832	9.886529	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1dea2b3a-703a-4991-98a9-86b7c0e3dbb3	1104	Lindenstraße 21, 34212 Melsungen	300060909	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1521169	9.5575865	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+29f70e83-1a58-47b6-ba90-965bdd5888b7	1109	Efzestraße 17, 34590 Wabern	300060917	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0895638	9.371461	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9f611dac-4773-4484-a857-3f67260152c5	1136	B 42, 65385 Rüdesheim am Rhein	300061600	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9741312	7.8932671	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fe9a2858-06d2-444e-b8ce-b1f1c925c5e0	1942	Königsteiner Straße 32, 61440 Oberursel	300061632	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.199621	8.557802	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7bd6d89a-9261-484c-8a33-21de136f0dd6	R4 Trendelburg	Wülmersen 1, 34388 Trendelburg	300062314	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.60741678757214	9.432481527328491	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3aee6ba5-9b4d-4c59-9f2a-324080a609e0	099b	Alte Frankfurter Straße 29, 34281 Gudensberg	300062584	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1646495	9.317688	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b293d516-7909-4cd9-90de-8d6dae9a0788	1118	Kleine Industriestraße 13, 36251 Bad Hersfeld	300062610	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.8645267	9.7206717	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c0e4575e-0efb-499f-bb44-bbcc8a9a696e	1128	Fuldaer Straße 20, 36341 Wartenberg	300062791	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6398137	9.4209329	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2c42b70e-7a09-4b74-b0b7-4172a7b7be6c	1126	Friedberger Straße 22, 35410 Hungen	300062795	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4664142	8.8967438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2173a048-3955-4ef2-8d3f-4c37fe4913eb	1800	Billinghäuser Weg 5, 34474 Diemelstadt	300065669	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4989115	8.9528855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9dc2df7d-e57d-4510-adba-f0f63bcf9f69	1801	K 50, 34497 Korbach	300065670	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2238049	8.8436617	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c8a1be71-35a1-494b-917a-b6d4ff9250c8	1802	An Der Kolbenmühle 2, 34537 Bad Wildungen	300065671	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0461045	9.0683097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1223c95a-2f57-40c8-b9b2-4865ad65dc3b	1803	K 8 1, 34454 Bad Arolsen	300065672	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3417778	9.0096503	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9cd67a8f-37b7-44b8-bd08-25e50f25e3a9	1804	Am Steuken 6, 34497 Korbach	300065673	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3173682	8.8686745	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d04eb60b-ae5f-411d-ab30-284216ea92c4	1805	Heuweg, 34513 Waldeck	300065674	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2574511	9.0536248	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+13e3f962-e20f-4472-a854-0913831ff39a	1320	Düsseldorfer Straße 5, 65760 Eschborn	300065682	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.129511	8.565771	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7b52ae18-b1bd-4fa0-a872-3f44576d618e	1321	Kronberger Straße 66, 65760 Eschborn	300065683	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.163802	8.536151	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+82cd99ac-68e3-4c2f-a0f8-e8c40982d446	1322	Ludwig-Erhard-Straße 12, 65760 Eschborn	300065684	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.144913	8.552011	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fbb9239b-79ed-4f0d-9e47-93aa6888dd7a	1450	Griedeler Straße 1, 35510 Butzbach	300065765	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.437014	8.691392	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a89ba726-1ac9-4ba5-aec1-568b2cc89d70	1451	C.-Schneider-Straße 27, 35510 Butzbach	300065766	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.426777	8.6624685	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+820281be-b2b6-4718-980e-559f6888fd45	1452	L 3056, 35510 Butzbach	300065767	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.392349	8.640951	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+76a3f889-0d69-44ee-b751-020d35efb007	1453	Windhofstraße 46, 35510 Butzbach	300065768	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.451948	8.657641	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d6be3320-95d4-4543-a692-37e2c5d1c3c3	1462	Urseler Straße 67, 61348 Bad Homburg	300065773	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.215301	8.608097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dcec73f3-b388-4b6e-bdfa-31be358968bf	1463	Quellenweg 1a, 61348 Bad Homburg	300065774	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.227835	8.631313	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dc6a892c-6bc9-4135-9368-f4586add3572	1461	Frölingstraße 67, 61348 Bad Homburg vor der Höhe	300065777	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.221686	8.609935	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3e466298-ecb6-40c1-b7db-b017e90a0b95	1410	Oberdorfstraße 25, 35117 Münchhausen	300066392	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.946656	8.702841	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+52ca2e0e-6561-464d-b849-91bd9a3596a6	1411	Diemelweg 12, 35274 Kirchhain	300066394	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.818874	8.851642	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1cbc1f97-5f1a-44a6-b803-e26ba5279de0	1412	An Der Ziegelei 4, 35085 Ebsdorfergrund	300066395	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.73744	8.80777	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b3fe29aa-104d-4798-8215-945f3aee41a1	1414	Sandweg 8, 35112 Fronhausen	300066396	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.693657	8.716265	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+281b5003-d713-494f-b2f5-b6f9333ee416	1415	Biegenstraße 8, 35112 Fronhausen	300066397	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.707397	8.70491	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eca0ad3f-8c1c-44a0-b3c5-388139ece29a	1416	Wasserwerk Wohratal 1, 35274 Kirchhain	300066398	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.84757	8.926747	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+aa2e669f-f7b1-4198-b3f7-50a352f507b5	1418	Emil-Rössler-Straße 10, 35279 Neustadt	300066400	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.841797	9.087694	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e63e038a-b95c-4271-bb93-a622ab13053d	1419	Försterweg 15, 35083 Wetter	300066401	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.92562	8.770603	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+11cdd1b6-332a-43f9-a825-0150de40c666	1420	Mühlbergweg 5, 35083 Wetter	300066402	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.90718	8.664738	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+66a6f885-ef46-4590-bb91-2231daac5aee	1422	Buchenauer Straße 1, 35232 Dautphetal	300066403	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.861786	8.610586	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e731ef30-9425-40b4-b369-5b3bba2f53eb	1423	Schelde-Lahn-Straße 70, 35236 Breidenbach	300066404	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.861156	8.47303	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+53d71c52-877c-4af6-ae8c-b8ad44a6466f	1425	Dilschhäuser Straße 13, 35075 Gladenbach	300066405	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.808907	8.632998	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+64c6f4d7-0109-4a4e-b421-ec0e0000d8fa	1426	Gladenbacher Straße 25, 35102 Lohra	300066406	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.737087	8.624935	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1f2910bb-d16b-419e-927d-fd9cbc395936	1427 M	Niederwalgerner Mühle 1, 35096 Weimar	300066407	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.739494	8.684207	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b1a6be0b-82a7-45db-bdbc-d8b1841a5bf3	1428 M	Fleckenbühl 6, 35091 Cölbe	300066408	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.88079	8.826204	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3d7c0688-81ef-4647-a646-266f4147652a	1460	Friedberger Straße 68, 61350 Bad Homburg vor der Höhe	300066721	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.247554	8.620444	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f09ad90a-44d3-4d6a-8c1e-ae0a70fcbe37	1680	Pfarrwiese 42b, 61118 Bad Vilbel	300066723	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.190571	8.748497	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0caa20a3-5762-43c9-869a-0194a7c9b044	1380	Stockstädter Straße, 64584 Biebesheim am Rhein	300066727	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.791083	8.470652	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fae5c2c8-aed1-4fce-8075-b0ccec1689e2	1381	Alter Mainzer Weg 3, 65428 Bischofsheim	300066728	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.973143	8.396446	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1cc6f51e-b5a9-49f7-9725-d748b7d29113	1382	A 67, 64572 Büttelborn	300066729	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.920027	8.504231	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ebd2f5a4-fb30-4cad-9257-246af844f054	1383	Bergstraße 11, 65451 Kelsterbach	300066730	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.066372	8.528382	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1c6a29ab-8f90-4bbf-94f1-4d4c02930295	1384	Ginsheimer Landstraße, 65474 Bischofsheim	300066731	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.982167	8.350083	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fd2e1b89-c007-4ef1-a6ef-a08a55e626c8	1385	Okrifteler Straße, 65451 Kelsterbach	300066732	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.046248	8.511247	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+642f724e-092b-4033-a23c-5dcb22568791	1386	Büttelborner Straße 39, 64521 Groß-Gerau	300066733	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.900869	8.490651	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a052aef4-a2da-4eee-8aa2-34400b6b71f6	1388	Stockheimer Weg 7, 64569 Nauheim	300066734	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.939653	8.454162	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f0d0f180-10cb-4d68-abc4-dce3b767a5af	1389		300066735	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.893709	8.480328	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+287a535f-0aa0-472d-ab0f-2c58255ad8e4	1390	Walter-Flex-Straße 88, 65428 Rüsselsheim am Main	300066736	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.995703	8.431374	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+15b73074-7581-4949-afd2-fbb55c4f024f	1391	Außerhalb 29, 65468 Trebur	300066737	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.917823	8.368272	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+518dc68b-d366-4b4b-9ff2-efb43b8b4960	1392	Am Lerchesberg 1, 64546 Mörfelden-Walldorf	300066738	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.986529	8.572802	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+62d7f31c-a1ce-4d7d-ab3e-cbd12d89b1c2	1393	Rüsselsheimer Straße 78, 64546 Mörfelden-Walldorf	300066739	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.973121	8.546428	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b332ef47-874f-42ff-9f83-37a14e8c3a9d	1395	Mörfelder Straße 25, 64546 Mörfelden-Walldorf	300066741	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.999812	8.570641	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5e370bab-429d-4db5-95db-e3f50abcd129	1396	Darmstädter Straße 45, 65428 Rüsselsheim	300066742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.990691	8.412475	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c25a9b29-0da2-491a-825f-1b4ffab612e6	1399 M	Weisenauer Straße 39, 65428 Rüsselsheim am Main	300066745	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992792	8.407855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+42bd830e-229d-496b-a405-f07be074635e	1330	Willy-Brandt-Straße 8, 61440 Oberursel	300066801	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.208952	8.593424	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7c587a78-3894-42a6-b921-d163ced7ef8d	1331	Zeilweg 12, 61440 Oberursel	300066802	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.208821	8.603026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8d0e7028-24ef-4a09-ad82-d1cb51398b30	1332	Gattenhöferweg 43, 61440 Oberursel	300066803	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191202	8.583164	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+60a172cb-dd66-43f5-a1f3-7964ac0696c9	1333	Hohemarkstraße 190, 61440 Oberursel	300066804	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.214981	8.539191	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+80e2cc4f-a553-499d-9663-fd0d5dba2e54	1334	Lahnstraße 57, 61440 Oberursel	300066805	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.219036	8.578047	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c509eb34-ad5b-4f22-abd0-eca5ff882064	1335	Wallstraße 102, 61440 Oberursel	300066806	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.194527	8.605785	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+da77cd9d-c991-4390-890e-cdae45cc2a50	1397	Hans-Sachs-Straße 98a, 65428 Rüsselsheim am Main	300066819	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.988861	8.424007	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+47902102-cf99-47a9-9089-a99a2a4432be	1440	Rödermarkring 29, 63322 Rödermark	300067383	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992211	8.822872	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e43c75d6-4d92-4352-996f-68a5bfb0a7d3	1441	Rödermarkring 29, 63322 Rödermark	300067384	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992141	8.822575	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b19631f8-4864-4d32-b4e7-269a9462cd89	1443	Dieburger Straße 71a, 63303 Rödermark	300067385	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.978831	8.764224	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+277227ca-d7ca-4159-887d-0e3052e1e2f3	1444	Forsthausweg 4, 63322 Rödermark	300067386	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.964904	8.833094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b38e864f-c27d-4b0b-8028-1b24d793fdfc	1446	Donaustraße 46a, 63322 Rödermark	300067387	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.976558	8.817451	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+761b1272-a9fa-4798-9412-fd06f5d43077	1540	Am Gradierwerk 10, 61231 Bad Nauheim	300067390	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.358586	8.751901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3e406be2-43ef-4feb-a38c-34a52268b553	1541	Friedberger Straße 100, 61231 Bad Nauheim	300067391	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.350058	8.743573	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4d8becd3-4a7c-4f64-9fac-886745a5ec20	1544	Ludwigstraße 3, 61231 Bad Nauheim	300067393	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.365166	8.743807	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b0f65dfa-02de-4f04-94df-4e9158a72654	1300	Dammühlenweg 3, 65510 Idstein	300067401	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.223789	8.267836	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+38d095c7-81b3-4e3f-be28-1d47642b192b	1630	Leukertsweg 102, 63225 Langen	300067402	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.980279	8.658221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+68b07f01-d38c-4f6c-867a-e295255cfaaa	1640	Dyckerhoffstraße 1, 65203 Wiesbaden	300067781	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0288728	8.2565807	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6a61de98-fff6-405f-b53f-27187b42aee8	1641	Rheinufer 10, 55252 Wiesbaden	300067782	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.008154	8.279928	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d30bd3b0-1a29-46b9-8ed2-478cd53f5087	1642	Sonnenberger Straße 3, 65193 Wiesbaden	300067783	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.085065	8.254723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f44ed066-3e0b-4b53-8dd8-6c832db9deb4	1643	Steinern Straße, 55246 Wiesbaden	300067784	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0191403	8.3115487	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+29aa4409-7a54-4ce9-b4cd-4992801d186c	1645	Uferstraße 5, 65203 Wiesbaden	300067785	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.037871	8.228499	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d5841583-8e56-4ed0-83ef-97436d5207f0	1610 Richtung Frankfurt	Frankfurter Straße 151, 63067 Offenbach	300067966	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.101922	8.744597	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+53db4148-5d7c-4f6f-a506-16a44e8adac4	1610 Richtung Offenbach	Frankfurter Straße 144, 63067 Offenbach	300067967	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.101749	8.744721	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+34ac264a-b57b-4c05-8cf7-67eb7deb5254	1612	Lortzingstraße 8, 63069 Offenbach	300067968	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.093403	8.758437	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dc3a58d2-1531-460f-9906-ea74051203d8	1613	Seligenstädter Straße 73, 63073 Offenbach	300067969	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0851054	8.8140816	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+447e72b0-0b53-465e-af6e-9767ac48997e	1614	Senefelderstraße 35, 63069 Offenbach	300067970	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.096893	8.762923	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6839d882-8135-4cf5-9288-67a164459bcf	1615	Taunusstraße 38, 63067 Offenbach	300067971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.109375	8.753598	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1baca48c-b65e-488e-966b-39180dd00e4a	1616	Von-Behring-Straße 84, 63075 Offenbach	300067972	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.116093	8.785673	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ccc0ab7d-e142-4caf-bc7f-a2c253ab0fd7	1650	Spessartstraße 2, 65779 Kelkheim	300067973	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.143504	8.433294	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+aa90a4b6-8414-44b8-9a05-a7d53d634c2c	1651	Sodener Straße 120, 65779 Kelkheim	300067974	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.148511	8.436107	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8486baf1-e5f6-4daf-9245-78183f6ec8dc	1700	Philipp-Reis-Straße 17, 63128 Dietzenbach	300067975	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.016084	8.789891	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+81f542e9-ac53-4809-8231-40f6be00e8ad	1702	Offenthaler Straße 51, 63128 Dietzenbach	300067976	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.001438	8.773084	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0ad7e7ae-3ea1-4a31-b0b3-c673e8936152	1703	Offenbacher Straße 3, 63128 Dietzenbach	300067977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.014509	8.778663	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+91b67cfa-ebca-4569-b926-7685f87e6ae4	1704	Michelstädter Weg 3, 63128 Dietzenbach	300067978	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.014404	8.779065	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c6687f32-8b20-4d4e-8a43-f3c252766efb	1580	Dieburger Straße 255, 64287 Darmstadt	300067979	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.885035	8.687166	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e3aeb205-e198-4b41-a269-9a737c9f6afb	1581	Eschollbrücker Straße 200, 64295 Darmstadt	300067980	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.847274	8.616109	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6c16ca3c-b721-4d18-8ce4-527dcae6b809	1584	Otto-Röhm-Straße 85, 64293 Darmstadt	300067981	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.888814	8.631675	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6d33a5e3-737a-471b-903d-12a1c74a7a07	1587	Seeheimer Straße 99, 64297 Darmstadt	300067983	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.806544	8.645383	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+cd5d0ba3-0ee6-4b12-a438-7cf1082286a9	1591	Nieder-Ramstädter Straße 184, 64285 Darmstadt	300067985	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.854575	8.669506	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e821f0b5-fb65-479c-9129-9486cf7acbab	1592	Nasser Weg, 64293 Darmstadt	300067986	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.885555	8.617049	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c40144bf-9aa3-4bae-bd45-4f5557b85f43	1510	Ramsaystraße 5, 63450 Hanau	300067987	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.138485	8.916046	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+69edbdcf-1a5e-44c7-a16c-3afd29a8a664	1511 stadtauswärts	Aschaffenburger Straße 64, 63457 Hanau	300067988	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124785	8.948019	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+56ab2e0f-2b0d-4601-82df-246f8e83de1a	1511 stadteinwärts	Maria-Montessori-Allee 8, 63457 Hanau	300067989	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.125046	8.947751	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+72b0abca-9a22-42d1-b05e-098e3f6b02b3	1512	Philipp-August-Schleißner-Weg 2a, 63452 Hanau	300067990	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.135722	8.930461	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a002aafd-3df6-44e8-8518-1b4d1be36eb4	1590	Rheinstraße, 64295 Darmstadt	300067991	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.869134	8.625688	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+58fa0b3f-c60c-497a-9330-3cdafc8cb254	1351	Ludwigstraße 40, 63263 Neu-Isenburg	300067992	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.055758	8.694251	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+31a2e17c-ba58-45b5-bfa4-716daa463b4a	1354	Rheinstraße 90, 63263 Neu-Isenburg	300067993	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.054368	8.679211	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4eea9457-4ac1-4a12-84f7-5ed5f2c25b55	1355	Triebweg 188, 63263 Neu-Isenburg	300067994	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.055267	8.710026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7e98c7d3-d0dd-459f-be21-5d4e28d66ff2	1471	Arndtstraße 16, 34123 Kassel	300068882	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3075038	9.5060745	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c5cb593d-8e62-40ce-a5c1-2af7306c6dad	1473	Salztorstraße 5, 34125 Kassel	300068883	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3164309	9.5107162	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1cde8b7e-4e31-405e-84a7-1942c202b5d8	1476	Christian-Reul-Straße 39, 34121 Kassel	300068884	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3031819	9.4545222	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+498e3059-fd88-45ee-ab57-7c81402192e3	1477	Neue Fahrt 11, 34117 Kassel	300068885	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3143068	9.4931761	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+71caa105-ecfa-4fd6-8a6c-69356eac6498	1478	Olebachweg 50a, 34123 Kassel	300068886	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3008995	9.5412794	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+64dcd97d-ed11-469b-95f6-ee1960213348	1479	Renthof 3, 34117 Kassel	300068887	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3147468	9.5039636	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+24e8f718-072d-47aa-add0-e299d2354214	1480	Schillerstraße 60-62, 34117 Kassel	300068888	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3206865	9.4811773	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+04e7a73c-b85e-4413-872a-b6cd6610949b	1481	Sternbergstraße 31c, 34121 Kassel	300068889	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3066935	9.4609602	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0efe9bcb-eff4-4530-bf6e-dbd1abf8eeac	1482	Sternstraße 19a, 34123 Kassel	300068890	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.311907	9.5051667	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+215fbdb5-5ed8-4866-8d46-beaf3fc9b7d0	1484	Wahlershäuser Straße 58, 34130 Kassel	300068891	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3200852	9.4442726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+39224feb-db47-42f7-9f92-61960a719594	1810	Hafenstraße 69, 34125 Kassel	300068892	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3170148	9.5191947	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+720fc59d-4c28-42b8-8862-e6c556c537a6	1340	In Den Schlangenäckern 9, 64395 Brensbach	300069071	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.753078	8.878057	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+273ec648-7592-4aa2-a1c8-241227668e6f	1341	Neustädter Straße 33a, 64747 Breuberg	300069072	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.815449	9.023055	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2991e48f-3922-4be2-8253-c985b311f646	1342	Neckarstraße 157, 64711 Erbach	300069073	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.639157	8.997476	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c1cb7485-2286-4d13-a9fd-06e2a3864ec1	1343	Untere Siegfriedstraße 10, 64756 Mossautal	300069074	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.620643	8.944041	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5456e193-6738-4007-bd8a-5845b86aa78b	1345	Höchster Straße 102, 64395 Brensbach	300069075	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.772377	8.889865	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c9b8329d-29b2-4fb5-a4a8-97ec202b6c7c	Zählstelle Sinntal Altengronau Rhönexpressradweg	Aspenweg 52, 36391 Sinntal	300069163	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.254807	9.636959	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+b2bd21d3-070a-4cae-a1fc-3946f7a096fa	Zählstelle Gelnhausen Höchst R3	Untere Schönau 13, 63571 Gelnhausen	300069164	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.204788	9.226091	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d688485f-8032-49f4-865b-dc31e69f282e	1690	Quellenstraße 5, 34537 Bad Wildungen	300069324	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.111181	9.090314	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+eb6a5241-40f7-41a1-9d0a-5537101c3690	1550	L 3199, 63619 Bad Orb	300069410	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.237935	9.303873	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+789e5f79-a263-43fa-9a2c-70bb9ff39965	1663	An Den Herrnäckern 30, 63150 Heusenstamm	300069417	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.053022	8.814157	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a8ae3e27-55ec-4113-b039-fb591ab3cd01	1662	Am Goldberg 34, 63150 Heusenstamm	300069418	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.061418	8.819416	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2dbd844d-0621-435a-8c6a-40877ecc3224	1661	Frankfurter Straße 19, 63150 Heusenstamm	300069419	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.059434	8.807676	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5e121c5d-d782-4a36-aca9-81c9c08068d9	1370	Altenfeldsweg 6, 35394 Gießen	300069438	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.578741	8.683931	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+a4d020f3-59a5-42ac-b2b8-1bf17d8790fc	1371	Leimenkauter Weg 63, 35398 Gießen	300069439	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596218	8.669114	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d0eb52a7-065c-47a4-9d05-dea611f407c6	1372	Goethestraße 52, 35390 Gießen	300069440	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.579672	8.677358	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d730c20b-aa6a-4a23-b67d-5cad4f5a9f52	1373	Gottlieb-Daimler-Straße 1, 35398 Gießen	300069441	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.586522	8.650516	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+66613d40-4d8b-4247-bdba-f9e1f25c36c2	1374	Lahnstraße 31, 35398 Gießen	300069442	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.584607	8.663103	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+7eb8d4d9-d8e4-4bdb-a296-4d2d23a459b1	1375	Taubenweg 8, 35396 Gießen	300069443	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596484	8.691651	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+06362c75-a98a-4649-8f68-d937cedffd8e	1376	Marktstraße 10, 35390 Gießen	300069444	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.585941	8.673337	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3d744ef9-c741-4496-a79f-50ac6276ed46	1490	Theodor-Stern-Kai 3, 60596 Frankfurt	300070104	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.095812	8.658578	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+deb86e6c-53a1-4c45-b29b-b486931b4d32	1493	Alte Mainzer Gasse 23, 60311 Frankfurt	300070106	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1087556	8.6803453	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e0f23b75-47f6-4b77-a171-6be7cac3efe2	1494	Gerbermühlstraße 105, 60594 Frankfurt	300070107	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1061185	8.7214845	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+d20dcd32-cb99-402d-a398-e6100c1a4775	1495	Gelastraße 117, 60388 Frankfurt	300070108	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.143361	8.736621	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fe17fd1a-b259-406d-8911-24353cd3a4de	1496 auswärts	Schloßstraße 95, 60486 Frankfurt	300070109	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.117673	8.645531	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ac2f9b07-ed0e-41f5-8256-e0a1407a7194	1496 einwärts	Schloßstraße 95, 60486 Frankfurt	300070110	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.117627	8.645436	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+00684a49-f0e3-4c73-bfa6-34557b20f674	1497	Oeder Weg 12, 60318 Frankfurt	300070111	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1188237	8.6797508	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2107f64c-cab5-4b18-a500-f153dbd03809	1500	Vorm Wald 28, 65934 Frankfurt	300070113	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1123951	8.5819811	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5a0420c6-824c-4bef-b4a8-adb60a7996da	1017	Eisenacher Straße 17, 37293 Herleshausen	300048879	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0028574	10.1834362	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+307ea4a9-ad7b-4449-8f97-3ec8cabc73e2	1417	Ausbau Zur Radroute Geplant, 35279 Neustadt	300066399	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.860207	9.131354	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8c91ac5c-20e4-49ec-902a-790fa1bfc49d	1394	Am Wallgraben 3, 64546 Mörfelden-Walldorf	300066740	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.972621	8.571438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c25de5be-2677-4ef4-b88c-e4c03d2e6db7	1660	Im Grund 4, 34317 Habichtswald	300068994	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3345592	9.3221639	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e5f36ff1-93f6-4285-a9c2-1d79abba8877	111	Ebersberger Straße 5, 64711 Erbach	300022577	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.615944	8.992066	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+607f0a07-7509-4517-955b-5cc3965269da	048	Bergstraße 48, 65795 Kriftel	300023310	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.075130727825126	8.47725570201874	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+57697b85-036e-4ef3-ab90-5209a8da0c77	108	B 455, 61169 Friedberg	300024240	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.316007636838584	8.708804057532689	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5bf44ff6-bf84-4f19-8da4-96c58bb6c03f	1492	Ginnheimer Landstraße 1b, 60487 Frankfurt	300070105	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.128344	8.640726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3367d029-929f-4829-806e-faa7db743a93	120	Egerländer Weg 8, 61476 Oberursel	300024708	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.185525	8.558612	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+e8c2107d-9f78-4bfa-8b4d-44a501889b2d	079	Am Brachthof 1, 35102 Lohra	300026787	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.728205	8.662766	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1d861365-568a-41e2-a530-e407177a15f1	089	L 3092, 35041 Marburg	300026824	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.8245442	8.7161966	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6f1a9f95-8589-4201-9c0c-663a7c65ab53	012	Auweg 6a, 35457 Lollar	300027971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.641062	8.696359	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+aa8ce371-9cc4-400d-a15b-f626bd79d51e	042	Jagdhaus Traiges 2, 36369 Lautertal	300028030	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.567416	9.255976	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+272f509d-3a21-48d0-a9fb-4fd32b63f1aa	341	Heidelberger Straße 133, 64625 Bensheim	300032872	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.66667996782354	8.629465699195864	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fbef8253-dee6-406c-9b76-06432e4d40c5	1078	L 3111, 68519 Viernheim	300043184	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.583399	8.589813	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0483a09e-7c1f-4917-b4f9-428329a53a1c	1010	Blumenstraße 17, 34466 Wolfhagen	300045393	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2876086	9.1508519	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3673b68a-0781-4ef3-8d62-cf3c544bd293	1499 a	Eschersheimer Landstraße 249, 60320 Frankfurt	300070112	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.135723	8.671253	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+9eec86e0-088b-4fef-a1c4-a2460dda73c7	1065	In Der Herborn 2, 65388 Schlangenbad	300046301	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.108727	8.094532	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+85cfeb5c-5b95-451d-93e7-81637a21ca09	1045	Hölderlinstraße 51, 65549 Limburg an der Lahn	300046901	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3760099	8.0762714	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4f1b11d7-d4a9-4cc5-9fe2-41114f770bd0	Erbprinzenstraße	Eco-Counter Zählerstandort (kumulierte Zählung)	100004165	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	49.0072864	8.4027153	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+971b7c56-ce35-42ea-9519-11f82b6b050d	Horstmannsteg Hennef	Eco-Counter Zählerstandort (kumulierte Zählung)	100063389	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	50.77557	7.29088	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+09a15e55-ad8f-4858-a439-9d83c32ee562	Radschnellweg Osnabrück Belm	Eco-Counter Zählerstandort (kumulierte Zählung)	100050631	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	52.27996540308624	8.0550560783977	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+d2a26e5c-5095-47c7-ba9d-6eec7aeddde3	Römerhofweg	Eco-Counter Zählerstandort (kumulierte Zählung)	100063376	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	48.25	11.6544	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
+7d5ec122-e120-4c61-86e0-02c04c0eece8	520	Sprudelstraße 8, 63683 Ortenberg	300032699	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.342086	9.035552	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+70fceaf7-ffa7-4ab5-910e-d42473357c12	730	Feuersteinweg, 61279 Grävenwiesbach	300032700	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.393952	8.511263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+45ed3711-5c92-418d-9145-6aaefbaf4a79	472	Okrifteler Straße 38, 64546 Mörfelden-Walldorf	300032827	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.008198	8.566961	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+efc583eb-c693-4a3f-adaa-3e1050cd81db	542	Bahnhofstraße 18, 61191 Rosbach vor der Höhe	300032889	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.301619	8.694759	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4a8c4e47-0603-41b8-9dad-3daa35c08d6f	KÖ Steinstraße	Königsallee 52, 40212 Düsseldorf	100005014	b9145b59-ec36-52da-9343-bde7f49d6046	51.223255	6.779096	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+81858014-9313-42fe-8621-6035921166a3	Kirchfeldstraße	Kirchfeldstraße 4, 40217 Düsseldorf	100011631	b9145b59-ec36-52da-9343-bde7f49d6046	51.212435	6.770726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bfee4987-778e-4c44-b537-298647c8a9a3	Lohauser Deich	Der Grüne Weg 80, 40474 Düsseldorf	100011632	b9145b59-ec36-52da-9343-bde7f49d6046	51.276819	6.714056	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+4d0ea272-e21f-441c-92d7-d4ba638ea38f	Christophstraße	Christophstraße 11, 40225 Düsseldorf	100011637	b9145b59-ec36-52da-9343-bde7f49d6046	51.195957	6.796619	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+47da2398-48f1-4253-a36a-18bd061109b1	Mannesmann Ufer	Mannesmannufer 1a, 40213 Düsseldorf	100016424	b9145b59-ec36-52da-9343-bde7f49d6046	51.220154	6.767121	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c41194fa-8368-4912-a812-800972e94601	Elisabethstraße	Elisabethstraße 16, 40217 Düsseldorf	100033660	b9145b59-ec36-52da-9343-bde7f49d6046	51.216641	6.775346	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+58781890-ffe1-41f7-ab09-d42488d6dd4a	Bilker Allee	Bilker Allee 92, 40217 Düsseldorf	100046689	b9145b59-ec36-52da-9343-bde7f49d6046	51.21074	6.771311	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+20ae5f4b-aca9-4138-90cb-ac5fdba3cfe6	Münchener/Ickeswarder Str	Fritz-Strassmann-Straße 11, 40591 Düsseldorf	100047053	b9145b59-ec36-52da-9343-bde7f49d6046	51.176601	6.809242	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+42b8d5c6-8350-4e66-8102-7a90b14446dd	Fleher Deich	Fleher Deich 49, 40223 Düsseldorf	100047054	b9145b59-ec36-52da-9343-bde7f49d6046	51.18775	6.77722	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0e24f71a-524c-445a-8d96-e62515d3fad4	Koblenzer Straße	Theodor-Litt-Straße 2a, 40593 Düsseldorf	100047279	b9145b59-ec36-52da-9343-bde7f49d6046	51.149015	6.886683	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5314c49d-8b06-46a9-b304-54746f4d04fb	Oberkasseler Brücke	Kaiser-Friedrich-Ring 1, 40545 Düsseldorf	100047280	b9145b59-ec36-52da-9343-bde7f49d6046	51.23166	6.7632	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+068ce86a-a56a-4671-a93b-dcded0535707	Fleher Deich Rampe	Bückerbergweg 28, 40223 Düsseldorf	100047281	b9145b59-ec36-52da-9343-bde7f49d6046	51.18834	6.77571	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+22700902-e04e-4e80-985b-ce37167560fa	Hofgartenrampe Oederallee	Fritz-Roeber-Straße 2, 40213 Düsseldorf	300029563	b9145b59-ec36-52da-9343-bde7f49d6046	51.231551	6.776191	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+08918099-a16a-41b0-bec2-da59c10ff291	08 Vorgebirgspark	Homburger Straße 14, 50969 Köln	100019755	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.913017	6.948681	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f2476936-0e82-4f29-9c8a-c3ce5d7ba3b9	09 Alphons-Silbermann-Weg	Zülpicher Wall 5, 50674 Köln	100019756	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.930084	6.930417	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+fca8e3b6-c2bc-4e44-8899-2b4b91fac44f	10 Stadtwald	Friedrich-Schmidt-Straße 60b, 50933 Köln	100019757	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.933098	6.8929157	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+88d66b97-8d33-454e-a864-6bdc56e2e93d	11 Niederländer Ufer	An Der Schanz 14, 50735 Köln	100019758	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.962322	6.986403	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+739d06f1-62bb-4588-880b-56ddd3e35a41	07 Alfred-Schütte-Allee	Alfred-Schütte-Allee 76, 51105 Köln	100021727	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.914497	6.9818854	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+af475dfb-d98c-4cef-a944-425ba8bd10a5	01 Bonner Straße Rad	Bonner Straße 41, 50677 Köln	100023269	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.9182	6.960489	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+0c117ffc-1629-49d4-b79b-91465c823cf8	02 Venloer Straße Rad	Venloer Straße 176, 50823 Köln	100023270	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.945816	6.9266076	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+62631d8f-fe79-4ab3-8b66-136dc56887c8	04 Hohenzollernbrücke	Kennedy-Ufer 2a, 50679 Köln	100029854	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94118	6.9701	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+bad75edf-3a8c-4662-9916-2a23aaefb76f	06 Neumarkt	Neumarkt 10, 50667 Köln	100030418	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93637257134968	6.947836756773378	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+15bc5909-d6e8-455f-843a-eb676e983281	05 Deutzer Brücke	Kennedy-Ufer 1, 50679 Köln	100044729	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93649	6.96658	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+5222df13-0f31-4715-9d3a-92d7a2d0b7a6	12 Vorgebirgswall	Vorgebirgswall 4-8, 50677 Köln	100045094	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.92054907885211	6.94476961008295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+dc75e416-ff2b-4a71-bf69-810dcdc0dbb5	03 Zülpicher Straße	Zülpicher Straße 51, 50937 Köln	100057124	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.92719493078395	6.933329933685668	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+8ac19391-3911-486d-9c19-b486300325bb	13 Universitätsstr.	Universitätsstraße 75, 50931 Köln	100059340	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93311976074636	6.925021246105153	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+6bd3d8fd-af03-4083-a43e-bc6955862b4e	14 Rodenkirchener Brücke	Weidenweg 50, 51105 Köln	300014336	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.90295502231652	6.993484497070313	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+ff60ce3f-e746-415a-98cf-5cf35e499feb	15 Severinsbrücke	Im Zollhafen 5, 50678 Köln	300016603	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93071097591193	6.967520713806153	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+1402f916-a1d5-4660-8cc0-215791589d7e	16 Neusser Straße Rad	Neusser Straße 153, 50733 Köln	300021441	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95783433133611	6.955429364340324	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+f1472a11-b019-4113-94dd-712382ab2c8b	17 Hohe Pforte Rad	Hohe Pforte 19, 50676 Köln	300022210	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93375713622347	6.956292986869813	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+54511dfb-859f-4de2-8bf5-40b397472a6d	18 Gladbacher Straße	Gladbacher Straße 9, 50672 Köln	300028615	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94546997818451	6.940703988075257	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+c9f532db-275a-4654-844b-0d8398ad285b	19 Elisabeth-Schäfer-Weg	Herler Straße 92a, 51067 Köln	300037617	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95755663257499	7.024080455303193	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+296ae90a-7808-45be-aca8-d2497f46a919	21 Hohenzollernring Rad	Hohenzollernring 17, 50672 Köln	300041441	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93719185680222	6.939121484756471	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+274d6de4-301c-4b94-9489-c32bc58d2a72	20 Auenweg	Auenweg 185, 51063 Köln	300041859	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95320931360196	6.986403465270997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+3c090d4a-f557-4bea-9fdb-4ac25a82a111	22 Maybachstraße	Maybachstraße 111, 50670 Köln	300049705	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94902	6.94953	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+267e4d9c-8c3d-4e9c-85fd-4e62e77eaf70	23 Kalker Hauptstraße	Kalker Hauptstraße 56, 51103 Köln	300050064	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93728313036514	6.996134519577027	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
 \.
 
 
@@ -866,13 +1536,13 @@ d4ae8d41-909f-4ac4-8edd-aa2d8ed53688	MQ9.5	Messquerschnitt (Zählfeld-Gruppe) MQ
 -- PostgreSQL database dump complete
 --
 
-\unrestrict EFtAl0RGrMhXDxBAWu56NVqx4MO6lM3CzzHE25gUYbfVV6rC2q2TbdaIl4xLh60
+\unrestrict shC33G8ioC42U8BZeocahstpgag1GvMfV4UECDi1WVUHbp36PVTJ8Ji1if0j1Z1
 
 --
 -- PostgreSQL database dump
 --
 
-\restrict ECl3sfIPry3KFehranaMOvWcdROb8zrYDgImVuM59skXCAqg8xSnfAaAgA4kKw5
+\restrict 3aEAfnA4Wf74luLjNBNZFbUZ9qlw0SPxLXsdI5rgKfp6JFhL65scofTmAMYIoQ7
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -894,395 +1564,985 @@ SET row_security = off;
 --
 
 COPY public.channels (id, counting_station_id, name, description, external_datasource_id) FROM stdin;
-63fbdc95-b785-48e9-b188-1ba425fa324e	71b941df-0c7a-4db6-bc4c-b551a33ed74f	Bismarckallee Fahrräder IN		353420516
-66cfb432-321d-441f-8a04-e76221a3e17f	71b941df-0c7a-4db6-bc4c-b551a33ed74f	Bismarckallee Fahrräder OUT		353420517
-06e256ae-b125-48bc-8ec9-543094b2b0b1	baeb1263-4ec0-48db-b36a-ed73af103ccc	Bohlweg [Bike Stadteinwärts]		353413831
-69475589-bcad-44c1-a79c-81db249a4aed	baeb1263-4ec0-48db-b36a-ed73af103ccc	Bohlweg [Bike Stadtauswärts]		353413832
-314572f4-24b9-4d40-812f-202a9bd45300	6615df93-4d29-4636-b848-cd9740087dac	Coesfelder Kreuz Stadteinwärts		353425081
-dc889c78-7e9d-47dc-9a67-c46de1ddc4d1	6615df93-4d29-4636-b848-cd9740087dac	Coesfelder Kreuz Stadtauswärts		353425082
-a9185641-579e-44d2-ba18-ee38c7688774	06278fe5-c70b-4487-8a8b-4a68a75814cc	Gartenstraße einwärts		101034978
-8c3e4232-da91-4a7c-8f23-dc40fbdd4a6f	06278fe5-c70b-4487-8a8b-4a68a75814cc	Gartenstraße auswärts		102034978
-03821e46-ef42-4ec0-a296-0060e0b890fb	97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege Fahrräder Stadteinwärts		353413846
-25abace8-988f-43b5-aa0d-1757abf6f56a	97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege Fahrräder Stadtauswärts		353413847
-3f5515d2-24c6-49ca-a2b3-23716ec57b30	97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege Fahrräder Stadteinwärts (353426663)		353426663
-6ae6404d-0259-4d15-865d-979182fce548	97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege Fahrräder Stadteinwärts (353426665)		353426665
-040df7ca-804f-4765-bf19-e7f263765559	97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege Fahrräder Stadtauswärts (353426666)		353426666
-f9010a44-6796-4726-962c-5f191353be60	97514fa2-2a21-4a17-b85c-6ec4aa74db27	Gasselstiege Fahrräder Stadtauswärts (353426668)		353426668
-b30fca82-bb71-4a70-bb85-d494420c7a64	07bd531e-1af9-4b40-ad10-19163eba9f26	Goldstraße [Bike Stadteinwärts]		353413828
-39dda2a9-3ea7-45dd-8a9c-c3c582665f6d	07bd531e-1af9-4b40-ad10-19163eba9f26	Goldstraße [Bike Stadtauswärts]		353413829
-cf92c414-1f12-4eb5-9339-d5cd4edd6179	7d275c99-b946-4ba5-88ab-d999474dda38	Grevener Straße Formel - Fahrräder Stadteinwärts		353425091
-2aef68d3-fa0a-4457-a9f2-e9cd6f0c3d05	7d275c99-b946-4ba5-88ab-d999474dda38	Grevener Straße Formel- Fahrräder Stadtauswärts		353425097
-f7369ef9-f8d1-491a-9aa5-3f910660bb04	b3c82471-0212-464e-b8aa-febb77f00b01	Hafenstraße Fahrräder IN		101031300
-f1579895-0996-4075-b89d-459ab256eaeb	b3c82471-0212-464e-b8aa-febb77f00b01	Hafenstraße Fahrräder OUT		102031300
-10376a23-ebcb-4c50-806a-f586b8daff1f	afa9d8cb-21fb-4855-a818-a0b6eb0ac216	Hammer Straße stadteinwärts		101034980
-1e6e1864-8abb-4ed3-ac3b-2cd72e7304ce	afa9d8cb-21fb-4855-a818-a0b6eb0ac216	Hammer Straße stadtauswärts		102034980
-a86eda43-f74f-43f6-b87e-c6707c6db0a9	7b263d87-9b77-4dc3-a349-3f6c847530d6	Hüfferstraße stadteinwärts		101034982
-d8b9f6df-52d4-450d-a5cd-2ff9ebc44781	7b263d87-9b77-4dc3-a349-3f6c847530d6	Hüfferstraße stadtauswärts		102034982
-d3262cee-5599-40ae-a8fe-1f90e58989ff	98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade, Abschnitt 1 (Dingstiege) Fahrräder IN		353410966
-bd18c488-5dd9-4085-ae8e-425152a215ab	98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade, Abschnitt 1 (Dingstiege) Fahrräder OUT		353410967
-e94dab77-5377-4ad6-835d-6b8ddccbbe22	98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN]		353426657
-0c79333c-6dde-4302-9d69-b11a10c17897	98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN] (353426659)		353426659
-1450b5f9-d07b-4419-8519-e08fca00998d	98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT]		353426660
-31549d81-90de-4798-b2a1-77ff1e1b6335	98ce175c-ebbf-4369-9778-cc7fa1551daf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT] (353426662)		353426662
-40b83747-267a-4588-ac1e-26f5f377c559	3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor		101053305
-adb55e40-6bf0-4ff8-a36a-fdbf6fe40d86	3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum		102053305
-17b8bbc4-c667-4b52-96f4-3b4711e8c01c	3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor (103053305)		103053305
-42d2c011-2527-417c-aa9f-95ba793900b9	3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum (104053305)		104053305
-2d6477b1-bcba-4d97-b408-cfd102dd1677	3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor (353306596)		353306596
-5fb10e41-dde7-4067-83cb-23dc328874a4	3ff26069-d05a-41ac-90de-e515d0b36d20	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum (353306597)		353306597
-ab0f33e0-a14f-45db-865b-f7d8562033bb	d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade, Abschnitt 6 Fahrräder Richtung Münster		353413873
-fc0d3766-f8d0-4c4d-8513-da0ad6111216	d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade, Abschnitt 6 Fahrräder Richtung Weg von Münster		353413874
-d4ef0867-5484-4ef9-9588-bdf6581b59da	d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade, Abschnitt 6 [Bike IN]		353426355
-22f1628b-1c33-4e22-8b2b-a29a222f4099	d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade, Abschnitt 6 [Bike IN] (353426357)		353426357
-6ba39e8e-2e17-40de-a81d-4da9ab5db2b9	d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade, Abschnitt 6 [Bike OUT]		353426358
-4f952f23-957f-48ad-b487-529c366bd5a9	d5a6e3ea-028e-4dc2-96c6-ff0a647226f6	Kanalpromenade, Abschnitt 6 [Bike OUT] (353426360)		353426360
-7dba6747-8253-47d3-ac3a-4afbaffe579e	45e63e38-40b7-4b8d-b4c2-66ebbc8affbb	Kinderhauser Str. [Bike Stadteinwärts]		353413835
-05f67a63-79fb-4dc3-b748-24fa3ee88f81	45e63e38-40b7-4b8d-b4c2-66ebbc8affbb	Kinderhauser Str. [Bike Stadtauswärts]		353413836
-22ae97e3-18f6-4fda-9e75-802f9bda6de7	2ddc8b5e-9fb8-4067-a1ff-73b098a61e71	Lütkenbecker Str. [Bike Stadteinwärts]		353413813
-ab3e8bbd-ec15-4906-bf7c-bd5266cb9809	2ddc8b5e-9fb8-4067-a1ff-73b098a61e71	Lütkenbecker Str. [Bike Stadtauswärts]		353413814
-2af28bc9-f2ff-42ee-bea1-ce897e7a67dc	6f278529-1a13-4f29-8079-3b40e7abf788	Neutor stadteinwärts		101035541
-7342caf7-8a71-410a-bc91-98c7db1b10fb	6f278529-1a13-4f29-8079-3b40e7abf788	Neutor stadtauswärts		102035541
-9179d383-967d-4d11-904c-766340849219	1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade Radfahrer FR Mauritztor		101031297
-01633039-331a-418a-85c4-b7ba2695fbef	1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade Radfahrer FR Salzstraße		102031297
-ce9a5e1d-f065-41d4-b0dd-f707f7c70707	1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade Radfahrer FR Mauritztor (103031297)		103031297
-d34434d7-f6e3-4e1b-b229-2f0657f61929	1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade Radfahrer FR Salzstraße (104031297)		104031297
-33dbe7e2-319e-44e8-a8e2-d6c9359daf22	1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade Radfahrer FR Mauritztor (105031297)		105031297
-5e5535da-b68c-4aed-9f4b-4ed2f9bd2f74	1388bf66-d7bb-46f8-be2c-b13fa539c966	Promenade Radfahrer FR Salzstraße (106031297)		106031297
-d2ad4a50-21ee-4e27-bdc9-fc0ca80f63c7	19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westl. Hals) Fahrräder IN		353409612
-5eab7c7c-3ad9-4921-a739-37f4d9df7ba3	19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westl. Hals) Fahrräder OUT		353409613
-b4591cad-2939-42b0-bffe-d71c9be32453	19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westl. Hals) [Bike IN]		353426710
-f69a4318-305c-4617-9110-73ea21117010	19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westl. Hals) [Bike IN] (353426712)		353426712
-4d8b0dea-7c5f-4681-9183-aeea20f7fde9	19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westl. Hals) [Bike OUT]		353426713
-8a9b7272-4f63-4a8e-9059-179f177565b1	19cfc382-5ad0-4284-b250-3cda096e5d3a	Promenade (westl. Hals) [Bike OUT] (353426715)		353426715
-93ffa067-4a76-4073-a231-e722ed101030	a24f5e4e-6336-4076-bfef-53f45125bacc	Schmeddingstraße [Bike Stadteinwärts]		353413849
-a0fe4f27-2b81-42f2-9a1b-1714470533e5	a24f5e4e-6336-4076-bfef-53f45125bacc	Schmeddingstraße [Bike Stadtauswärts]		353413850
-4dc9a9d5-c441-4bd4-abc5-4c7c9f2b48ad	c9890748-f684-4cd1-bea7-92fd5b63a837	Warendorfer Straße stadteinwärts		101034983
-37b715ea-ad2d-463b-a78f-77aeaecc562d	c9890748-f684-4cd1-bea7-92fd5b63a837	Warendorfer Straße stadtauswärts		102034983
-e43aaa6a-2d8d-438b-ae50-c3fad63dfd93	c2794c99-51d0-47ef-9bf3-c202d41aa88a	Weißenburg Str. [Bike Stadteinwärts]		353413852
-f3ba8d4f-a6ad-40c8-a17d-06442e12a98f	c2794c99-51d0-47ef-9bf3-c202d41aa88a	Weißenburg Str. [Bike Stadtauswärts]		353413853
-8db6302b-bae9-4bfc-ac47-8c7dfaa34da5	b317228f-ec46-4f8d-999b-a944ca970ab6	Weseler Straße stadteinwärts		101034981
-3e2bfcd7-d719-4c4c-af3f-9ca3abd8172a	b317228f-ec46-4f8d-999b-a944ca970ab6	Weseler Straße stadtauswärts		102034981
-ae4fec61-ea7a-4170-a434-01ffc9bea60b	c53a4c52-22b9-472e-a5d1-1b46810668e3	FR stdteinwärts		101020113
-b69d70b1-cd51-4c3b-ad7b-9020f8ddeabb	c53a4c52-22b9-472e-a5d1-1b46810668e3	FR stadtauswärts		102020113
-60b77bea-47ef-427f-8cb9-d4642e860b71	3a4e7d22-9dd4-4aca-8e5d-333691c9df5e	BN - Brühler Straße		11
-4bcbfb22-24fc-4c00-9763-4f0f1d423966	28cdd1f8-6fa7-40e0-a77d-d62db7028209	BN - Nordbrücke (Südseite)		3
-d4855d83-4f02-4481-8f34-51dcc89881d5	1d05c141-b981-4842-944c-ac2240374f64	BN - Straßburger Weg		12
-edf72524-7f1a-4ee4-9ea2-2d9f4d11f12c	d638db73-d6aa-4e41-945c-99370d10df9e	BN - Wilhelm-Spiritus-Ufer		13
-a2004b04-d353-4bc3-80b8-45ac255590f8	aac27300-4f45-4de0-a5e7-eefd2f096ae6	BN - Kennedybrücke (Nordseite)		1
-81fccdd6-eb17-4e2f-8084-ce34052d63ad	d45f16b4-4246-440f-b125-b2d209c3ae41	BN - Kennedybrücke (Südseite)		2
-44135853-6e5c-450a-97a9-d2879ee886ce	8ee2d1e0-403d-4c9d-b737-a794a8ec2ac9	BN - Nordbrücke (Nordseite)		4
-c208792b-ff88-473f-8ed7-fb6a0fc39c9e	294f8b0f-15de-42ff-a828-c6665cbb3f6a	BN - Südbrücke (Südseite)		5
-d25cfe95-a1c7-4e2e-b855-14d36d6ae06c	e0c9f737-c3ff-4999-9a93-075d62807310	BN - Südbrücke (Nordseite)		6
-1b63c3be-9e22-4db2-ac85-23d87b627eb5	caf54c1c-15c8-45cb-8245-6f3f3c86788d	BN - Von-Sandt-Ufer		8
-21560f65-7685-4651-886c-eb62cf388204	c5e6d7ff-efc1-4cf5-87b3-a204622e095d	BN - John-J.-McCloy-Ufer		14
-34f0da64-aa3d-4076-a348-cc3498474e57	212ec0cd-078d-438f-886c-1552ae3a4b51	BN - Bröltalbahnweg		10
-95e63703-86d9-467f-b482-a14bc29d78b7	f3d90fa8-56b6-40a6-b434-7550967fa11f	BN - Estermannufer		7
-b44a6b50-c720-4336-9205-4d2b52b40705	c0b127f6-735b-40fa-bb6a-8a0d0b33fc06	BN - Hochwasserdamm Beuel		15
-fd6ab3ab-3655-423b-ab54-781ca3a1abb4	cd9f9ca3-4201-4606-8ac4-2eba16ffd45d	BN - Rhenusallee		9
-c13fe94c-96d9-4a67-ada3-91c88f181e59	2fad2b6d-8db5-43f8-ae57-a2f28ed0e7ac	BN - Rheinweg		19
-36c5af0b-6cbc-4c46-aa70-a2f4f8602fa4	ea83d709-d8fd-4fbc-91a4-b947964b851e	BN - Joseph-Beuys-Allee		18
-23673b62-8ebc-41c3-b9a8-94cf81e4c6af	ef9ba3be-71a0-4336-9f75-5becf24f42ee	A_1.2_1_I (Richtung 1)		A_1.2_1_I
-f2d2db51-04ca-4872-bad1-c196914e007d	ef9ba3be-71a0-4336-9f75-5becf24f42ee	A_1.2_2_G (Richtung 2)		A_1.2_2_G
-7330950e-4df2-45a4-bd3f-5ff18a79fca1	fbcf0bdf-bb55-4c34-b1ac-82b09cdcec25	A_1.3_1_G (Richtung 1)		A_1.3_1_G
-88e5a19a-4986-42dd-9afa-87b22385fc8d	fbcf0bdf-bb55-4c34-b1ac-82b09cdcec25	A_1.3_2_I (Richtung 2)		A_1.3_2_I
-c8853003-1ab0-414a-b363-5fa16e549390	d467eca8-fad8-44f4-96c4-8001ed1a9caf	A_22.1_1_I (Richtung 1)		A_22.1_1_I
-5c0946b3-b3f3-4884-abdc-431b461be2db	d467eca8-fad8-44f4-96c4-8001ed1a9caf	A_22.1_2_G (Richtung 2)		A_22.1_2_G
-2d1115d9-c188-4b0d-a227-38be11ac31fd	249ef77b-1cc5-4f38-9dd1-77d86a574c7e	A_25.1_1_I (Richtung 1)		A_25.1_1_I
-001a53d7-cb55-40fc-a041-c8eee01d32e5	249ef77b-1cc5-4f38-9dd1-77d86a574c7e	A_25.1_2_G (Richtung 2)		A_25.1_2_G
-e0f4660d-c6bc-4453-9678-ff4f55f6f2fb	14bba2ec-f9e0-46b4-beb7-d7040c411c6e	A_25.2_1_G (Richtung 1)		A_25.2_1_G
-a67bfbad-eb9b-4dc0-815c-e24f9b20ca52	14bba2ec-f9e0-46b4-beb7-d7040c411c6e	A_25.2_2_I (Richtung 2)		A_25.2_2_I
-5af3b014-8d2d-4ae6-8fe8-074be0977ead	9bb270cc-6da2-4dea-81f5-4ccd5f4f4525	A_27.3_1_G (Richtung 1)		A_27.3_1_G
-e96af58b-1ea6-46d0-9a52-40ce938617cd	9bb270cc-6da2-4dea-81f5-4ccd5f4f4525	A_27.3_2_I (Richtung 2)		A_27.3_2_I
-77dd00df-b511-4cab-a6ad-a123c5c66c65	e083f835-7962-4e9f-a20f-d4de90207ca2	A_29.1_1_I (Richtung 1)		A_29.1_1_I
-afc1a750-ca0a-4eb0-a066-633cbabd8fe9	e083f835-7962-4e9f-a20f-d4de90207ca2	A_29.1_2_I (Richtung 2)		A_29.1_2_I
-2e8c83e9-a9d7-4efc-94a0-28746b2f4d81	6c298a8c-e826-4cdf-9d99-3b70b29796dd	A_38.2_1_I (Richtung 1)		A_38.2_1_I
-1f80b89c-8811-4453-9799-bbb9d9299fca	6c298a8c-e826-4cdf-9d99-3b70b29796dd	A_38.2_2_G (Richtung 2)		A_38.2_2_G
-66d9c5c4-99d4-43ab-8288-f0361c5f7c1a	ffb41b93-faa5-48c2-b4d7-ab43c713a372	A_39.2_1_I (Richtung 1)		A_39.2_1_I
-18164a2f-4d3e-4d8a-802b-7aabff950541	ffb41b93-faa5-48c2-b4d7-ab43c713a372	A_39.2_2_G (Richtung 2)		A_39.2_2_G
-e366cbff-06a7-4f0c-ae34-186fcaadf65a	77e53145-41ad-4a53-b5a3-45055521eb8d	A_41.2_1_G (Richtung 1)		A_41.2_1_G
-09b2475b-7bf1-4d7b-9d43-510193726815	77e53145-41ad-4a53-b5a3-45055521eb8d	A_41.2_2_I (Richtung 2)		A_41.2_2_I
-c49f11df-2ac1-4504-8c92-afdb13084cc9	76d6130e-0a48-431d-b217-1f947b941c9b	A_41.7_1_G (Richtung 1)		A_41.7_1_G
-57b0aeb0-97c1-4783-ba08-e150c169ff21	76d6130e-0a48-431d-b217-1f947b941c9b	A_41.7_2_I (Richtung 2)		A_41.7_2_I
-7bdb9ff4-15b5-4fa5-880e-6e967f4070de	9855add8-857f-4667-b118-65cdc15ae6a4	A_43.1_1_G (Richtung 1)		A_43.1_1_G
-09b71d7b-e6c8-4dea-80c7-7656faf3c3f8	9855add8-857f-4667-b118-65cdc15ae6a4	A_43.1_2_I (Richtung 2)		A_43.1_2_I
-9e8085d8-a29f-40cc-8d28-701a1b794134	56ac9d80-5d97-459b-b85f-f8b92c98e4b5	A_43.2_1_I (Richtung 1)		A_43.2_1_I
-cac2aefe-fc60-48b6-add0-f142d1260f0c	56ac9d80-5d97-459b-b85f-f8b92c98e4b5	A_43.2_2_G (Richtung 2)		A_43.2_2_G
-574755c0-496a-4241-979a-e18f59d743ce	f5b468c1-e812-4e3c-83be-4f35b89fcee8	A_50.2_1_G (Richtung 1)		A_50.2_1_G
-bbdd5afc-4b0e-4f8c-a3ba-d292c15d732c	f5b468c1-e812-4e3c-83be-4f35b89fcee8	A_50.2_2_I (Richtung 2)		A_50.2_2_I
-bd553ab0-d271-40c7-b2e7-d8742d26e679	903cc87f-77a2-4769-bf6a-4b8af52af690	A_50.4_1_I (Richtung 1)		A_50.4_1_I
-db0eba5c-2444-46f1-a867-581445afef71	903cc87f-77a2-4769-bf6a-4b8af52af690	A_50.4_2_G (Richtung 2)		A_50.4_2_G
-1746ed46-09da-43f6-b2c3-7693459fc123	330ab162-a3a5-41a5-a06c-9a6042cc7ac2	A_54.1_1_I (Richtung 1)		A_54.1_1_I
-1a6c3a79-925e-4931-90dd-4c183cf5ec73	330ab162-a3a5-41a5-a06c-9a6042cc7ac2	A_54.1_2_I (Richtung 2)		A_54.1_2_I
-af56e479-f16a-4c33-b30f-884a5f41eb56	c1a0b88e-4af6-4cca-aed7-d8ea7ebe503a	A_64.1_1_I (Richtung 1)		A_64.1_1_I
-4e33672a-9e55-4599-b3eb-38b0a4c91d2e	c1a0b88e-4af6-4cca-aed7-d8ea7ebe503a	A_64.1_2_I (Richtung 2)		A_64.1_2_I
-a46bed69-1b76-461f-94fe-214505346606	8c343b86-d2b1-44eb-be18-76caa6755794	A_70.1_1_I (Richtung 1)		A_70.1_1_I
-35fca64e-3d94-4abf-b47c-88d94741ff79	8c343b86-d2b1-44eb-be18-76caa6755794	A_70.1_2_I (Richtung 2)		A_70.1_2_I
-7809329a-a9a8-44e0-b441-bfacc84a21f3	4fff0458-4158-49d3-857b-d636e2e40adb	B_10.1_1_I (Richtung 1)		B_10.1_1_I
-8672af0c-132a-426c-aa81-62cd2e376155	4fff0458-4158-49d3-857b-d636e2e40adb	B_10.1_2_G (Richtung 2)		B_10.1_2_G
-a846a51d-8aeb-4314-9cad-c05b00777760	4fff0458-4158-49d3-857b-d636e2e40adb	B_10.2_1_G (Richtung 1)		B_10.2_1_G
-117746c6-1313-4df2-8cf2-54ebeb96505c	4fff0458-4158-49d3-857b-d636e2e40adb	B_10.2_2_I (Richtung 2)		B_10.2_2_I
-b71eb405-d68c-4919-90df-db7be7388cf0	2dd63896-a459-466b-9369-e449edad4270	B_11.1_1_G (Richtung 1)		B_11.1_1_G
-b4210d9e-160a-4a38-9455-e28726fda810	2dd63896-a459-466b-9369-e449edad4270	B_11.1_2_I (Richtung 2)		B_11.1_2_I
-021188ca-4e7f-4d3e-a145-f77e2341ca23	b4f16079-a745-4fa4-9bb9-f63efd444dbc	B_11.2_1_I (Richtung 1)		B_11.2_1_I
-cd70941d-ee1e-4ff2-9bd1-60cf36941b51	b4f16079-a745-4fa4-9bb9-f63efd444dbc	B_11.2_2_G (Richtung 2)		B_11.2_2_G
-091e9bc9-8a98-4126-ba70-2e23ef8bf35f	ce6b9f80-fc3f-4725-a57c-f82a0418a0f8	B_13.1_1_I (Richtung 1)		B_13.1_1_I
-8f960fce-5bbd-4cb2-919e-ec81ed0ca827	ce6b9f80-fc3f-4725-a57c-f82a0418a0f8	B_13.1_2_I (Richtung 2)		B_13.1_2_I
-2078db4b-f6db-4174-bdb7-2a96576782e8	086c7c6d-2ecc-4f20-bf07-ebfef6717e35	B_16.1_1_I (Richtung 1)		B_16.1_1_I
-c7bcce84-99e2-4b8d-b368-891e87a21fdd	086c7c6d-2ecc-4f20-bf07-ebfef6717e35	B_16.1_2_G (Richtung 2)		B_16.1_2_G
-249c7798-1ac1-4ad4-8293-775890fcff3c	eeb683e0-b68a-4594-aabc-e1bca35e2a5c	B_16.2_1_G (Richtung 1)		B_16.2_1_G
-d48a6dd2-b260-4de2-8199-985e4b98bf19	eeb683e0-b68a-4594-aabc-e1bca35e2a5c	B_16.2_2_I (Richtung 2)		B_16.2_2_I
-b0470211-3c52-4052-908c-113fc8c127b3	5bade359-4c13-43ec-8302-39c88a1a14e5	B_16.4_1_I (Richtung 1)		B_16.4_1_I
-0ed2b564-36a2-46d6-8485-f14b1d267447	5bade359-4c13-43ec-8302-39c88a1a14e5	B_16.4_2_G (Richtung 2)		B_16.4_2_G
-d353d648-fa3e-473e-857f-dd815634a47d	c9d6c5c0-b506-4f6b-b941-f90567cbe69c	B_16.5_1_G (Richtung 1)		B_16.5_1_G
-b47b65e1-d15d-4738-a65a-b701d284849d	c9d6c5c0-b506-4f6b-b941-f90567cbe69c	B_16.5_2_I (Richtung 2)		B_16.5_2_I
-0d7ef901-c462-458f-93cf-27a8658ec33a	99e594bb-fe81-42c0-8b29-1cbc5f913ae8	B_16.6_1_I (Richtung 1)		B_16.6_1_I
-53b7f276-70cd-40ca-92bc-f8c86df13167	99e594bb-fe81-42c0-8b29-1cbc5f913ae8	B_16.6_2_G (Richtung 2)		B_16.6_2_G
-7bc1f13f-bea4-4be1-b765-b53abac1c6a6	215a7435-6355-486d-bd64-578ce44a5985	B_17.2_1_I (Richtung 1)		B_17.2_1_I
-483ab3fa-a5fa-4a5e-8bc4-8acd42846206	215a7435-6355-486d-bd64-578ce44a5985	B_17.2_2_I (Richtung 2)		B_17.2_2_I
-52a605e7-ace6-43a8-acbc-23e383e8738b	6729aa22-2049-40ad-b60b-80a44b87a393	B_21.1_1_I (Richtung 1)		B_21.1_1_I
-af42d62f-5608-4351-b4c8-6124e3439e56	6729aa22-2049-40ad-b60b-80a44b87a393	B_21.1_2_G (Richtung 2)		B_21.1_2_G
-cabfc867-13e2-434e-8c31-038fdd233348	c2c815f7-a9b9-412a-899c-5190f769fa10	B_26.1_1_G (Richtung 1)		B_26.1_1_G
-2860425b-064c-4278-a8ac-7b9de1a41bd4	c2c815f7-a9b9-412a-899c-5190f769fa10	B_26.1_2_I (Richtung 2)		B_26.1_2_I
-b986b2b0-f363-4895-a143-bd656544854e	19583fc1-8700-4abc-93ab-0b3ad26041be	B_27.2_1_I (Richtung 1)		B_27.2_1_I
-b5f4ded7-64fa-4af1-a350-2e41179ccbae	19583fc1-8700-4abc-93ab-0b3ad26041be	B_27.2_2_G (Richtung 2)		B_27.2_2_G
-6d64bb6e-c7fd-46c6-b80f-9d72ad3ec30c	cacf195e-4dae-4408-a8a0-1e95e0178aa6	B_28.1_1_I (Richtung 1)		B_28.1_1_I
-0a8931f9-2ef8-4eb6-bb85-cb43779d0737	cacf195e-4dae-4408-a8a0-1e95e0178aa6	B_28.1_2_G (Richtung 2)		B_28.1_2_G
-c1428859-552c-4c05-aca5-6944318fdb5c	50e76d0e-a80c-40ed-b3fc-3dd3089e3a25	B_28.6_1_G (Richtung 1)		B_28.6_1_G
-c9585135-b931-4a11-9f6f-154fea66b2a5	50e76d0e-a80c-40ed-b3fc-3dd3089e3a25	B_28.6_2_I (Richtung 2)		B_28.6_2_I
-8ea1d4e8-35fa-4186-8c9d-3819bab4258a	370436fa-5097-4b4f-bf55-79097a8a826a	B_3.1_1_I (Richtung 1)		B_3.1_1_I
-a1127967-83f1-4994-b57d-1e804c5a6460	370436fa-5097-4b4f-bf55-79097a8a826a	B_3.1_2_G (Richtung 2)		B_3.1_2_G
-2f12c794-c4e6-4011-b474-0fbbf8b65a5f	5d14c1b5-f45f-426a-9e6a-7c4f3700ef99	B_3.2_1_G (Richtung 1)		B_3.2_1_G
-9112bea5-05cb-44ed-8155-b6d50c3b2d72	5d14c1b5-f45f-426a-9e6a-7c4f3700ef99	B_3.2_2_I (Richtung 2)		B_3.2_2_I
-b6f5556e-95c5-48a1-a3cd-7bd580231377	a6dc9158-023a-4acf-b2cb-a0cfe0754d2a	B_31.1_1_G (Richtung 1)		B_31.1_1_G
-b807309d-0cfc-4abb-99d8-c88847be9857	a6dc9158-023a-4acf-b2cb-a0cfe0754d2a	B_31.1_2_I (Richtung 2)		B_31.1_2_I
-acd75326-4fd8-4b5a-aaa1-872606b05402	e035541d-141f-42a2-bdc0-bf576492877d	B_31.3_1_I (Richtung 1)		B_31.3_1_I
-3086d050-258a-484d-be37-e5250b81c8b5	e035541d-141f-42a2-bdc0-bf576492877d	B_31.3_2_G (Richtung 2)		B_31.3_2_G
-69947a92-fee7-45d6-82c7-9bf25cec3895	d0caf4b5-a954-494d-b4ed-88da4427763a	B_31.5_1_G (Richtung 1)		B_31.5_1_G
-a7d980e2-5c06-4a23-9c3c-d9b47881b47d	d0caf4b5-a954-494d-b4ed-88da4427763a	B_31.5_2_I (Richtung 2)		B_31.5_2_I
-a14dffb6-9367-4e6f-b8c8-effe9ff7c2b0	ed477c62-4447-48d8-b024-b2851b05898e	B_31.6_1_I (Richtung 1)		B_31.6_1_I
-7c2110fc-e2e7-4b16-a44f-67aad2b6160d	ed477c62-4447-48d8-b024-b2851b05898e	B_31.6_2_G (Richtung 2)		B_31.6_2_G
-2c7cd8c2-994c-46cf-8c28-7086054b5f0e	58b7239f-9f6c-4955-bfec-d7696d8ad2c1	B_33.1_1_I (Richtung 1)		B_33.1_1_I
-6f807ae5-908f-4522-91c4-5c3d28ca263e	58b7239f-9f6c-4955-bfec-d7696d8ad2c1	B_33.1_2_G (Richtung 2)		B_33.1_2_G
-7af38e18-9efb-4c47-af43-3b732cc52fe5	0d1abc09-79f2-4ab0-bb56-ce4e3b0dcb49	B_33.2_1_G (Richtung 1)		B_33.2_1_G
-512ee5fc-9067-4730-a991-229cf8a153ac	0d1abc09-79f2-4ab0-bb56-ce4e3b0dcb49	B_33.2_2_I (Richtung 2)		B_33.2_2_I
-0bb417d0-08db-41c3-af3c-61e3c9b93664	399725be-13c9-45cd-8fe2-6b63c3fb7cc2	B_34.1_1_I (Richtung 1)		B_34.1_1_I
-32510edc-8363-496b-8933-814199ede178	399725be-13c9-45cd-8fe2-6b63c3fb7cc2	B_34.1_2_G (Richtung 2)		B_34.1_2_G
-54591906-7801-43ab-a060-9f760169b48a	b7a492a5-88ea-49c4-b216-a4470a2a3866	B_34.2_1_G (Richtung 1)		B_34.2_1_G
-61b74c17-12c5-48d7-8648-16dcaccde3d0	b7a492a5-88ea-49c4-b216-a4470a2a3866	B_34.2_2_I (Richtung 2)		B_34.2_2_I
-6ecdbac3-74a2-4fea-8f6c-d467d2918122	ad12e891-f225-4041-af30-5d478d9c7f3b	B_35.1_1_I (Richtung 1)		B_35.1_1_I
-f0ca9e56-c5ca-4a7f-8250-d271d41e837d	ad12e891-f225-4041-af30-5d478d9c7f3b	B_35.1_2_G (Richtung 2)		B_35.1_2_G
-d46c0cf3-4ed1-4431-9407-d3ba5989d3ad	d11f6ed7-b8c5-4491-9a9a-58f2bc85e39c	B_35.2_1_G (Richtung 1)		B_35.2_1_G
-802e7430-457d-4d7a-bc82-81820bbdb9b4	d11f6ed7-b8c5-4491-9a9a-58f2bc85e39c	B_35.2_2_I (Richtung 2)		B_35.2_2_I
-ebf620d0-334e-4909-830a-ccc0fdafb016	9ad49971-4f14-49b3-a156-35e6e465ce21	B_37.1_1_I (Richtung 1)		B_37.1_1_I
-4e68c4a5-7174-47d8-a43e-fd3868ce9308	9ad49971-4f14-49b3-a156-35e6e465ce21	B_37.1_2_G (Richtung 2)		B_37.1_2_G
-d1433470-4b06-46db-a6d0-708b3991700a	ab2488e0-91fd-4bc9-8f6d-7d3ff914b1a4	B_37.2_1_G (Richtung 1)		B_37.2_1_G
-6a683420-9640-494e-b01d-a07b5c4fd1e5	ab2488e0-91fd-4bc9-8f6d-7d3ff914b1a4	B_37.2_2_I (Richtung 2)		B_37.2_2_I
-15ec94fa-1aab-4e2a-a851-13e2284f3149	155381f5-edb4-44de-8f53-a9130cb8ce20	B_39.1_1_G (Richtung 1)		B_39.1_1_G
-80e4dbea-7074-429c-9e0c-00e18b49616a	155381f5-edb4-44de-8f53-a9130cb8ce20	B_39.1_2_I (Richtung 2)		B_39.1_2_I
-de282e9d-c5a0-4387-b9c8-5b37371307bc	c44158ad-ee9e-43bd-8fa7-24fd29fec2f3	B_39.3_1_I (Richtung 1)		B_39.3_1_I
-d23b02d6-7d38-4528-8f42-ceebec087964	c44158ad-ee9e-43bd-8fa7-24fd29fec2f3	B_39.3_2_G (Richtung 2)		B_39.3_2_G
-49980954-4db3-491b-a9b1-d1a2b3405635	88868a15-d727-46b2-acb5-66281a17ec31	B_39.4_1_G (Richtung 1)		B_39.4_1_G
-2541a1aa-6e62-450b-a799-83961474a99f	88868a15-d727-46b2-acb5-66281a17ec31	B_39.4_2_I (Richtung 2)		B_39.4_2_I
-31ca774c-e029-46ca-aad7-e599944d38ee	f5c7f8a8-5511-4821-863a-f999a1ea2b9c	B_39.5_1_I (Richtung 1)		B_39.5_1_I
-5be2817e-536b-4282-8c67-6bf22f3c5475	f5c7f8a8-5511-4821-863a-f999a1ea2b9c	B_39.5_2_G (Richtung 2)		B_39.5_2_G
-039ddc40-4e74-4a6d-a011-3f54a6492ba8	71b08db3-4478-41d4-9213-ff1e172ab685	B_39.6_1_G (Richtung 1)		B_39.6_1_G
-ac391084-6b69-449b-8b5f-62e9786f54fd	71b08db3-4478-41d4-9213-ff1e172ab685	B_39.6_2_I (Richtung 2)		B_39.6_2_I
-65a5faab-154c-4b32-a2a6-1f00831bdb1e	8005c500-e3ef-4431-a93f-f8189598fc04	B_39.7_1_G (Richtung 1)		B_39.7_1_G
-918e8b67-69a6-49ae-839b-15f97e10e695	8005c500-e3ef-4431-a93f-f8189598fc04	B_39.7_2_I (Richtung 2)		B_39.7_2_I
-b047918c-dd2a-47ba-9cec-e9cafaafe35f	1b3c381c-4d84-4d01-90ab-25ebaaf3fa84	B_39.8_1_I (Richtung 1)		B_39.8_1_I
-f8962568-a85a-4c18-a882-5a786a0c8e71	1b3c381c-4d84-4d01-90ab-25ebaaf3fa84	B_39.8_2_G (Richtung 2)		B_39.8_2_G
-c5595498-1e38-4b42-9b47-c2c1b9d41086	6611a133-1316-4656-a0f6-b6e622cd17ad	B_41.1_1_I (Richtung 1)		B_41.1_1_I
-c65418cf-1dce-45d9-a9d1-a96de2f57026	6611a133-1316-4656-a0f6-b6e622cd17ad	B_41.1_2_G (Richtung 2)		B_41.1_2_G
-6f8b9389-3ff3-4039-8c34-ae8ad6f82b04	4027a890-6001-488f-92c7-1b0129c9c767	B_41.3_1_I (Richtung 1)		B_41.3_1_I
-231a657f-42cb-44f1-900e-e08429c8acbd	4027a890-6001-488f-92c7-1b0129c9c767	B_41.3_2_I (Richtung 2)		B_41.3_2_I
-a5c4eb67-0707-4811-8c02-99b07a096242	c5354f99-756b-4227-9372-7e8654fbb667	B_41.4_1_G (Richtung 1)		B_41.4_1_G
-81c57fdc-7b6c-4762-9478-281817e37241	c5354f99-756b-4227-9372-7e8654fbb667	B_41.4_2_I (Richtung 2)		B_41.4_2_I
-f069f5f6-e199-49de-9a5a-47257f5196f9	94e8be3d-157d-464e-906c-380103897eec	B_41.5_1_I (Richtung 1)		B_41.5_1_I
-30795228-06e9-45f3-978d-0b299561f586	94e8be3d-157d-464e-906c-380103897eec	B_41.5_2_G (Richtung 2)		B_41.5_2_G
-f1ba4e2b-3a08-46cd-9a32-2de7887a1753	06595e41-03be-4fdd-b711-e387371d6b94	B_45.3_1_G (Richtung 1)		B_45.3_1_G
-af7c0077-81d2-45ad-9f97-6c0747506f0a	06595e41-03be-4fdd-b711-e387371d6b94	B_45.3_2_I (Richtung 2)		B_45.3_2_I
-2ae30522-59f7-408f-89cf-3eb9680e06b3	d4708ef0-8965-4da0-aa92-6cd79b68214d	B_46.1_1_I (Richtung 1)		B_46.1_1_I
-c04df40d-6f73-4c6a-a25f-c2699c629ba8	d4708ef0-8965-4da0-aa92-6cd79b68214d	B_46.1_2_G (Richtung 2)		B_46.1_2_G
-fd889738-31bf-433b-b625-6db38d721331	bd0f227f-ada0-4bb3-985d-d85524913f49	B_46.2_1_G (Richtung 1)		B_46.2_1_G
-d43e984e-b81b-4409-8503-11e2495e367b	bd0f227f-ada0-4bb3-985d-d85524913f49	B_46.2_2_I (Richtung 2)		B_46.2_2_I
-7aff38b2-f7c9-4e9b-9534-f2b8cad42356	23e4a4f0-da57-4743-85e6-bab7d3edddea	B_46.5_1_I (Richtung 1)		B_46.5_1_I
-9088d63f-65cf-46c8-a176-52a5e61578e0	23e4a4f0-da57-4743-85e6-bab7d3edddea	B_46.5_2_G (Richtung 2)		B_46.5_2_G
-12ce9a8c-6bb5-4c8f-b147-25d13aa2b957	1ca2182b-6051-478d-925e-c84b67512e55	B_46.6_1_G (Richtung 1)		B_46.6_1_G
-573cb226-eb5f-44d5-b3c1-27b6c2524cf6	1ca2182b-6051-478d-925e-c84b67512e55	B_46.6_2_I (Richtung 2)		B_46.6_2_I
-3818fd40-1381-4c06-864f-89bbd384638b	69b61272-869a-4d0d-9a01-8158a2559dc9	B_46.7_1_I (Richtung 1)		B_46.7_1_I
-008135b9-4933-4a8b-82e9-79ae8baa8ec4	69b61272-869a-4d0d-9a01-8158a2559dc9	B_46.7_2_G (Richtung 2)		B_46.7_2_G
-4d5c1900-83f5-4b1c-80a0-81fe3aa26dfb	b13224c8-a6ef-493d-a6c2-b3a147bd39ed	B_46.8_1_G (Richtung 1)		B_46.8_1_G
-6b3446f7-bf76-418a-b2d6-555e1ad1a91c	b13224c8-a6ef-493d-a6c2-b3a147bd39ed	B_46.8_2_I (Richtung 2)		B_46.8_2_I
-a271dca3-9e8d-4f7a-a47c-bd31a0c9e9d7	b5ac5eef-1dca-49fe-adf8-19da6ed17a4a	B_48.1_1_I (Richtung 1)		B_48.1_1_I
-54681903-1589-443e-96f8-d6477abf64e0	b5ac5eef-1dca-49fe-adf8-19da6ed17a4a	B_48.1_2_G (Richtung 2)		B_48.1_2_G
-da880eec-0112-4892-9dfb-4a8461de2c24	6433a6f9-514b-4ea9-9ebb-45e0b9f381cf	B_48.2_1_G (Richtung 1)		B_48.2_1_G
-9920927a-eda7-4de8-bf39-ab9749a7c25d	6433a6f9-514b-4ea9-9ebb-45e0b9f381cf	B_48.2_2_I (Richtung 2)		B_48.2_2_I
-cdf1238b-09b5-40b3-935c-1dca7b86acaa	b21f20f1-1fa0-4879-ad33-08015ec0b76b	B_49.1_1_I (Richtung 1)		B_49.1_1_I
-01525689-3b71-4fc4-b8c9-cfbbb8df2fb6	b21f20f1-1fa0-4879-ad33-08015ec0b76b	B_49.1_2_I (Richtung 2)		B_49.1_2_I
-4d8442f8-5202-4716-8bcd-a9a958176c0d	ed1d204f-41ab-490d-9ed6-99857b6bacbe	B_50.1_1_G (Richtung 1)		B_50.1_1_G
-24227d00-4187-42ed-8eef-550e122245b3	ed1d204f-41ab-490d-9ed6-99857b6bacbe	B_50.1_2_I (Richtung 2)		B_50.1_2_I
-c3e199b4-f334-465b-b5fd-4bc141ac6c59	5f97085b-7223-4dbd-a3a0-3f95018d0ebd	B_50.3_1_I (Richtung 1)		B_50.3_1_I
-0b6e606c-36b6-4450-a9e1-b5cd012febc0	5f97085b-7223-4dbd-a3a0-3f95018d0ebd	B_50.3_2_G (Richtung 2)		B_50.3_2_G
-371a40fd-a331-4017-93e2-29a8a15216b6	0a2442be-7d7c-44ba-9c94-3814cbf16ff3	B_50.6_1_I (Richtung 1)		B_50.6_1_I
-65d8d598-795c-4a25-b15b-128437d6c087	0a2442be-7d7c-44ba-9c94-3814cbf16ff3	B_50.6_2_G (Richtung 2)		B_50.6_2_G
-887e3555-2970-4385-93a8-a13ac9ecb9d1	87076da6-1721-4ae3-976a-f6f79bbae3ab	B_62.1_1_I (Richtung 1)		B_62.1_1_I
-8c977fa2-f49b-4785-b1cf-9f04ff37255d	87076da6-1721-4ae3-976a-f6f79bbae3ab	B_62.1_2_I (Richtung 2)		B_62.1_2_I
-50255682-dce9-4d01-a9f4-a9956f2d481c	a4bfaef5-a256-46fe-91e2-c89f8c1a6d40	B_65.1_1_I (Richtung 1)		B_65.1_1_I
-cf09e4d6-e7ea-40b2-85c4-2b2d4b9f7c7d	a4bfaef5-a256-46fe-91e2-c89f8c1a6d40	B_65.1_2_G (Richtung 2)		B_65.1_2_G
-f0eedf25-b97a-4070-aa5e-f1ff37704b86	acf9d8a0-8712-4235-9814-d31fde482059	B_65.2_1_G (Richtung 1)		B_65.2_1_G
-775c5cd3-b096-45bb-8c67-a392dbe2a9f6	acf9d8a0-8712-4235-9814-d31fde482059	B_65.2_2_I (Richtung 2)		B_65.2_2_I
-efa75734-c8dc-4458-859e-bbf3c188e7f2	5bfa63d5-54c9-4bce-80bb-4096443816c5	B_66.1_1_G (Richtung 1)		B_66.1_1_G
-0cb10761-e5c2-4365-b323-82bc024c3b68	5bfa63d5-54c9-4bce-80bb-4096443816c5	B_66.1_2_I (Richtung 2)		B_66.1_2_I
-e22e32bb-be8c-4dd5-a64d-e4d03a0fdc6e	752e9f3e-97cb-4d3a-b6b3-a7d727dc7b8e	B_66.2_1_I (Richtung 1)		B_66.2_1_I
-e902b14e-5309-4166-8284-cf5436022b1f	752e9f3e-97cb-4d3a-b6b3-a7d727dc7b8e	B_66.2_2_G (Richtung 2)		B_66.2_2_G
-03b41851-47b0-4bf8-8dd2-b2dccb680808	cf12ed0f-4582-45fc-a748-9d8a153b9a54	B_69.1_1_G (Richtung 1)		B_69.1_1_G
-7382c122-0d96-46ff-b45e-40c5d5ca31fd	cf12ed0f-4582-45fc-a748-9d8a153b9a54	B_69.1_2_I (Richtung 2)		B_69.1_2_I
-fd6c4999-d9c7-44a6-b43c-9916857bf705	9079c4f7-ec55-46d9-bbe1-5345d5a6fcf3	B_69.2_1_I (Richtung 1)		B_69.2_1_I
-ee1e80bd-4028-4ee3-ad5f-b0ade5fe9918	9079c4f7-ec55-46d9-bbe1-5345d5a6fcf3	B_69.2_2_G (Richtung 2)		B_69.2_2_G
-287d2258-e458-4a76-a49b-f9bfda74f1bf	c81b8f96-d5ae-4ae2-8b7d-990aa8628667	B_78.1_1_I (Richtung 1)		B_78.1_1_I
-eaa8b7a2-9759-4f33-8867-6573338de184	c81b8f96-d5ae-4ae2-8b7d-990aa8628667	B_78.1_2_G (Richtung 2)		B_78.1_2_G
-7ab4a2c7-b5cc-4a24-8fa2-ac3def5de36b	3401c05d-09ba-47e8-ac15-8bf77c269a98	B_78.2_1_G (Richtung 1)		B_78.2_1_G
-c49e0bbd-9ecf-4bf1-a61d-e985a6081107	3401c05d-09ba-47e8-ac15-8bf77c269a98	B_78.2_2_I (Richtung 2)		B_78.2_2_I
-0216ac0c-2c92-4dac-bb7e-2892bd9467c6	1d7b20eb-2d09-4291-b716-366f68f60aa4	B_8.1_1_I (Richtung 1)		B_8.1_1_I
-6b0aac3f-765d-4d2a-90de-bb759d4f54b7	1d7b20eb-2d09-4291-b716-366f68f60aa4	B_8.1_2_I (Richtung 2)		B_8.1_2_I
-4d6159d1-008f-4640-a43f-3095bc08bfd1	e9ec304d-9cc4-4863-aa03-550dae475265	B_85.1_1_I (Richtung 1)		B_85.1_1_I
-9a88a82f-0527-4748-a52c-335ebc0fabf0	e9ec304d-9cc4-4863-aa03-550dae475265	B_85.1_2_G (Richtung 2)		B_85.1_2_G
-25879f8e-0e77-4215-85ec-f7f721d48e8f	2984c4e4-bef0-4c8f-aeb0-5861df556670	B_85.2_1_G (Richtung 1)		B_85.2_1_G
-b399d70f-3dbf-434e-b367-7fe25c6ae748	2984c4e4-bef0-4c8f-aeb0-5861df556670	B_85.2_2_I (Richtung 2)		B_85.2_2_I
-85a366d8-4582-42b1-9d27-d6bb0ecc32cb	79617035-1bb6-49c5-83d7-ad746d2ea0b3	B_9.1_1_G (Richtung 1)		B_9.1_1_G
-8a13768d-d7e8-4df8-97b4-ae0f5cf3d961	79617035-1bb6-49c5-83d7-ad746d2ea0b3	B_9.1_2_I (Richtung 2)		B_9.1_2_I
-bf4d0c3a-96fc-43c2-9b4a-0ccbfd3a632e	8a50fa3d-ca19-4646-a212-41cb16cff9ce	B_9.2_1_I (Richtung 1)		B_9.2_1_I
-37e4e86b-a56f-4ae9-a7ec-45907bfaed91	8a50fa3d-ca19-4646-a212-41cb16cff9ce	B_9.2_2_G (Richtung 2)		B_9.2_2_G
-8ac7c6ea-eb7d-4e70-be5e-bbc1ccd19697	80dbe98b-69ce-45ae-a711-a76beedbb7e0	B_9.3_1_I (Richtung 1)		B_9.3_1_I
-0586fb37-66db-4158-a5ff-3a16ef4082b3	80dbe98b-69ce-45ae-a711-a76beedbb7e0	B_9.3_2_G (Richtung 2)		B_9.3_2_G
-e50a7a26-47a0-421b-bace-f3f844990ed8	d7bcfc8f-85e1-452d-a6e3-5b65b85cab29	B_9.4_1_G (Richtung 1)		B_9.4_1_G
-e77d3726-b966-4ed5-8bac-ccf4ed963196	d7bcfc8f-85e1-452d-a6e3-5b65b85cab29	B_9.4_2_I (Richtung 2)		B_9.4_2_I
-acd86bdb-22dd-423e-bf35-1c349a405b35	d4ae8d41-909f-4ac4-8edd-aa2d8ed53688	B_9.5_1_G (Richtung 1)		B_9.5_1_G
-a8df82af-9aa5-4ac6-84f0-c902844f4adf	d4ae8d41-909f-4ac4-8edd-aa2d8ed53688	B_9.5_2_I (Richtung 2)		B_9.5_2_I
-0fb5809c-48dc-402c-8d36-aa1a60f7283e	4125e009-437b-4ca4-b1e3-7cb68121dbd3	C_20.2_1_I* (Richtung 1)		C_20.2_1_I*
-081b564f-b4f5-4cb6-a60d-bf3e409f8123	4125e009-437b-4ca4-b1e3-7cb68121dbd3	C_20.2_2_G* (Richtung 2)		C_20.2_2_G*
-907e4308-0292-4d19-b693-2bbfea9ded9e	5a4a1d45-dae5-453c-9721-7ffa9412962b	C_20.3_1_I* (Richtung 1)		C_20.3_1_I*
-0f856483-4cf5-4ce9-b5e1-c542b31f1e75	5a4a1d45-dae5-453c-9721-7ffa9412962b	C_20.3_2_G* (Richtung 2)		C_20.3_2_G*
-9371550e-6d9d-442a-b20f-25526e0aaca7	87c116b5-c7d2-4a64-a99b-1ef0dee18aaf	D_15.1_1_I (Richtung 1)		D_15.1_1_I
-93e5df44-7c61-4df9-bda3-424797ab9a1f	8494e346-08dd-4912-8f65-379068ce3143	D_15.2_2_I (Richtung 2)		D_15.2_2_I
-4ebba317-0bbc-4af4-b3b7-f8e482676734	b522e377-db3a-482d-b14f-fa1309cec081	D_19.2_2_I (Richtung 2)		D_19.2_2_I
-4a539c89-f276-4a7a-add0-636332ebee58	5c7b05f8-f5ef-42b8-ae8a-1db073340941	D_2.2_1_I (Richtung 1)		D_2.2_1_I
-432eacc5-0df5-468f-adda-19c3074a3460	5a74ee6c-2791-4360-a6d0-72ceb75b4dec	D_21.2_2_I (Richtung 2)		D_21.2_2_I
-37a80d29-20d5-4567-b232-ef24f5413918	64015caa-3af8-41de-95fe-0123f0f86db0	D_22.2_2_I (Richtung 2)		D_22.2_2_I
-d46bb50c-1796-4ab7-b8e6-f9d53d491e28	448f16c5-8766-4680-9f51-04dd00f34ad7	D_24.2_1_I (Richtung 1)		D_24.2_1_I
-2a9db725-6d7d-4bd2-847c-b066406aff32	25c98c13-6bd8-4cdc-a42d-6cb2fe8b8f6d	D_26.2_1_I (Richtung 1)		D_26.2_1_I
-9a41d8a5-2eb8-44ba-a9d9-53bfd0251ec8	c8e02aab-17b5-4fd9-aefc-1e6bc66dacb5	D_4.1_1_I (Richtung 1)		D_4.1_1_I
-e6eb68b8-425c-4e14-b7b4-c07b9eaa8f76	2a64598b-4abc-41ec-b115-6dcffb8e19a2	D_4.2_2_I (Richtung 2)		D_4.2_2_I
-084def18-1bc8-4aa4-9b76-0934121f07fb	aa551fd9-1b8a-4078-bc75-7f397732a3c5	D_40.4_2_I (Richtung 2)		D_40.4_2_I
-3a78d6ae-cfe2-4cba-b22d-d398d156756d	ea7beeb0-279b-4db9-8314-ddb7826f900b	D_40.5_1_I (Richtung 1)		D_40.5_1_I
-dcab47eb-e45a-41b5-b99b-3f455dd53c60	f9c76e4e-0155-42dd-816a-56799572194a	D_41.6_1_I (Richtung 1)		D_41.6_1_I
-3223fe25-cda3-4c14-ad91-6b4c3cc8d945	60f4b2c7-6e97-49f3-b034-8f7e9cdedce7	D_42.1_2_I (Richtung 2)		D_42.1_2_I
-b865e29d-19eb-42e6-8228-cf88f1a6718d	60f4b2c7-6e97-49f3-b034-8f7e9cdedce7	D_42.2_1_I (Richtung 1)		D_42.2_1_I
-999d4b5a-fdd8-4841-932d-ff05ee715d4f	ee264bd9-b785-494a-bd5f-406c20a65c48	D_44.3_1_I (Richtung 1)		D_44.3_1_I
-66812dbe-0c85-42ac-8c7f-dc825dc2a8fc	ee264bd9-b785-494a-bd5f-406c20a65c48	D_44.4_2_I (Richtung 2)		D_44.4_2_I
-9ad6b084-9aa2-40bf-82a6-3c5616b9220b	f8cd406f-fb98-439f-a220-7de0fa2451c4	D_45.4_1_I (Richtung 1)		D_45.4_1_I
-d564575e-b8f6-412d-8f6a-63069418a832	5966fcd8-cb1c-450d-b22c-4c484c402393	D_50.5_1_G (Richtung 1)		D_50.5_1_G
-d7f5e26c-a450-45d2-af3d-150142c3ad14	5966fcd8-cb1c-450d-b22c-4c484c402393	D_50.5_2_I (Richtung 2)		D_50.5_2_I
-90886ba1-928e-4a68-bc65-a0c5357dfcca	0d67b863-05a2-4519-acaa-7ac0e649e9a9	D_55.2_1_I (Richtung 1)		D_55.2_1_I
-eb44e8a8-1d27-4282-ac03-1f034fc155ac	20a741fe-c726-48ef-bed1-d6b8df0f5e87	D_55.3_2_I (Richtung 2)		D_55.3_2_I
-d8a71c86-8432-4f89-97a7-bc163ba80588	f988fe94-624f-4343-8b6c-b2552c99611a	D_56.1_1_I (Richtung 1)		D_56.1_1_I
-a329e636-49f8-4b8b-8e1a-d68be90268b8	397d16fa-f448-478c-89bb-a546d44d9df3	D_56.2_2_I (Richtung 2)		D_56.2_2_I
-a408909e-0388-4cdc-8ab4-67fe4b48ca40	f197df02-f66a-4b2f-b700-0fe433aa78c5	D_57.1_1_I (Richtung 1)		D_57.1_1_I
-62c5e008-f7f3-455b-8c0c-a53f008f7fc6	7dd4abc1-8fa7-40bb-89e0-f9c3e74210f6	D_57.2_2_I (Richtung 2)		D_57.2_2_I
-f1d0a974-1278-423d-b744-0e1506e7ee30	c73b2ee8-e5b0-4975-ae7f-9541dc0d0587	D_58.2_1_I (Richtung 1)		D_58.2_1_I
-46fe0e0a-935d-4540-9f44-9f8a5c7a45e9	4b7f9094-74d7-482f-87b8-2e78adcf1735	D_58.3_2_I (Richtung 2)		D_58.3_2_I
-c47777d2-1ac1-484c-ad7c-b27488d0825a	09ef934f-4baf-4649-8d1b-a5733ca315e4	D_59.1_2_I (Richtung 2)		D_59.1_2_I
-a9d92d2f-7006-4206-a790-2a56b3d0f675	243307e9-2eec-4ff0-8732-aaf9f950f1a0	D_61.1_1_I (Richtung 1)		D_61.1_1_I
-a5445711-7b2a-40a0-9fda-18b97745152b	d869f874-c19e-4e7b-9d9a-890cdaf48d5b	D_61.2_2_I (Richtung 2)		D_61.2_2_I
-9e8e03f4-e13c-4c21-8176-4a73ad0b7ac8	e5c070c5-022c-47e0-b795-b431b9d2516d	D_68.1_1_I (Richtung 1)		D_68.1_1_I
-d09afe0e-191a-4f89-8517-bc6188ffa2a9	b96f7f0a-3710-473b-8587-f414be3eae4d	D_68.2_2_I (Richtung 2)		D_68.2_2_I
-288959bf-0cb2-4adf-b975-654f8facb06b	7a59c026-7e33-46f9-844d-9fb41bbf85ad	D_72.1_2_I (Richtung 2)		D_72.1_2_I
-b5481211-7a32-4b35-ae96-284549fd6c4e	a3e56884-e6c3-4b1e-8286-f0d594125505	D_72.2_1_I (Richtung 1)		D_72.2_1_I
-7d61971b-3224-444d-8447-2f9cf2899c33	8ed36a54-883b-4901-a2a8-9ab4eafaf43b	D_73.1_2_I (Richtung 2)		D_73.1_2_I
-f1abf3df-27cf-46e8-8cbb-08c83227f37b	8ed36a54-883b-4901-a2a8-9ab4eafaf43b	D_73.2_1_I (Richtung 1)		D_73.2_1_I
-f16eabbc-33af-4e4f-8cd7-c7e17775220a	8b87558b-8c13-45b1-98a0-e2489d1aaf00	D_74.1_2_I (Richtung 2)		D_74.1_2_I
-6e8c31b7-92bd-4324-87c0-ca6a04ce5392	980cb835-8329-4988-8dc1-d2a4bc73c069	D_74.2_1_I (Richtung 1)		D_74.2_1_I
-f603c24c-4a66-403d-bc77-02d948f801eb	5e42bdbb-b342-4c3b-af98-973f4f3b90d3	D_80.1_1_I (Richtung 1)		D_80.1_1_I
-547841dc-ff36-4a5a-8980-f1bce407b56a	6e385cce-bd45-4617-9b48-753c5c887c9b	D_80.2_2_I (Richtung 2)		D_80.2_2_I
-891caefc-ebea-490f-845d-e850725f9e9a	9ab58739-3a83-41dd-bcbb-30ec15cc29c9	D_9.6_1_I (Richtung 1)		D_9.6_1_I
-1cab6466-a094-4f9b-bce5-363d78203d03	8916a2fa-7feb-4439-b2ee-dafeb588198e	E_24.4_1_I (Richtung 1)		E_24.4_1_I
-f9cd2652-10e3-4c13-8e13-4485dda0767d	8916a2fa-7feb-4439-b2ee-dafeb588198e	E_24.4_2_G (Richtung 2)		E_24.4_2_G
-ebb585aa-36fc-461c-b6d0-47961f285484	f524a800-d616-42cb-ac87-207ec35cf8fc	E_24.5_1_G (Richtung 1)		E_24.5_1_G
-1365d204-8518-4ff2-ba20-61a80af381a1	f524a800-d616-42cb-ac87-207ec35cf8fc	E_24.5_2_I (Richtung 2)		E_24.5_2_I
-54f72354-6ed0-4672-ae28-629d57e4de5a	f8acc9ac-a45f-41f2-9e24-de7632a090dc	E_38.1_1_G (Richtung 1)		E_38.1_1_G
-4430e95f-6c09-4b6a-917c-6dcc105098ac	f8acc9ac-a45f-41f2-9e24-de7632a090dc	E_38.1_2_I (Richtung 2)		E_38.1_2_I
-79205658-266d-4698-9c33-690afede772f	517b0bd1-281d-441e-808c-fe6235ad23d2	G_2.4_1_I (Richtung 1)		G_2.4_1_I
-b9ce2651-854d-4e78-9653-9c0941181eab	4f55cf09-5a29-4c87-b77d-cf467191dff3	G_32.1_1_I (Richtung 1)		G_32.1_1_I
-b4e46f08-c29d-460f-8b3e-36af76df4099	4f55cf09-5a29-4c87-b77d-cf467191dff3	G_32.1_2_G (Richtung 2)		G_32.1_2_G
-1ca2df3f-b293-4222-b358-649b61fdcffc	d9842b6c-50c6-4bc6-8e7e-6d7838d283c1	G_32.2_1_G (Richtung 1)		G_32.2_1_G
-74d28d8b-44cf-4111-aee2-ccf177ee8c50	d9842b6c-50c6-4bc6-8e7e-6d7838d283c1	G_32.2_2_I (Richtung 2)		G_32.2_2_I
-52ba98ba-bba1-409f-b07f-3f2d61c2ba6e	dfc088a5-2b18-4cb5-959e-31dc2fff816f	G_40.1_2_I (Richtung 2)		G_40.1_2_I
-4f8e63ee-bf47-40d9-85cb-8a701becbf9d	dfc088a5-2b18-4cb5-959e-31dc2fff816f	G_40.2_1_I (Richtung 1)		G_40.2_1_I
-c5d4f87e-7f95-46c4-a427-21c5fd58444c	bbfe3d5f-2c6c-41a1-9f0f-f08e38279fcf	G_40.6_2_I (Richtung 2)		G_40.6_2_I
-d78d7cdb-e0cf-4c7f-8e05-fb514ad6c63a	20855979-32ab-46a6-b1b3-d2f1e55deccc	G_40.7_1_I (Richtung 1)		G_40.7_1_I
-12cd753a-5a3f-4474-b0eb-d7b73e99b612	8e6b93d1-4db3-4068-bcb7-d28b1e0281a1	G_40.8_2_I (Richtung 2)		G_40.8_2_I
-388cf748-ef98-47e6-898b-ee8b1ae3e9d2	f2242f0d-77d7-4014-a5f7-c41936db9d0d	G_40.9_1_I (Richtung 1)		G_40.9_1_I
-f4445fca-a502-4f70-82d7-7bd1167198f8	8385618c-2531-4981-88d7-a438854b1869	G_46.3_1_G (Richtung 1)		G_46.3_1_G
-53c321e8-d750-4cf4-a88b-8d9745ae0cd4	8385618c-2531-4981-88d7-a438854b1869	G_46.3_2_I (Richtung 2)		G_46.3_2_I
-7161e261-90ab-4ac2-83c6-8d66cb60eb7a	c4aad667-4211-4255-82e4-17f510e942d1	G_46.4_1_I (Richtung 1)		G_46.4_1_I
-b925c637-c469-4ca9-a798-40d907fff1a3	58219bc1-6f42-4eef-a51a-f582b98c1d02	G_59.2_1_I (Richtung 1)		G_59.2_1_I
-7d462f34-dad2-4b03-9f46-cdc881706cd3	a72ed750-d3ea-44f5-81a0-6ee7f9eab4da	H_2.5_2_I (Richtung 2)		H_2.5_2_I
-c1fa8c5e-a43a-4782-88d0-8ba3bc3091c9	0920762d-ce58-4d35-b39f-479bc2d5872e	H_21.3_1_I (Richtung 1)		H_21.3_1_I
-d8caeab2-dd37-4f27-9c9c-5a2ca02c12c9	0920762d-ce58-4d35-b39f-479bc2d5872e	H_21.4_2_I (Richtung 2)		H_21.4_2_I
-25b0f4dd-84d2-4d87-986c-da15b6b3cd38	94bd8bf6-a432-4c50-b10c-6059b5da52bc	H_29.2_2_I (Richtung 2)		H_29.2_2_I
-579b42ec-d6d1-4233-ba31-dcd2d4428716	240b6f98-f8a2-4160-8cd7-1c65a8968aa1	H_29.4_1_I (Richtung 1)		H_29.4_1_I
-c0e0f1bb-d39f-4208-894f-0c0429184697	6c1096ff-d5fb-4baa-b3e1-2fd060dd2c10	H_30.1_1_I (Richtung 1)		H_30.1_1_I
-1f1b2910-657b-4fa2-9675-3fc16da1751c	6c1096ff-d5fb-4baa-b3e1-2fd060dd2c10	H_30.2_2_I (Richtung 2)		H_30.2_2_I
-75222cb0-028b-4f2d-89fb-26f68bf5f175	2ba7d180-ef72-4425-bde8-5aa33b56b09b	I_19.1_1_I (Richtung 1)		I_19.1_1_I
-fc80383f-8b99-4643-8382-d730f7b9b8f3	870b2d7f-3b2e-4359-9c23-afb8c881a8d1	I_24.3_2_I (Richtung 2)		I_24.3_2_I
-00740a1c-940d-4209-8984-66a3014158ae	db8bf121-f602-4108-af1d-42c03b74cd76	I_27.2_1_I (Richtung 1)		I_27.2_1_I
-71887b00-2c2e-4926-847f-02a48664d838	6f422e6f-a51b-4836-85c3-f3ef07ead011	I_31.2_1_I (Richtung 1)		I_31.2_1_I
-9365e6e0-75ec-49a4-88b0-0ea583347cae	6f422e6f-a51b-4836-85c3-f3ef07ead011	I_31.2_2_I (Richtung 2)		I_31.2_2_I
-e753f25e-a2be-41fd-8219-08c6005c13a7	6c298a8c-e826-4cdf-9d99-3b70b29796dd	I_38.2_1_I (Richtung 1)		I_38.2_1_I
-a5f45150-5e1f-4764-af1e-2b952fd5d076	d9864a04-b58b-40d3-9b73-616a5fae89aa	I_71.1_2_I (Richtung 2)		I_71.1_2_I
-0c554301-3ccf-4ec4-9805-1b8b996f5b2f	efb02c6d-c2d7-4b62-b691-6846cf436237	I_71.2_1_I (Richtung 1)		I_71.2_1_I
-e8778274-3c76-4f19-b269-8a71cb3627e3	2c8515d2-c136-49fa-bfe7-7d3ab4f11608	I_86.1_2_I (Richtung 2)		I_86.1_2_I
-92cf49f1-993a-4386-9e63-2f787a3c89e8	df91bd97-b6c6-4ade-be34-563db50046f7	J_16.3_2_I (Richtung 2)		J_16.3_2_I
-ed864840-5414-4b92-be26-0166fe67d829	d013fd18-10e3-42c7-8d6b-b554635ff4c8	J_2.3_1_I (Richtung 1)		J_2.3_1_I
-7098d52e-5188-495a-92e8-0cee80421e2a	d013fd18-10e3-42c7-8d6b-b554635ff4c8	J_2.3_2_G (Richtung 2)		J_2.3_2_G
-f1f71b33-3059-4f0f-af42-354577c956f6	d1d1de24-7a8e-44c3-8b13-81d4d88f0cf4	J_20.1_1_I* (Richtung 1)		J_20.1_1_I*
-7b1716c3-33e8-41fe-98cc-ca917d5b0d9c	d1d1de24-7a8e-44c3-8b13-81d4d88f0cf4	J_20.1_2_G* (Richtung 2)		J_20.1_2_G*
-4b4bb138-6302-4b02-bd83-e2677591dca2	7c0af1f4-a7e1-4598-8b60-49d7d259f2d7	J_24.6_1_I (Richtung 1)		J_24.6_1_I
-149a5d3e-5b2a-4018-8d09-2ff075e4736d	7c0af1f4-a7e1-4598-8b60-49d7d259f2d7	J_24.6_2_I (Richtung 2)		J_24.6_2_I
-024050cd-f5b4-4d1e-a4fa-385aa2f862a0	f39bc2c2-8540-40e1-bc48-e34be7eb3c7c	J_27.1_1_I (Richtung 1)		J_27.1_1_I
-a899bc0b-5e3c-4e35-8f19-fa4823a6fdd0	f39bc2c2-8540-40e1-bc48-e34be7eb3c7c	J_27.1_2_G (Richtung 2)		J_27.1_2_G
-e9446732-0387-4481-9a14-8c373f5cab4b	7aa5d0a1-e3c9-40f7-b5d5-f7f50722a99b	J_31.4_1_I (Richtung 1)		J_31.4_1_I
-d9c1b2e5-fe9e-4af3-9514-d0dce3edad4c	7aa5d0a1-e3c9-40f7-b5d5-f7f50722a99b	J_31.4_2_I (Richtung 2)		J_31.4_2_I
-6e91c25e-fa20-403c-bf22-6f7054f3ad5a	1255c5e6-1c96-4877-855d-ecda7df82f7d	J_36.1_1_I (Richtung 1)		J_36.1_1_I
-617eacbf-859c-40fe-81be-6368d07e5d7b	1255c5e6-1c96-4877-855d-ecda7df82f7d	J_36.1_2_I (Richtung 2)		J_36.1_2_I
-813fe370-86ed-44c7-9e22-3cb40c77da9d	9beceb68-de06-415c-bf43-3e534b013afd	J_37.3_1_I (Richtung 1)		J_37.3_1_I
-a1a8288a-a6e8-41bd-8774-5d2c8b481bcb	9beceb68-de06-415c-bf43-3e534b013afd	J_37.3_2_I (Richtung 2)		J_37.3_2_I
-0fce8a4e-a80d-439d-93b5-c32f22457ec4	9da0bb93-f1be-44ef-bdd5-dfb26905f260	J_42.7_1_I (Richtung 1)		J_42.7_1_I
-b7cc2dbd-2306-4f72-8a2e-f4530dd58a6e	9da0bb93-f1be-44ef-bdd5-dfb26905f260	J_42.7_2_I (Richtung 2)		J_42.7_2_I
-b730f81a-f39a-4a90-9dd5-70755ba9407b	2767a83e-1634-4fb9-8839-471810ce5fe4	J_47.1_1_I (Richtung 1)		J_47.1_1_I
-177c9e5f-e966-445d-9dfa-56dfd9eab6d4	2767a83e-1634-4fb9-8839-471810ce5fe4	J_47.1_2_I (Richtung 2)		J_47.1_2_I
-f479cc1f-b518-4c63-9555-29c0b9c0892c	68008f57-049c-47e9-9a50-ab3dfdc1c176	J_52.1_1_I (Richtung 1)		J_52.1_1_I
-85883e77-e6da-43bc-82ab-52cec3915020	68008f57-049c-47e9-9a50-ab3dfdc1c176	J_52.1_2_I (Richtung 2)		J_52.1_2_I
-fa1452f0-e5cb-4370-86b8-b6dfde5343b3	c287c484-280c-4cc6-a23e-83db8f9d3e89	J_53.2_1_I (Richtung 1)		J_53.2_1_I
-6cd2c323-68a0-498c-b153-ee7b4dd071be	c287c484-280c-4cc6-a23e-83db8f9d3e89	J_53.2_2_I (Richtung 2)		J_53.2_2_I
-869f0979-c1fb-44c4-976a-7ce0013a75eb	16bbe2aa-6392-4686-a870-a6c8ec51749c	J_6.1_2_I (Richtung 2)		J_6.1_2_I
-ea240392-8695-4b90-841c-7c90ad16dd22	16bbe2aa-6392-4686-a870-a6c8ec51749c	J_6.2_1_I (Richtung 1)		J_6.2_1_I
-7f67efe8-070a-4802-8ff3-888761db077e	ee629315-6083-463a-8108-c720f942f3bb	J_60.1_1_I (Richtung 1)		J_60.1_1_I
-8b41d80c-448f-4bbb-a1cd-34afce72a46f	ee629315-6083-463a-8108-c720f942f3bb	J_60.1_2_I (Richtung 2)		J_60.1_2_I
-b950eead-9e5e-4a35-9472-3e2129437716	99956799-3d70-4f29-a5d7-367bb0ce8f4d	J_63.1_1_I (Richtung 1)		J_63.1_1_I
-5a8623f8-1b55-4045-9160-2c2494b57196	99956799-3d70-4f29-a5d7-367bb0ce8f4d	J_63.1_2_I (Richtung 2)		J_63.1_2_I
-adc6f142-8c97-4e34-8b4b-38f0efe27c8d	bad1830b-96ec-47a1-a7c8-e2792a05a16d	J_76.1_1_I (Richtung 1)		J_76.1_1_I
-29b182da-2022-4ff0-8944-08a1473345d4	bad1830b-96ec-47a1-a7c8-e2792a05a16d	J_76.1_2_I (Richtung 2)		J_76.1_2_I
-acd39d3f-ef9c-4d68-8c5a-62193bc2d336	b3beff21-8198-4268-815b-276eb1c501c0	J_77.1_1_I (Richtung 1)		J_77.1_1_I
-86bcf7f0-8a57-423c-82f1-5f7cb846ca4d	b3beff21-8198-4268-815b-276eb1c501c0	J_77.1_2_I (Richtung 2)		J_77.1_2_I
-e210b22a-2e4c-42d1-9737-6633a701de8e	c1be4805-1af1-488e-a5a0-586b506d9ff8	J_79.1_1_I (Richtung 1)		J_79.1_1_I
-fdfe49a4-872f-4f72-98bd-78ac7abd94a7	c1be4805-1af1-488e-a5a0-586b506d9ff8	J_79.1_2_I (Richtung 2)		J_79.1_2_I
-29f054fc-4514-4ad7-8c37-749a55c98b39	8047f424-6f63-468c-929f-ab32cc3bafd7	J_81.1_1_I (Richtung 1)		J_81.1_1_I
-1f648e5a-1514-4ddb-af7b-f1d6c4ddb805	8047f424-6f63-468c-929f-ab32cc3bafd7	J_81.1_2_I (Richtung 2)		J_81.1_2_I
-097e596d-81fa-4347-aa88-9b82309ded09	1b459ae7-d311-401a-a270-8593cac5443b	J_87.1_1_I (Richtung 1)		J_87.1_1_I
-165944a1-a407-40de-bf2c-c9dab4a93db3	1b459ae7-d311-401a-a270-8593cac5443b	J_87.1_2_I (Richtung 2)		J_87.1_2_I
-aec073a4-a39e-4eb9-9256-14341c6ff150	09a7f71d-3f6a-46d6-bea1-440bd121e635	X_44.1_1_I (Richtung 1)		X_44.1_1_I
-f455a8f3-a931-4a43-8d06-ad0dccadb6d7	09a7f71d-3f6a-46d6-bea1-440bd121e635	X_44.1_2_I (Richtung 2)		X_44.1_2_I
+17c14bc3-e82e-4cc8-8dae-51a7be00a493	09f3dc59-40c7-4527-982c-86e42a7f4e8b	Bismarckallee Fahrräder IN		353420516
+4ef6ffcd-aeb1-4a56-a890-3c343afe63cd	09f3dc59-40c7-4527-982c-86e42a7f4e8b	Bismarckallee Fahrräder OUT		353420517
+62087614-faec-468e-9294-bb6f84aa2402	e58da4d9-b781-4873-9479-e67a97fe464e	Bohlweg [Bike Stadteinwärts]		353413831
+bcfcd0de-3da2-4bf6-ac00-b5dca1ee2a31	e58da4d9-b781-4873-9479-e67a97fe464e	Bohlweg [Bike Stadtauswärts]		353413832
+46475d21-66f1-4588-a01f-9c9dad8ca8d7	85c48593-03a5-477a-8df0-fa3ba53bf6b2	Coesfelder Kreuz Stadteinwärts		353425081
+0f4f0bf3-1520-454f-bb99-291b1700b4b6	85c48593-03a5-477a-8df0-fa3ba53bf6b2	Coesfelder Kreuz Stadtauswärts		353425082
+f276f68e-5be0-4e8f-8372-1ce680ffce18	2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße einwärts		101034978
+b91a2075-6cb3-4916-819b-a5d6841e15ad	2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße auswärts		102034978
+85b580c0-5c58-44c4-9cb5-19c795342c71	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts		353413846
+529a4d47-7cdc-4112-85f3-287991080a39	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts		353413847
+b2bdc20e-840d-45c7-9749-1f915594104b	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts (353426663)		353426663
+80cf42f7-9d29-4c7d-9959-261046b6cb61	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts (353426665)		353426665
+8e9846e3-3eea-40ed-baf7-1bb8f4c31da0	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts (353426666)		353426666
+131e02b4-c40d-4f0c-ad84-ff9c92bde321	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts (353426668)		353426668
+df8c8cf1-8ff9-404a-b35f-540b38026c8e	9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße [Bike Stadteinwärts]		353413828
+e75569cd-1245-412a-87d5-ce1fdb81c9d9	9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße [Bike Stadtauswärts]		353413829
+51eb8c7b-0860-4119-ab5a-4d65ee007be4	1866c3c6-02ff-4178-9afe-0871c9eb0302	Grevener Straße Formel - Fahrräder Stadteinwärts		353425091
+aab04e16-d888-4cce-a808-3c0edff72c59	1866c3c6-02ff-4178-9afe-0871c9eb0302	Grevener Straße Formel- Fahrräder Stadtauswärts		353425097
+99786591-2e3f-4002-98d5-8d08ba5fb9d6	d1b2d952-5724-4b0f-b6cf-931828c03ec3	Hafenstraße Fahrräder IN		101031300
+4cc62556-c2de-43da-9568-44953dd0e394	d1b2d952-5724-4b0f-b6cf-931828c03ec3	Hafenstraße Fahrräder OUT		102031300
+1464e43e-5318-4c4f-a17a-eea14b348fdd	10456344-748c-4ae6-9108-f986092d0e37	Hammer Straße stadteinwärts		101034980
+0235787d-17f4-44c2-9f22-eb82ac88a4c9	10456344-748c-4ae6-9108-f986092d0e37	Hammer Straße stadtauswärts		102034980
+8412f709-d422-42d8-92ca-9d438ef9d986	86b93643-80ea-4ab9-abf5-c5f8c88363bd	Hüfferstraße stadteinwärts		101034982
+6991f703-8df2-4907-9710-6b8409fd6e39	86b93643-80ea-4ab9-abf5-c5f8c88363bd	Hüfferstraße stadtauswärts		102034982
+a7ea311d-88fc-4e62-9753-cdd28dc9b441	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) Fahrräder IN		353410966
+38f4cb02-012a-48f2-9d2e-54bad2266e05	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) Fahrräder OUT		353410967
+02600f64-00ef-4f4f-be73-59306fecc22b	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN]		353426657
+5a7244fb-344f-48de-9324-d2ab0fdd1fdf	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN] (353426659)		353426659
+a8c5f6f5-6235-4e81-8bc8-b33480a70912	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT]		353426660
+41619846-0a8b-49f6-99c9-b807d8fa9b75	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT] (353426662)		353426662
+1e9e1dac-aaad-4721-986a-9382e54d9850	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor		101053305
+cbe482f2-8df6-431f-b9a2-455383c3c0a6	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum		102053305
+b0ee317f-e4f9-4322-8c29-b137e4c32e5b	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor (103053305)		103053305
+ccab0a33-0541-4bbd-997b-988d59fb53fd	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum (104053305)		104053305
+f7e29d23-6c9f-4e7b-b929-08c79602535b	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor (353306596)		353306596
+c39b7383-ad01-4da5-b02d-81fae7a87c69	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum (353306597)		353306597
+2bcb9993-a9c0-4eb0-8819-8a6eec8a8437	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 Fahrräder Richtung Münster		353413873
+56eedb14-93f7-4a98-8de0-899320fe332e	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 Fahrräder Richtung Weg von Münster		353413874
+3a343039-12ce-4c14-8e26-1c32f51e1866	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike IN]		353426355
+f4b89999-3e89-4351-a0e4-9a96f40e28a9	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike IN] (353426357)		353426357
+2301321c-ab04-4474-b6b6-d56fb4250240	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike OUT]		353426358
+d2374e30-80fd-4b3b-bfa6-4c6b75018116	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike OUT] (353426360)		353426360
+c70b1769-62af-4946-8822-5cefb23ed4ed	35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str. [Bike Stadteinwärts]		353413835
+53cb8ae6-e7b8-4e0a-b9ad-6b1cafd2b9f5	35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str. [Bike Stadtauswärts]		353413836
+2257e569-7230-4556-a27f-c970e55c164d	7e23d159-5899-4c55-957a-d89963173fdc	Lütkenbecker Str. [Bike Stadteinwärts]		353413813
+2d349487-0fc6-450c-a476-8009975ca239	7e23d159-5899-4c55-957a-d89963173fdc	Lütkenbecker Str. [Bike Stadtauswärts]		353413814
+aeedc9f3-8547-4e51-99b7-bfe42359f5bf	6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor stadteinwärts		101035541
+53bf8707-9cd7-4cb4-8c47-e05ead1abdab	6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor stadtauswärts		102035541
+47d4a5f5-8c9f-4ece-9f58-39f58c194ad0	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor		101031297
+97807e66-cd00-4864-88bf-aaa435d48164	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße		102031297
+76b3210e-accb-4c3d-ad07-43ecdc972913	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor (103031297)		103031297
+b485ab9f-d6af-46b6-83bb-409450c09fc4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße (104031297)		104031297
+931804ab-4ab1-4ddf-8e6d-a2694ab025a4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor (105031297)		105031297
+4f527927-83c9-47b8-860b-410cb45f973e	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße (106031297)		106031297
+3496425b-13f1-43c0-998f-d137be08d289	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) Fahrräder IN		353409612
+d312e793-cf1c-48be-b570-4d7b38db5e16	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) Fahrräder OUT		353409613
+39a96dfd-c8c2-47b5-90bb-60bf42e09790	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike IN]		353426710
+3a928a85-07a0-4487-a695-ef5cde0988d1	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike IN] (353426712)		353426712
+4c377b02-47c7-4b8c-a203-ad2c486da71f	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike OUT]		353426713
+27140f8a-54c8-42d2-9ab4-a6693b726445	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike OUT] (353426715)		353426715
+4d6ad5d9-ad9b-4811-a2f1-8729a2fd1adc	2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße [Bike Stadteinwärts]		353413849
+610ca780-ba78-4b46-9c13-bad974ba89ee	2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße [Bike Stadtauswärts]		353413850
+0ae003ad-c910-413f-88ea-333537ce35f8	8bc74780-c0dd-4e71-97f0-e0ada75a0e41	Warendorfer Straße stadteinwärts		101034983
+bf7df741-d820-4355-8ca7-58057b74dc4e	8bc74780-c0dd-4e71-97f0-e0ada75a0e41	Warendorfer Straße stadtauswärts		102034983
+e60538bf-ac28-4b51-a9ed-a87cf959bccd	fed9ecfe-72ac-4098-b99d-a6597965fe90	Weißenburg Str. [Bike Stadteinwärts]		353413852
+aedebab7-f20f-4560-9e73-f551c9ec14d2	fed9ecfe-72ac-4098-b99d-a6597965fe90	Weißenburg Str. [Bike Stadtauswärts]		353413853
+3e85200d-de91-48e8-ab98-396fe65e5905	f7a545f1-4d17-49d0-9c19-e36d5340da49	Weseler Straße stadteinwärts		101034981
+cf9ce381-8e5d-4532-8205-404d220cbbf5	f7a545f1-4d17-49d0-9c19-e36d5340da49	Weseler Straße stadtauswärts		102034981
+80e068f0-4230-4940-9891-45c2b9081cc0	f2661888-fad4-4ffe-be44-a0e4ef7df0e0	FR stdteinwärts		101020113
+088fbe41-adcf-4296-a0e0-74cd977bdf4e	f2661888-fad4-4ffe-be44-a0e4ef7df0e0	FR stadtauswärts		102020113
+c50afd99-6458-44b6-a2e2-9fb84427ec61	1d91486f-ed15-4eb1-811d-4f6779d760b0	BN - Brühler Straße		11
+8c9ed9f2-319a-4bc4-92d7-eb8468bcefee	b39332ac-f545-499f-a0e0-3a371a5a5839	BN - Nordbrücke (Südseite)		3
+9c351250-467b-4c99-8ee2-12549e37be07	743e7c29-0940-4011-bf2a-3f5e44446a28	BN - Straßburger Weg		12
+480c2bac-2628-456e-8c10-0bc821a5aada	edeef68f-2110-4648-ab10-12d181780847	BN - Wilhelm-Spiritus-Ufer		13
+b03aa25b-3ec7-4ec8-94e0-cb229e300fd6	2cc780a8-48b5-47dc-8492-0cc0dcc6e560	BN - Kennedybrücke (Nordseite)		1
+120f68bc-7d03-4a90-9657-3cd5d8066b96	4dc4be7d-38b3-423b-89ce-b2b05665cbd5	BN - Kennedybrücke (Südseite)		2
+8f54eeb0-003e-4b5c-b966-7fa4ce83e7c6	3c9e9903-f357-4569-a757-ee1b4177c8e3	BN - Nordbrücke (Nordseite)		4
+ccaf6672-1e01-4c92-b83a-26667f6050ca	05717a4e-df8e-4a99-9f2e-a8a4f386030d	BN - Südbrücke (Südseite)		5
+2e0fc46f-59a7-4271-8318-9034826d89d5	31e21830-145b-4c59-8199-37c8eb3c2f85	BN - Südbrücke (Nordseite)		6
+15bfd09e-fdba-42d9-869a-8f3d631be9f0	f8e36b25-2165-4a6d-afde-c13c67df65ac	BN - Von-Sandt-Ufer		8
+ef2a837c-e24e-428c-aa19-9bf567c554d2	18077a4e-dc01-43b6-b408-ecb321d2f5d9	BN - John-J.-McCloy-Ufer		14
+d7dece85-a5a7-4160-9bbd-0c6669e5b46d	0867be14-2aca-4396-b4c6-dc6b554d715f	BN - Bröltalbahnweg		10
+747ae585-b9e0-46d1-966f-41bf3311ef77	3fe282f7-f725-4bfa-b534-2d53dd42431b	BN - Estermannufer		7
+70a4f659-76df-4d2c-a4ad-6f895e1a5818	c5b739c5-b831-47ba-9e6e-dcb6d012e8d2	BN - Hochwasserdamm Beuel		15
+9a4814a7-3cae-4b19-9bc1-d41be0fe180a	625a6e6b-bd00-454d-9984-2cc674491219	BN - Rhenusallee		9
+046ee3b1-daae-4ea8-ae2d-7e5625694e3b	1a9de3f3-9dca-4e84-8cb9-06f3ff5bb920	BN - Rheinweg		19
+cccc4679-68d1-449b-8e57-bb4bd34563ff	5198bd82-f11b-46ce-84a2-094e1a96da2b	BN - Joseph-Beuys-Allee		18
+859f37e3-45e1-4257-afc7-acff6825f675	635e3ed1-65d0-47b5-952a-dffefdada546	A_1.2_1_I (Richtung 1)		A_1.2_1_I
+e4a598e8-8fde-432e-b468-73fedd3c1a0a	635e3ed1-65d0-47b5-952a-dffefdada546	A_1.2_2_G (Richtung 2)		A_1.2_2_G
+500d7a60-13ab-4d0a-9afa-2ef3e452baa8	fcae169d-de64-4d2d-a792-66a00423bdca	A_1.3_1_G (Richtung 1)		A_1.3_1_G
+ab00559e-6c37-47e6-a6dc-ef9ede9eb9bb	fcae169d-de64-4d2d-a792-66a00423bdca	A_1.3_2_I (Richtung 2)		A_1.3_2_I
+3f8bac65-a40d-49f1-95dc-d24c027c92f8	9542c3c1-4436-4a36-99cf-d2dca965ed2b	A_22.1_1_I (Richtung 1)		A_22.1_1_I
+f4f0a95c-807f-4b8a-a1cb-2ae26072723d	9542c3c1-4436-4a36-99cf-d2dca965ed2b	A_22.1_2_G (Richtung 2)		A_22.1_2_G
+317b05b7-99ab-4e5b-b2ba-ac730f3064fe	cc1b0068-f2f4-49da-b059-a4f9635f7f4b	A_25.1_1_I (Richtung 1)		A_25.1_1_I
+5c152959-fe5b-4ce1-a43b-1c812e235b8e	cc1b0068-f2f4-49da-b059-a4f9635f7f4b	A_25.1_2_G (Richtung 2)		A_25.1_2_G
+1b1b0c63-239b-4eaf-80b1-ad5a165a01cb	0c930397-8b1e-4e13-9455-82f70550833a	A_25.2_1_G (Richtung 1)		A_25.2_1_G
+003fcf74-131c-4987-a7e3-78a959ecef3c	0c930397-8b1e-4e13-9455-82f70550833a	A_25.2_2_I (Richtung 2)		A_25.2_2_I
+1def4d8c-f91d-4ba2-8683-d97dade86d16	afb35ef4-a641-4965-a717-730e782e2432	A_27.3_1_G (Richtung 1)		A_27.3_1_G
+1ddf801b-c6ea-4d1c-84d2-4a4417fc31e4	afb35ef4-a641-4965-a717-730e782e2432	A_27.3_2_I (Richtung 2)		A_27.3_2_I
+a1bf78ed-d150-4fd5-8427-07e6a61b4433	ef44abd2-386a-4b47-99cf-4793ea1894bf	A_29.1_1_I (Richtung 1)		A_29.1_1_I
+48d094b0-f438-4f9b-adfb-aeabf4c6e315	ef44abd2-386a-4b47-99cf-4793ea1894bf	A_29.1_2_I (Richtung 2)		A_29.1_2_I
+e349b31b-5259-4394-a9f8-83676349ddc0	e3408d9a-b86b-4a7a-8c96-b4f8b4934aa6	A_38.2_1_I (Richtung 1)		A_38.2_1_I
+3b0a9690-7e0d-4302-9819-8649e32292f0	e3408d9a-b86b-4a7a-8c96-b4f8b4934aa6	A_38.2_2_G (Richtung 2)		A_38.2_2_G
+7d360740-8786-4898-af84-55ca6c8077ea	f8b9cdeb-2edf-419a-88c8-6e68b4ec112f	A_39.2_1_I (Richtung 1)		A_39.2_1_I
+0846f65d-2740-4663-8130-c67143ba0573	f8b9cdeb-2edf-419a-88c8-6e68b4ec112f	A_39.2_2_G (Richtung 2)		A_39.2_2_G
+9fffc17f-7746-44af-be29-c1dbe762946e	fc7c8417-2e38-400d-9ad0-2c69a4819a2d	A_41.2_1_G (Richtung 1)		A_41.2_1_G
+8b003a8d-576e-4d77-ae0b-b29b49b6cd96	fc7c8417-2e38-400d-9ad0-2c69a4819a2d	A_41.2_2_I (Richtung 2)		A_41.2_2_I
+2b202016-363f-4da6-8d5e-32178b19ccc5	7fd6b4d5-4508-4f7b-b610-5c1e476a4914	A_41.7_1_G (Richtung 1)		A_41.7_1_G
+9f5f4e80-3145-4fde-9b12-d0a175bbdc8d	7fd6b4d5-4508-4f7b-b610-5c1e476a4914	A_41.7_2_I (Richtung 2)		A_41.7_2_I
+c29d2a9d-125f-413e-9c30-169d10ed6a47	0b429d14-66af-4826-bf8e-1b13b18e2887	A_43.1_1_G (Richtung 1)		A_43.1_1_G
+6ce15489-e140-4bcb-ba6a-e5349f38223f	0b429d14-66af-4826-bf8e-1b13b18e2887	A_43.1_2_I (Richtung 2)		A_43.1_2_I
+58ddd0f7-81ff-4980-9a68-1f9a1c20145d	3217aeed-e380-44d0-8b04-751701f97ba7	A_43.2_1_I (Richtung 1)		A_43.2_1_I
+45343b95-1b10-4e99-8e56-51d8de405486	3217aeed-e380-44d0-8b04-751701f97ba7	A_43.2_2_G (Richtung 2)		A_43.2_2_G
+765de7bd-1608-4f77-a9c7-60b1444ea7ad	07d18993-983a-4d82-9217-5fdc93255953	A_50.2_1_G (Richtung 1)		A_50.2_1_G
+0e35d4ac-704b-4957-bd82-4216ce4ddff1	07d18993-983a-4d82-9217-5fdc93255953	A_50.2_2_I (Richtung 2)		A_50.2_2_I
+b71eb186-0b16-4ce6-a978-9b0ff261dc73	e4b45ee8-cb4f-4947-9f3e-b1679a4aac8d	A_50.4_1_I (Richtung 1)		A_50.4_1_I
+9ce16220-9ed3-4c05-9449-85f45951d92a	e4b45ee8-cb4f-4947-9f3e-b1679a4aac8d	A_50.4_2_G (Richtung 2)		A_50.4_2_G
+023768a0-7624-4fcc-a35c-444d6227c588	e9ae5f96-83ce-40db-99e5-04412eca1e43	A_54.1_1_I (Richtung 1)		A_54.1_1_I
+52e99668-2d11-437d-9437-a002111f5b1a	e9ae5f96-83ce-40db-99e5-04412eca1e43	A_54.1_2_I (Richtung 2)		A_54.1_2_I
+e463db08-c057-4d94-af6f-a90a77a453e9	9b2bdd44-3c3d-4dec-a10f-62f4b5d292d8	A_64.1_1_I (Richtung 1)		A_64.1_1_I
+566cf66f-448d-40b8-b8f0-de6d978fd204	9b2bdd44-3c3d-4dec-a10f-62f4b5d292d8	A_64.1_2_I (Richtung 2)		A_64.1_2_I
+009fe5de-38ec-4347-b27c-ed05478bc1d6	820f3c6f-e838-469c-873d-f0e833a9ccc1	A_70.1_1_I (Richtung 1)		A_70.1_1_I
+fdbd028d-bd5f-447e-a639-599be8f85dff	820f3c6f-e838-469c-873d-f0e833a9ccc1	A_70.1_2_I (Richtung 2)		A_70.1_2_I
+35c2f847-7092-4a0f-b61f-ac2b255a5605	8a366bf2-f714-40c2-8a54-f8722d96400b	B_10.1_1_I (Richtung 1)		B_10.1_1_I
+f49eec62-61a1-4b8b-9ec2-6637f49e31cb	8a366bf2-f714-40c2-8a54-f8722d96400b	B_10.1_2_G (Richtung 2)		B_10.1_2_G
+37a45201-6b76-4719-8389-bbb91c2aaf2b	8a366bf2-f714-40c2-8a54-f8722d96400b	B_10.2_1_G (Richtung 1)		B_10.2_1_G
+fb1608b1-5a8c-476e-929a-3f6ae5be72e4	8a366bf2-f714-40c2-8a54-f8722d96400b	B_10.2_2_I (Richtung 2)		B_10.2_2_I
+6533388e-7c90-4a04-8468-42b33d427b8b	d555d386-8664-4683-80b4-7c258912093d	B_11.1_1_G (Richtung 1)		B_11.1_1_G
+d8e56f52-43fe-4e0d-8673-668eaa27def6	d555d386-8664-4683-80b4-7c258912093d	B_11.1_2_I (Richtung 2)		B_11.1_2_I
+6403884c-1e11-40a1-9f65-309a61a98dd8	998268eb-f5f5-4f45-83aa-60effb497175	B_11.2_1_I (Richtung 1)		B_11.2_1_I
+7692242f-df1d-47e3-a165-f7871129e345	998268eb-f5f5-4f45-83aa-60effb497175	B_11.2_2_G (Richtung 2)		B_11.2_2_G
+201d96d2-27c8-4c02-a11d-3ea2f26fbb55	70482357-f2a6-44c9-ae8e-ac086840c50e	B_13.1_1_I (Richtung 1)		B_13.1_1_I
+3114e57d-d9d4-44b0-adb2-1a288b2b3200	70482357-f2a6-44c9-ae8e-ac086840c50e	B_13.1_2_I (Richtung 2)		B_13.1_2_I
+e31e7d87-67f9-47f2-9111-43070a45c422	1bf368ed-790e-4565-8445-1721f2ba2060	B_16.1_1_I (Richtung 1)		B_16.1_1_I
+272accb1-42e7-4348-94bd-d72a0176a29a	1bf368ed-790e-4565-8445-1721f2ba2060	B_16.1_2_G (Richtung 2)		B_16.1_2_G
+8a6c77ef-8044-4d77-a3e5-04b1181af10f	eefa0525-6191-46ad-9c9a-fd5e0de84beb	B_16.2_1_G (Richtung 1)		B_16.2_1_G
+b9a1c88f-2882-45be-b35b-19ba0fc8bae8	eefa0525-6191-46ad-9c9a-fd5e0de84beb	B_16.2_2_I (Richtung 2)		B_16.2_2_I
+43569d59-035b-43bc-bfbc-49454512b8f5	194dff83-9672-44cc-a3a9-d8069389a12c	B_16.4_1_I (Richtung 1)		B_16.4_1_I
+d9e255b3-85a6-4f13-bf87-2f2995ef53c7	194dff83-9672-44cc-a3a9-d8069389a12c	B_16.4_2_G (Richtung 2)		B_16.4_2_G
+c0c01cc2-6518-44a1-8f8b-1d1e84ed2e76	baae3578-829f-4680-8d0b-ccced489e56e	B_16.5_1_G (Richtung 1)		B_16.5_1_G
+2a42b42b-942f-4894-82de-c5cb0f8f4b60	baae3578-829f-4680-8d0b-ccced489e56e	B_16.5_2_I (Richtung 2)		B_16.5_2_I
+2a03b609-e485-4dd3-a78a-4a6470edc4d0	1a5da770-5f21-459f-b497-ae3029f7523c	B_16.6_1_I (Richtung 1)		B_16.6_1_I
+5a66836e-1aea-4375-a595-b21ce1613c2b	1a5da770-5f21-459f-b497-ae3029f7523c	B_16.6_2_G (Richtung 2)		B_16.6_2_G
+60d09c96-f02b-4415-93a1-054e3d3dbe25	5289f3b1-8ab3-400d-89a6-08cb0ee8b15e	B_17.2_1_I (Richtung 1)		B_17.2_1_I
+a9486899-75a4-4966-a51f-7ead4f82541a	5289f3b1-8ab3-400d-89a6-08cb0ee8b15e	B_17.2_2_I (Richtung 2)		B_17.2_2_I
+e819040c-37c3-41c7-a3ad-a5bef1921525	bbcb9757-aadc-4ab4-a2bd-cbece98bbfb9	B_21.1_1_I (Richtung 1)		B_21.1_1_I
+22589acb-4fb9-4946-b07d-32aa4f9f5a84	bbcb9757-aadc-4ab4-a2bd-cbece98bbfb9	B_21.1_2_G (Richtung 2)		B_21.1_2_G
+28d3b004-2c55-4a56-80d2-a6d4f3cf98f8	889f932a-cefc-4bdc-b4ff-9ff5630dafc8	B_26.1_1_G (Richtung 1)		B_26.1_1_G
+4559ef1c-5c95-4814-a9a8-38aeb540be2d	889f932a-cefc-4bdc-b4ff-9ff5630dafc8	B_26.1_2_I (Richtung 2)		B_26.1_2_I
+3656eb03-a511-4c7c-a26e-eaff3b906a4e	e5c3ad5a-3d1e-4cd7-b657-72b26651132c	B_27.2_1_I (Richtung 1)		B_27.2_1_I
+8703582d-3707-4afe-98c2-e6f19bf8f51f	e5c3ad5a-3d1e-4cd7-b657-72b26651132c	B_27.2_2_G (Richtung 2)		B_27.2_2_G
+feb2caa1-923c-474b-9c09-5adb601950b3	d00a5f81-88b4-450f-bf2f-e49d063d0d9d	B_28.1_1_I (Richtung 1)		B_28.1_1_I
+7df9f89c-81d2-4572-a175-de1127cd133d	d00a5f81-88b4-450f-bf2f-e49d063d0d9d	B_28.1_2_G (Richtung 2)		B_28.1_2_G
+2710c191-8dae-4650-afab-d91314202572	12aff17e-afac-4cd3-8dff-1f94db662930	B_28.6_1_G (Richtung 1)		B_28.6_1_G
+1590af22-33ea-410b-858b-a7e27c5e317d	12aff17e-afac-4cd3-8dff-1f94db662930	B_28.6_2_I (Richtung 2)		B_28.6_2_I
+eab2d505-f153-4d41-9efe-a2c24e2ead8e	1dfef925-989f-4786-85d9-5c91d2191d89	B_3.1_1_I (Richtung 1)		B_3.1_1_I
+4182854b-cc7b-4489-b7c2-3f0cc3236d55	1dfef925-989f-4786-85d9-5c91d2191d89	B_3.1_2_G (Richtung 2)		B_3.1_2_G
+e7dd5583-c67e-4f64-b1b9-ca393d1a2e11	6c908933-50ab-4e93-86eb-be9a02ae26b0	B_3.2_1_G (Richtung 1)		B_3.2_1_G
+dda8d2fc-3ffb-4b53-8e94-35bbc3965a5d	6c908933-50ab-4e93-86eb-be9a02ae26b0	B_3.2_2_I (Richtung 2)		B_3.2_2_I
+97b2ea8e-7564-45b8-b60d-db6093b3f22c	66656cfe-7b46-463f-ab61-446975497073	B_31.1_1_G (Richtung 1)		B_31.1_1_G
+4caed8cc-90e2-4892-95c6-18ecefb1ab62	66656cfe-7b46-463f-ab61-446975497073	B_31.1_2_I (Richtung 2)		B_31.1_2_I
+d3b11549-5190-4496-aed1-9245066b569b	b83ca7a6-8eca-4b97-bb21-4c03c7788138	B_31.3_1_I (Richtung 1)		B_31.3_1_I
+d0b075f4-e990-488d-bb74-72cf5df89d0b	b83ca7a6-8eca-4b97-bb21-4c03c7788138	B_31.3_2_G (Richtung 2)		B_31.3_2_G
+03ae724b-edb6-411f-a8b6-de8ea81715ad	7d624589-fc5a-422b-a35f-28380acfff14	B_31.5_1_G (Richtung 1)		B_31.5_1_G
+dd58b358-7db0-4cea-82b9-4cc903a128f3	7d624589-fc5a-422b-a35f-28380acfff14	B_31.5_2_I (Richtung 2)		B_31.5_2_I
+55fd02d4-3553-4d55-831a-1bb77269bc37	1096c768-e862-4248-ba0b-61271e1c36cf	B_31.6_1_I (Richtung 1)		B_31.6_1_I
+e518f450-5692-4687-95fa-c71229a73367	1096c768-e862-4248-ba0b-61271e1c36cf	B_31.6_2_G (Richtung 2)		B_31.6_2_G
+5fa54704-4605-4e72-b071-3335076efca9	5ba4fc53-19a2-4071-ae02-55de1a0767fe	B_33.1_1_I (Richtung 1)		B_33.1_1_I
+cfdce2db-7cbd-4815-a8bd-8aff47a60205	5ba4fc53-19a2-4071-ae02-55de1a0767fe	B_33.1_2_G (Richtung 2)		B_33.1_2_G
+7ad19b53-aa2a-442d-a3b3-d56ff45bffda	0da1ed56-5073-4143-9da5-51b9364196f9	B_33.2_1_G (Richtung 1)		B_33.2_1_G
+0dfaa1ec-16d9-4e11-ba1a-0857637e76ac	0da1ed56-5073-4143-9da5-51b9364196f9	B_33.2_2_I (Richtung 2)		B_33.2_2_I
+4caee85e-613e-48ef-b2e4-645960e95d59	016b5f5d-dd27-4ff8-a23f-ef8c85f25712	B_34.1_1_I (Richtung 1)		B_34.1_1_I
+79fb96e5-f13e-4967-9446-810b07ade272	016b5f5d-dd27-4ff8-a23f-ef8c85f25712	B_34.1_2_G (Richtung 2)		B_34.1_2_G
+756b1646-8112-487a-abd0-c37ab6b5b373	1d0e5994-72cf-4e57-8581-3b0c06fd9cda	B_34.2_1_G (Richtung 1)		B_34.2_1_G
+29ae9019-7129-4dce-b411-5af0600d35ef	1d0e5994-72cf-4e57-8581-3b0c06fd9cda	B_34.2_2_I (Richtung 2)		B_34.2_2_I
+6847e2e1-1136-46e4-b253-1d83b074cc49	c2415aae-e97a-497f-9ad0-9b144214da82	B_35.1_1_I (Richtung 1)		B_35.1_1_I
+cc799e22-58ee-462b-8930-65b4fe020b49	c2415aae-e97a-497f-9ad0-9b144214da82	B_35.1_2_G (Richtung 2)		B_35.1_2_G
+f3734275-9e5e-4931-8049-00469f740f88	510367da-29cc-4746-9ba2-349cebfeb44b	B_35.2_1_G (Richtung 1)		B_35.2_1_G
+78c43bba-cf0d-42b2-bb83-274dbf96d986	510367da-29cc-4746-9ba2-349cebfeb44b	B_35.2_2_I (Richtung 2)		B_35.2_2_I
+b977cc76-ffed-41fa-a7d0-820e845758c9	8a93eb34-c409-4d76-bbb6-216b9f09ba32	B_37.1_1_I (Richtung 1)		B_37.1_1_I
+76323948-aff8-4af5-8245-3eb1178b2f39	8a93eb34-c409-4d76-bbb6-216b9f09ba32	B_37.1_2_G (Richtung 2)		B_37.1_2_G
+34a03ecf-2ade-41a1-8c37-4a3e7696b5e5	bc3b7abc-681f-45d8-868e-20e5a2ad396e	B_37.2_1_G (Richtung 1)		B_37.2_1_G
+9e8cf0fc-fcbb-4302-8084-a93b8f472525	bc3b7abc-681f-45d8-868e-20e5a2ad396e	B_37.2_2_I (Richtung 2)		B_37.2_2_I
+6480aaea-8fb3-4671-9124-100f05f8b92d	4fd23adf-e422-4f7d-9447-df6238bd7c72	B_39.1_1_G (Richtung 1)		B_39.1_1_G
+9376ebfb-a78a-4b06-9da5-7c756e5cec59	4fd23adf-e422-4f7d-9447-df6238bd7c72	B_39.1_2_I (Richtung 2)		B_39.1_2_I
+9bb07bc9-4a09-42d9-a0fd-3c1553fc6d1a	562190bd-0d6a-40c7-9c5c-b6c78d6b7715	B_39.3_1_I (Richtung 1)		B_39.3_1_I
+acba7076-7fcb-4037-8e5c-6c8d980742d1	562190bd-0d6a-40c7-9c5c-b6c78d6b7715	B_39.3_2_G (Richtung 2)		B_39.3_2_G
+85c285d2-256c-47ad-bf43-11d89c9590bc	54faaa05-4f0c-44e9-af64-90d174521ac5	B_39.4_1_G (Richtung 1)		B_39.4_1_G
+0910cecb-cc71-4ad1-8efa-96b0a6578a2f	54faaa05-4f0c-44e9-af64-90d174521ac5	B_39.4_2_I (Richtung 2)		B_39.4_2_I
+255f3066-fd6c-464d-9fa5-043c12f6a6ca	e578a68b-f9be-42d2-b1df-9034c9b8fc64	B_39.5_1_I (Richtung 1)		B_39.5_1_I
+09eaad3d-8231-4026-b6e9-503bf60afcc9	e578a68b-f9be-42d2-b1df-9034c9b8fc64	B_39.5_2_G (Richtung 2)		B_39.5_2_G
+459a7bc2-ccb3-413c-af54-afc8e7ef9bc0	fbfac096-29f4-459b-ab4a-b26bc1d497b4	B_39.6_1_G (Richtung 1)		B_39.6_1_G
+861dde1d-3ce8-4990-b584-a8d9b1c0cdbb	fbfac096-29f4-459b-ab4a-b26bc1d497b4	B_39.6_2_I (Richtung 2)		B_39.6_2_I
+848b5612-6f25-4e4e-b733-1a3325eb18eb	b0c972c5-924f-4df8-909f-8f8024acd767	B_39.7_1_G (Richtung 1)		B_39.7_1_G
+188ade0c-8e65-41ea-9237-e90907e01603	b0c972c5-924f-4df8-909f-8f8024acd767	B_39.7_2_I (Richtung 2)		B_39.7_2_I
+2d572225-444d-47fb-8b16-5d9789a47d46	80f154b5-7f96-4abc-86ee-f611f460a3c8	B_39.8_1_I (Richtung 1)		B_39.8_1_I
+44f60c2b-72e5-4882-b948-79fdd665ea0a	80f154b5-7f96-4abc-86ee-f611f460a3c8	B_39.8_2_G (Richtung 2)		B_39.8_2_G
+81eba09f-a90f-4257-9103-ac729b78451c	097fc8d1-a0fc-49fd-a345-1d1eb647b380	B_41.1_1_I (Richtung 1)		B_41.1_1_I
+75142a99-d32c-43ee-87b1-d74620558854	097fc8d1-a0fc-49fd-a345-1d1eb647b380	B_41.1_2_G (Richtung 2)		B_41.1_2_G
+932a0e01-04a2-4611-9636-a72f658b5c2d	125359db-d6f7-4ead-8489-d69e125f90fb	B_41.3_1_I (Richtung 1)		B_41.3_1_I
+a66d523a-1089-4410-a355-604a7d0f5a2c	125359db-d6f7-4ead-8489-d69e125f90fb	B_41.3_2_I (Richtung 2)		B_41.3_2_I
+2bb96c2a-5fc1-4a43-a4bc-711230c447a3	c01ada55-c3fd-4b4e-b6b1-436f1107dfb1	B_41.4_1_G (Richtung 1)		B_41.4_1_G
+2b1360e3-4c7a-49e0-9144-62352a433541	c01ada55-c3fd-4b4e-b6b1-436f1107dfb1	B_41.4_2_I (Richtung 2)		B_41.4_2_I
+7914474c-2134-4341-afea-918e9574aada	f699f15d-c4f4-4f1e-ad30-059c7b1f0dfb	B_41.5_1_I (Richtung 1)		B_41.5_1_I
+6eeae816-f003-4206-a044-1632be740122	f699f15d-c4f4-4f1e-ad30-059c7b1f0dfb	B_41.5_2_G (Richtung 2)		B_41.5_2_G
+88345233-002b-4357-b532-5eceb39503d2	b9f0c58c-3dcb-45ef-88e6-c163173e92df	B_45.3_1_G (Richtung 1)		B_45.3_1_G
+690cca52-afbc-44a0-86bc-549f1d5c2ac8	b9f0c58c-3dcb-45ef-88e6-c163173e92df	B_45.3_2_I (Richtung 2)		B_45.3_2_I
+8488f9b5-9491-4e2b-ba93-b84ab9088839	4f1662f1-d2a1-4d6f-8104-7a218b6ce83f	B_46.1_1_I (Richtung 1)		B_46.1_1_I
+69cc1056-e8af-4c9d-b813-476a9195729e	4f1662f1-d2a1-4d6f-8104-7a218b6ce83f	B_46.1_2_G (Richtung 2)		B_46.1_2_G
+9fcc48bf-4e72-436b-8e94-024e9ffce946	7214a2a3-f139-4ef6-aa6e-33e7194138ce	B_46.2_1_G (Richtung 1)		B_46.2_1_G
+fb02556a-4f08-4237-80e3-2ccb03749f85	7214a2a3-f139-4ef6-aa6e-33e7194138ce	B_46.2_2_I (Richtung 2)		B_46.2_2_I
+a689a671-090a-4d58-a122-0ac23c0c8f94	e172eed9-9d6f-4ceb-91da-98e3f7170ecf	B_46.5_1_I (Richtung 1)		B_46.5_1_I
+8e8506b6-1880-45cb-888e-e5a9e246b555	e172eed9-9d6f-4ceb-91da-98e3f7170ecf	B_46.5_2_G (Richtung 2)		B_46.5_2_G
+54315d4d-9e7f-4966-b98a-b08b79a959c0	f6bfb17e-9e13-40aa-b243-97fcda01a0b6	B_46.6_1_G (Richtung 1)		B_46.6_1_G
+e8934599-c9ba-4a3b-b171-6650a9dad1a4	f6bfb17e-9e13-40aa-b243-97fcda01a0b6	B_46.6_2_I (Richtung 2)		B_46.6_2_I
+02b6d562-03ea-4f64-9fb9-83667ab7a8f9	7e5beffd-8445-484d-ac51-2bd9d8e3a214	B_46.7_1_I (Richtung 1)		B_46.7_1_I
+bb78de7e-1b89-4dfc-a403-0df26a622574	7e5beffd-8445-484d-ac51-2bd9d8e3a214	B_46.7_2_G (Richtung 2)		B_46.7_2_G
+222c4572-e5e0-4641-8324-4e6182fbc683	88e21d93-2183-4a05-a2cf-3cc2d730a7d6	B_46.8_1_G (Richtung 1)		B_46.8_1_G
+ef4f3735-10f8-4954-9d17-22b50359aa8f	88e21d93-2183-4a05-a2cf-3cc2d730a7d6	B_46.8_2_I (Richtung 2)		B_46.8_2_I
+388c9eba-2795-45c3-bbf3-b5e5f61b29af	485b1f4e-86b4-4e61-bfaa-7040370aa893	B_48.1_1_I (Richtung 1)		B_48.1_1_I
+b33f4e2d-8a95-4d00-b9bd-89282c89f17b	485b1f4e-86b4-4e61-bfaa-7040370aa893	B_48.1_2_G (Richtung 2)		B_48.1_2_G
+357b83c2-ab9a-4f52-afff-9df0dcefb1fb	9ad79121-31cd-4948-9914-08b385301e1f	B_48.2_1_G (Richtung 1)		B_48.2_1_G
+14951ff7-d8d5-483c-9380-d8cc1f8bd3b4	9ad79121-31cd-4948-9914-08b385301e1f	B_48.2_2_I (Richtung 2)		B_48.2_2_I
+60f5ba4e-d289-4648-bec8-a6eaf00001fe	677127de-d3a9-4a33-8ecd-cf794f6fddec	B_49.1_1_I (Richtung 1)		B_49.1_1_I
+2abc20e1-b2cd-414b-b4d9-2bb44a6753b4	677127de-d3a9-4a33-8ecd-cf794f6fddec	B_49.1_2_I (Richtung 2)		B_49.1_2_I
+5ed89f59-850c-4df0-9564-cc0c93e0fe33	d0638c5e-db0f-4274-870c-2e3605e8355f	B_50.1_1_G (Richtung 1)		B_50.1_1_G
+568fad2d-9bfa-47ac-9463-53f69ec22381	d0638c5e-db0f-4274-870c-2e3605e8355f	B_50.1_2_I (Richtung 2)		B_50.1_2_I
+b1fc8216-c2b7-4740-9cc6-390772b8e10e	4a905f69-f28d-4138-84c9-b5cbd29ed88d	B_50.3_1_I (Richtung 1)		B_50.3_1_I
+1bd09f23-3d66-4d96-bf78-fc7f0e4061b2	4a905f69-f28d-4138-84c9-b5cbd29ed88d	B_50.3_2_G (Richtung 2)		B_50.3_2_G
+29e28993-faf2-4cca-9832-b4c836ba2b59	a9699225-3ee9-481c-a3cc-f156745238bb	B_50.6_1_I (Richtung 1)		B_50.6_1_I
+1752df13-da3d-4aeb-85bc-04f169d0ad08	a9699225-3ee9-481c-a3cc-f156745238bb	B_50.6_2_G (Richtung 2)		B_50.6_2_G
+48f26495-a815-44e4-95e6-dd67b4669acd	61768a1d-0367-48f6-b87b-1c2b90e7fa99	B_62.1_1_I (Richtung 1)		B_62.1_1_I
+7376b583-438e-42c9-81fa-2fc00bcb0991	61768a1d-0367-48f6-b87b-1c2b90e7fa99	B_62.1_2_I (Richtung 2)		B_62.1_2_I
+d9d136b0-1f9b-4abe-88b3-076de393b990	23615cb6-5a28-470a-9569-60d7a2a8b5c5	B_65.1_1_I (Richtung 1)		B_65.1_1_I
+03d3ead5-81fc-4e00-823e-1d3f05e8eeff	23615cb6-5a28-470a-9569-60d7a2a8b5c5	B_65.1_2_G (Richtung 2)		B_65.1_2_G
+26111141-c9ee-4a6d-b935-4ea07378416a	b8306794-1a8e-4d6e-baf2-6c7c4b5c0ebb	B_65.2_1_G (Richtung 1)		B_65.2_1_G
+38b6e3e8-9c45-4967-a503-e0d93b18b3a3	b8306794-1a8e-4d6e-baf2-6c7c4b5c0ebb	B_65.2_2_I (Richtung 2)		B_65.2_2_I
+7ba2cada-df65-4d4f-968b-fcc4f3758241	9f26a8b2-7ce6-4f36-b4eb-f6d7a20355f5	B_66.1_1_G (Richtung 1)		B_66.1_1_G
+5dd6f3fe-f352-4f15-ad7c-b819e46317de	9f26a8b2-7ce6-4f36-b4eb-f6d7a20355f5	B_66.1_2_I (Richtung 2)		B_66.1_2_I
+fc3e902f-9e13-4a33-8808-c9c7d1791e47	97aea76f-ba6b-4dc3-a6dc-0fd2eb0bc397	B_66.2_1_I (Richtung 1)		B_66.2_1_I
+328a293f-afb5-4f61-9b0e-08292943c83b	97aea76f-ba6b-4dc3-a6dc-0fd2eb0bc397	B_66.2_2_G (Richtung 2)		B_66.2_2_G
+8660b2be-301a-43af-b092-4db9a97b8a9a	6178eab3-5231-427c-a4e0-57b310f6c077	B_69.1_1_G (Richtung 1)		B_69.1_1_G
+c8c495c3-86b9-495c-a3c4-aef8c932e3a3	6178eab3-5231-427c-a4e0-57b310f6c077	B_69.1_2_I (Richtung 2)		B_69.1_2_I
+3099055a-3500-46ca-82d5-14840c7f572a	bebc1a3b-74e2-470e-9a96-c1ca970551a3	B_69.2_1_I (Richtung 1)		B_69.2_1_I
+7dabe999-f244-4cf9-9db9-6793b058c8bf	bebc1a3b-74e2-470e-9a96-c1ca970551a3	B_69.2_2_G (Richtung 2)		B_69.2_2_G
+afec9bdb-612c-408d-af40-eb766bb8eb28	c8d71786-655f-4ebd-9bc3-15f182c38821	B_78.1_1_I (Richtung 1)		B_78.1_1_I
+9315aa87-8ffe-4398-90b6-7815b1681fae	c8d71786-655f-4ebd-9bc3-15f182c38821	B_78.1_2_G (Richtung 2)		B_78.1_2_G
+c426e1e2-cacc-44a9-8abc-22000f2bf059	52d1d96d-6d99-4faa-9cbd-be7bd2823b3c	B_78.2_1_G (Richtung 1)		B_78.2_1_G
+b2e67e90-cd39-4684-b486-9676a037292b	52d1d96d-6d99-4faa-9cbd-be7bd2823b3c	B_78.2_2_I (Richtung 2)		B_78.2_2_I
+3df488d5-5b57-4b4d-b56e-f05997cdf2cb	9c1522e1-b6ef-4239-a463-afba09fc6ec3	B_8.1_1_I (Richtung 1)		B_8.1_1_I
+2f5d94bc-d8a5-4358-bed7-c02549e844f3	9c1522e1-b6ef-4239-a463-afba09fc6ec3	B_8.1_2_I (Richtung 2)		B_8.1_2_I
+bbf7e876-716a-473b-ab89-a05fdd3ee41e	077157be-fbf1-4ab0-9c00-ba5d12ee9686	B_85.1_1_I (Richtung 1)		B_85.1_1_I
+e7f607b7-f026-4291-9cd7-ebe1c0e2c0f5	077157be-fbf1-4ab0-9c00-ba5d12ee9686	B_85.1_2_G (Richtung 2)		B_85.1_2_G
+d2357209-e303-4355-af4d-c1b7d83290fb	7455f858-9703-4527-8693-73b4c624763d	B_85.2_1_G (Richtung 1)		B_85.2_1_G
+76a9f3cd-6a0a-407b-8670-1753fd52cd37	7455f858-9703-4527-8693-73b4c624763d	B_85.2_2_I (Richtung 2)		B_85.2_2_I
+90c3f92e-5dfb-485a-b165-bd8a8c9d6420	04979100-9e64-4ed6-95c3-bec20ab22d09	B_9.1_1_G (Richtung 1)		B_9.1_1_G
+6c0c2551-51b9-4dc1-979f-6c928058193f	04979100-9e64-4ed6-95c3-bec20ab22d09	B_9.1_2_I (Richtung 2)		B_9.1_2_I
+7e1fa3c6-2f47-4c1a-b77a-8faaaaa1ec5e	4552ab93-28e4-42a2-af8c-46d5790a950f	B_9.2_1_I (Richtung 1)		B_9.2_1_I
+5b67beae-c223-49f1-892d-5cfeca5c27cb	4552ab93-28e4-42a2-af8c-46d5790a950f	B_9.2_2_G (Richtung 2)		B_9.2_2_G
+778be9ad-64f0-4028-8f03-251bd5f9c12b	79601896-2c58-40ff-9e28-7ce12aee9d41	B_9.3_1_I (Richtung 1)		B_9.3_1_I
+fa337a18-5fbe-415a-9f50-dbd3979b50a8	79601896-2c58-40ff-9e28-7ce12aee9d41	B_9.3_2_G (Richtung 2)		B_9.3_2_G
+b6006cc1-0f9d-423c-a65f-7ba5ba50fb8a	e663e3be-f262-4f4e-9c4a-efd8444b4f9f	B_9.4_1_G (Richtung 1)		B_9.4_1_G
+44a12f7d-6519-4e57-a54c-1be9f3ce7794	e663e3be-f262-4f4e-9c4a-efd8444b4f9f	B_9.4_2_I (Richtung 2)		B_9.4_2_I
+c578ac6f-cf56-4064-9d3d-6a76c8eae931	ede561df-d84e-4e80-88d9-7d7406622cbd	B_9.5_1_G (Richtung 1)		B_9.5_1_G
+39e4860c-2bdd-4961-889d-e03c0a063d01	ede561df-d84e-4e80-88d9-7d7406622cbd	B_9.5_2_I (Richtung 2)		B_9.5_2_I
+82abaf71-2755-4926-8202-1e25d68d4978	77e0772d-b481-4b1b-ab0f-0a2e8cd83138	C_20.2_1_I* (Richtung 1)		C_20.2_1_I*
+870c59ba-9500-4f69-acf5-ccb15bcc4f50	77e0772d-b481-4b1b-ab0f-0a2e8cd83138	C_20.2_2_G* (Richtung 2)		C_20.2_2_G*
+0b0a4312-fce7-4288-a5c5-174541e87ee1	5f127565-6b7f-42ee-9155-913a0db396cd	C_20.3_1_I* (Richtung 1)		C_20.3_1_I*
+f2dced78-306c-4c98-8d41-5ab21ff0a52c	5f127565-6b7f-42ee-9155-913a0db396cd	C_20.3_2_G* (Richtung 2)		C_20.3_2_G*
+c58a65e6-fd1a-474d-8fab-88a382ea1469	b3e125a6-f275-44a5-a493-9d9e0b96b352	D_15.1_1_I (Richtung 1)		D_15.1_1_I
+b9172f5a-023e-4426-afb9-33ae5ecebd5b	0c9b5df9-a269-4096-8cce-181a09456e9a	D_15.2_2_I (Richtung 2)		D_15.2_2_I
+b28ffa29-6176-4340-96c9-319a441f2581	15244802-0b50-4857-aac7-2cf9384541fa	D_19.2_2_I (Richtung 2)		D_19.2_2_I
+efb3d704-200f-4d5f-8e40-5edcf2fc9c0d	26575ab9-f8c5-48f0-aedb-182be7e79fa3	D_2.2_1_I (Richtung 1)		D_2.2_1_I
+d82e7280-c7d5-4180-be59-b287d90f401e	e3267ba2-ec09-45ad-b31d-8dd0bbe62d2e	D_21.2_2_I (Richtung 2)		D_21.2_2_I
+3c6b5e5a-31e1-4133-8776-fa1a46704503	0d19b786-27af-44aa-81a5-2d5657ef5f36	D_22.2_2_I (Richtung 2)		D_22.2_2_I
+cb82aa6f-6afb-41ed-a153-cb22a6196afa	017bbf49-47d4-47dd-a252-6ba093fbeb22	D_24.2_1_I (Richtung 1)		D_24.2_1_I
+8c79965f-3446-43b5-995b-26b9c1ff2f99	a4f2be3d-95b0-4404-aeb0-3aedc8c07ecf	D_26.2_1_I (Richtung 1)		D_26.2_1_I
+1d908821-25ae-4f0a-b4af-a73fa43ef947	66fc0691-137b-4e1f-9de7-b61f67b20e9b	D_4.1_1_I (Richtung 1)		D_4.1_1_I
+c8398d57-f309-4361-9e62-ef8490363171	1c8ac7ea-e0a8-4434-a640-144319c45a72	D_4.2_2_I (Richtung 2)		D_4.2_2_I
+0cd1eb82-4bf6-4df3-8554-c478fcfd48b4	029c0f2e-b221-4572-afea-d21b60b9de01	D_40.4_2_I (Richtung 2)		D_40.4_2_I
+c3a62333-890b-4b94-919e-4b37acd27d13	9f4ffa2b-f465-48cd-934a-ec33e649cfd2	D_40.5_1_I (Richtung 1)		D_40.5_1_I
+ebb7bd6b-a9e9-47e5-9ebf-2d65f5818c66	3f02fea6-0595-4ee4-ae34-7b3444ab5079	D_41.6_1_I (Richtung 1)		D_41.6_1_I
+f670b952-eee8-4299-8d21-36089e0d57a3	69544b4a-f8a6-4c3a-a2de-7736634778a9	D_42.1_2_I (Richtung 2)		D_42.1_2_I
+745cdfca-0513-4de7-80d1-b589f11e2a4d	69544b4a-f8a6-4c3a-a2de-7736634778a9	D_42.2_1_I (Richtung 1)		D_42.2_1_I
+21be3a71-cdd0-492f-af8a-bbcd31e2efde	bbdcd18c-0585-4a1a-9ec9-b04a78113ca8	D_44.3_1_I (Richtung 1)		D_44.3_1_I
+7ae940e2-8f3e-4b00-9cdc-4cc327121ecc	bbdcd18c-0585-4a1a-9ec9-b04a78113ca8	D_44.4_2_I (Richtung 2)		D_44.4_2_I
+0b553935-02c2-4890-bd29-f0aec7683261	2d1dbe5d-bc8d-47ab-916a-6a749245d101	D_45.4_1_I (Richtung 1)		D_45.4_1_I
+bde45dfc-f7c3-478c-a9a6-c5675b99375e	0d614c5c-5d5f-4d7f-8cb4-178765874647	D_50.5_1_G (Richtung 1)		D_50.5_1_G
+0e25f544-afb3-4a58-898d-767907968b86	0d614c5c-5d5f-4d7f-8cb4-178765874647	D_50.5_2_I (Richtung 2)		D_50.5_2_I
+3bb4b527-3990-4755-9e65-ff3b300252be	e5955033-155b-456b-b9e9-15ffc9dbc4c0	D_55.2_1_I (Richtung 1)		D_55.2_1_I
+d055edfb-5a44-45f9-9a9f-78e55e7c1d03	1cef93d5-3005-463d-b70f-cf3930c198f0	D_55.3_2_I (Richtung 2)		D_55.3_2_I
+40c7ed46-1117-4b00-b595-0e6e25e9d8ef	e1486d48-8de6-4e8f-b13f-af0aa12cd6d2	D_56.1_1_I (Richtung 1)		D_56.1_1_I
+6ae5394b-4c9f-42c0-ba06-aded924562fb	1e4f9fed-c71e-40c1-a9fc-d37894d1309a	D_56.2_2_I (Richtung 2)		D_56.2_2_I
+4a1682bb-beca-4573-8203-ce0e739d91cb	2e3b31a0-a308-45d5-af08-869155b0e488	D_57.1_1_I (Richtung 1)		D_57.1_1_I
+6223c5b1-cf6e-428b-ae59-be156e9a4636	bf1f01ae-eb8c-475f-8e21-959a012059ff	D_57.2_2_I (Richtung 2)		D_57.2_2_I
+7f7e8834-e511-4bcf-8338-8e7b0d595778	df101039-59f6-46e5-a59f-05fb71d641ab	D_58.2_1_I (Richtung 1)		D_58.2_1_I
+fbae1023-c5b6-46db-ba95-e4d4d7e14237	8757950c-caed-412c-ac99-ba176dd1acc4	D_58.3_2_I (Richtung 2)		D_58.3_2_I
+175d77e1-caee-4bc6-b893-3d0930e7e8d1	4b99f7f9-c9e5-40e4-b24c-39f64f87ecf4	D_59.1_2_I (Richtung 2)		D_59.1_2_I
+d5dfc411-92af-4f84-baf6-695d4b8be8a0	c361a9a8-ca59-42f1-a1f8-138cfda05b67	D_61.1_1_I (Richtung 1)		D_61.1_1_I
+6f9360ea-c31a-4b55-8aaa-9fe8604e5f9d	3ed49c63-e1d3-4e3a-a1ed-0b99fc99c71d	D_61.2_2_I (Richtung 2)		D_61.2_2_I
+64f295ca-0575-4ac5-b8aa-fccff8e47637	d904a6f0-5dcc-46e9-8573-433a619089d0	D_68.1_1_I (Richtung 1)		D_68.1_1_I
+8c71c1a1-ac78-428a-8c9b-08c68282faae	7234e762-c5a0-41a6-8904-35e44cb69087	D_68.2_2_I (Richtung 2)		D_68.2_2_I
+4c118567-294a-49b3-aa0d-73fb0a977c3d	4121befc-c0a0-43e6-8a42-5cb5fc0843ae	D_72.1_2_I (Richtung 2)		D_72.1_2_I
+8596c74a-3d23-4c99-b80c-56b4b6ff8319	0bbe8772-a504-49ca-9649-a52c65678163	D_72.2_1_I (Richtung 1)		D_72.2_1_I
+a77955e1-0198-4a96-aaf5-ba2c651ac0cb	a80f6806-8443-4013-bbd5-e4b5ff013828	D_73.1_2_I (Richtung 2)		D_73.1_2_I
+02f88a2e-36b9-410e-84e3-fb75b3f37544	a80f6806-8443-4013-bbd5-e4b5ff013828	D_73.2_1_I (Richtung 1)		D_73.2_1_I
+18119d9a-5900-4bbb-ad5a-ae2d9944b3af	7772ed13-90d1-40d2-80d7-715ea9b31079	D_74.1_2_I (Richtung 2)		D_74.1_2_I
+85efa30e-88ad-4a0a-9d25-c026c13e2cde	176b8e62-a6d7-4404-ad52-828bbc765756	D_74.2_1_I (Richtung 1)		D_74.2_1_I
+46497ff8-2ea7-4a40-a078-99823c62f5fa	94f61afd-3a3a-4edb-b125-3fe4db4e9481	D_80.1_1_I (Richtung 1)		D_80.1_1_I
+44f5d38c-bca3-41e8-808d-31e73406d650	00d8fa50-0192-4866-89db-a3f5ef364d2a	D_80.2_2_I (Richtung 2)		D_80.2_2_I
+c40c126d-1533-4722-b1a1-f8557c7d208b	8ddae2e9-8035-42e4-b152-91e380bc828d	D_9.6_1_I (Richtung 1)		D_9.6_1_I
+9de3514e-71b7-4050-bf21-804f17a58708	b7293c19-5c8c-4d5a-af06-a468ec299b62	E_24.4_1_I (Richtung 1)		E_24.4_1_I
+5cbd59e5-31ed-4b18-9be9-419525e44052	b7293c19-5c8c-4d5a-af06-a468ec299b62	E_24.4_2_G (Richtung 2)		E_24.4_2_G
+6bc26e0b-69f0-41fe-9968-a28491aaf984	cba14d7e-69bb-4443-b0aa-9c80c3d0cb3b	E_24.5_1_G (Richtung 1)		E_24.5_1_G
+735d4709-1751-4eb0-b511-9f4a94461d02	cba14d7e-69bb-4443-b0aa-9c80c3d0cb3b	E_24.5_2_I (Richtung 2)		E_24.5_2_I
+f4468138-e551-49cc-8e5b-a05c80f4ea66	bd1aa173-8048-4587-9b4e-d5544bd92772	E_38.1_1_G (Richtung 1)		E_38.1_1_G
+61bccf39-4ae5-48aa-a0da-b60d22947fb8	bd1aa173-8048-4587-9b4e-d5544bd92772	E_38.1_2_I (Richtung 2)		E_38.1_2_I
+4e5fef62-2d71-4b40-8242-8cd6877aed1a	bf845988-3bdd-4511-b3bc-fb09bad70276	G_2.4_1_I (Richtung 1)		G_2.4_1_I
+908e2d16-747f-4ee7-8757-4d69a92d8b4a	dbfa3e2a-f2ed-4075-874a-a93941aac4d6	G_32.1_1_I (Richtung 1)		G_32.1_1_I
+d0e3035e-9ad7-40da-b021-9833bc467ffa	dbfa3e2a-f2ed-4075-874a-a93941aac4d6	G_32.1_2_G (Richtung 2)		G_32.1_2_G
+bce9fb54-7de5-4cee-b0b7-659bc3b403a7	9a453733-19aa-4dc4-8764-5ab2027c268c	G_32.2_1_G (Richtung 1)		G_32.2_1_G
+f95bb73e-f5fe-47c2-b41e-85e2b10bddfa	9a453733-19aa-4dc4-8764-5ab2027c268c	G_32.2_2_I (Richtung 2)		G_32.2_2_I
+e44cf5c8-290d-48fe-bb02-119409250505	977a27e6-f014-49a7-b9e3-3c60561492aa	G_40.1_2_I (Richtung 2)		G_40.1_2_I
+0a43ceac-bc47-441c-954c-c56571c17deb	977a27e6-f014-49a7-b9e3-3c60561492aa	G_40.2_1_I (Richtung 1)		G_40.2_1_I
+c6b62180-844d-41c9-b375-0beaf66e9461	a2163a49-3d46-4158-a470-2c1fb73ff554	G_40.6_2_I (Richtung 2)		G_40.6_2_I
+9dd26aea-16bd-4717-a772-e13dd4f4e4b4	990a13e0-d11a-4154-83bf-b62b1e14a950	G_40.7_1_I (Richtung 1)		G_40.7_1_I
+f73c1358-a2bb-401d-b816-3c7baea95ab5	9abc559e-05e6-467b-a8b5-2de7c271e1f7	G_40.8_2_I (Richtung 2)		G_40.8_2_I
+532d07be-bdc7-44b0-9902-b2eacdc1274a	5e11aa77-b127-40f9-b2f1-4769b2febc13	G_40.9_1_I (Richtung 1)		G_40.9_1_I
+c992578c-b7fc-4e87-b3b2-c951ce70def3	22d55dde-7d1f-4d1b-85fc-faf685542902	G_46.3_1_G (Richtung 1)		G_46.3_1_G
+6be64f8d-1795-4d78-bf99-3bdf4f629057	22d55dde-7d1f-4d1b-85fc-faf685542902	G_46.3_2_I (Richtung 2)		G_46.3_2_I
+8d682be6-3b92-43c6-b35a-454fd43ca1cd	9be76c54-7fbb-41e0-a0a6-c8a1d8bcfc3f	G_46.4_1_I (Richtung 1)		G_46.4_1_I
+2e7825a7-a5cc-4b2e-b16e-7783701f15c2	7b7ec8b8-d426-4f2f-81c0-29265b2be2a4	G_59.2_1_I (Richtung 1)		G_59.2_1_I
+5423549f-6923-4f49-b4f3-c7f4a772f7f5	47f0cdec-2f2c-48f9-8e79-aca33f2bd17d	H_2.5_2_I (Richtung 2)		H_2.5_2_I
+292df5e7-9482-4613-a30a-7354b943453d	886cbc86-1788-4d99-afdd-dad68f1084f1	H_21.3_1_I (Richtung 1)		H_21.3_1_I
+088aca5c-e35d-41e1-9afc-91fd6f60c252	886cbc86-1788-4d99-afdd-dad68f1084f1	H_21.4_2_I (Richtung 2)		H_21.4_2_I
+edaf1868-09bf-4051-ac98-43e33be7a662	2b4a35f1-4983-41ec-8d42-acfac2a2935c	H_29.2_2_I (Richtung 2)		H_29.2_2_I
+8225a234-b70d-4852-babe-1203feec438b	19fe5121-2590-4ff9-9ca8-6412a815fa19	H_29.4_1_I (Richtung 1)		H_29.4_1_I
+a1722f29-2079-4a82-bc5e-634ac37807f2	68bd4cf2-b2ab-4e89-ba21-a764421789b2	H_30.1_1_I (Richtung 1)		H_30.1_1_I
+94346264-e2bb-4b4f-aafb-a4d0be4dbe98	68bd4cf2-b2ab-4e89-ba21-a764421789b2	H_30.2_2_I (Richtung 2)		H_30.2_2_I
+5ec4de02-80ca-4668-b929-6d82223d3d0d	7a38034f-9bd5-44af-963e-26d9b736f6b1	I_19.1_1_I (Richtung 1)		I_19.1_1_I
+edd40c90-6580-47bb-a7f4-702a922aae3c	e9bfc08e-8925-470a-adae-40c904e1fda9	I_24.3_2_I (Richtung 2)		I_24.3_2_I
+7ae83699-56d2-4f94-bb42-cd26051a7591	b1923170-7866-4a80-8487-c22850f6efe4	I_27.2_1_I (Richtung 1)		I_27.2_1_I
+edf55c3f-6499-4243-acc9-4f677d669d05	c77b5fdb-f885-4874-bb07-68da0e4c0375	I_31.2_1_I (Richtung 1)		I_31.2_1_I
+b84732c2-a134-4886-a81d-1faeea5a74b2	c77b5fdb-f885-4874-bb07-68da0e4c0375	I_31.2_2_I (Richtung 2)		I_31.2_2_I
+29d8df88-56a4-40ca-af09-31d3e2959336	e3408d9a-b86b-4a7a-8c96-b4f8b4934aa6	I_38.2_1_I (Richtung 1)		I_38.2_1_I
+137e8c5d-70f2-449a-a95d-cd7d00a578b6	8ae8f801-9ab1-4ee3-9973-15a07f67d284	I_71.1_2_I (Richtung 2)		I_71.1_2_I
+71009c5e-56ed-4ef4-9d3c-c33c20f9ba4f	8921abf3-401e-49d0-a83f-bb8d92e02628	I_71.2_1_I (Richtung 1)		I_71.2_1_I
+7f728651-4fb2-4368-9c97-679aa0b2e804	1999951b-d0d5-4605-82a5-99948d2faab1	I_86.1_2_I (Richtung 2)		I_86.1_2_I
+a9e580bf-8ba7-4f56-8a28-e9266b368ac1	7b161005-f138-4714-9ae8-5c093eb0e74b	J_16.3_2_I (Richtung 2)		J_16.3_2_I
+33d4ff30-db8a-4f84-b460-bea85263ce08	668f312f-6960-4078-bc0c-36089af4a603	J_2.3_1_I (Richtung 1)		J_2.3_1_I
+9bc67a04-6298-47da-b7f0-7e24a7f6e911	668f312f-6960-4078-bc0c-36089af4a603	J_2.3_2_G (Richtung 2)		J_2.3_2_G
+e2aea128-f501-4dea-a46a-658d101c62a4	13c3c641-e1f7-4ded-8a8f-dc2c1904ca6a	J_20.1_1_I* (Richtung 1)		J_20.1_1_I*
+a0dc6a81-41fd-49d4-92a0-abe210285c87	13c3c641-e1f7-4ded-8a8f-dc2c1904ca6a	J_20.1_2_G* (Richtung 2)		J_20.1_2_G*
+027c9971-55f1-411d-815d-a6dca407f55a	2d430191-5148-4000-9f38-9264de575911	J_24.6_1_I (Richtung 1)		J_24.6_1_I
+cc2b57ce-b7b5-4f31-8faf-14ee34bdfd84	2d430191-5148-4000-9f38-9264de575911	J_24.6_2_I (Richtung 2)		J_24.6_2_I
+bc593064-2524-4c71-9e27-1f5cb2d44a90	595839f1-bfa3-4f94-8fc8-bbc23373eb19	J_27.1_1_I (Richtung 1)		J_27.1_1_I
+00699463-578e-4b74-96f6-c964d744f8fe	595839f1-bfa3-4f94-8fc8-bbc23373eb19	J_27.1_2_G (Richtung 2)		J_27.1_2_G
+89a662e1-9f3f-4d2d-93ed-01fec056e1de	7283419f-e56a-443a-bce7-7e6303e3c2aa	J_31.4_1_I (Richtung 1)		J_31.4_1_I
+6ce952cf-3bf1-458f-9f0f-27125227fefd	7283419f-e56a-443a-bce7-7e6303e3c2aa	J_31.4_2_I (Richtung 2)		J_31.4_2_I
+22f0fca8-686c-4ba8-82f4-0f0a51947fcb	1e515b7e-d856-4aaf-af8a-c7f4b7856af7	J_36.1_1_I (Richtung 1)		J_36.1_1_I
+77135084-25db-4287-ad93-faebc7feed37	1e515b7e-d856-4aaf-af8a-c7f4b7856af7	J_36.1_2_I (Richtung 2)		J_36.1_2_I
+bba1b0d3-f7c7-4e6b-a19f-59ea2469cc1c	0a83facf-5d95-46de-90af-b5d1e935d7ae	J_37.3_1_I (Richtung 1)		J_37.3_1_I
+ad9b20f9-971c-4e7b-bf44-a9b0fa45aa8e	0a83facf-5d95-46de-90af-b5d1e935d7ae	J_37.3_2_I (Richtung 2)		J_37.3_2_I
+6e04fc08-3b2c-4a07-a5db-20e174d1b3ee	a5d2fb4b-011c-4cd7-8d45-ea18886bdfa0	J_42.7_1_I (Richtung 1)		J_42.7_1_I
+01f8e4d2-3b0f-4ca5-9dbe-024add1ee69c	a5d2fb4b-011c-4cd7-8d45-ea18886bdfa0	J_42.7_2_I (Richtung 2)		J_42.7_2_I
+f1e26f36-dd8c-4f37-88a7-e85a8ee92a74	d37b8931-e1ad-46e1-ac65-f6a593da61ca	J_47.1_1_I (Richtung 1)		J_47.1_1_I
+de5fbca7-a545-4191-a97e-7f3765a42ffa	d37b8931-e1ad-46e1-ac65-f6a593da61ca	J_47.1_2_I (Richtung 2)		J_47.1_2_I
+4939e30a-018c-482d-8cb5-c477e5b2ae5e	075d0a14-5e2a-4442-bce7-2a2fa84716c3	J_52.1_1_I (Richtung 1)		J_52.1_1_I
+3673e1ea-a931-42e6-8c00-f751573c0bc0	075d0a14-5e2a-4442-bce7-2a2fa84716c3	J_52.1_2_I (Richtung 2)		J_52.1_2_I
+56ce4767-0fd4-4be8-a334-a14f82a7b9bf	2a74d2f5-ee45-48a5-b068-057be374fa8f	J_53.2_1_I (Richtung 1)		J_53.2_1_I
+abc8b4ec-9188-475c-9b0f-8dad88a5a700	2a74d2f5-ee45-48a5-b068-057be374fa8f	J_53.2_2_I (Richtung 2)		J_53.2_2_I
+686a3a56-a702-44b6-a738-c7796ae5cb6a	30d66148-696f-470a-9a96-1bad5ceec307	J_6.1_2_I (Richtung 2)		J_6.1_2_I
+42892c32-b2b1-4a17-8f28-75c444ebd401	30d66148-696f-470a-9a96-1bad5ceec307	J_6.2_1_I (Richtung 1)		J_6.2_1_I
+31a8e57c-e342-4c35-a0eb-47023b2a68b8	6ec07dec-7c4f-463d-9bec-ba0ea26a3b9b	J_60.1_1_I (Richtung 1)		J_60.1_1_I
+21b0c42a-b7a2-4190-a660-51c56b1e6a82	6ec07dec-7c4f-463d-9bec-ba0ea26a3b9b	J_60.1_2_I (Richtung 2)		J_60.1_2_I
+e0f4f2d9-fbbb-4ae6-b163-f622ece23d24	ac4b360d-5cb1-4558-adac-e1a0f6b17611	J_63.1_1_I (Richtung 1)		J_63.1_1_I
+7f123287-c1cb-4c0a-a56c-be4325a7553d	ac4b360d-5cb1-4558-adac-e1a0f6b17611	J_63.1_2_I (Richtung 2)		J_63.1_2_I
+62bd2ee9-1d09-4cd6-9e5f-368586273cdd	7bd84b64-46d2-4959-bdad-730b0c013003	J_76.1_1_I (Richtung 1)		J_76.1_1_I
+05cc2e7c-76f3-43ec-b4f5-8ec36a048c92	7bd84b64-46d2-4959-bdad-730b0c013003	J_76.1_2_I (Richtung 2)		J_76.1_2_I
+dd9ba230-6a09-426d-914a-94514e2d64c7	d83d6097-875b-4617-9999-17fd8546c386	J_77.1_1_I (Richtung 1)		J_77.1_1_I
+133affc1-15d1-4035-8bd5-bc1166f24a28	d83d6097-875b-4617-9999-17fd8546c386	J_77.1_2_I (Richtung 2)		J_77.1_2_I
+b7e823c8-df0e-48b3-8d44-ef9ce3680869	8ddcaec5-e00a-4e80-b320-65569bd7408b	J_79.1_1_I (Richtung 1)		J_79.1_1_I
+7b6e2250-595f-4ef7-ba85-8002b003e0f6	8ddcaec5-e00a-4e80-b320-65569bd7408b	J_79.1_2_I (Richtung 2)		J_79.1_2_I
+b51f0304-e28b-4ec1-8e5f-dda657c092b1	2e02b374-63ec-450b-8fa6-52d146fcc3ed	J_81.1_1_I (Richtung 1)		J_81.1_1_I
+7ba6069f-c175-41d2-b13b-94fb23fde5a6	2e02b374-63ec-450b-8fa6-52d146fcc3ed	J_81.1_2_I (Richtung 2)		J_81.1_2_I
+43cb14b4-c5d4-4425-a62e-e3176212c70c	07907880-9dfc-4349-aa5e-fc9a40aa0db5	J_87.1_1_I (Richtung 1)		J_87.1_1_I
+e2d60e4d-9c79-4f6e-ba95-983d60beda5c	07907880-9dfc-4349-aa5e-fc9a40aa0db5	J_87.1_2_I (Richtung 2)		J_87.1_2_I
+5e113e28-da6f-444b-a1f5-8bd8b8a50b7d	a88bf1ba-0e9f-416d-bbea-b56e1863e3fd	X_44.1_1_I (Richtung 1)		X_44.1_1_I
+8a264ede-47f1-4b3b-9523-1626bef490c5	a88bf1ba-0e9f-416d-bbea-b56e1863e3fd	X_44.1_2_I (Richtung 2)		X_44.1_2_I
+d2aac31f-e244-4266-9246-19ec95de6cc4	f6ce388b-6401-4fb6-a2ba-a71124ba7ad4	Stadt Stein Nürnberger Straße		100063085
+295dc968-d3dd-4917-ab8f-a679960df714	4f1b11d7-d4a9-4cc5-9fe2-41114f770bd0	Erbprinzenstraße		100004165
+7bb8ec52-1222-4f60-99e2-1b5386fec88d	09a15e55-ad8f-4858-a439-9d83c32ee562	Radschnellweg Osnabrück Belm		100050631
+aabd7caf-0e71-4fcd-a1fb-166f5022f162	d2a26e5c-5095-47c7-ba9d-6eec7aeddde3	Römerhofweg		100063376
+c027a122-38f3-4ae4-b7ed-2f365a26017a	971b7c56-ce35-42ea-9519-11f82b6b050d	Horstmannsteg Hennef		100063389
+e77a6d5b-8b5c-4bda-8bc6-3dcf57f1f327	d7059ec7-b7c1-4a15-9eef-97ea35a69180	064b		300022489
+8fb31a40-53e0-4c7c-bdc1-46209db5adf1	25f34d59-8798-409c-b5d2-124cb3b41b2f	121		300022501
+9ffd27db-9d4e-4019-b141-72e38fac4d14	7844e667-8569-4814-9235-f37b6f7f3196	122		300022502
+e2bda801-84f0-43c7-a052-772d4649e1c6	b7721b6b-b7c0-45b6-be6e-d4719bb9950d	123		300022506
+5cfbfaa0-713f-45c0-8fed-79f8c04ba801	13ae5275-9622-4811-9a80-f52faae01aef	051		300022516
+b72b22c2-a264-4b78-b663-d4874dce7ccd	e5f36ff1-93f6-4285-a9c2-1d79abba8877	111		300022577
+57dd8b7d-84bb-4b0c-be54-a00c4c5fa73a	934465bc-9c04-41c7-8f0c-d46daac3309c	028		300022578
+7caebfb5-15dc-419c-855f-96e36d1cbef2	caa7e16c-6946-4974-adf0-47360c0a12b9	059		300022608
+8ea43198-8929-4d4e-ac33-dee40307ad69	1f9e5140-ae97-4750-90c7-d40526933c78	084		300022633
+03b495f4-d820-481d-ad6d-5dff942c7fd5	796c56e7-6305-4187-824f-45b9a4a2b84c	085		300022664
+ac5946a2-f965-41f7-bd55-ae118c14d901	57a6db75-7f2c-4c91-aa49-6c02ad7fa599	086		300022666
+d56b41d6-2049-47d4-9048-c62d4ea05c40	4c963be6-8d7d-4d9b-86fd-150c29a8ad43	117		300022699
+d73ecc8b-d434-4f81-bb9a-8d17f8188cde	8de4f3e1-fcdc-4035-a487-8d7d77c9786e	043		300022870
+9e0a7d49-217f-433f-b4b9-af0dd3f6eb32	fdcdf742-8f49-4a06-a149-c5c847e35f75	044		300022899
+a10af290-19a7-4af3-842d-f0d06c71e90f	f9a81a12-8ca8-424a-85d3-a426328b2679	137a		300023017
+b556d546-4fb8-49ab-99a2-b9f4c604a790	6f4e996d-56f7-4483-8f88-e196e6b3ceb0	137b		300023018
+10bbf8b6-a7ac-402c-b1c0-cd080b90eac9	8771705f-a9f8-434e-8037-634f400379e8	138a		300023019
+060f0064-d1d0-4995-82c4-d411703b2a8f	79a0c451-96f8-4b86-be8b-62e671609c44	138b		300023020
+d8e3a415-b914-46c3-9e41-d5825b891ace	7e615aa8-638e-4f96-9815-e5fef24ecd0c	063		300023021
+a1ebaa89-a19c-42d0-8165-031691d49891	abeb1c53-849e-4d18-8586-0cc059e3f019	047		300023023
+1cabe54b-894e-4b5c-8724-1d08ae865e7e	c4e8d7ba-9f65-40c4-840e-545c840f0d5a	135a		300023024
+07d52b97-66fc-4ac8-9a0b-f07e883423a3	3f13f2e0-90f0-4da9-9d7b-0a299c0ad8d8	135b		300023025
+13f5d285-be06-44ca-a7e7-96b33c24ae15	8a4b1fb7-85d7-4e25-b109-47d46f15d97c	135c		300023027
+27b1d8de-4037-48e8-9205-5155267f3bca	fdb5eff6-eda0-4655-a219-b0d2bdbffec3	087b		300023094
+57a0489e-b9e6-4d52-ac72-fcb9cd7317e1	4abb336c-6515-4ad5-92bd-01703f648a7c	087a		300023095
+9ce453a6-b63a-4542-981a-90d369e4a8a2	782a65c3-1e76-4abe-b7e1-a4f5823a7b4b	045		300023096
+826fbfbe-a668-40ff-81e3-5e81c4a939f6	0b6edea7-60cd-4f59-9c74-682400ed2fcf	052		300023219
+c9089107-6213-4a31-add2-d219c5a582d4	c20ad583-505c-4583-9e4c-c38a44d2bcd8	054		300023225
+1aad0b3f-dd68-4e6a-84a4-30cd45bef92e	607f0a07-7509-4517-955b-5cc3965269da	048		300023310
+da610a10-3842-432e-b8f1-d390874aa582	bbfef302-d937-4691-ab38-a4c97de02951	071a		300023417
+d9e69593-dd01-4d62-9d5b-0dc61bb81c89	e93bf808-4d5b-4b0c-b403-f873263ec6d1	071c		300023418
+153dd9af-22c7-41a9-8d94-2a45f4a00352	eeb7b2a3-5c2b-4d15-b723-799f9d7e2724	073		300023481
+99418284-ed50-40bb-bc6f-2745fe49f5b1	6fa44868-6158-4e3e-9240-26858c048c0a	056		300023562
+a2e0503c-9221-4a11-80bb-5fba1b5f356e	161bfaa5-18ea-404f-be68-fec3721a4bd0	032		300023574
+26878b97-4d6e-4fc6-92f2-bd928a76fab2	fbcbfc0b-78b0-4c30-9710-a0007a3a4853	055b		300023583
+b587ca78-aeec-48ed-9765-674bcdb04bf5	4a3447cd-bdfb-42e1-82ba-07d3b8d5a993	033		300023585
+12a90a09-de99-4764-9b01-d23ddf22237e	f2e308d2-9524-491e-8d11-3a07967becb2	026		300023603
+271d7278-e920-4ac5-aeef-759bbf825229	1925bd59-8561-4605-accc-2faed4ae6aa2	055a		300023605
+5bbeb947-1010-4a45-9f40-1d5c7e51cfc9	d027dc36-5870-41e6-a42c-02354bbdce8b	034		300023608
+5865f343-da16-4c08-adc5-9ef14620713b	d29b3154-26bb-410c-8a55-caa390c632d7	005		300023629
+8513e71d-a9e1-43de-87f5-dd2e51a66d0c	4f9db2b0-9704-4693-bcbb-1c851e326075	110		300023639
+83f528c2-3044-46aa-aa7a-e424e1020788	f74a886d-6448-4779-90d7-66081b84eb53	049b		300023654
+ff868cdf-d344-45ff-9d92-b6e63ba21bda	756966a0-54b5-4459-8735-0609d0668f9b	049a		300023655
+847d40d5-8be2-4a7b-b64a-c9a4b55272e7	f0b46c81-a7e3-452c-98d8-8f17305983c8	128		300023661
+3c7cc3cb-3516-4f9e-98a9-c2a905432ecc	3afd2de3-2038-4db3-9235-ecb82220698e	062		300023683
+35eb7e84-1d4a-4359-916e-41d30e2b9b30	d50a62fd-6302-4be8-9ca6-4297b63b276b	127		300023706
+da50a732-72f1-4e6b-b1a5-ae69846fd406	1e37e863-47e8-42f2-ae27-30a22c383916	119a		300023733
+cfa0c1e4-969d-49c1-a786-38d4db566a33	50d37bd3-9056-4f98-aca5-da6f72ae2631	027		300023897
+3566ca35-0e75-4bac-b67b-9942d4fd425c	c37ad5b6-96d1-4b24-90f7-ddfadcfee16d	107c		300023972
+dfc80e4f-8034-46c3-bd83-42a016f42f4b	7264ec8f-e8a5-4be7-96ee-784531b362fa	093		300023989
+75b39c1e-5548-4e1a-a214-75af9bdf05dc	1183b62d-0ee9-4c8d-a059-331090e34eaf	142		300024019
+3272eac5-b879-4962-a6b5-747cd6d64983	081f3be1-74d3-4b26-bb63-79a3660bf382	008		300024063
+d5973752-6d89-4e53-9524-13ec54acf56f	f26b5aaf-8465-4068-94c4-7fbc82308aed	018		300024065
+b83c87f3-2eab-479a-b3d8-69ff0239f737	0331cf1c-3903-43f0-8bfb-49e660b7030c	126b		300024072
+df83c4f6-5e43-4a66-820f-8cbf04b9e6a9	f0faa72b-9a9e-46c6-951f-8653f57fabe9	124		300024079
+0f6d4552-d6da-45c3-9798-9e99391519d0	271a52cc-c5ed-4813-a5f3-9166632a05ce	097		300024100
+9e73cad6-2bd5-461f-ac1f-ff3590bcd520	55dcc8ed-54b9-44b7-898c-9f52063499dd	098		300024108
+0b9cf347-5eff-4da7-8c79-46470d61bfba	d2eff03a-ca6b-426b-ad25-e4814ca86760	107a		300024124
+6c46a895-95b3-4978-a3f0-cfd6f6b0890f	4784c44d-a5b9-4c08-8620-bf77f6dc968e	107b		300024125
+a0172661-b71d-416b-92cb-601e5a6755ad	57697b85-036e-4ef3-ab90-5209a8da0c77	108		300024240
+4dcd7744-b8ab-4e59-afcc-97ec20cbb8b6	e1c69e99-ca4d-4e25-9ebb-70b758051537	126a		300024689
+3d453038-9658-4e6a-9d95-38c9ccc130eb	3367d029-929f-4829-806e-faa7db743a93	120		300024708
+8f86f6c5-c4cb-4f00-857f-e8ee84c5c9b4	342bec76-2274-4aff-8adc-5cbd1d29c14b	074		300024729
+4936d68a-07a4-4280-96dd-dc3b12f4fe32	c214516b-6dd3-466d-aa29-5d6e49ac8553	130		300024746
+1a823027-d8f1-47ee-bbf3-33000f9084a4	759ee2f4-f637-481e-b1b7-a0980e5f0ca6	134		300024832
+def28707-a693-4dd1-8352-5f95bc3add6a	118364d6-c428-40cc-a82f-142ba1c6a888	023		300024956
+b6023a31-f124-499b-a1f0-6da67fdd35e7	8157d17e-d128-4b79-bccb-3d1cbb40dfae	115		300024971
+893e3c61-c291-4ac3-acc9-7f191fdc64e0	e28ad6d1-52d1-4cb9-8d12-b2ece9ff1049	076		300025055
+8ccb5434-e229-4968-85ab-f8ebef20780f	eb54aed8-a4f1-4109-83cc-04e5e6562a77	099		300025106
+4c4932d6-e7da-487e-9053-412df8eb41ab	78fb239c-0b0c-4767-b194-0f1d19f27025	031a		300025131
+efd4cdfa-7798-48f4-9bad-677ad71b2b6b	48a6f365-e128-4451-8f98-0e79b238548e	029a		300025144
+a8be2425-9fd2-4acd-9aa2-03e5f06ec884	e2d8ba1b-05a0-4f7b-8448-836adb7a0f12	125		300025166
+0cee7567-c204-4678-a097-a9d7ce68557f	c5afe716-1b14-4620-a6a2-93af08c414eb	094		300025186
+c9b69e82-1fde-4b67-ae9d-4c1173276c1b	ac575611-f0ca-40ef-8f7f-4435a5288e29	141		300025203
+45d831b4-dc55-4f5f-adb1-95cff7ed4ed2	28ba9852-1bbf-442c-82cb-6aff4a4688e6	092		300025221
+0623815d-a268-44d0-9457-af691abcf5d8	9ac55f32-c40f-4ba1-bef4-cc109d36e8d4	091		300025228
+26a6752b-7985-4f31-b239-3b336c9b2633	99594c91-6d9c-4cb7-b503-ccda852b69d0	102		300025264
+752caed5-9cb1-4643-ae97-1c0601efa1cf	077fdccb-9e09-4dff-a781-112eb64e69cc	131		300025274
+3de8bda8-189e-4a3f-b590-4cd89ddefe91	193b5dfd-987f-4c86-a559-cb51f91ab0dc	039		300025305
+79081bac-3f2b-4b5f-8875-e13e6b73bbb0	ef9ecef1-bf1c-4245-8b4b-8c666dc813c5	040		300025313
+6c5ef9e9-eda4-4329-aaec-3201d1e359eb	9e6c84dd-5d5e-4f57-acd3-e5086317536d	104		300025339
+b2f3442d-f99a-47a0-a871-ac59ee26f6af	59c3fdc7-dbad-4187-82d2-e7cba8780a7a	069		300025387
+90f14478-818f-4cd8-9c44-ad33e0617ac3	2aaf8f27-2f36-4815-aa48-52c7dbade718	106		300025483
+bbcad4cd-96b3-450e-abb6-5558d5a70f8a	26bba575-ba30-423e-ab03-788e8d9e097f	038		300025528
+b557867c-e0ba-4fe7-8c20-1dabf635e1f7	fef8f50d-9038-4455-9cbc-e0ce167ab1dc	119b		300025551
+8659851d-892a-4490-8322-6f5035c2ac8b	879afcc0-2021-451b-88f6-5915ed4515f1	041		300025604
+69821181-7186-4ae7-af45-a9128b7417ae	24fc07d9-7cf5-4958-b0e0-bf5feb72a85f	024		300025661
+f193f38c-ca25-4767-a44c-5dd34f87638b	ddfe16ff-ea93-4c6c-a31e-6d87a9cd67c3	075		300025675
+d4200669-cbbb-461d-a472-75cbe7a3fa3e	075fe118-01da-4288-a18c-7aac09e7ac61	025		300025725
+3bd9d11f-a7da-4955-bce5-44d17e50e1f4	d0ba0a5a-9c7f-494b-9133-d25a85f2e8ec	133		300025734
+27335518-158c-4253-a5b6-ad3dac204a5c	e1a3fb2e-0771-4bdb-9c46-dfc742a75f5d	095		300025773
+36c787a4-f4cc-456b-9bdb-0b5d04dad283	0fd17977-7290-4db6-85d5-f0e94db2f360	096		300025779
+ee152149-0733-434c-957a-45fd54769afe	3bfa3b48-d4af-41fd-b6c5-67c956651627	100		300025902
+dd7ab322-a288-4287-8932-c70844e5dd8d	53655ed8-bd96-4cf6-9999-f130618c1f4d	078		300025977
+f4be296a-0259-492a-ac0f-61b06c875adb	82173b64-2595-4da7-9a97-10157ec9b2ef	083		300025986
+d6ea1f5f-7a4c-4443-909a-89ed1edeecb4	3ffa50b8-02b9-467a-88bf-0fe91ac0a143	081		300026004
+9b5c974e-44bb-4d55-9691-1f21391c904a	2209b58a-91a1-47c8-96a1-26d430155d83	088		300026028
+ffab30e6-b3f3-4254-a628-c365db831bb5	098be9c2-70dd-4b98-a854-3eac4eead362	058		300026735
+3a378875-92b1-46c8-923e-872b9404bcfe	daa443fe-2238-4527-ab43-c1ddde3e4cac	057		300026742
+a0618206-3aed-4e11-8efa-f5a737fe9b83	b5673c88-f075-453c-a9f2-004b53184f37	066		300026763
+0c56a84c-11c8-4e25-9f52-dbb14b56db47	e8c2107d-9f78-4bfa-8b4d-44a501889b2d	079		300026787
+d69e772c-aed3-4590-b7ce-4de57030d213	1d861365-568a-41e2-a530-e407177a15f1	089		300026824
+9a97d18c-4a85-4a39-a6f7-592aee89ecc7	52b8ea39-3fe5-4b96-b0ff-64f1a521c05c	090		300026859
+74fdad2a-97c8-4704-856c-436ee647d096	429a3aa7-f4b7-4158-9dfc-4f5556a5bd73	013		300026914
+65532109-b988-43b4-b85e-ada18249d986	c0f7f1b7-1870-40b3-b862-7a7fbac7f24b	082		300026964
+06975e12-52df-43de-af50-ef1925aa7556	314c33ac-46e5-4f30-a11c-5651895f4fbf	068		300027016
+c6bb5efb-864d-42ef-97a9-eea3da087ad5	25ddd35a-cd0b-48b0-a36c-30482ee2166d	009		300027026
+57cd16c2-78f4-45d1-b737-edf49088cc80	f6b4ce13-5cd9-4092-868c-a21a73b4e356	112		300027095
+bb2338e7-1a61-44c8-9916-e37003266fae	8fcbb132-0f3d-4942-b70f-f73f66de834a	015		300027135
+d972a07e-e1dc-443c-847d-7247686d227b	61c3d671-61d2-4cab-90b9-3e5372bf8b4d	077		300027143
+40adf6ae-5c8d-493f-8e7d-3a676a3a28c7	d67115ab-896f-4d77-85ec-1089b9dc4245	020		300027303
+f2a9d0d8-713e-48ee-8053-0dda011e4107	1b87db16-4286-48c1-968d-a13da1c7af32	021		300027319
+4166a7de-c7c6-4214-a530-dac447aee088	a64d09d6-1cba-46f4-a9a7-5483004b9673	060		300027341
+916c1b18-d660-4750-9a0e-47a4dbc70b78	1cabb1ab-8470-48dc-b491-0b58f4fbe334	065		300027385
+feac5607-d903-472f-9102-82a5f3db19fc	64a353b8-d6ca-4a2a-b8e8-7f56b6938458	007		300027418
+9523369a-4c24-431c-a970-d2773a98ea1c	d052f3c3-b84c-42e8-a15c-ca87fe9419aa	067		300027432
+f05db358-5a41-4995-8276-7531299608e5	d3190914-3961-499e-9ee2-f03da3551018	006		300027443
+a728a7a4-b69e-4a66-a712-80b090fd7db7	340a803e-adf9-420a-9b58-708ea667d33e	070		300027451
+89426c35-823b-4df4-9828-f2195e7bc08e	81e0ead9-e0fc-4065-b099-59ea9bfce61a	143		300027562
+d8568d90-85bb-4182-bd0b-9344ef375b7a	c52f849a-cd11-4128-80ab-02f4b4576188	035		300027601
+e037e0db-e937-447c-8d6c-30643118b2ea	75103e2c-ec5e-4872-b676-bd702b2a71f7	036		300027638
+deec3e8e-3244-4039-88d2-d015d70ea205	bd7c41c0-afe2-4e41-a75c-55ebdcae8428	002		300027672
+a69ad87e-68f2-4daf-9ae1-fa44120f290b	d6392ba3-e17c-4c4e-bffc-ae4199656617	001		300027685
+d1267dcf-60bc-4b78-a0f9-07e381998533	3e38fe42-08fb-4a52-8fb7-ab3ce4a1c45a	150		300027925
+aa3502cc-012d-407e-a440-58962aaf8ee2	3f85a534-dfe6-4f91-8719-8428d98abab2	016		300027948
+740fcb7e-a077-4385-9966-c43434fb478a	6f1a9f95-8589-4201-9c0c-663a7c65ab53	012		300027971
+85f51789-b593-49d7-850f-a2c4ca282ccc	73d70c47-8545-485c-a8dd-7f1625942f5b	003		300028013
+33fce779-04a9-4151-b340-26c0a05e6a50	aa8ce371-9cc4-400d-a15b-f626bd79d51e	042		300028030
+5f94c229-387d-43e5-af7c-79cdc2893a6d	284a09a7-4ef2-44a8-9ee2-f2b019aa7e87	061		300028438
+2335320e-4185-4a51-a709-5df6873985c4	ebe20483-b252-4c93-aa3a-383e336c4983	101		300028442
+6c0ebe6c-fd58-4eca-9aea-4730e44035d4	8ac25f47-06ab-4a3d-a847-c3e8cb680cbf	010		300028467
+3f9a7685-853a-4eb4-8974-55bb3c43f84a	0da6914c-20bf-43c7-a5ef-48a0f975cbec	072		300028469
+2314ca96-7d85-4309-8d38-413e94182aaa	40d2c002-e610-4292-87e1-9c9f1a964720	139		300028473
+afbfe05c-89bf-4488-a338-bfb01c0edf94	b8b96451-3a42-423a-8c40-43d45e3532db	103		300028665
+04b6b649-1578-4a72-ba13-83aeface98cd	e9eedbb7-9059-4638-8da6-cf1ea21c6d6b	113		300028667
+0043691f-e564-4696-8805-2943ec2bdd78	26c69280-47ba-43ce-8fc3-9f96825c1431	105		300029624
+29572f4a-6297-4383-b283-711aa84649f3	5bfef0d0-3194-41e8-aefe-e50103d8f5a3	129		300029628
+2d9e6bb0-fd78-4144-a573-9acb557577cc	0e88cc14-8959-4eba-868d-dbad16975bad	011		300029976
+3218881f-869d-40bc-a880-37aed59c7785	7fb24229-4ea3-440a-b390-ced97da8f01e	Leipziger Straße		300032693
+33c9f97a-2f2a-4636-ae9f-77568ceb6760	7d5ec122-e120-4c61-86e0-02c04c0eece8	520		300032699
+1aa6ab55-e89a-4cd2-b8b2-217dcad54a4f	70fceaf7-ffa7-4ab5-910e-d42473357c12	730		300032700
+c9d25932-c0bd-4629-93ee-7fb7b57deb34	1186af82-2dc4-484d-85ae-cac8c44a4715	800		300032707
+78ed4283-00c7-4aab-9185-c44f1b927655	71a454c9-df1f-420c-89a1-bfb6a709ebb0	801		300032708
+f2cdbeea-1209-41ca-921a-46ee742a9de4	8dbb2929-d6eb-4f8a-82d7-8e669fb42219	802		300032709
+33258a4d-8acc-487d-91b7-e862c6441e05	2de3773a-a4ca-4f9e-b42b-77bcc9eadd0f	804		300032710
+4ca7b6c9-4a68-45f0-b2b7-8c81fde7ea7b	7e411607-8937-48de-aae0-5517c41b7ad2	808		300032711
+e704eca0-5cfc-4a83-8d97-e520b90764e4	45fd5f40-fa54-4afd-baa0-96e81265b6a4	810		300032712
+291d0cde-2422-4ac1-8eae-044b7aafc31b	a3999497-2430-499b-ba0b-9a1b0404e637	850		300032713
+9e94617f-4ec6-476e-81e9-42f3de42c603	36382e5b-68d2-4ee5-ac30-4eb7f5df8448	851		300032714
+488f176e-110b-4654-b57d-42a1bf770577	e0c822b4-7c9b-4a54-ac82-f6435150653e	852		300032715
+84b64383-0016-499a-a890-5f873f7b705d	7ac4d911-9233-4d17-90db-cf0346f7d386	853		300032716
+f47e2d00-af61-4682-b42f-da2461731fd1	ef36ec74-1471-4ecc-820f-8fc8bdb96539	854		300032717
+9d00a099-fa15-48c4-9b18-29a384dfb1ce	197e7b14-8636-4f6c-8d1c-2567e124564d	855		300032718
+50eb8694-7608-4aec-9b2c-01f634a61dca	35534dc0-809d-44c5-8752-7b327be0f389	856		300032719
+321bd0a6-ac6f-41e5-a289-370c57cdd8e5	b6df7f36-f989-4916-a85c-48ff93ea64b3	857		300032720
+e2441cd7-4bdd-4639-9f91-0d7db0073345	a94169f3-6926-4dec-b192-98806f763629	858		300032721
+11e25b00-685b-49fc-b57a-57fb02e8386d	ab69519b-4fd0-4f81-874e-04e048097333	859		300032722
+374d626d-9cde-4a47-8f22-979a7d3e2135	a815e643-3839-4f96-9d31-60e4c9e2609c	860		300032723
+40fc1678-a580-4fd9-a3ef-99aaab22e139	aaab1011-193f-411f-b9ef-89dc1198bdf2	861		300032724
+1ab30c16-46c0-4808-9285-d896c5f6476e	fdae896e-279a-4618-9518-b47639ad7306	862		300032725
+6255cf6a-4d71-45ef-a6e4-4ee9d3d106a3	e649f59f-9485-4ef0-af86-2449d890e558	863		300032726
+d85bec9f-146d-4309-91ea-88aca88ece38	143cf41a-37da-4afc-ac5c-dd88079cc981	864		300032727
+83bc519f-379f-4633-ab0b-7b677d3e8d78	98559781-5c10-464d-9b24-b4fb2f46a625	865		300032728
+d57494c1-5edd-48c0-b4a5-b9e4f3b58df5	8fb7692d-ed75-42ba-a024-1ee3547bbf3f	880		300032729
+c1b26861-3038-476b-a1db-2831d524c468	d3815963-6d88-4b57-ae56-ee8e8e936443	881		300032730
+58dde2d2-2ce9-4de8-a03f-ad7d085c9ce8	1e847f8c-bcd7-494c-8107-38866b5e1d4e	883		300032731
+6d9dda73-c052-45ac-ba46-55dc20e55d17	53210d4c-46a3-4da1-87bd-bb0b35863f72	884		300032732
+41f6828d-7e4c-402b-a940-fecdf1c38255	9702a0f3-824f-4f19-ac24-6ccb3f9852e8	885		300032733
+4cf49a05-431a-435c-89a4-ba7149dedf92	bd3eb677-3935-4d36-8e04-4e991338c9b8	886		300032734
+e58b47e1-1122-4a7f-99f5-c65a6a6c5d3a	8e7fe179-070b-43af-860b-be4321671d27	887		300032735
+9277fce9-af8e-4a79-b87b-6d47865c9fd3	3521269a-1c90-483c-8122-d1759d67acc8	888		300032736
+174dbd0d-c9be-43c2-ac81-4d7b19fca782	4008f308-ae2e-426a-bc3c-879a97320bb9	889		300032737
+f3846669-df4f-4cb5-a839-c188781c5836	985da359-a693-495f-8f9a-5ad74a13ddda	834		300032739
+f79b8cd8-0f0b-4707-a8af-4dda3f19bf34	b33acdea-ecb9-430d-9c25-eb144c879068	830		300032740
+ae675162-a096-4c13-a8ce-04a4e6399824	84e3396d-c706-4891-abae-01586e3bda37	832		300032742
+31b78c3f-e57d-4f69-8ca6-5086dd99cc48	fc3ffc5f-8deb-414d-893a-fccc15226677	833		300032743
+fd9eb41b-8330-4470-8cc2-0ceb61a24456	4242120d-b46c-47a5-9b8b-afcfd8c4d891	831		300032744
+386c4773-fdda-44bd-8e11-7acc508ea3ef	9f361fef-1f79-4a02-ac7d-2e9f6ad04dfd	420		300032745
+40afa443-4f57-416f-a09d-ce8a644888e9	8d792d28-ad29-4d52-993e-cfccd041e0ef	430		300032747
+6e9c671d-3fb2-47e1-bfd5-1ba0e40a6af0	00931e5f-904e-4f73-b26c-a90e1a101aac	807		300032748
+6f49405b-16f0-4f75-b3e6-c3d2736fce4c	21f7b47e-73af-419d-8dda-f6e311d44bd5	780		300032749
+86dede03-3cd6-4610-ab10-d31c8db6ca25	f6de9763-bbf4-479a-a54a-0efcc36fda33	771		300032751
+fb235310-4184-4866-8a7e-77993298eac7	7a26ef5b-65c7-451a-8760-6a35f2b12995	772		300032752
+8e6da737-72db-4a2e-8490-b956d4562f2f	1eff667a-c829-4c29-adfb-e23823ef1a7e	770		300032753
+50d8c6cb-8b3b-470e-9e6e-7c51cf3f4816	ab276087-f730-4f40-8f09-0de2d4d26cb1	740		300032802
+8e9d8487-ae3c-44d3-aa1b-a02d4d163a49	92f1c023-e93e-45d5-9518-a55b910ad7b6	390		300032803
+456a92cf-c84f-406f-b80e-58ae44a3c483	d2e011c8-32aa-483f-9322-e9bca76d15e2	391		300032804
+49bbc61a-bacd-4f29-b3e9-bed0bee8bdc1	eec2579d-08b4-4efc-b68e-7f0519e05d78	410		300032805
+e70ada7e-7257-462b-98e1-8ffde0bc713e	6d79294e-899a-44a0-998d-9b9452e0e699	411		300032806
+5908e1d7-99cc-42b4-9173-19490912e3d0	5fb124c9-b76d-44e6-a8a7-455243ce6d1a	412		300032807
+892b00d4-2425-444a-a1fd-54649071330c	9c81b688-1bf6-440b-8190-f856f3290105	413		300032808
+ff6ebf17-7f87-418f-9875-5fc27629b77e	cf3b3dcd-e679-4bef-9434-0ffbf1f85142	414		300032809
+dfc1addc-4869-4995-8e89-c6af6939c7e4	5d902fba-b94c-4146-851c-55998c1f3d43	510a		300032810
+c59273b1-467d-4b92-8b91-fa804e18f1c4	d57cc522-1d78-436e-9190-4349c026c6f8	510b		300032811
+90ed12a7-65c3-4c32-ab2d-8e153d725f57	e03dfcd6-0f0d-4b0c-8bbd-2c5e4c187979	511		300032812
+b2972233-7e2a-4d94-a48e-150ebc2a195b	492955b5-8598-4c87-b52e-2c608766200e	512		300032813
+ece8b9c2-8593-4e14-9eba-a64612557a0c	263b3e10-8c17-49b6-bb12-e2b2e05ea10b	513		300032814
+b973a203-24c7-4886-8e54-2f0eca147d6c	0cf28682-c7cf-47b1-8239-8590e290bd4f	514a		300032815
+e3c6fbb1-7e7d-48bb-a7a7-80400ae8c481	7fd02962-8534-412d-b9fe-61b6558f17f6	514b		300032816
+80349efc-69f9-4600-b179-1d0424e77792	eb473a51-db8a-49c5-b5ae-21e76bb73bf9	515		300032817
+81cd8907-5005-46e3-91d0-9b489514b324	559ea59f-3341-4b8f-9982-977725e4d2b8	514		300032818
+2057daba-f28c-4bae-b253-373ca1bc0703	fdde778a-cd52-45e7-bad0-6abda459ab8e	370		300032820
+5b4c8bb7-d890-4f27-9f91-17d500e51e5f	f810fd04-d5bf-44f4-a905-5a06a92f7b3b	371		300032821
+bb5ba88a-9f70-4429-8e55-488a45146d36	bb7d740c-9838-48d3-963a-b7e56f4a950b	372		300032822
+2fad2aa5-141b-4d48-9017-b48ddd48eae2	f826f524-00f0-47bc-9c22-3d7f89a456b8	373		300032823
+894b3562-c532-4180-8524-96ac89f4e3cd	6510a11b-da9b-41e8-a728-afc07440c110	374		300032824
+9c38e1b7-d35d-4899-8d56-88c73b9abbc8	488e07cb-e8d1-4325-a4bc-2a9d5f3fd80c	470		300032825
+1ede59e0-fb2d-4e5c-9d10-a28e75b02a71	348c4cb5-9761-431f-aeea-c1ddbc6847b4	471		300032826
+45a539fb-8883-4c94-b216-ade9b785f07a	45ed3711-5c92-418d-9145-6aaefbaf4a79	472		300032827
+14c22496-4cf0-48c5-8304-dd313965602e	0416cc06-15b3-4ddb-83b8-afb8eb3d6c72	500		300032829
+8f8bb8d6-5827-4b5a-8871-a5b15fb2d57c	21f57f27-9176-4242-bd4c-43e25c60174a	501		300032830
+7b287fbf-8497-44d2-b346-bd78d452fb40	2f25395e-709c-4356-8f42-fd17d2fcaee5	502		300032831
+e657b278-5ac4-42cb-b3ed-5abf8c7b3ffa	8ecdaa56-5a74-4901-ae02-ca35f4a4e7dd	574		300032833
+aeaa1e6f-74cb-44ef-b7f9-d643290201b6	9f0527f3-90b3-4e55-84de-7d92fe8691e7	573		300032834
+a705f3ac-a96c-4b75-b97a-8a4036c43950	4886f3f3-b5b7-4de7-a1e2-6fad21f72748	572		300032835
+22d9b228-e238-470f-a6cf-32687606984c	8c1534d3-a284-4ce9-af50-3fb6a9e683d1	570		300032836
+6e934931-5d95-4636-ad3c-02f4185ff1e6	882b463f-9fe7-41e5-af22-0a415d680ca4	533		300032839
+c0af3bbe-d55d-4fa5-95dc-74b9944ff2f8	40fbce8a-ce5e-4c73-b4a8-4a439b0f95d5	532		300032840
+c007cbac-29e4-424e-b66e-b8f4f49b84e9	28669ad8-c16b-4b41-8615-d10f2ad220fd	531		300032841
+8dd42da2-8aba-4de2-a870-372b6169f6e2	2ca366da-df86-4c9d-b6c9-e5ba936a0e34	530		300032842
+5be970c2-49ec-49fe-aa5e-10aa398d4352	142f7b13-5976-4800-8e72-def0d120c2ac	360		300032867
+5d148241-324e-4a20-be9f-6ac1bec352fe	486dc72b-4eca-40c7-b490-7e81cbeecb18	361		300032868
+030bdc6c-de5f-4f59-9bcd-86703e439b59	d1616daf-7293-4afc-b884-21a20be748f6	362		300032869
+e86f8161-3065-4e44-a596-a80d239b2032	64e285cb-9662-49ce-9082-920e2a3ad871	340		300032871
+e119ba25-d384-4103-89d6-76e1f076528f	272f509d-3a21-48d0-a9fb-4fd32b63f1aa	341		300032872
+8daa53f8-0595-4d71-9e22-9f43cd6eb4be	69e8c71b-b528-47e8-8e62-4a033703cb4f	400		300032873
+eee640c7-b7e5-42a0-9e69-67205b838d65	0a80f571-5d67-4ca4-9e12-1f3bed5b8826	401		300032874
+5633968a-6423-4f29-9f79-344d939f32c1	bea5a6ba-e4af-422b-ac00-ee736242742b	402		300032875
+095dfa1f-d210-497b-a2af-37bc9052f6b6	f26659eb-b0e7-4d23-ada1-b58b168489ed	403		300032876
+970575d7-6954-477c-abe4-86bc5a39b39d	346bd82a-12da-4895-8c65-a59bdd2f8d52	404		300032877
+1593da39-2190-49cf-a578-09f754f85b4e	6680a00f-f351-4c8d-b756-baaa595a8448	440		300032878
+df2f0e09-4995-44fb-a261-3e0cce47bf77	6c30218a-29e9-492a-aff3-9afa96cb6f95	450		300032879
+ae2c570e-7b12-4c80-a6fd-7212a65f17f9	89250ae5-c973-49ce-9e30-a41a4ca6968d	451		300032880
+e76bfbc2-fbe8-4e76-b292-8c36a790c3b8	77051cde-02cb-4ae8-8d3c-de983e29d717	452		300032881
+053504ca-a0e6-47bd-b9ef-1f7fc81c9c8b	c2ed6976-b494-4f88-97f1-7cbe6d8cdd72	490		300032884
+4da25cd6-010c-4e3e-8039-a7acec91f3c9	413e7ccb-9ac8-4656-beba-dc8cee58add0	310a		300032885
+2ab691ee-9934-457d-80fc-06b2584d21f8	7eaa7e60-7f54-4393-8f82-05e4adba14af	310b		300032886
+16b3cb65-2158-4b75-ba19-64207ecbdc38	393d0c78-6ddb-4790-a653-14dd75c494cb	540		300032887
+bdceeca4-3fc3-4710-99c6-572fdbdb2a20	bea85abc-4b1e-4930-a1b1-d1183c2a5e04	541		300032888
+a11640c8-c03e-4ebf-b68a-1fa5224f0a0b	efc583eb-c693-4a3f-adaa-3e1050cd81db	542		300032889
+1cd29170-6616-406c-8014-67417a1da991	adb56df9-b34f-4fa2-838b-8dbaadca98ca	550		300032890
+185903d0-1c27-4688-8ea1-721cad3921b5	c9c440de-5192-4642-940e-bf8cc6289e03	551		300032891
+596ee705-e79f-4045-bf0b-3ed113896f32	9c77af6b-6be4-4fc0-8871-c396fb801b84	553		300032892
+5dd8d138-b56b-4667-8be1-670c0f6d44e4	081c6056-3426-437b-ae55-a4f7ce96cb74	900		300032993
+4f8d250f-7a8f-459b-a186-2918fa58b9d3	8df9fed0-10b8-4276-a298-d998d529262d	910		300032994
+b68cb3c2-90f5-4d5b-92e3-1c745e3aa7b1	de472b6f-4390-4396-8f74-41e9fd533251	710		300032995
+8b1d6631-b9a4-4106-ad0f-73edf75340af	981302af-cf0d-49d3-ba1d-e5cd029dfa97	701		300032996
+f13d6ea1-7396-4892-8a8b-c8e4e40e599f	f740bb4a-b8b0-40f8-a9b7-47c161d0106a	554		300032997
+4dd75cda-04d4-4e60-bfdb-322aac79a730	d9f3f8ae-9cf0-42d1-a1b8-b4d9b43fe13c	560		300032998
+9a4124fa-9d2e-4b58-aae6-ff3beee2838e	a203ddf1-c984-4797-b070-2698b4ef398e	561		300032999
+79174734-8631-4969-a8a5-094509cb3ad8	ec164ceb-70fd-498d-b4c3-65c0db14124b	562		300033000
+2db45482-0c18-472e-9106-4e82608f8688	5e60daa2-74cf-48b0-b1d1-a339c65fdf94	590		300033002
+de262821-2dca-4900-9427-e1578f0e92a2	3da51535-6f23-47d1-9199-1799bc62d90c	591		300033003
+03afaed6-e01b-42d7-8aa4-d3b5a250178f	07db0e94-867a-42a7-ac73-7b63ddd7672b	592		300033004
+15d5748a-d3b1-4384-9db7-7e782d03bd44	97fdaf1e-1b05-48c9-813b-bf977dae3830	320		300033005
+429fe8a9-97a4-46d3-a83f-686f0cf14fdd	b6e2e9b0-b57c-4391-a3df-127c008cd5b1	330		300033006
+577cb603-442f-48cb-8f37-eb357a40dffd	f5f366ef-ce91-447a-a2fa-cba1c3057608	380		300033007
+c8f5334e-f9b9-486b-854f-63c582f3cc7d	cf2f327e-de7d-4d3a-bd5b-81a6e5b22003	381		300033008
+99ae59a7-fb7b-4f1d-a882-b255a2e6d4ed	0a244517-d4eb-4d2d-b636-be5235768d1e	300a		300033286
+9e3f9526-672f-4613-8a3e-1b99603c8647	753900ab-ed80-49d2-bbe3-b8bab3b3a5b1	300b		300033287
+93b417ea-160c-44ad-bc2a-bcc1a65183be	c65fb70c-edc1-4664-83e0-a0f5eb6d275b	301a		300033288
+071b94c6-9202-445e-adc1-6da7a29aa2c7	568d041f-1adb-45b3-9ecf-b5883c247e60	301b		300033289
+d528c017-17dc-4dc0-aa86-23080dce33da	87b4cb20-bc3a-4662-b8e1-a862985f00fa	302a		300033290
+765a181c-c4ff-4ab8-b723-ea1ed0c1ce67	3215fd5d-c2ac-446b-8f40-ae9abce612d0	302b		300033291
+d39b6e54-26c2-46e2-9769-14c423e91789	5d1d6a40-c106-4177-8762-8acd3fbce53b	303		300033292
+32759f88-4fce-4720-8dbb-2311f07dd7d0	7f68b240-043a-4d4a-9462-fe6253aad0a9	304		300033293
+ccf780cf-f226-47e5-8ce2-67c653e70b72	9140b93b-70d2-4901-8324-97c1629d0143	350		300033295
+1ca74b79-2bf5-479c-a8ca-99193b4797d3	6c27897d-e045-4156-a1f5-b0050fd55d50	351		300033296
+14eecddb-93b2-4454-8952-9c00fb3e1cb3	29e54d5d-bf3f-4adc-97f0-b1bf7136c5ad	352		300033297
+9dd451c8-75a9-4763-86ea-af8589de9a5f	9938d090-3a96-4cef-b300-090928648899	353		300033298
+b59a766e-86fa-4e29-bb5c-56a61743de83	f013bf27-c3af-48c3-90a0-17f20c787f45	354		300033299
+5280e3d3-9efc-42a5-be32-b10f8dc51f7c	01ce127c-b117-4e88-9658-42b9eb9902f6	Steinbacher Straße		300034327
+33fff261-381a-4baf-853b-615cfdfc50ae	2a79a816-b05f-4cb8-99d8-0d3618f085d9	920		300039700
+83cc6456-e00a-495a-ad9d-95ba442e0103	b7d1a05b-d34c-4068-af62-36ad89766001	921		300039701
+e21b5874-b4bf-4be2-97f7-a313252b14ce	5268b5ed-d4d6-4189-9cc0-7d333f2d9a35	922		300039702
+9ffb1b3a-7167-419d-9363-b8f2c17d9568	a4275e6d-27b3-4f19-8fae-1b30be1d5749	923		300039703
+a213ee55-3cfb-4fb9-9888-24cc86006e30	f123b162-cc38-417e-8d5c-beabe52f419e	924		300039704
+31539cda-863a-426c-9d8a-bd784805c7ef	df337c62-c1d6-4953-b7fe-663c20c4005b	1072 R		300042071
+20f93fb5-9031-4cfa-9b60-9471d7cd1f6b	7c47ff8d-c0e0-4d7b-8e00-46a7a30919d8	1072 M		300042697
+6c0e9cd4-ad63-435f-bebc-b2b653c3c9f8	4bf69ec2-4d4d-42ee-ba92-e47dceb1b267	1083		300042698
+88781970-cc4b-469c-b048-3f9449fe7472	5b5a1a4a-b0ce-4dda-8e8b-2ab89fd12494	1084		300042699
+434fc39a-0396-49d5-9cde-8beae17cab69	5a3e4ac5-73f4-40bc-b6e3-f3a6a32f24e2	1073 R		300043174
+005b238b-d14a-4a45-b16a-8b00ddb044ac	f369ccf1-aea0-4240-9c3c-50b5f40b48c3	1085		300043176
+a8731452-b718-4de6-86a8-16d93c69c035	44e32424-17bd-4bcb-882f-b0f8884c8b08	1086		300043177
+e2713929-8232-4877-aed0-c1870b261535	fdf6593f-e2b8-4d65-9bcd-9e8b75eb9670	1066 M		300043179
+9d3a69ff-4b99-46e4-a232-18075c427781	622e27ec-9817-455e-943e-d244e7b359f0	1065 M		300043180
+b6d0457b-8ac4-4521-b2d1-203800438914	fbef8253-dee6-406c-9b76-06432e4d40c5	1078		300043184
+aacf1804-0d1c-4575-936f-73348bdeec7f	f086f768-5b37-40ff-bd93-664d6c10ddd6	1081		300043185
+ee54d003-ab91-4312-a0f9-f033f18f15f0	31cece4a-42d7-4841-b885-6eef726d9f78	1079 M		300043186
+2121b636-2014-44af-a60d-5cdd0a0d0876	58039960-e562-44ed-b4ed-b12ec2fe13a5	1079 R		300043189
+ce877704-4a9b-4f5e-b9bd-c3208eff8e5c	46eb79ca-43ff-4b12-8919-230e107f2db2	1001		300043196
+ed56f1a3-db19-4c64-9b57-8b215e42d448	2c924bc8-d4ad-4d85-a9b3-c9b74755c0af	1029		300043260
+81b48763-d2de-45c8-80d3-16f308568fac	6d451a4b-e73a-441a-9c46-db840bbe2010	1006		300043408
+344a9177-a948-4dfe-8217-7538c8ade703	64acad4b-d5ab-477a-a7aa-be74d5d41704	1067 M		300043450
+9a1217af-7570-488c-8993-5289a3c40258	ba05a758-e30f-4fb1-84ac-cd42dfd66349	1067 R		300043465
+8b508980-40aa-4daa-8314-977b6a9e7639	04fd952a-6b96-42d3-bf74-f7fb3b9b67ea	1031		300043646
+482157d8-6ab7-4eee-a200-5089d7250683	560b3f1d-0ada-4193-ae7e-9f5a0f373c23	1032		300043720
+6895713a-b88c-4414-84da-1f6e05db978c	4800e341-8609-4338-b1a7-538ab1841694	1047		300043825
+ebfc04fc-6c89-4bd3-a75f-f6b6518282f9	060c32ed-609d-48d7-a9e2-b18c763ffe21	563		300044983
+75a134ab-6f1a-4066-9a60-c051e5b411c3	4750596f-d1d2-4625-bea9-d52ae8ac41c9	1004		300045290
+935041a2-aeb5-495c-9072-1cdca045ab8d	9a85dfc4-65f4-47d3-9db8-1eb41ecf9216	1013		300045358
+72e81a9b-1103-4da1-af74-971e0d814191	0483a09e-7c1f-4917-b4f9-428329a53a1c	1010		300045393
+3a5f3ddb-03cf-40d5-89df-2f60bdafdfdd	2325905d-0f46-45ca-9cf3-1d4d4b6acd30	1005		300045415
+78e09ce8-bbb6-4563-94aa-bd7234a58077	5b75249f-495f-4c4d-afa2-b477f4e08ba7	1520		300045452
+318193af-129f-41f8-8d86-9f350dcf2d1f	dbdb54a6-4710-4aaf-a8bd-714ec8a96d82	1028M		300045851
+024261fd-e33b-4696-b3c5-bf005e329cd7	cfc2c527-22f8-4fa2-91bc-d4f88aace631	1051		300045880
+b014fcda-a9bd-4f6a-8388-82c345df86b4	fbfcf59e-3f33-42b6-99bf-aef50360580c	1024		300045892
+b08f477f-2833-4643-ac08-635109aa8478	3273d796-bdbb-40ff-870a-18334287ed10	1026 M		300045912
+1e909428-f45b-4e85-81eb-e1edfd9b13cc	3575d69e-c445-4df0-9031-ab1f1287ca15	1027		300045940
+d3230b8c-0549-47a8-8191-7313d49e6ab7	cccd371e-dade-4b81-b53e-7f23471a2ef9	1055		300045960
+0e8343fa-d26f-4b11-9ba6-bc1ecdf9c4c4	bc27f81e-01d6-4fb3-86d5-8277dcb48de4	1063 M		300046000
+0afac0cd-3a5c-495f-88aa-3691bd554894	04203c32-5c18-40f4-8fb9-4df501bf7731	1670		300046031
+9b28aadd-3d01-4cc6-bee7-b27db4bc5d7b	9eec86e0-088b-4fef-a1c4-a2460dda73c7	1065		300046301
+61c716a0-c3cc-4cc3-948f-87c27170a87f	8450c032-b732-4266-b08b-8be6ed665289	1009		300046345
+a5bf4289-9e74-4af8-a9be-b10e54695b69	be718cec-e0d2-41b2-9b47-41419c6a1c25	1076		300046413
+9e333f5f-d58d-4302-b00b-2bf57f1d62ba	51370ed8-84d6-455c-a17d-8ca59b7af7d0	1035		300046505
+003f490d-1b45-417d-9d84-cb26f9b70f67	d38d9082-d64b-4087-bc46-2471ff937886	1050		300046591
+9ea66458-5795-4a15-a5b6-589e8a7e86f1	663810df-e777-4e54-8484-1beb883f8ba9	1049		300046658
+7343df06-04d2-4ee1-90c7-d98cd2fa7a88	502480bf-b57e-479c-bae6-dbcc05c30b18	1037		300046664
+ae231f6e-4ef3-4b33-bfb9-93bd1839c7c9	180a354d-ba4c-4f05-a993-4b97642d326b	1038		300046693
+663d7f08-d610-4a24-ac8a-eb3affdb2618	e7eefdd5-6777-41a5-aa83-427c519f1ab2	1064		300046809
+00cedf27-9758-4ea7-999e-67e1cff6e7ff	e87be3c1-9e5c-4e2b-9c63-8165d58415ff	1058		300046815
+e43fe897-107e-4805-a0fa-0c74debe0935	2b6de37d-cd2a-4429-a11c-d09022e8cf3f	1061		300046822
+750cd9f8-8c4d-4608-943d-761a4d7ef1e3	da51b1b3-24fe-4908-8872-d0c541f43eda	1062		300046860
+6797715c-0904-4b61-a17b-3d38b458be45	cdf208fe-e5b7-4cd5-b18a-a4314c25283c	1044		300046894
+f37e05ef-24f0-4af3-80f7-e8ef0357c674	85cfeb5c-5b95-451d-93e7-81637a21ca09	1045		300046901
+5d94d216-5668-4bd8-afe5-ed7f87327474	4a257926-6bbd-4e0e-b29d-ec213f9e0c6b	1041		300046946
+aa34257c-8793-4d12-8f67-35a3a9592a08	0a717821-fd97-4420-8f06-3d270f24c225	1043		300046977
+60f09f3c-777f-4874-b97a-03ea96ac45f8	1a7e4e9a-bd73-464e-b102-d9e91933a05e	1039		300046979
+c207be3c-e94a-4c56-ae4c-0bc86a81af5a	5b0020cc-bbe8-43c6-9652-0204f473ef0e	1048		300046981
+d2a24faf-7c22-4661-a252-505b1f652b9c	3d04aaf8-eb8e-4c66-bbbc-ac07fcc220ed	1053 M		300047012
+a4672354-8f98-4d16-a530-f33bffecb2bb	fc6f992f-3c19-4467-a5e2-f45d1b1e4920	1056 M		300047050
+9abaed53-3352-4556-8e02-9dd69f014a66	eea62949-40ec-4c69-ab85-f5404da37d3d	1060		300047104
+1151ab2d-1183-4886-ad3c-0152c4f2c9e6	e2f64428-f162-4cb7-8aea-a4aa0f18bac0	1054 M		300047138
+e28bf800-b13f-4ef6-9ae7-70eeee3b492c	f257865a-5d02-4993-b7d3-52fa4a9112ba	1046		300047631
+9159e540-74de-41f7-bdf4-3e259d03b252	6c8690b9-896f-439f-9258-859e5858fcc2	1052		300047639
+51205495-3a57-48d1-8191-f3c53b852461	5b67acca-e623-4f68-a465-e547a2b53287	1057		300047688
+96c8b769-e50e-433d-b99d-08cdd9c1a3f4	bdfab3e3-8764-4123-afef-08a7f1d6e6bb	1033		300047741
+e5b46884-090f-45d7-8ba8-c36ea4d8ccf1	e55fda14-11e2-4310-ad9c-df5965eb06a6	1040		300047754
+95e603c3-6a18-47d5-a1ea-0893343043c5	397fb59f-6cd0-410c-9cc3-a3c8dc9ff536	1042		300047800
+719843d6-0d9e-441b-b1dc-a000d9c421dc	d0ec96b1-cd67-4c96-ba2c-0428c46aa11d	1034		300047875
+b27be92f-838a-4f70-ab48-b07de9204ce5	264029da-1d87-459f-9a6a-541831d25000	1020 M		300047923
+7f7763d5-3863-4df3-8d26-d75d13442ea7	5a7496a9-b320-41a5-85d4-0dd3c1969666	1016 M		300047959
+500ac17f-2357-4de4-8aed-96da416dc721	a61e0e32-dda7-4779-a471-5599c33c9024	1019		300048048
+3a755fe3-71ba-4b78-b23b-251b65acd1c4	9fb67f9c-04ca-43a6-b57a-908e741d2ea7	1023		300048049
+2757b079-bf16-46c7-80ae-8580182c7705	a5c5d587-456e-44be-817c-695f8fe1a2a5	1022		300048067
+b838f21d-79a6-49a2-b351-c711ab9cfe3b	bd09e3c6-67e8-4ef6-b421-06dc4f3157f1	1015 R		300048093
+3a1c027b-3cb3-49e8-b95d-64decc9c3d15	34e8579b-0383-43ac-8673-cbb884e27071	1069 R		300048125
+953f03eb-853f-4ca3-a1c6-ce0e9c3b218c	426f79f3-4260-410f-adfa-3e3efa7c6edc	140		300048131
+97019642-185b-4e98-9550-376f545fdc8c	ceb6a1cc-1441-4f26-bb2b-ad4b624607b6	1059		300048159
+9523ee2d-b213-4b22-93d8-9953c0df5276	64a4eba6-505b-4c3b-bd84-bc2f9cee1be3	1077		300048181
+e3d95b67-ab8c-4918-bdbe-42324bee31ff	a98c3528-8477-4275-9339-a9c240607a95	1014 M		300048844
+c4bc2414-23e9-453f-9c2b-247266632e15	67da6191-3145-4d21-bd75-bac2b16e124f	1530		300048857
+2951d4a8-1f40-46ab-a4b9-fc91be0bbe25	5a0420c6-824c-4bef-b4a8-adb60a7996da	1017		300048879
+71718360-3a3a-4143-889b-b3199cb570a0	165d9c3d-f053-4cb2-9159-b95c14814c7f	1025		300049446
+36e5f928-2047-441a-a33e-f4e06d020d09	bd4dd5f4-da1b-4685-a187-88233322d0c1	Woogsweg		300049541
+98c79a91-e623-4942-942e-419840178b7b	84356a1a-3188-4d0b-9d3e-47a772a6f519	Arheilger Straße		300049542
+fdb2fc01-4071-44d0-8407-54977ab545cf	51f3633f-538d-4fd2-9f95-fb71432a1ae7	1150		300052661
+14b7aa78-b62c-4119-b616-b2c7bccfca15	cddd862d-28e2-4e79-82fb-c0b6d6b7622e	1146		300052686
+6f14e919-abeb-4649-ae00-5ad8e05d082c	8dc071b8-32ee-4b22-af7c-bf619a4b94d7	1151		300052811
+e4fa3e20-40d0-4e88-9087-90d0161d5329	1c1e6bef-4561-471d-bdc3-0a48ac296997	1154		300052836
+89ae65eb-c14a-49f8-bada-66831d841f9d	7f7a7c5d-1d59-4a18-8441-508bba210d14	1145		300052874
+6cbe0c13-f234-4598-981f-7d09d98f846c	27a68e7e-8d3c-4689-b559-3fa2609c3be1	1124		300052977
+60c758aa-9e03-43b5-b2ad-b9f26f324b6d	7c33ab21-a589-4e03-ad02-dd1cea60e6ec	1135		300053004
+f7ff3d6c-e72d-47aa-b19b-9ae7091c5f30	d5af3a5a-357b-4cd6-93ef-77f9ada20d40	1125		300053036
+51910eef-4b7e-4107-8434-00e20a599aad	8dcdf93b-4dd8-4033-93f4-9cf4bd596df8	1140 M		300053092
+a7a1b3cd-eae4-4066-838e-a009389d61e6	dfa75be7-c7b0-498e-80d8-d39c7c341cf4	1138 M		300053153
+f0e13c96-c942-43ff-8d66-2cebecd42849	95d240aa-3810-4d06-a499-d412c5503e45	1138 R		300053166
+6dc924a2-5445-43ec-b6af-a30e1508a63d	69f05caa-d4a6-45f6-95eb-8e0b1d0dd076	1111		300053210
+0ab06229-bcd7-4915-b84d-d82bd10fe8bb	980babb8-2d01-4754-b730-cb555e3df28b	1106		300053236
+bfca8147-d2fc-4f01-9ab6-1545ea9f8a58	22045a05-2bd9-4d0f-831b-6ea99642c42a	1107		300053298
+3c411e23-d0c9-4b62-a0a0-0ae6eefb72af	ba68375e-89aa-4dfd-afec-f14ffca9411f	1112		300053300
+2a50eb19-a277-4a1f-9286-96a3c1bb1d39	78791f43-f7e1-485e-bc82-9a65f02a6f2f	1105		300053370
+76287ed1-f8b1-48ae-9e81-2a1369d2345d	457ba19e-53c6-41d5-a0e1-3f448ef5a5f4	1102		300053371
+7112102f-3bab-4cd4-932a-5a98a71df5b7	4ecffbbc-58b6-45cc-acbe-d4cd95061334	1108		300053372
+f77469d6-cd42-40ff-b2c6-4d0dc19abd82	13ea6ed7-4a2b-4b23-9f15-5b10dd71d4b7	1101		300053424
+9359007d-85d1-4330-bd7d-d323298289b5	6f5c6317-9eeb-4bb7-8e53-3fc784f8da76	1153		300054607
+67beba20-4170-48e7-8451-79cd2a307bf1	9fec7562-1e76-42b1-ac4b-b669bc1703a3	1903		300054692
+e14355f3-b20b-4854-8761-8754daaada7e	d9ed2d48-26d2-4e1d-9ad6-bc013d942bc0	1143		300054880
+2b0b52a8-f2b1-4a76-bde1-eae5807c8fb9	5cfc6ce4-db1f-46e8-89b2-a7a7eb02e6e8	1920		300054912
+e8d816fe-7173-48dd-9e57-53af3e1239b8	db86eeb1-d0c3-4041-a08c-13eed593bf07	1129		300054923
+83d862af-cb62-4b58-84aa-52e82ddea703	7edfe95e-1710-48d7-b7cd-12f0c3a2782f	1130		300055208
+4a9a196f-a269-4765-9257-0656c13a6ef2	2b5071c1-dd2c-4f25-8cb5-d14c72faa730	1132		300055231
+3e9acec3-4a15-4e79-94d5-e1fadddd8f0b	3ed89acb-c255-4bc7-ae2b-86f922f4a382	1139		300060310
+6188008f-4818-4a61-bb2c-5c8f5995e2ba	5c5c5243-b316-4ed2-9e54-5a3b857e9121	1148		300060329
+59bfb8c5-ad6e-43eb-b8be-40be6d060c4d	0bb2534d-861a-4e62-8fc4-f2cfd98c80e5	1142		300060338
+50aec2aa-dbb5-4e9b-9d10-3e801b123943	1f1e152e-9125-4ac4-a01b-dfb621d09208	1144		300060374
+1df2ac5e-4e56-4bbc-9b35-37833e2d8731	8bcdeba0-2c91-4fb5-a932-49148fbdd069	1133		300060380
+40c80f93-8a4f-4250-ac1f-189e57a3892b	9261b9d9-0a9f-44ea-bec9-8b09811174a4	1134		300060402
+64d1d4e1-f14b-4d46-8ee6-81bda308ff5e	6afe008a-70c4-4840-916a-a8e29865f187	1137 R		300060406
+b21f5235-4f4f-44ee-8693-51dd346b4b8e	d25cd5bd-668b-45c6-aa1b-b1aad34b984c	1122		300060439
+107ce2f3-289e-4aa7-8134-efa2a1ee46b8	919cc4d5-8153-4a4d-b048-8b512a8ccc7a	1119		300060452
+af28bd0b-8e36-4735-9de4-cb1ef7cc2a2f	27fb06be-30f6-4d40-abe4-252e44000682	1121		300060521
+4b0c5ab6-bebd-48b7-a22a-1a843e69eb6a	6efe9dd8-ca6f-4848-90a8-2410db91c428	1141		300060609
+8d793c7b-3178-46f3-a9a0-2df136bdedcb	918d4b32-24db-43bd-ae12-aa9e91fdcd1b	1900		300060779
+b57ebb0e-0bc3-4221-851a-cee2eee03011	468e4279-0d6b-4cc4-a28a-e40003d29600	1117		300060818
+c408b63d-42ae-463b-b74d-45606245951b	8511587b-ab47-421d-83f5-061c47aea6c3	1115		300060826
+c736abc1-9e90-4547-858c-6898c9a6357d	7e20214f-273e-450b-9a3e-4975f9810764	1116 R		300060851
+3ba17cb0-d7cb-4536-94f7-c327ee6f22ab	c0e6d3ed-e0b0-420f-b03e-d29996f289eb	1114		300060887
+aed9447b-9314-4f30-ae33-d8fceb95e47f	1dea2b3a-703a-4991-98a9-86b7c0e3dbb3	1104		300060909
+dc8db767-8416-471a-83f7-c6520b1e371a	29f70e83-1a58-47b6-ba90-965bdd5888b7	1109		300060917
+d7a97cc0-4885-4cf1-8a23-1e4f96941174	9f611dac-4773-4484-a857-3f67260152c5	1136		300061600
+ed0ff4c8-7669-4dae-adc0-ccd5b090ff73	fe9a2858-06d2-444e-b8ce-b1f1c925c5e0	1942		300061632
+10940603-39e3-4e41-9dca-12db01916bcd	7bd6d89a-9261-484c-8a33-21de136f0dd6	R4 Trendelburg		300062314
+74381d1d-2d04-4c78-b6fd-62a676207141	3aee6ba5-9b4d-4c59-9f2a-324080a609e0	099b		300062584
+800a01c7-0663-4258-97c6-b9673b87a789	b293d516-7909-4cd9-90de-8d6dae9a0788	1118		300062610
+8d0a820c-dc48-4a5e-97cd-c7b85f59c7b6	c0e4575e-0efb-499f-bb44-bbcc8a9a696e	1128		300062791
+e0144dc0-717f-4231-abfb-3276795d5454	2c42b70e-7a09-4b74-b0b7-4172a7b7be6c	1126		300062795
+8fa0e0f3-76f7-470c-9fd6-cb01a3bc726b	2173a048-3955-4ef2-8d3f-4c37fe4913eb	1800		300065669
+e873bae6-25e8-4dc6-982d-d80f5a15798f	9dc2df7d-e57d-4510-adba-f0f63bcf9f69	1801		300065670
+e7d28152-f281-4446-a8a5-4da1555ed8cf	c8a1be71-35a1-494b-917a-b6d4ff9250c8	1802		300065671
+e3179024-2db6-4058-b5b5-b42ec3e6e21b	1223c95a-2f57-40c8-b9b2-4865ad65dc3b	1803		300065672
+92845abc-054d-44b6-85a3-5a23a88fe1f3	9cd67a8f-37b7-44b8-bd08-25e50f25e3a9	1804		300065673
+99d7c9a4-67c7-4a42-9c2a-128acf7ccca2	d04eb60b-ae5f-411d-ab30-284216ea92c4	1805		300065674
+1658a69d-b2e2-4eb4-8dd5-09c6a623d48d	13e3f962-e20f-4472-a854-0913831ff39a	1320		300065682
+31f9d310-5521-40e4-b890-32aaa53eccef	7b52ae18-b1bd-4fa0-a872-3f44576d618e	1321		300065683
+3fd0bbd3-dc16-434f-83cd-da6ecb0071e1	82cd99ac-68e3-4c2f-a0f8-e8c40982d446	1322		300065684
+9560538c-4985-4763-9815-fe6d8f3b0bef	fbb9239b-79ed-4f0d-9e47-93aa6888dd7a	1450		300065765
+a6d54715-53b6-4f5b-86e9-9bbc8e17a29f	a89ba726-1ac9-4ba5-aec1-568b2cc89d70	1451		300065766
+af12ccd0-9b51-4c7f-9c9f-a3fba3e7cbe1	820281be-b2b6-4718-980e-559f6888fd45	1452		300065767
+390bfad5-e94f-468a-b398-90b00361f087	76a3f889-0d69-44ee-b751-020d35efb007	1453		300065768
+bd928b8e-7b08-4a29-86af-55f701a84488	d6be3320-95d4-4543-a692-37e2c5d1c3c3	1462		300065773
+1a5b2a30-4260-4b79-8284-61f9c884617b	dcec73f3-b388-4b6e-bdfa-31be358968bf	1463		300065774
+8657e6bc-2aae-43dd-8785-5414a6d4d200	dc6a892c-6bc9-4135-9368-f4586add3572	1461		300065777
+53f1d1a8-18ae-40a7-aa27-a047b6d50df2	3e466298-ecb6-40c1-b7db-b017e90a0b95	1410		300066392
+3d00f18a-d29a-49d2-b8ca-48ed60538649	52ca2e0e-6561-464d-b849-91bd9a3596a6	1411		300066394
+28cb844a-a6f5-4e22-9305-7dfa1839388e	1cbc1f97-5f1a-44a6-b803-e26ba5279de0	1412		300066395
+0a6b26bc-fbf9-4fbb-84b6-e996e4228cc6	b3fe29aa-104d-4798-8215-945f3aee41a1	1414		300066396
+19846464-b7b2-4f8e-86b0-6b6961aefae4	281b5003-d713-494f-b2f5-b6f9333ee416	1415		300066397
+4879cb8d-231b-4ba0-a2fc-194e300c736f	eca0ad3f-8c1c-44a0-b3c5-388139ece29a	1416		300066398
+238583fb-246c-4715-8383-fff86601348d	307ea4a9-ad7b-4449-8f97-3ec8cabc73e2	1417		300066399
+6f4fd54b-501a-4dc4-b74c-75156cb6d9a1	aa2e669f-f7b1-4198-b3f7-50a352f507b5	1418		300066400
+9de4cb2f-ae82-435a-a536-e88ba3c304f2	e63e038a-b95c-4271-bb93-a622ab13053d	1419		300066401
+1ddd4182-4557-4bda-ae3f-3c5638010a5e	11cdd1b6-332a-43f9-a825-0150de40c666	1420		300066402
+67076b26-e7b3-462f-9e43-58afd41a3f15	66a6f885-ef46-4590-bb91-2231daac5aee	1422		300066403
+153feccc-700b-439a-9122-17fabd3ae941	e731ef30-9425-40b4-b369-5b3bba2f53eb	1423		300066404
+ab8d8cfd-6d18-435b-a968-4807113fd966	53d71c52-877c-4af6-ae8c-b8ad44a6466f	1425		300066405
+8f46dce7-000a-4164-80eb-af88cfd9faf4	64c6f4d7-0109-4a4e-b421-ec0e0000d8fa	1426		300066406
+afc1c483-615e-4876-abd1-243b57091303	1f2910bb-d16b-419e-927d-fd9cbc395936	1427 M		300066407
+5c3dab50-31f7-48d3-9118-484d1b672302	b1a6be0b-82a7-45db-bdbc-d8b1841a5bf3	1428 M		300066408
+f59d9e78-c2d1-4e8a-89c6-0ccb25436add	3d7c0688-81ef-4647-a646-266f4147652a	1460		300066721
+81d8ae8d-9210-4d52-8365-6a7d77b2d3b9	f09ad90a-44d3-4d6a-8c1e-ae0a70fcbe37	1680		300066723
+82b140b6-946f-4629-a917-85710f351cf9	0caa20a3-5762-43c9-869a-0194a7c9b044	1380		300066727
+0dfbf0d5-99d4-4e45-8121-cedb53e8c203	fae5c2c8-aed1-4fce-8075-b0ccec1689e2	1381		300066728
+bd30402a-af8c-4f75-9d7d-6f84c78acabc	1cc6f51e-b5a9-49f7-9725-d748b7d29113	1382		300066729
+14db8445-ac38-49dd-971f-5d02d15bdf31	ebd2f5a4-fb30-4cad-9257-246af844f054	1383		300066730
+c89cc2ff-3d0e-4615-b97a-cf6c6fd041ed	1c6a29ab-8f90-4bbf-94f1-4d4c02930295	1384		300066731
+044b512c-daf0-48a7-ac28-1e26cc226785	fd2e1b89-c007-4ef1-a6ef-a08a55e626c8	1385		300066732
+acccc3ba-0d18-4c8e-a422-6c58b36489b3	642f724e-092b-4033-a23c-5dcb22568791	1386		300066733
+b10d039b-3f67-4e30-99a6-8eadebdfa2b9	a052aef4-a2da-4eee-8aa2-34400b6b71f6	1388		300066734
+03ac7eeb-e6b8-4637-9e78-c6656529ebf0	f0d0f180-10cb-4d68-abc4-dce3b767a5af	1389		300066735
+b7c82fc5-ba40-4a28-b6b4-a491c74138ac	287a535f-0aa0-472d-ab0f-2c58255ad8e4	1390		300066736
+8f7db6ac-64f6-44e1-bccc-cf1a5c32d117	15b73074-7581-4949-afd2-fbb55c4f024f	1391		300066737
+148ffeb3-bc84-4f06-b4a6-d58f0f3326d9	518dc68b-d366-4b4b-9ff2-efb43b8b4960	1392		300066738
+00f55b35-a905-4040-8a0b-a7543127a96a	62d7f31c-a1ce-4d7d-ab3e-cbd12d89b1c2	1393		300066739
+ef4a782e-895c-4e7e-a04c-f5b662f4bce4	8c91ac5c-20e4-49ec-902a-790fa1bfc49d	1394		300066740
+a2b9feca-d028-4d91-9719-6a40132191d9	b332ef47-874f-42ff-9f83-37a14e8c3a9d	1395		300066741
+f283b98e-11a5-4a17-b91d-de30ab84b599	5e370bab-429d-4db5-95db-e3f50abcd129	1396		300066742
+b96fbd00-35b0-44c5-a618-d2938859f8b7	c25a9b29-0da2-491a-825f-1b4ffab612e6	1399 M		300066745
+7e50253a-0a58-4287-ab9f-0f89a690b083	42bd830e-229d-496b-a405-f07be074635e	1330		300066801
+27b8289d-9165-4701-952c-b51b2b860ea5	7c587a78-3894-42a6-b921-d163ced7ef8d	1331		300066802
+0d421dcc-4bb9-4643-86d4-3f2589c11355	8d0e7028-24ef-4a09-ad82-d1cb51398b30	1332		300066803
+148f7cf1-5f51-4eb0-8411-166b6ba9b952	60a172cb-dd66-43f5-a1f3-7964ac0696c9	1333		300066804
+c16e7383-f97d-478e-a83c-ddd905bf2088	80e2cc4f-a553-499d-9663-fd0d5dba2e54	1334		300066805
+11002597-c868-4ec6-ac4d-bab9dc7dec87	c509eb34-ad5b-4f22-abd0-eca5ff882064	1335		300066806
+a7e9fecb-7d58-47d4-b39f-a4be0f5df977	da77cd9d-c991-4390-890e-cdae45cc2a50	1397		300066819
+64a70696-0e3b-4726-a5cc-5c271725c8fc	47902102-cf99-47a9-9089-a99a2a4432be	1440		300067383
+ae83e365-1a1b-4f79-a6fb-0f40b340641c	e43c75d6-4d92-4352-996f-68a5bfb0a7d3	1441		300067384
+9144d0d0-bb80-4356-a761-47e0dc84040a	b19631f8-4864-4d32-b4e7-269a9462cd89	1443		300067385
+f7de33b5-c716-4672-aba4-4fce5f93a382	277227ca-d7ca-4159-887d-0e3052e1e2f3	1444		300067386
+422193f2-4607-401d-a485-303dd35b0c0d	b38e864f-c27d-4b0b-8028-1b24d793fdfc	1446		300067387
+0af9020e-d36b-48be-bd1c-b0f289a3dfa4	761b1272-a9fa-4798-9412-fd06f5d43077	1540		300067390
+6535f3e2-f6f0-44da-9b99-141bd54837cc	3e406be2-43ef-4feb-a38c-34a52268b553	1541		300067391
+6b32e728-699e-43a9-bd0b-8b9162a2fba3	4d8becd3-4a7c-4f64-9fac-886745a5ec20	1544		300067393
+fcd45255-6677-428a-8042-ed98bf1dd95d	b0f65dfa-02de-4f04-94df-4e9158a72654	1300		300067401
+bd86003b-bd29-4f46-9086-34eb6fa690e7	38d095c7-81b3-4e3f-be28-1d47642b192b	1630		300067402
+8327d995-53c8-4f60-8654-cb07f4e451ab	68b07f01-d38c-4f6c-867a-e295255cfaaa	1640		300067781
+5914164a-4bd1-45a8-aeb7-1b91b4253d8b	6a61de98-fff6-405f-b53f-27187b42aee8	1641		300067782
+2959393b-19b6-4064-aef6-ad811c5e0d5c	d30bd3b0-1a29-46b9-8ed2-478cd53f5087	1642		300067783
+ce71e107-f181-4cc2-a3de-aee18b28c5cd	f44ed066-3e0b-4b53-8dd8-6c832db9deb4	1643		300067784
+966404eb-ea3e-44c2-acce-78d0f01f9b81	29aa4409-7a54-4ce9-b4cd-4992801d186c	1645		300067785
+f7c3b2eb-ce8b-48a4-8c81-6bf8a0839284	d5841583-8e56-4ed0-83ef-97436d5207f0	1610 Richtung Frankfurt		300067966
+ee4b15f5-cc8c-43e1-a2b0-35ac7384f48c	53db4148-5d7c-4f6f-a506-16a44e8adac4	1610 Richtung Offenbach		300067967
+7ead3abd-3bb0-43fc-bc7f-ae7545858aa0	34ac264a-b57b-4c05-8cf7-67eb7deb5254	1612		300067968
+9d9315fe-5e5e-41d3-b9f3-639a723c811f	dc3a58d2-1531-460f-9906-ea74051203d8	1613		300067969
+268686bd-43fe-4139-bd11-cc0ecf6674aa	447e72b0-0b53-465e-af6e-9767ac48997e	1614		300067970
+439c0999-7f40-47da-91e1-04ba3ce4f8b8	6839d882-8135-4cf5-9288-67a164459bcf	1615		300067971
+76caf690-1502-49c4-bf68-d2795585efe0	1baca48c-b65e-488e-966b-39180dd00e4a	1616		300067972
+585e0eef-cf3f-46c1-a8f9-164a294f7553	ccc0ab7d-e142-4caf-bc7f-a2c253ab0fd7	1650		300067973
+d2fabdfb-b39e-42b5-84d0-ab9d97bce91f	aa90a4b6-8414-44b8-9a05-a7d53d634c2c	1651		300067974
+f3dab7a8-4f5e-4076-a1da-618523151be5	8486baf1-e5f6-4daf-9245-78183f6ec8dc	1700		300067975
+61a8b7f3-d405-4b29-920d-b2b7a1fe874e	81f542e9-ac53-4809-8231-40f6be00e8ad	1702		300067976
+9628e20a-d64d-4156-8d5c-d6bd3327ca86	0ad7e7ae-3ea1-4a31-b0b3-c673e8936152	1703		300067977
+86b1b7f9-0ad9-4215-8dc7-c9e6236e0216	91b67cfa-ebca-4569-b926-7685f87e6ae4	1704		300067978
+06d9a497-d7b8-4b58-beea-1711cf2287a9	c6687f32-8b20-4d4e-8a43-f3c252766efb	1580		300067979
+caf3332e-7c42-4c50-9f1d-b2f9d684c675	e3aeb205-e198-4b41-a269-9a737c9f6afb	1581		300067980
+d6163c3f-82b3-4cca-863e-2989d73464c6	6c16ca3c-b721-4d18-8ce4-527dcae6b809	1584		300067981
+bb5c64bf-fc74-4633-88ef-bfa0d84967bb	6d33a5e3-737a-471b-903d-12a1c74a7a07	1587		300067983
+b97a6b99-3f14-416b-8cc1-108ebf428e60	cd5d0ba3-0ee6-4b12-a438-7cf1082286a9	1591		300067985
+5a007087-a6c7-4dad-b6fb-58e1418858fb	e821f0b5-fb65-479c-9129-9486cf7acbab	1592		300067986
+6daa9505-1dd5-46b8-8376-a3361fd51e26	c40144bf-9aa3-4bae-bd45-4f5557b85f43	1510		300067987
+213497eb-54e5-4fa2-8a80-2ec037c97b43	69edbdcf-1a5e-44c7-a16c-3afd29a8a664	1511 stadtauswärts		300067988
+b46ef980-d6c8-4574-be00-a02d66e31b06	56ab2e0f-2b0d-4601-82df-246f8e83de1a	1511 stadteinwärts		300067989
+a9c25171-d04b-4157-9f75-def368eebfae	72b0abca-9a22-42d1-b05e-098e3f6b02b3	1512		300067990
+34f9efb7-4c27-4e08-9a8f-489b0e7d09ef	a002aafd-3df6-44e8-8518-1b4d1be36eb4	1590		300067991
+abb3eeae-9aab-4865-b6d6-1480d029ed8c	58fa0b3f-c60c-497a-9330-3cdafc8cb254	1351		300067992
+230f54d8-5d9b-43b2-b25b-4c2f32485cba	31a2e17c-ba58-45b5-bfa4-716daa463b4a	1354		300067993
+7c5522a9-90de-4235-871f-9cbcc03b09a8	4eea9457-4ac1-4a12-84f7-5ed5f2c25b55	1355		300067994
+f7a8d36a-c544-481d-b3af-b1738899b01c	7e98c7d3-d0dd-459f-be21-5d4e28d66ff2	1471		300068882
+697a8bf0-935e-4651-a7a6-b75c43f18638	c5cb593d-8e62-40ce-a5c1-2af7306c6dad	1473		300068883
+95186a64-b970-49c5-83fe-32440d3ad76a	1cde8b7e-4e31-405e-84a7-1942c202b5d8	1476		300068884
+96018b95-fdda-40b7-b448-33e3a72982d2	498e3059-fd88-45ee-ab57-7c81402192e3	1477		300068885
+61e37b2b-6459-437b-bfa1-4f26c2c4e3f3	71caa105-ecfa-4fd6-8a6c-69356eac6498	1478		300068886
+72d29df0-5576-4fc8-ac65-4a6c1c0183eb	64dcd97d-ed11-469b-95f6-ee1960213348	1479		300068887
+0d179368-6c2d-43cc-8ebe-057b72a11ca4	24e8f718-072d-47aa-add0-e299d2354214	1480		300068888
+aaca3e3d-3731-4fae-9620-601cac93b36e	04e7a73c-b85e-4413-872a-b6cd6610949b	1481		300068889
+73c85977-4643-4843-ae4a-a47c7eb6eb38	0efe9bcb-eff4-4530-bf6e-dbd1abf8eeac	1482		300068890
+507b82e1-098f-4130-bce8-0b3b00845ef1	215fbdb5-5ed8-4866-8d46-beaf3fc9b7d0	1484		300068891
+545cb326-f875-4dc7-80d9-3c6470938026	39224feb-db47-42f7-9f92-61960a719594	1810		300068892
+ffe0664c-74a9-4abd-9200-2e1a049ce810	c25de5be-2677-4ef4-b88c-e4c03d2e6db7	1660		300068994
+f4cf3aaa-7d40-443e-b978-c1f9bd144d25	720fc59d-4c28-42b8-8862-e6c556c537a6	1340		300069071
+92f039c7-d7a4-46a8-9c97-918de6a30ace	273ec648-7592-4aa2-a1c8-241227668e6f	1341		300069072
+8f8ce336-061c-4560-a999-7da3e4e43744	2991e48f-3922-4be2-8253-c985b311f646	1342		300069073
+a25c3e9c-4158-43ce-973c-4ac14a4e3e85	c1cb7485-2286-4d13-a9fd-06e2a3864ec1	1343		300069074
+8bfa093d-ed3c-4e58-870f-c17410b04346	5456e193-6738-4007-bd8a-5845b86aa78b	1345		300069075
+41f04792-804d-415e-89a7-f6c89b3e3b29	c9b8329d-29b2-4fb5-a4a8-97ec202b6c7c	Zählstelle Sinntal Altengronau Rhönexpressradweg		300069163
+69f2478f-ad0c-41bf-b2e8-2ad8c55dcb25	b2bd21d3-070a-4cae-a1fc-3946f7a096fa	Zählstelle Gelnhausen Höchst R3		300069164
+423447d9-57d4-43ee-9cd8-dc73ca5308c1	d688485f-8032-49f4-865b-dc31e69f282e	1690		300069324
+7a88fb21-e2be-4d08-86de-a9103515a9b4	eb6a5241-40f7-41a1-9d0a-5537101c3690	1550		300069410
+dd3b7713-0d73-4037-84d7-6722be8abd51	789e5f79-a263-43fa-9a2c-70bb9ff39965	1663		300069417
+9952bd48-5151-4d16-8060-dc9b1df08982	a8ae3e27-55ec-4113-b039-fb591ab3cd01	1662		300069418
+8c417655-eae4-4df8-ac95-da1930632863	2dbd844d-0621-435a-8c6a-40877ecc3224	1661		300069419
+0cecde0c-a9ce-4dcd-94aa-3e24388d6e34	5e121c5d-d782-4a36-aca9-81c9c08068d9	1370		300069438
+244c16bf-d5ea-4a64-8387-08434d895684	a4d020f3-59a5-42ac-b2b8-1bf17d8790fc	1371		300069439
+febdf138-234f-43e7-bfad-117e1598d68a	d0eb52a7-065c-47a4-9d05-dea611f407c6	1372		300069440
+1194e075-5cf3-47ab-b96e-0ffbee3c249d	d730c20b-aa6a-4a23-b67d-5cad4f5a9f52	1373		300069441
+5891a988-41ca-43b7-a2a0-bafa88511e27	66613d40-4d8b-4247-bdba-f9e1f25c36c2	1374		300069442
+4fc2b8c5-0f05-454b-a7a9-8bb7dc287612	7eb8d4d9-d8e4-4bdb-a296-4d2d23a459b1	1375		300069443
+0c65daaf-b2c7-4c93-9542-8b1cb65027d9	06362c75-a98a-4649-8f68-d937cedffd8e	1376		300069444
+47a9aae5-e8eb-4d13-9d72-b9f9c837da0f	3d744ef9-c741-4496-a79f-50ac6276ed46	1490		300070104
+cbab619d-c94e-4bc0-a598-edfeb0b4c5ad	5bf44ff6-bf84-4f19-8da4-96c58bb6c03f	1492		300070105
+969a6fb1-eb31-46cc-9df0-6b1902f7098b	deb86e6c-53a1-4c45-b29b-b486931b4d32	1493		300070106
+47113a76-6b9f-47b7-b271-69970a9eb1e8	e0f23b75-47f6-4b77-a171-6be7cac3efe2	1494		300070107
+669cb40e-00cc-4125-b36d-a1934f5d9598	d20dcd32-cb99-402d-a398-e6100c1a4775	1495		300070108
+755e4e00-8f2c-44c0-8b7c-cd5b8a642bb9	fe17fd1a-b259-406d-8911-24353cd3a4de	1496 auswärts		300070109
+bc5a8387-c987-4f6e-baef-a64d8e68e824	ac2f9b07-ed0e-41f5-8256-e0a1407a7194	1496 einwärts		300070110
+e4f75eb5-0e5f-4735-b6f2-9091bba605ce	00684a49-f0e3-4c73-bfa6-34557b20f674	1497		300070111
+84f50208-afae-4dd0-be8f-db1d98659b1a	3673b68a-0781-4ef3-8d62-cf3c544bd293	1499 a		300070112
+ea6891ca-c7d6-4f6a-ae01-dd378159e664	2107f64c-cab5-4b18-a500-f153dbd03809	1500		300070113
+5710d532-0e91-464b-876b-4175cf767fe4	4a8c4e47-0603-41b8-9dad-3daa35c08d6f	KÖ Steinstraße		100005014
+e5bbcac7-f31d-42c0-b1e2-88c33167e218	81858014-9313-42fe-8621-6035921166a3	Kirchfeldstraße		100011631
+353ceef0-f423-4bb3-8a95-7ad94edbf8cd	bfee4987-778e-4c44-b537-298647c8a9a3	Lohauser Deich		100011632
+0bc430cb-89f1-47b9-bba7-20a5a6a857af	4d0ea272-e21f-441c-92d7-d4ba638ea38f	Christophstraße		100011637
+a444f188-49e6-4c51-aab1-2e850895aa6e	47da2398-48f1-4253-a36a-18bd061109b1	Mannesmann Ufer		100016424
+42b9f1b6-46ce-4243-acc8-b8fbfa248997	c41194fa-8368-4912-a812-800972e94601	Elisabethstraße		100033660
+b4a3e1e8-26f5-4039-801e-c8cb1ca18f1c	58781890-ffe1-41f7-ab09-d42488d6dd4a	Bilker Allee		100046689
+5aceae15-2dc4-448f-8d7f-82a574761b0f	20ae5f4b-aca9-4138-90cb-ac5fdba3cfe6	Münchener/Ickeswarder Str		100047053
+3b5cba5e-4948-4438-83ea-532970feddde	42b8d5c6-8350-4e66-8102-7a90b14446dd	Fleher Deich		100047054
+e217f798-11bb-47b7-83d6-06a05f335db2	0e24f71a-524c-445a-8d96-e62515d3fad4	Koblenzer Straße		100047279
+3b89ebe7-4876-4f8c-a3c6-0884d0f30fda	5314c49d-8b06-46a9-b304-54746f4d04fb	Oberkasseler Brücke		100047280
+87feba1d-9b57-45f9-a85f-06e22ce45a37	068ce86a-a56a-4671-a93b-dcded0535707	Fleher Deich Rampe		100047281
+2aff75fc-088d-4796-831d-da4d86f41fff	22700902-e04e-4e80-985b-ce37167560fa	Hofgartenrampe Oederallee		300029563
+246979b6-fda2-4da1-bb65-74426ec2c75e	08918099-a16a-41b0-bec2-da59c10ff291	08 Vorgebirgspark		100019755
+c0227e64-ae20-40ec-aca1-8d9ac1319264	f2476936-0e82-4f29-9c8a-c3ce5d7ba3b9	09 Alphons-Silbermann-Weg		100019756
+2fa8d29f-7a39-488d-b757-ec2845af7b31	fca8e3b6-c2bc-4e44-8899-2b4b91fac44f	10 Stadtwald		100019757
+48d3e139-113d-4a47-b5dd-7809615f1c6c	88d66b97-8d33-454e-a864-6bdc56e2e93d	11 Niederländer Ufer		100019758
+81b7f67e-ca33-4153-9edf-1272f0cf904e	739d06f1-62bb-4588-880b-56ddd3e35a41	07 Alfred-Schütte-Allee		100021727
+22146dc4-91e9-45a7-afdd-340e3101e9f8	af475dfb-d98c-4cef-a944-425ba8bd10a5	01 Bonner Straße Rad		100023269
+7d12435f-0741-4646-8b83-5e54d92fe8bf	0c117ffc-1629-49d4-b79b-91465c823cf8	02 Venloer Straße Rad		100023270
+cb7f77e5-6f58-4d0d-9970-9fb9a99be47f	62631d8f-fe79-4ab3-8b66-136dc56887c8	04 Hohenzollernbrücke		100029854
+d369ee54-e5ce-4a27-a26e-2265927c78f5	bad75edf-3a8c-4662-9916-2a23aaefb76f	06 Neumarkt		100030418
+bd3e52a5-0d50-4be7-9779-337e8ab61779	15bc5909-d6e8-455f-843a-eb676e983281	05 Deutzer Brücke		100044729
+83297ad0-40a1-40e1-9c8e-a50cf62bad41	5222df13-0f31-4715-9d3a-92d7a2d0b7a6	12 Vorgebirgswall		100045094
+ad188f41-b421-4cd7-a45c-580fa1703e68	dc75e416-ff2b-4a71-bf69-810dcdc0dbb5	03 Zülpicher Straße		100057124
+1ad815ce-012b-4e4c-8df6-e2110e34b3b2	8ac19391-3911-486d-9c19-b486300325bb	13 Universitätsstr.		100059340
+dd3a61c1-ccdb-488b-8c3c-b178f98beb3a	6bd3d8fd-af03-4083-a43e-bc6955862b4e	14 Rodenkirchener Brücke		300014336
+3445dd3f-59e7-42c4-b638-62591feac014	ff60ce3f-e746-415a-98cf-5cf35e499feb	15 Severinsbrücke		300016603
+b18e1ba0-a522-4c7f-8c40-e27790b076f1	1402f916-a1d5-4660-8cc0-215791589d7e	16 Neusser Straße Rad		300021441
+93cd9344-c24e-477c-ace3-ede97cd75de4	f1472a11-b019-4113-94dd-712382ab2c8b	17 Hohe Pforte Rad		300022210
+32228d94-9c6c-4e25-b5d9-4054a4291851	54511dfb-859f-4de2-8bf5-40b397472a6d	18 Gladbacher Straße		300028615
+3812bad3-baae-421d-bd1c-9ad9e2c43e99	c9f532db-275a-4654-844b-0d8398ad285b	19 Elisabeth-Schäfer-Weg		300037617
+453827b9-87ad-4db0-9999-a95491ae0b9d	296ae90a-7808-45be-aca8-d2497f46a919	21 Hohenzollernring Rad		300041441
+839d242d-731f-4178-89da-8b7a8924ec16	274d6de4-301c-4b94-9489-c32bc58d2a72	20 Auenweg		300041859
+73032164-0fed-49f0-96ae-67bee842e60e	3c090d4a-f557-4bea-9fdb-4ac25a82a111	22 Maybachstraße		300049705
+4dbad389-5646-44f6-a136-6ac79c99003e	267e4d9c-8c3d-4e9c-85fd-4e62e77eaf70	23 Kalker Hauptstraße		300050064
 \.
 
 
@@ -1290,7 +2550,7 @@ f455a8f3-a931-4a43-8d06-ad0dccadb6d7	09a7f71d-3f6a-46d6-bea1-440bd121e635	X_44.1
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ECl3sfIPry3KFehranaMOvWcdROb8zrYDgImVuM59skXCAqg8xSnfAaAgA4kKw5
+\unrestrict 3aEAfnA4Wf74luLjNBNZFbUZ9qlw0SPxLXsdI5rgKfp6JFhL65scofTmAMYIoQ7
 
 
 -- Persistent state + provider messages (usually empty).
@@ -1299,7 +2559,7 @@ f455a8f3-a931-4a43-8d06-ad0dccadb6d7	09a7f71d-3f6a-46d6-bea1-440bd121e635	X_44.1
 -- PostgreSQL database dump
 --
 
-\restrict DBfQxfEAURJvTl9MWs6Np1BzZwHiF9Bd0JJzrxzQcw11s9H7VBWuOpXGmyZyyVp
+\restrict hGzLhaVPPrHRQJeHLUyASe0hABAQBDxVZQbYfDFWIqMgk66NkOqa2J7ieZVFuAY
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -1321,11 +2581,17 @@ SET row_security = off;
 --
 
 COPY public.data_source_persistent_state (id, data_source_id, key, value, updated_at) FROM stdin;
-0a9d5431-5d83-4601-a240-dede6221ce05	a023b021-9754-56c7-8c4e-9c391069aff5	archive_downloaded_at	2026-08-30T16:26:32.661200326+00:00	2026-08-30 16:26:41.950978+00
-3323c7c6-8628-45ed-a606-064486e5cfd1	a023b021-9754-56c7-8c4e-9c391069aff5	archive_file	/tmp/radverkehr-04f95ea1-cac7-4e50-b31b-69b20663cb3d.zip	2026-08-30 16:26:41.956837+00
-421b3f14-7afa-4e32-a065-d23e439aa6b6	a023b021-9754-56c7-8c4e-9c391069aff5	archive_extracted_at	2026-08-30T16:26:32.661200326+00:00	2026-08-30 16:26:42.389385+00
-beb57642-c98a-4ce6-b870-559a7b0d98c8	a023b021-9754-56c7-8c4e-9c391069aff5	archive_extracted_dir	/tmp/radverkehr-extracted-714c3ee2-5317-4819-8e18-bce8ad66dc0b	2026-08-30 16:26:42.394907+00
-64f0e513-21c3-4435-a9b4-cbfa367df41c	a023b021-9754-56c7-8c4e-9c391069aff5	archive_etag	W/"92c0a6674f86a43a01b2222a430dbe137532fdbe25aa993dbb432c32f082f0d2"	2026-08-30 16:26:42.395708+00
+6c4fb864-ebb3-4f1a-92c5-9c033b39e661	2750a682-90bd-5d2c-8b86-c9038c228d9c	index	{"timezone":"Europe/Berlin","stations":[{"external_id":"300022489","name":"064b","description":"Im Mundklingen 2, 64342 Seeheim-Jugenheim","latitude":49.780459,"longitude":8.648295},{"external_id":"300022501","name":"121","description":"K 31, 64653 Lorsch","latitude":49.661562,"longitude":8.576529},{"external_id":"300022502","name":"122","description":"In Den Langen Ruten 10, 64653 Lorsch","latitude":49.651834,"longitude":8.588048},{"external_id":"300022506","name":"123","description":"Am Sportplatz 1, 68642 Bürstadt","latitude":49.648463,"longitude":8.505124},{"external_id":"300022516","name":"051","description":"Darmstädter Straße 75, 64572 Büttelborn","latitude":49.904475,"longitude":8.536846},{"external_id":"300022577","name":"111","description":"Ebersberger Straße 5, 64711 Erbach","latitude":49.615944,"longitude":8.992066},{"external_id":"300022578","name":"028","description":"Hahner Straße 4, 64372 Ober-Ramstadt","latitude":49.82076694459276,"longitude":8.750551342964174},{"external_id":"300022608","name":"059","description":"Rheinstraße 2, 65391 Lorch","latitude":50.040216,"longitude":7.811698},{"external_id":"300022633","name":"084","description":"Aarstraße 5, 65232 Taunusstein","latitude":50.13081,"longitude":8.11911},{"external_id":"300022664","name":"085","description":"Mainzer Straße 2, 65205 Wiesbaden","latitude":50.052994,"longitude":8.277912},{"external_id":"300022666","name":"086","description":"Auweg 4, 65347 Eltville am Rhein","latitude":50.012307,"longitude":8.064773},{"external_id":"300022699","name":"117","description":"Am Schwarzen Berg 9a, 64521 Groß-Gerau","latitude":49.867808,"longitude":8.487299},{"external_id":"300022870","name":"043","description":"Lenzenbergstraße 118a, 65931 Frankfurt","latitude":50.10407,"longitude":8.50174},{"external_id":"300022899","name":"044","description":"Schmalkaldener Straße 19, 65929 Frankfurt","latitude":50.10444400452868,"longitude":8.504185080528261},{"external_id":"300023017","name":"137a","description":"K 705, 65527 Niedernhausen","latitude":50.17381296360336,"longitude":8.294790387153627},{"external_id":"300023018","name":"137b","description":"K 705, 65527 Niedernhausen","latitude":50.17370989251206,"longitude":8.294683098793032},{"external_id":"300023019","name":"138a","description":"Lochmühle 2, 65527 Niedernhausen","latitude":50.17702179903081,"longitude":8.298384547233583},{"external_id":"300023020","name":"138b","description":"Lochmühle 2, 65527 Niedernhausen","latitude":50.17706989556704,"longitude":8.29848110675812},{"external_id":"300023021","name":"063","description":"Am Höllberg 41, 64625 Bensheim","latitude":49.714285,"longitude":8.615094},{"external_id":"300023023","name":"047","description":"Schneiderstraße 9, 65931 Frankfurt","latitude":50.088241,"longitude":8.513669},{"external_id":"300023024","name":"135a","description":"Bensheimer Straße 2, 65428 Rüsselsheim","latitude":49.968742,"longitude":8.441705},{"external_id":"300023025","name":"135b","description":"Bensheimer Straße 2, 65428 Rüsselsheim","latitude":49.968707,"longitude":8.441448},{"external_id":"300023027","name":"135c","description":"Bensheimer Straße 2, 65428 Rüsselsheim","latitude":49.968777,"longitude":8.441926},{"external_id":"300023094","name":"087b","description":"Im Lorsbachtal 52, 65719 Hofheim am Taunus","latitude":50.124062,"longitude":8.417656},{"external_id":"300023095","name":"087a","description":"Im Lorsbachtal 52, 65719 Hofheim am Taunus","latitude":50.124074,"longitude":8.417782},{"external_id":"300023096","name":"045","description":"Rudolfstraße 2, 65830 Kriftel","latitude":50.093464,"longitude":8.473581},{"external_id":"300023219","name":"052","description":"Heusenstammer Schneise, 63069 Offenbach","latitude":50.071312,"longitude":8.735104},{"external_id":"300023225","name":"054","description":"Bornwaldweg 8, 63303 Dreieich","latitude":50.027194,"longitude":8.721126},{"external_id":"300023310","name":"048","description":"Bergstraße 48, 65795 Kriftel","latitude":50.075130727825126,"longitude":8.47725570201874},{"external_id":"300023417","name":"071a","description":"Pfungstädter Straße 191, 64297 Darmstadt","latitude":49.814585,"longitude":8.622561},{"external_id":"300023418","name":"071c","description":"Pfungstädter Straße 180, 64297 Darmstadt","latitude":49.81438786508744,"longitude":8.622631430625917},{"external_id":"300023481","name":"073","description":"Schwimmbadstraße 33, 64732 Bad König","latitude":49.74447792954899,"longitude":8.996660113334658},{"external_id":"300023562","name":"056","description":"An Der Lettkaut 46, 63303 Dreieich","latitude":50.00804,"longitude":8.674593},{"external_id":"300023574","name":"032","description":"Schleusenweg 18, 65549 Limburg an der Lahn","latitude":50.38997378228848,"longitude":8.08198928833008},{"external_id":"300023583","name":"055b","description":"An Der Lettkaut 2, 63303 Dreieich","latitude":50.00555525756325,"longitude":8.685740767032259},{"external_id":"300023585","name":"033","description":"L 3020, 65549 Limburg an der Lahn","latitude":50.38841417645314,"longitude":8.082085847854616},{"external_id":"300023603","name":"026","description":"Erzgebirgstraße 42, 65520 Bad Camberg","latitude":50.287158,"longitude":8.269894},{"external_id":"300023605","name":"055a","description":"An Der Lettkaut 2, 63303 Dreieich","latitude":50.00540836271789,"longitude":8.685679435729982},{"external_id":"300023608","name":"034","description":"Bahnhofstraße 9, 65594 Runkel","latitude":50.40388141892312,"longitude":8.160535097122194},{"external_id":"300023629","name":"005","description":"Sodener Weg 80, 36396 Steinau an der Straße","latitude":50.304011,"longitude":9.426305},{"external_id":"300023639","name":"110","description":"L 3121, 63110 Rodgau","latitude":50.020005,"longitude":8.927682},{"external_id":"300023654","name":"049b","description":"Neckarstraße 46, 64569 Nauheim","latitude":49.94133705545538,"longitude":8.444877459114652},{"external_id":"300023655","name":"049a","description":"Mainzer Landstraße 18, 64569 Nauheim","latitude":49.94128419433152,"longitude":8.444802962985706},{"external_id":"300023661","name":"128","description":"Rumpenheimer Straße 73a, 63165 Mühlheim am Main","latitude":50.131972,"longitude":8.820444},{"external_id":"300023683","name":"062","description":"A 66, 63526 Erlensee","latitude":50.144837332681874,"longitude":8.959830295352733},{"external_id":"300023706","name":"127","description":"Pfaffenbrunnenweg 149, 63165 Mühlheim am Main","latitude":50.120881,"longitude":8.878231},{"external_id":"300023733","name":"119a","description":"Friedberger Landstraße 427a, 60389 Frankfurt","latitude":50.14907,"longitude":8.70976},{"external_id":"300023897","name":"027","description":"Rheinufer 10, 55252 Wiesbaden","latitude":50.007881,"longitude":8.280194},{"external_id":"300023972","name":"107c","description":"Pionierweg, 61381 Friedrichsdorf","latitude":50.279968,"longitude":8.612589},{"external_id":"300023989","name":"093","description":"B 252, 34477 Twistetal","latitude":51.3229507,"longitude":8.9213161},{"external_id":"300024019","name":"142","description":"Am Keseberg 1, 34516 Vöhl","latitude":51.13044714725219,"longitude":8.877794265681588},{"external_id":"300024063","name":"008","description":"Kasseler Straße 22, 34388 Trendelburg","latitude":51.559219,"longitude":9.415306},{"external_id":"300024065","name":"018","description":"Landgraf-Carl-Weg 7, 34388 Trendelburg","latitude":51.559182,"longitude":9.411189},{"external_id":"300024072","name":"126b","description":"Wittmarstraße 25, 34414 Volkmarsen","latitude":51.44414927256679,"longitude":9.120879649854034},{"external_id":"300024079","name":"124","description":"Hochsauerlandstraße 32, 34508 Willingen","latitude":51.2786086,"longitude":8.6380424},{"external_id":"300024100","name":"097","description":"Birkenallee 32, 34225 Baunatal","latitude":51.260135,"longitude":9.421791},{"external_id":"300024108","name":"098","description":"Kasseler Straße 79, 34281 Gudensberg","latitude":51.186396,"longitude":9.393864},{"external_id":"300024124","name":"107a","description":"Köpperner Tal, 61381 Friedrichsdorf","latitude":50.281251,"longitude":8.614871},{"external_id":"300024125","name":"107b","description":"Köpperner Tal, 61381 Friedrichsdorf","latitude":50.281159,"longitude":8.614847},{"external_id":"300024240","name":"108","description":"B 455, 61169 Friedberg","latitude":50.316007636838584,"longitude":8.708804057532689},{"external_id":"300024689","name":"126a","description":"Wittmarstraße 25, 34414 Volkmarsen","latitude":51.444184,"longitude":9.121025},{"external_id":"300024708","name":"120","description":"Egerländer Weg 8, 61476 Oberursel","latitude":50.185525,"longitude":8.558612},{"external_id":"300024729","name":"074","description":"Lindenstraße 31, 61279 Grävenwiesbach","latitude":50.397502,"longitude":8.460949},{"external_id":"300024746","name":"130","description":"Mühlenweg 19, 61239 Ober-Mörlen","latitude":50.363008,"longitude":8.64232},{"external_id":"300024832","name":"134","description":"Bürgerhausstraße 10, 35410 Hungen","latitude":50.43989,"longitude":8.925089},{"external_id":"300024956","name":"023","description":"Mühlweg 5, 35633 Lahnau","latitude":50.575041,"longitude":8.562544},{"external_id":"300024971","name":"115","description":"Alte Straße 5, 35578 Wetzlar","latitude":50.550363,"longitude":8.46732},{"external_id":"300025055","name":"076","description":"B 277, 35614 Aßlar","latitude":50.59437,"longitude":8.43609},{"external_id":"300025106","name":"099","description":"Alte Frankfurter Straße 29, 34281 Gudensberg","latitude":51.164951,"longitude":9.318208},{"external_id":"300025131","name":"031a","description":"Berghof 1, 34399 Wesertal","latitude":51.5975583,"longitude":9.5836931},{"external_id":"300025144","name":"029a","description":"B 80, 34399 Wesertal","latitude":51.5914917,"longitude":9.5753041},{"external_id":"300025166","name":"125","description":"Krugweg 1, 34454 Bad Arolsen","latitude":51.435057,"longitude":8.958232},{"external_id":"300025186","name":"094","description":"Rocklinghausen 2, 34477 Twistetal","latitude":51.3210971,"longitude":8.9448834},{"external_id":"300025203","name":"141","description":"Orketalstraße 2, 34516 Vöhl","latitude":51.131306,"longitude":8.874157},{"external_id":"300025221","name":"092","description":"Am Bahnhof 1, 35108 Allendorf","latitude":51.032988,"longitude":8.72721},{"external_id":"300025228","name":"091","description":"Siegener Straße 62, 35066 Frankenberg","latitude":51.043818,"longitude":8.766338},{"external_id":"300025264","name":"102","description":"B 253, 34560 Fritzlar","latitude":51.124106,"longitude":9.235686},{"external_id":"300025274","name":"131","description":"B 253, 34560 Fritzlar","latitude":51.124212,"longitude":9.235291},{"external_id":"300025305","name":"039","description":"B 455, 63667 Nidda","latitude":50.45092,"longitude":9.04229},{"external_id":"300025313","name":"040","description":"Schlaggasse 44, 63667 Nidda","latitude":50.449481,"longitude":9.048017},{"external_id":"300025339","name":"104","description":"Hain-Gründauer Straße 64, 63584 Gründau","latitude":50.2414095,"longitude":9.1197638},{"external_id":"300025387","name":"069","description":"B 276, 35321 Laubach","latitude":50.519292,"longitude":9.09324},{"external_id":"300025483","name":"106","description":"L 3184, 63667 Nidda","latitude":50.3853577,"longitude":9.0281281},{"external_id":"300025528","name":"038","description":"B 455, 63667 Nidda","latitude":50.45188,"longitude":9.043449},{"external_id":"300025551","name":"119b","description":"Friedberger Landstraße 427a, 60389 Frankfurt","latitude":50.149228,"longitude":8.709188},{"external_id":"300025604","name":"041","description":"B 455, 63667 Nidda","latitude":50.45188,"longitude":9.043449},{"external_id":"300025661","name":"024","description":"Hof Niederfeld 1, 35428 Langgöns","latitude":50.509734,"longitude":8.654937},{"external_id":"300025675","name":"075","description":"Sportplatzstraße 20, 61279 Grävenwiesbach","latitude":50.383807,"longitude":8.406892},{"external_id":"300025725","name":"025","description":"Greizer Straße 18, 35447 Reiskirchen","latitude":50.595277,"longitude":8.854319},{"external_id":"300025734","name":"133","description":"Hochwarte 11, 35394 Gießen","latitude":50.564968,"longitude":8.7405},{"external_id":"300025773","name":"095","description":"Junkerhofstraße 9, 34466 Wolfhagen","latitude":51.358935,"longitude":9.12251},{"external_id":"300025779","name":"096","description":"B 83, 34393 Grebenstein","latitude":51.413788,"longitude":9.440625},{"external_id":"300025902","name":"100","description":"Kasseler Straße 59, 37217 Witzenhausen","latitude":51.326411,"longitude":9.774644},{"external_id":"300025977","name":"078","description":"B 255, 35649 Bischoffen","latitude":50.713592,"longitude":8.499111},{"external_id":"300025986","name":"083","description":"Lange Wiese 7, 35708 Haiger","latitude":50.740632,"longitude":8.239213},{"external_id":"300026004","name":"081","description":"Berliner Straße 17, 35683 Dillenburg","latitude":50.729255,"longitude":8.292364},{"external_id":"300026028","name":"088","description":"Hüttenstraße 1, 35232 Biedenkopf","latitude":50.867733,"longitude":8.558567},{"external_id":"300026735","name":"058","description":"Bert-Brecht-Straße 66, 64291 Darmstadt","latitude":49.932738,"longitude":8.659898},{"external_id":"300026742","name":"057","description":"Erzhäuser Straße 77, 64291 Darmstadt","latitude":49.938147856440935,"longitude":8.649208221759183},{"external_id":"300026763","name":"066","description":"Gut Plausdorf 1, 35287 Amöneburg","latitude":50.808167,"longitude":8.970818},{"external_id":"300026787","name":"079","description":"Am Brachthof 1, 35102 Lohra","latitude":50.728205,"longitude":8.662766},{"external_id":"300026824","name":"089","description":"L 3092, 35041 Marburg","latitude":50.8245442,"longitude":8.7161966},{"external_id":"300026859","name":"090","description":"Hauptstraße 2, 35083 Wetter","latitude":50.918268,"longitude":8.708246},{"external_id":"300026914","name":"013","description":"Zimmerplatzweg 14, 35043 Marburg","latitude":50.77422495646949,"longitude":8.75800146794063},{"external_id":"300026964","name":"082","description":"Hauptstraße 1, 35083 Wetter","latitude":50.9189428,"longitude":8.7050098},{"external_id":"300027016","name":"068","description":"Lauterbacher Straße 30, 34628 Willingshausen","latitude":50.863937,"longitude":9.192529},{"external_id":"300027026","name":"009","description":"Zu Den Auewiesen 2, 34613 Schwalmstadt","latitude":50.895875,"longitude":9.160975},{"external_id":"300027095","name":"112","description":"Kasseler Straße 2, 34621 Frielendorf","latitude":50.939551,"longitude":9.274604},{"external_id":"300027135","name":"015","description":"An Der Schleuse 14, 35606 Solms","latitude":50.549419,"longitude":8.427021},{"external_id":"300027143","name":"077","description":"Im Brühl 1, 35614 Aßlar","latitude":50.592154,"longitude":8.436444},{"external_id":"300027303","name":"020","description":"Landgrafenstraße 5a, 34326 Morschen","latitude":51.064514,"longitude":9.619295},{"external_id":"300027319","name":"021","description":"L 3067, 34599 Neuental","latitude":50.979054,"longitude":9.206268},{"external_id":"300027341","name":"060","description":"Am Hopfenberg 24, 36286 Neuenstein","latitude":50.907589,"longitude":9.515396},{"external_id":"300027385","name":"065","description":"Zollstockerweg 12, 36304 Alsfeld","latitude":50.757205,"longitude":9.241374},{"external_id":"300027418","name":"007","description":"Brückenstraße 8b, 36341 Lauterbach","latitude":50.644775,"longitude":9.363825},{"external_id":"300027432","name":"067","description":"Schrecksbacher Straße 14, 34637 Schrecksbach","latitude":50.847818,"longitude":9.291475},{"external_id":"300027443","name":"006","description":"Am Bahnhof 5, 36318 Schwalmtal","latitude":50.703938,"longitude":9.306125},{"external_id":"300027451","name":"070","description":"Grünberger Straße 20, 36325 Feldatal","latitude":50.64527,"longitude":9.13058},{"external_id":"300027562","name":"143","description":"Milseburg 9, 36115 Hilders","latitude":50.559557,"longitude":9.910363},{"external_id":"300027601","name":"035","description":"Brunnenstraße 21, 36282 Hauneck","latitude":50.820718,"longitude":9.727752},{"external_id":"300027638","name":"036","description":"Oberhauner Straße 26, 36282 Hauneck","latitude":50.821562,"longitude":9.73528},{"external_id":"300027672","name":"002","description":"Akazienweg 6, 36269 Philippsthal","latitude":50.858373,"longitude":9.977205},{"external_id":"300027685","name":"001","description":"Hof Lämmerthal 1, 36277 Schenklengsfeld","latitude":50.857235,"longitude":9.805901},{"external_id":"300027925","name":"150","description":"Eichenweg 8, 35794 Mengerskirchen","latitude":50.54305,"longitude":8.14732},{"external_id":"300027948","name":"016","description":"Weilburger Straße 9, 35792 Weilburg","latitude":50.506557,"longitude":8.271959},{"external_id":"300027971","name":"012","description":"Auweg 6a, 35457 Lollar","latitude":50.641062,"longitude":8.696359},{"external_id":"300028013","name":"003","description":"An Der Aspe 7, 36137 Großenlüder","latitude":50.583187,"longitude":9.551504},{"external_id":"300028030","name":"042","description":"Jagdhaus Traiges 2, 36369 Lautertal","latitude":50.567416,"longitude":9.255976},{"external_id":"300028438","name":"061","description":"An Der Wasserscheide 6, 36280 Oberaula","latitude":50.852587,"longitude":9.434167},{"external_id":"300028442","name":"101","description":"Waldecker Straße 31, 35110 Frankenau","latitude":51.089396,"longitude":8.950159},{"external_id":"300028467","name":"010","description":"Am Graben 5, 34582 Borken","latitude":51.035235,"longitude":9.250291},{"external_id":"300028469","name":"072","description":"Höchster Straße 14, 64853 Otzberg","latitude":49.806852,"longitude":8.948973},{"external_id":"300028473","name":"139","description":"Am Holzweg 28, 65830 Kriftel","latitude":50.077970945397595,"longitude":8.480629920959474},{"external_id":"300028665","name":"103","description":"Landstraße 86, 37284 Waldkappel","latitude":51.145373,"longitude":9.920657},{"external_id":"300028667","name":"113","description":"Alter Graben 16, 36205 Sontra","latitude":51.103591,"longitude":9.960599},{"external_id":"300029624","name":"105","description":"Am Berg 16, 63683 Ortenberg","latitude":50.333868,"longitude":9.038855},{"external_id":"300029628","name":"129","description":"Butzbacher Straße 110a, 35510 Butzbach","latitude":50.424771,"longitude":8.678182},{"external_id":"300029976","name":"011","description":"Zum Steinkreuz 8, 34466 Wolfhagen","latitude":51.334768,"longitude":9.252955},{"external_id":"300032693","name":"Leipziger Straße","description":"Industriestraße 26, 34260 Kaufungen","latitude":51.285710416300944,"longitude":9.583924012622449},{"external_id":"300032699","name":"520","description":"Sprudelstraße 8, 63683 Ortenberg","latitude":50.342086,"longitude":9.035552},{"external_id":"300032700","name":"730","description":"Feuersteinweg, 61279 Grävenwiesbach","latitude":50.393952,"longitude":8.511263},{"external_id":"300032707","name":"800","description":"Auf Der Mainspitze 21, 65462 Ginsheim-Gustavsburg","latitude":49.99376,"longitude":8.30474},{"external_id":"300032708","name":"801","description":"Mainzer Straße 153, 65428 Rüsselsheim","latitude":49.99700880391229,"longitude":8.385154008865358},{"external_id":"300032709","name":"802","description":"Mönchhofallee 20, 65479 Raunheim","latitude":50.03636646906296,"longitude":8.475088477134706},{"external_id":"300032710","name":"804","description":"Hauptstraße 65, 65462 Ginsheim-Gustavsburg","latitude":49.962412,"longitude":8.346344},{"external_id":"300032711","name":"808","description":"Mönchbruchallee, 65428 Rüsselsheim","latitude":49.99927434669023,"longitude":8.514758348464968},{"external_id":"300032712","name":"810","description":"","latitude":49.767857,"longitude":8.4789693},{"external_id":"300032713","name":"850","description":"Im Espen 1, 35091 Cölbe","latitude":50.856805,"longitude":8.788355},{"external_id":"300032714","name":"851","description":"Alsfelder Straße 102, 35274 Kirchhain","latitude":50.807566,"longitude":8.937352},{"external_id":"300032715","name":"852","description":"Falkenweg 24, 35260 Stadtallendorf","latitude":50.82699,"longitude":9.040242},{"external_id":"300032716","name":"853","description":"Mühlweg 7, 35274 Kirchhain","latitude":50.842431,"longitude":8.868084},{"external_id":"300032717","name":"854","description":"Perfstraße 4, 35216 Biedenkopf","latitude":50.9090387,"longitude":8.4621254},{"external_id":"300032718","name":"855","description":"Alter Kirchhainer Weg 16, 35039 Marburg","latitude":50.805601,"longitude":8.784028},{"external_id":"300032719","name":"856","description":"Auf Dem Krummacker 8, 35216 Biedenkopf","latitude":50.922005,"longitude":8.460612},{"external_id":"300032720","name":"857","description":"Binge 40, 35083 Wetter","latitude":50.908797,"longitude":8.718868},{"external_id":"300032721","name":"858","description":"Auestraße 35, 35288 Wohratal","latitude":50.915813,"longitude":8.942747},{"external_id":"300032722","name":"859","description":"Mühlstraße 68a, 35075 Gladenbach","latitude":50.7526626,"longitude":8.527576},{"external_id":"300032723","name":"860","description":"Hüttenmühlweg 14, 35075 Gladenbach","latitude":50.7513449,"longitude":8.589884},{"external_id":"300032724","name":"861","description":"Strassmühle 2, 35085 Ebsdorfergrund","latitude":50.714012,"longitude":8.777644},{"external_id":"300032725","name":"862","description":"Gießener Landstraße 27, 35102 Lohra","latitude":50.68537,"longitude":8.606149},{"external_id":"300032726","name":"863","description":"Kälbachtalbrücke, 35279 Neustadt","latitude":50.87421275347331,"longitude":9.1214969658904},{"external_id":"300032727","name":"864","description":"Am Hopfen 3, 35096 Weimar","latitude":50.725780541659766,"longitude":8.716765426215717},{"external_id":"300032728","name":"865","description":"Auf Dem Kreuz 1, 35719 Angelburg","latitude":50.832451,"longitude":8.453297},{"external_id":"300032729","name":"880","description":"Frankfurter Straße 129, 61231 Bad Nauheim","latitude":50.375038,"longitude":8.740434},{"external_id":"300032730","name":"881","description":"Elsegrund 6, 63654 Büdingen","latitude":50.292119,"longitude":9.03581},{"external_id":"300032731","name":"883","description":"Parkweg 3, 61197 Florstadt","latitude":50.332634988227554,"longitude":8.907256070233418},{"external_id":"300032732","name":"884","description":"Frankfurter Straße 35, 61169 Friedberg","latitude":50.320836,"longitude":8.746944},{"external_id":"300032733","name":"885","description":"","latitude":50.413406,"longitude":9.223973},{"external_id":"300032734","name":"886","description":"Schlinkenweg 14, 61184 Karben","latitude":50.236573,"longitude":8.71221},{"external_id":"300032735","name":"887","description":"Dieselstraße 32, 61184 Karben","latitude":50.221151,"longitude":8.763435},{"external_id":"300032736","name":"888","description":"Max-Planck-Straße 40, 61184 Karben","latitude":50.220821,"longitude":8.767392},{"external_id":"300032737","name":"889","description":"Seewiese 17, 63667 Nidda","latitude":50.407297,"longitude":9.009599},{"external_id":"300032739","name":"834","description":"Außerhalb 1, 64859 Eppertshausen","latitude":49.950067,"longitude":8.827531},{"external_id":"300032740","name":"830","description":"Jenaer Straße 21, 64372 Ober-Ramstadt","latitude":49.838404,"longitude":8.763913},{"external_id":"300032742","name":"832","description":"Waldstraße 79n, 64846 Dieburg","latitude":49.887503,"longitude":8.8201899},{"external_id":"300032743","name":"833","description":"Ober-Beerbacher Straße, 64342 Seeheim-Jugenheim","latitude":49.762613,"longitude":8.660226},{"external_id":"300032744","name":"831","description":"Eichelsweg 16, 64367 Mühltal","latitude":49.790314,"longitude":8.702873},{"external_id":"300032745","name":"420","description":"Frankfurter Straße 115a, 65779 Kelkheim","latitude":50.12953,"longitude":8.45905},{"external_id":"300032747","name":"430","description":"Wallstraße 20, 61462 Königstein im Taunus","latitude":50.17556,"longitude":8.453883},{"external_id":"300032748","name":"807","description":"Am Hegbachsee 46, 64569 Nauheim","latitude":49.945796,"longitude":8.468996},{"external_id":"300032749","name":"780","description":"Obere Schulstraße 7, 61273 Wehrheim","latitude":50.27779,"longitude":8.549736},{"external_id":"300032751","name":"771","description":"Bahnstraße 79, 65843 Sulzbach","latitude":50.126039753149776,"longitude":8.521517515182497},{"external_id":"300032752","name":"772","description":"Oberliederbacher Weg 44, 65843 Sulzbach","latitude":50.1316,"longitude":8.51419},{"external_id":"300032753","name":"770","description":"Dunantring 71, 65936 Sulzbach","latitude":50.12323,"longitude":8.55277},{"external_id":"300032802","name":"740","description":"Gut Bodenhausen 11, 34317 Habichtswald","latitude":51.33162,"longitude":9.30741},{"external_id":"300032803","name":"390","description":"Massenheimer Landstraße 15, 65239 Hochheim am Main","latitude":50.02751,"longitude":8.36506},{"external_id":"300032804","name":"391","description":"Rheinstraße 43, 65239 Hochheim am Main","latitude":50.00241213676519,"longitude":8.35916340351105},{"external_id":"300032805","name":"410","description":"Königstor 50, 34117 Kassel","latitude":51.313523,"longitude":9.48088},{"external_id":"300032806","name":"411","description":"Fiedlerstraße 5, 34127 Kassel","latitude":51.328154,"longitude":9.503701},{"external_id":"300032807","name":"412","description":"Menzelstraße 46, 34121 Kassel","latitude":51.301025,"longitude":9.483848},{"external_id":"300032808","name":"413","description":"Brüder-Grimm-Straße 139, 34134 Kassel","latitude":51.292278,"longitude":9.460877},{"external_id":"300032809","name":"414","description":"Landaustraße 1a, 34121 Kassel","latitude":51.307063,"longitude":9.49073},{"external_id":"300032810","name":"510a","description":"Berliner Straße 76, 63065 Offenbach","latitude":50.105873,"longitude":8.763238},{"external_id":"300032811","name":"510b","description":"Berliner Straße 80, 63065 Offenbach","latitude":50.106109,"longitude":8.762816},{"external_id":"300032812","name":"511","description":"Richard-Wagner-Straße 71, 63069 Offenbach","latitude":50.087803,"longitude":8.752807},{"external_id":"300032813","name":"512","description":"Lämmerspieler Weg 27, 63071 Offenbach","latitude":50.102226,"longitude":8.781639},{"external_id":"300032814","name":"513","description":"Luisenstraße 78, 63067 Offenbach","latitude":50.105046,"longitude":8.756004},{"external_id":"300032815","name":"514a","description":"Mühlheimer Straße 425, 63075 Offenbach","latitude":50.114905,"longitude":8.809187},{"external_id":"300032816","name":"514b","description":"","latitude":50.115142,"longitude":8.809067},{"external_id":"300032817","name":"515","description":"Rumpenheimer Straße 143, 63075 Offenbach","latitude":50.12573,"longitude":8.792634},{"external_id":"300032818","name":"514","description":"Mühlheimer Straße 425, 63075 Offenbach","latitude":50.115009182002304,"longitude":8.80908250808716},{"external_id":"300032820","name":"370","description":"","latitude":50.55862,"longitude":9.66381},{"external_id":"300032821","name":"371","description":"Karl-Storch-Straße 4, 36041 Fulda","latitude":50.534088,"longitude":9.668252},{"external_id":"300032822","name":"372","description":"Wasserkuppenstraße 29-31, 36043 Fulda","latitude":50.535947,"longitude":9.698615},{"external_id":"300032823","name":"373","description":"Gallasiniring 20a, 36043 Fulda","latitude":50.549972,"longitude":9.699978},{"external_id":"300032824","name":"374","description":"Birkenallee 8, 36037 Fulda","latitude":50.559141,"longitude":9.693172},{"external_id":"300032825","name":"470","description":"Frankfurter Landstraße 1, 64546 Mörfelden-Walldorf","latitude":49.999922610215464,"longitude":8.588443994522097},{"external_id":"300032826","name":"471","description":"Elisabeth-Selbert-Straße 8, 64546 Mörfelden-Walldorf","latitude":49.98228879729856,"longitude":8.564963936805727},{"external_id":"300032827","name":"472","description":"Okrifteler Straße 38, 64546 Mörfelden-Walldorf","latitude":50.008198,"longitude":8.566961},{"external_id":"300032829","name":"500","description":"Frankfurter Landstraße 72, 61440 Oberursel","latitude":50.192623149347774,"longitude":8.594720363616945},{"external_id":"300032830","name":"501","description":"Gattenhöferweg 43, 61440 Oberursel","latitude":50.191307776477046,"longitude":8.583487272262575},{"external_id":"300032831","name":"502","description":"Herzbergstraße 11, 61440 Oberursel","latitude":50.204332835198606,"longitude":8.585793972015383},{"external_id":"300032833","name":"574","description":"Volpertshäuser Straße 38, 35578 Wetzlar","latitude":50.540046,"longitude":8.525261},{"external_id":"300032834","name":"573","description":"Solmserstraße 75, 35578 Wetzlar","latitude":50.54537,"longitude":8.501787},{"external_id":"300032835","name":"572","description":"Wolfgang-Kühle-Straße 10, 35576 Wetzlar","latitude":50.5659731,"longitude":8.5106459},{"external_id":"300032836","name":"570","description":"Dillufer 40, 35576 Wetzlar","latitude":50.5548821,"longitude":8.49048},{"external_id":"300032839","name":"533","description":"Kreisquerverbindung, 63110 Rodgau","latitude":50.01519,"longitude":8.851267},{"external_id":"300032840","name":"532","description":"Nieuwpoorter Straße, 63110 Rodgau","latitude":50.015754,"longitude":8.890968},{"external_id":"300032841","name":"531","description":"","latitude":50.012575791017355,"longitude":8.883588910102846},{"external_id":"300032842","name":"530","description":"Hauptstraße 50a, 63110 Rodgau","latitude":50.04992,"longitude":8.87793},{"external_id":"300032867","name":"360","description":"Rheinstraße 72, 63303 Dreieich","latitude":49.9910717,"longitude":8.736355},{"external_id":"300032868","name":"361","description":"Kurt-Schumacher-Ring 110, 63303 Dreieich","latitude":50.036387,"longitude":8.695243},{"external_id":"300032869","name":"362","description":"Liebknechtstraße 144, 63303 Dreieich","latitude":50.020415,"longitude":8.674265},{"external_id":"300032871","name":"340","description":"Fehlheimer Straße 9, 64625 Bensheim","latitude":49.683512925332494,"longitude":8.619681000709535},{"external_id":"300032872","name":"341","description":"Heidelberger Straße 133, 64625 Bensheim","latitude":49.66667996782354,"longitude":8.629465699195864},{"external_id":"300032873","name":"400","description":"Niederhofheimer Straße 60a, 65719 Hofheim am Taunus","latitude":50.09562,"longitude":8.46079},{"external_id":"300032874","name":"401","description":"","latitude":50.08021,"longitude":8.43859},{"external_id":"300032875","name":"402","description":"Zeilsheimer Straße 20, 65719 Hofheim am Taunus","latitude":50.08837675341379,"longitude":8.452633023262026},{"external_id":"300032876","name":"403","description":"Casteller Straße 97g, 65719 Hofheim am Taunus","latitude":50.05614,"longitude":8.4052},{"external_id":"300032877","name":"404","description":"Oberer Haingraben 28a, 65719 Hofheim am Taunus","latitude":50.0627882,"longitude":8.4202249},{"external_id":"300032878","name":"440","description":"Frankenberger Landstraße 11, 34497 Korbach","latitude":51.263137,"longitude":8.884441},{"external_id":"300032879","name":"450","description":"Frankfurter Straße 93, 61476 Kronberg","latitude":50.17262419684514,"longitude":8.525733947753908},{"external_id":"300032880","name":"451","description":"Im Haak 6, 61476 Kronberg","latitude":50.18692866314112,"longitude":8.493794202804567},{"external_id":"300032881","name":"452","description":"Sodener Straße 36, 61476 Kronberg","latitude":50.1802,"longitude":8.53783},{"external_id":"300032884","name":"490","description":"Leipziger Straße 35, 63179 Obertshausen","latitude":50.07737,"longitude":8.852167},{"external_id":"300032885","name":"310a","description":"Zum Niddersteg 2, 63674 Altenstadt","latitude":50.283053,"longitude":8.940106},{"external_id":"300032886","name":"310b","description":"Zum Niddersteg 7, 63674 Altenstadt","latitude":50.282786,"longitude":8.940033},{"external_id":"300032887","name":"540","description":"","latitude":50.307169,"longitude":8.732088},{"external_id":"300032888","name":"541","description":"Gutenbergstraße 8b, 61191 Rosbach vor der Höhe","latitude":50.271702,"longitude":8.705564},{"external_id":"300032889","name":"542","description":"Bahnhofstraße 18, 61191 Rosbach vor der Höhe","latitude":50.301619,"longitude":8.694759},{"external_id":"300032890","name":"550","description":"Ascheröder Straße 57, 34613 Schwalmstadt","latitude":50.909912,"longitude":9.203595},{"external_id":"300032891","name":"551","description":"Festungsstraße 6, 34613 Schwalmstadt","latitude":50.908842,"longitude":9.234421},{"external_id":"300032892","name":"553","description":"Zwalmstraße 2, 34613 Schwalmstadt","latitude":50.914943,"longitude":9.19679},{"external_id":"300032993","name":"900","description":"","latitude":50.112920247359,"longitude":8.75178334164736},{"external_id":"300032994","name":"910","description":"Einsteinstraße 1, 64285 Darmstadt","latitude":49.84743,"longitude":8.64602},{"external_id":"300032995","name":"710","description":"Eichenhang 18, 34277 Fuldabrück","latitude":51.257009,"longitude":9.503334},{"external_id":"300032996","name":"701","description":"Am Heegbach 16, 63329 Egelsbach","latitude":49.954739,"longitude":8.651637},{"external_id":"300032997","name":"554","description":"Ludwig-Jahn-Straße 2, 34626 Neukirchen","latitude":50.866981,"longitude":9.339741},{"external_id":"300032998","name":"560","description":"Kreuzstraße 72, 64331 Weiterstadt","latitude":49.9079428,"longitude":8.5864387},{"external_id":"300032999","name":"561","description":"Rudolf-Diesel-Straße 26a, 64331 Weiterstadt","latitude":49.903192,"longitude":8.609398},{"external_id":"300033000","name":"562","description":"Münchweg 1a, 64331 Weiterstadt","latitude":49.91302,"longitude":8.61726},{"external_id":"300033002","name":"590","description":"Frankfurter Straße 215, 61118 Bad Vilbel","latitude":50.171578,"longitude":8.731607},{"external_id":"300033003","name":"591","description":"Hermann-Gmeiner-Str. 3, 61118 Bad Vilbel","latitude":50.171462,"longitude":8.731707},{"external_id":"300033004","name":"592","description":"Huizener Straße 76, 61118 Bad Vilbel","latitude":50.17991,"longitude":8.72212},{"external_id":"300033005","name":"320","description":"Berliner Straße 3, 34537 Bad Wildungen","latitude":51.121158,"longitude":9.137177},{"external_id":"300033006","name":"330","description":"Auhammer 7, 35088 Battenberg","latitude":51.03617906279141,"longitude":8.61930656439654},{"external_id":"300033007","name":"380","description":"Darmstädter Straße 102, 64646 Heppenheim","latitude":49.6591501,"longitude":8.630257},{"external_id":"300033008","name":"381","description":"Ernst-Schneider-Straße 17, 64646 Heppenheim","latitude":49.640949,"longitude":8.635017},{"external_id":"300033286","name":"300a","description":"Bockenheimer Landstraße 3, 60325 Frankfurt","latitude":50.115535,"longitude":8.67047},{"external_id":"300033287","name":"300b","description":"Bockenheimer Landstraße 3, 60325 Frankfurt","latitude":50.115455,"longitude":8.670261},{"external_id":"300033288","name":"301a","description":"Friedberger Landstraße 115, 60318 Frankfurt","latitude":50.12671,"longitude":8.6919},{"external_id":"300033289","name":"301b","description":"Friedberger Landstraße 121, 60318 Frankfurt","latitude":50.12712,"longitude":8.69183},{"external_id":"300033290","name":"302a","description":"Schaumainkai 50, 60596 Frankfurt","latitude":50.104972,"longitude":8.675413},{"external_id":"300033291","name":"302b","description":"Schaumainkai 55, 60596 Frankfurt","latitude":50.104585,"longitude":8.674973},{"external_id":"300033292","name":"303","description":"Alexander-Riese-Weg 2, 60439 Frankfurt","latitude":50.162759,"longitude":8.652591},{"external_id":"300033293","name":"304","description":"Ziegelhüttenweg 333, 60598 Frankfurt","latitude":50.079886,"longitude":8.672052},{"external_id":"300033295","name":"350","description":"Weidenweg 1, 64289 Darmstadt","latitude":49.8950573,"longitude":8.6654254},{"external_id":"300033296","name":"351","description":"Havelstraße 1, 64295 Darmstadt","latitude":49.8678561642216,"longitude":8.64139833043737},{"external_id":"300033297","name":"352","description":"","latitude":49.874005,"longitude":8.672037},{"external_id":"300033298","name":"353","description":"Rheinstraße 24, 64283 Darmstadt","latitude":49.872126,"longitude":8.646659},{"external_id":"300033299","name":"354","description":"Robert-Bosch-Straße 14, 64293 Darmstadt","latitude":49.869377,"longitude":8.623713},{"external_id":"300034327","name":"Steinbacher Straße","description":"","latitude":50.161369,"longitude":8.55826},{"external_id":"300039700","name":"920","description":"Grabenstraße 36, 65428 Rüsselsheim","latitude":49.9928,"longitude":8.41684},{"external_id":"300039701","name":"921","description":"Oppenheimer Straße 2, 65428 Rüsselsheim","latitude":49.9816,"longitude":8.40201},{"external_id":"300039702","name":"922","description":"Burggrafenlacher Weg 35, 65428 Rüsselsheim","latitude":49.98741354697087,"longitude":8.416708856821062},{"external_id":"300039703","name":"923","description":"Robert-Bunsen-Straße 49, 65428 Rüsselsheim","latitude":49.97728252024877,"longitude":8.437306618411899},{"external_id":"300039704","name":"924","description":"Lucas-Cranach-Straße 2, 65428 Rüsselsheim","latitude":49.9873,"longitude":8.44169},{"external_id":"300042071","name":"1072 R","description":"Ober-Rodener Straße 60, 63322 Rödermark","latitude":49.977368,"longitude":8.806373},{"external_id":"300042697","name":"1072 M","description":"Ober-Rodener Straße 60, 63322 Rödermark","latitude":49.977462,"longitude":8.806311},{"external_id":"300042698","name":"1083","description":"Waldhaus 1, 64397 Modautal","latitude":49.764273,"longitude":8.726217},{"external_id":"300042699","name":"1084","description":"Im Betzel 18, 64401 Groß-Bieberau","latitude":49.78502,"longitude":8.81122},{"external_id":"300043174","name":"1073 R","description":"Seestraße 13, 63533 Mainhausen","latitude":50.01769,"longitude":9.017761},{"external_id":"300043176","name":"1085","description":"Beethovenweg 21, 64823 Groß-Umstadt","latitude":49.88877,"longitude":8.935672},{"external_id":"300043177","name":"1086","description":"Viehtrieb 16, 64832 Babenhausen","latitude":49.972973,"longitude":8.942131},{"external_id":"300043179","name":"1066 M","description":"Nassgewann 7, 65329 Hohenstein","latitude":50.191193,"longitude":8.120215},{"external_id":"300043180","name":"1065 M","description":"Bärstadter Straße 4b, 65388 Schlangenbad","latitude":50.10889,"longitude":8.096001},{"external_id":"300043184","name":"1078","description":"L 3111, 68519 Viernheim","latitude":49.583399,"longitude":8.589813},{"external_id":"300043185","name":"1081","description":"Birkenhöhe 29, 64760 Oberzent","latitude":49.556911,"longitude":8.955133},{"external_id":"300043186","name":"1079 M","description":"Birkenauer Talstraße 101, 69469 Weinheim","latitude":49.561631,"longitude":8.691441},{"external_id":"300043189","name":"1079 R","description":"Birkenauer Talstraße 101, 69469 Weinheim","latitude":49.561573,"longitude":8.691438},{"external_id":"300043196","name":"1001","description":"Hainaer Straße 20, 35066 Frankenberg","latitude":51.050865,"longitude":8.853943},{"external_id":"300043260","name":"1029","description":"Industriestraße 1, 35716 Dietzhölztal","latitude":50.835304,"longitude":8.329263},{"external_id":"300043408","name":"1006","description":"Hof Hammer 1, 35119 Rosenthal","latitude":50.957336,"longitude":8.900755},{"external_id":"300043450","name":"1067 M","description":"Am Hümes 2, 65510 Hünstetten","latitude":50.246001,"longitude":8.185778},{"external_id":"300043465","name":"1067 R","description":"Am Hümes 2, 65510 Hünstetten","latitude":50.246032,"longitude":8.185663},{"external_id":"300043646","name":"1031","description":"L 3289, 35085 Ebsdorfergrund","latitude":50.779588,"longitude":8.853643},{"external_id":"300043720","name":"1032","description":"Cyriaxstraße 1, 35043 Marburg","latitude":50.77278,"longitude":8.713625},{"external_id":"300043825","name":"1047","description":"Siemensstraße 2, 35041 Marburg","latitude":50.837503,"longitude":8.773578},{"external_id":"300044983","name":"563","description":"Am Rotböll 4b, 64331 Weiterstadt","latitude":49.93068494682793,"longitude":8.62157464027405},{"external_id":"300045290","name":"1004","description":"Südring 8, 34497 Korbach","latitude":51.2696309,"longitude":8.8490651},{"external_id":"300045358","name":"1013","description":"Teichweg 19a, 34376 Immenhausen","latitude":51.44898,"longitude":9.4854412},{"external_id":"300045393","name":"1010","description":"Blumenstraße 17, 34466 Wolfhagen","latitude":51.2876086,"longitude":9.1508519},{"external_id":"300045415","name":"1005","description":"Randstraße, 34513 Waldeck","latitude":51.1960138,"longitude":9.006177},{"external_id":"300045452","name":"1520","description":"Alte Dieburger Straße 56, 64380 Roßdorf","latitude":49.867939,"longitude":8.766951},{"external_id":"300045851","name":"1028M","description":"L 2304, 36148 Kalbach","latitude":50.3669907,"longitude":9.718062},{"external_id":"300045880","name":"1051","description":"Am Kirchenpfad 8, 36323 Grebenau","latitude":50.7469662,"longitude":9.4809148},{"external_id":"300045892","name":"1024","description":"Am Hasenberg 12, 36088 Hünfeld","latitude":50.6653403,"longitude":9.6518163},{"external_id":"300045912","name":"1026 M","description":"Frankfurter Straße 1, 36154 Hosenfeld","latitude":50.5045628,"longitude":9.4793628},{"external_id":"300045940","name":"1027","description":"Frankfurter Straße 45, 36119 Neuhof","latitude":50.446158,"longitude":9.608311},{"external_id":"300045960","name":"1055","description":"Distelrasen 7, 36381 Schlüchtern","latitude":50.383832,"longitude":9.5306774},{"external_id":"300046000","name":"1063 M","description":"Am Hoherodskopf 8, 63679 Schotten","latitude":50.5124652,"longitude":9.2332783},{"external_id":"300046031","name":"1670","description":"Untermühle 2, 63526 Erlensee","latitude":50.1795324,"longitude":8.9873495},{"external_id":"300046301","name":"1065","description":"In Der Herborn 2, 65388 Schlangenbad","latitude":50.108727,"longitude":8.094532},{"external_id":"300046345","name":"1009","description":"Flugplatzstraße 33, 34379 Calden","latitude":51.4068852,"longitude":9.3891604},{"external_id":"300046413","name":"1076","description":"L 3096, 64560 Riedstadt","latitude":49.8559893,"longitude":8.4733123},{"external_id":"300046505","name":"1035","description":"Erlesbergstraße 20, 35423 Lich","latitude":50.5361605,"longitude":8.8815571},{"external_id":"300046591","name":"1050","description":"Am Kaiserberg 11, 35396 Gießen","latitude":50.6156271,"longitude":8.7035822},{"external_id":"300046658","name":"1049","description":"Tannenweg 58c, 35440 Linden","latitude":50.5440017,"longitude":8.6762582},{"external_id":"300046664","name":"1037","description":"Gießener Pforte 41, 35440 Linden","latitude":50.544131,"longitude":8.6497596},{"external_id":"300046693","name":"1038","description":"Gießener Straße, 35444 Biebertal","latitude":50.6076676,"longitude":8.6206634},{"external_id":"300046809","name":"1064","description":"Windhäuser Straße, 36325 Feldatal","latitude":50.6569914,"longitude":9.2261222},{"external_id":"300046815","name":"1058","description":"Gartenstraße 3a, 63571 Gelnhausen","latitude":50.2070403,"longitude":9.1548104},{"external_id":"300046822","name":"1061","description":"Jahnstraße 23a, 63589 Gelnhausen","latitude":50.1722912,"longitude":9.1830578},{"external_id":"300046860","name":"1062","description":"Aschaffenburger Straße 121, 63457 Hanau","latitude":50.1134429,"longitude":8.9705378},{"external_id":"300046894","name":"1044","description":"Auf Der Grenz 2, 65589 Hadamar","latitude":50.4281841,"longitude":8.0348989},{"external_id":"300046901","name":"1045","description":"Hölderlinstraße 51, 65549 Limburg an der Lahn","latitude":50.3760099,"longitude":8.0762714},{"external_id":"300046946","name":"1041","description":"Weilstraße 12, 35781 Weilburg","latitude":50.4723611,"longitude":8.2690121},{"external_id":"300046977","name":"1043","description":"Flachsberg 2, 35789 Weilmünster","latitude":50.4109948,"longitude":8.3471293},{"external_id":"300046979","name":"1039","description":"A 45 111, 35630 Ehringshausen","latitude":50.616234,"longitude":8.3886198},{"external_id":"300046981","name":"1048","description":"Otto-Wels-Straße 32, 35586 Wetzlar","latitude":50.5822636,"longitude":8.4838097},{"external_id":"300047012","name":"1053 M","description":"Ringstraße 19, 36399 Freiensteinau","latitude":50.4197343,"longitude":9.4182513},{"external_id":"300047050","name":"1056 M","description":"Wehrtbornstraße 62, 63654 Büdingen","latitude":50.3376612,"longitude":9.2043842},{"external_id":"300047104","name":"1060","description":"Kilianstädter Straße 10, 63454 Hanau","latitude":50.1823803,"longitude":8.8857316},{"external_id":"300047138","name":"1054 M","description":"L 3053, 35510 Butzbach","latitude":50.4347481,"longitude":8.6091302},{"external_id":"300047631","name":"1046","description":"Wermertshäuser Straße 36, 35466 Ebsdorfergrund","latitude":50.6930378,"longitude":8.9093913},{"external_id":"300047639","name":"1052","description":"Heegstraße 40, 35325 Mücke","latitude":50.6308459,"longitude":9.0284824},{"external_id":"300047688","name":"1057","description":"Herrnhuter Straße 2, 63654 Büdingen","latitude":50.2784293,"longitude":9.097436},{"external_id":"300047741","name":"1033","description":"Rehmühle 1, 35745 Herborn","latitude":50.6596793,"longitude":8.30679},{"external_id":"300047754","name":"1040","description":"Beilsteiner Straße 29, 35753 Greifenstein","latitude":50.596431,"longitude":8.2766605},{"external_id":"300047800","name":"1042","description":"Unterer Grimms 27a, 35647 Waldsolms","latitude":50.435542,"longitude":8.4852309},{"external_id":"300047875","name":"1034","description":"Großgasse 28, 35460 Staufenberg","latitude":50.6546273,"longitude":8.7366839},{"external_id":"300047923","name":"1020 M","description":"Untersuhler Straße 14, 36208 Wildeck","latitude":50.970553,"longitude":10.019531},{"external_id":"300047959","name":"1016 M","description":"Hunsrückstraße 4, 36199 Rotenburg an der Fulda","latitude":51.026477,"longitude":9.771942},{"external_id":"300048048","name":"1019","description":"Zum Lichtloch 3, 36214 Nentershausen","latitude":50.991452,"longitude":9.941334},{"external_id":"300048049","name":"1023","description":"L 3258, 36088 Hünfeld","latitude":50.6970542,"longitude":9.841369},{"external_id":"300048067","name":"1022","description":"L 3170, 36132 Eiterfeld","latitude":50.7445495,"longitude":9.8402852},{"external_id":"300048093","name":"1015 R","description":"Alte Zeche 7, 37247 Großalmerode","latitude":51.222618,"longitude":9.805446},{"external_id":"300048125","name":"1069 R","description":"Keltenstraße 2, 65439 Flörsheim am Main","latitude":50.048272,"longitude":8.438446},{"external_id":"300048131","name":"140","description":"Keltenstraße 2, 65439 Flörsheim am Main","latitude":50.048047,"longitude":8.438127},{"external_id":"300048159","name":"1059","description":"L 3008 2, 61118 Bad Vilbel","latitude":50.1913567,"longitude":8.7630219},{"external_id":"300048181","name":"1077","description":"L 3112, 64579 Gernsheim","latitude":49.7463615,"longitude":8.537532},{"external_id":"300048844","name":"1014 M","description":"L 3422, 37242 Bad Sooden-Allendorf","latitude":51.268037,"longitude":9.9316068},{"external_id":"300048857","name":"1530","description":"Hauptstraße 19, 34302 Guxhagen","latitude":51.1784143,"longitude":9.4812236},{"external_id":"300048879","name":"1017","description":"Eisenacher Straße 17, 37293 Herleshausen","latitude":51.0028574,"longitude":10.1834362},{"external_id":"300049446","name":"1025","description":"Am Tannenküppel 9, 36100 Petersberg","latitude":50.5641667,"longitude":9.7412746},{"external_id":"300049541","name":"Woogsweg","description":"Scharounweg 6, 64289 Darmstadt","latitude":49.90125858055004,"longitude":8.672665357589723},{"external_id":"300049542","name":"Arheilger Straße","description":"Schreberweg 15, 64289 Darmstadt","latitude":49.89192848119509,"longitude":8.661609292030336},{"external_id":"300052661","name":"1150","description":"Auf Der Binn 7, 64658 Fürth","latitude":49.644122,"longitude":8.7513688},{"external_id":"300052686","name":"1146","description":"Nibelungenstraße 81, 68623 Lampertheim","latitude":49.6360971,"longitude":8.4026784},{"external_id":"300052811","name":"1151","description":"In Den Schadenhecken 51, 64747 Breuberg","latitude":49.8243325,"longitude":9.0449247},{"external_id":"300052836","name":"1154","description":"Industriestraße 23, 69239 Neckarsteinach","latitude":49.4012076,"longitude":8.8588234},{"external_id":"300052874","name":"1145","description":"Außerhalb 26, 68642 Bürstadt","latitude":49.6732395,"longitude":8.4515298},{"external_id":"300052977","name":"1124","description":"B 253, 35684 Dillenburg","latitude":50.768008,"longitude":8.289006},{"external_id":"300053004","name":"1135","description":"Im Langen Garten 1, 36304 Alsfeld","latitude":50.7236569,"longitude":9.2311169},{"external_id":"300053036","name":"1125","description":"Alsfelder Straße 55, 35305 Grünberg","latitude":50.5913799,"longitude":8.971904},{"external_id":"300053092","name":"1140 M","description":"B 8, 61479 Glashütten","latitude":50.2102686,"longitude":8.4136294},{"external_id":"300053153","name":"1138 M","description":"Im Aartal 18e, 65326 Aarbergen","latitude":50.2393581,"longitude":8.0599672},{"external_id":"300053166","name":"1138 R","description":"Im Aartal 18e, 65326 Aarbergen","latitude":50.2393713,"longitude":8.0599427},{"external_id":"300053210","name":"1111","description":"Ahornstraße 2, 34513 Waldeck","latitude":51.2452541,"longitude":9.0105512},{"external_id":"300053236","name":"1106","description":"Ziegelhütte 4, 34497 Korbach","latitude":51.2877975,"longitude":8.8330129},{"external_id":"300053298","name":"1107","description":"Helser Höhe 1, 34454 Bad Arolsen","latitude":51.4028351,"longitude":9.015716},{"external_id":"300053300","name":"1112","description":"Mündener Straße 49, 34385 Gutsbezirk Reinhardswald","latitude":51.6504128,"longitude":9.4632616},{"external_id":"300053370","name":"1105","description":"Alte Wiesen 2, 35108 Allendorf","latitude":51.0701175,"longitude":8.6354442},{"external_id":"300053371","name":"1102","description":"Mündener Straße 37, 34233 Fuldatal","latitude":51.4014742,"longitude":9.5922985},{"external_id":"300053372","name":"1108","description":"Hüttenstraße 5, 34516 Vöhl","latitude":51.2167541,"longitude":8.896405},{"external_id":"300053424","name":"1101","description":"B 3, 34582 Borken","latitude":51.065443,"longitude":9.228901},{"external_id":"300054607","name":"1153","description":"Außerhalb 11 2, 64354 Reinheim","latitude":49.8534114,"longitude":8.7963936},{"external_id":"300054692","name":"1903","description":"Kloster-Eberbach-Straße 2, 65346 Eltville am Rhein","latitude":50.0374333,"longitude":8.0670528},{"external_id":"300054880","name":"1143","description":"Außerhalb 4, 64347 Riedstadt","latitude":49.8563673,"longitude":8.516892},{"external_id":"300054912","name":"1920","description":"B 276, 63633 Birstein","latitude":50.4129382,"longitude":9.3214125},{"external_id":"300054923","name":"1129","description":"Bahnhofstraße 6, 63633 Birstein","latitude":50.3503293,"longitude":9.3100846},{"external_id":"300055208","name":"1130","description":"B 275, 61197 Florstadt","latitude":50.328914,"longitude":8.8956174},{"external_id":"300055231","name":"1132","description":"Insterburger Straße 19a, 63486 Bruchköbel","latitude":50.1629616,"longitude":8.9119185},{"external_id":"300060310","name":"1139","description":"New-York-Straße 101, 65191 Wiesbaden","latitude":50.07965482737,"longitude":8.2737},{"external_id":"300060329","name":"1148","description":"Forstrat Louis-Weg, 64720 Michelstadt","latitude":49.6767389,"longitude":9.0704308},{"external_id":"300060338","name":"1142","description":"B 44, 64521 Groß-Gerau","latitude":49.9581907,"longitude":8.5424752},{"external_id":"300060374","name":"1144","description":"Frankenfelder Weg 21, 64579 Gernsheim","latitude":49.7773437,"longitude":8.5110391},{"external_id":"300060380","name":"1133","description":"Röhrig 26, 63599 Biebergemünd","latitude":50.1594649,"longitude":9.3492116},{"external_id":"300060402","name":"1134","description":"Lohrer Straße 29, 63639 Flörsbachtal","latitude":50.0942454,"longitude":9.4634822},{"external_id":"300060406","name":"1137 R","description":"Taunusstraße 8, 65344 Eltville am Rhein","latitude":50.0566449,"longitude":8.119155},{"external_id":"300060439","name":"1122","description":"Wartburgstraße 1, 36142 Tann","latitude":50.6556745,"longitude":10.0064162},{"external_id":"300060452","name":"1119","description":"Lingeloh 1, 36088 Hünfeld","latitude":50.6560985,"longitude":9.7530218},{"external_id":"300060521","name":"1121","description":"Rodenbach 29, 36129 Gersfeld","latitude":50.421611,"longitude":9.9374113},{"external_id":"300060609","name":"1141","description":"Köhlerweg, 60528 Frankfurt","latitude":50.0559836,"longitude":8.6434042},{"external_id":"300060779","name":"1900","description":"Rückerweg 6, 34477 Twistetal","latitude":51.315806,"longitude":9.0077939},{"external_id":"300060818","name":"1117","description":"Riedmühle 1, 36205 Sontra","latitude":51.029858,"longitude":10.0105993},{"external_id":"300060826","name":"1115","description":"Leipziger Straße 203, 37235 Hessisch Lichtenau","latitude":51.19874,"longitude":9.7467875},{"external_id":"300060851","name":"1116 R","description":"Am Ehrenmal 16, 36205 Sontra","latitude":51.1148754,"longitude":9.9786473},{"external_id":"300060887","name":"1114","description":"An Der Werra 10, 37215 Witzenhausen","latitude":51.3235832,"longitude":9.886529},{"external_id":"300060909","name":"1104","description":"Lindenstraße 21, 34212 Melsungen","latitude":51.1521169,"longitude":9.5575865},{"external_id":"300060917","name":"1109","description":"Efzestraße 17, 34590 Wabern","latitude":51.0895638,"longitude":9.371461},{"external_id":"300061600","name":"1136","description":"B 42, 65385 Rüdesheim am Rhein","latitude":49.9741312,"longitude":7.8932671},{"external_id":"300061632","name":"1942","description":"Königsteiner Straße 32, 61440 Oberursel","latitude":50.199621,"longitude":8.557802},{"external_id":"300062314","name":"R4 Trendelburg","description":"Wülmersen 1, 34388 Trendelburg","latitude":51.60741678757214,"longitude":9.432481527328491},{"external_id":"300062584","name":"099b","description":"Alte Frankfurter Straße 29, 34281 Gudensberg","latitude":51.1646495,"longitude":9.317688},{"external_id":"300062610","name":"1118","description":"Kleine Industriestraße 13, 36251 Bad Hersfeld","latitude":50.8645267,"longitude":9.7206717},{"external_id":"300062791","name":"1128","description":"Fuldaer Straße 20, 36341 Wartenberg","latitude":50.6398137,"longitude":9.4209329},{"external_id":"300062795","name":"1126","description":"Friedberger Straße 22, 35410 Hungen","latitude":50.4664142,"longitude":8.8967438},{"external_id":"300065669","name":"1800","description":"Billinghäuser Weg 5, 34474 Diemelstadt","latitude":51.4989115,"longitude":8.9528855},{"external_id":"300065670","name":"1801","description":"K 50, 34497 Korbach","latitude":51.2238049,"longitude":8.8436617},{"external_id":"300065671","name":"1802","description":"An Der Kolbenmühle 2, 34537 Bad Wildungen","latitude":51.0461045,"longitude":9.0683097},{"external_id":"300065672","name":"1803","description":"K 8 1, 34454 Bad Arolsen","latitude":51.3417778,"longitude":9.0096503},{"external_id":"300065673","name":"1804","description":"Am Steuken 6, 34497 Korbach","latitude":51.3173682,"longitude":8.8686745},{"external_id":"300065674","name":"1805","description":"Heuweg, 34513 Waldeck","latitude":51.2574511,"longitude":9.0536248},{"external_id":"300065682","name":"1320","description":"Düsseldorfer Straße 5, 65760 Eschborn","latitude":50.129511,"longitude":8.565771},{"external_id":"300065683","name":"1321","description":"Kronberger Straße 66, 65760 Eschborn","latitude":50.163802,"longitude":8.536151},{"external_id":"300065684","name":"1322","description":"Ludwig-Erhard-Straße 12, 65760 Eschborn","latitude":50.144913,"longitude":8.552011},{"external_id":"300065765","name":"1450","description":"Griedeler Straße 1, 35510 Butzbach","latitude":50.437014,"longitude":8.691392},{"external_id":"300065766","name":"1451","description":"C.-Schneider-Straße 27, 35510 Butzbach","latitude":50.426777,"longitude":8.6624685},{"external_id":"300065767","name":"1452","description":"L 3056, 35510 Butzbach","latitude":50.392349,"longitude":8.640951},{"external_id":"300065768","name":"1453","description":"Windhofstraße 46, 35510 Butzbach","latitude":50.451948,"longitude":8.657641},{"external_id":"300065773","name":"1462","description":"Urseler Straße 67, 61348 Bad Homburg","latitude":50.215301,"longitude":8.608097},{"external_id":"300065774","name":"1463","description":"Quellenweg 1a, 61348 Bad Homburg","latitude":50.227835,"longitude":8.631313},{"external_id":"300065777","name":"1461","description":"Frölingstraße 67, 61348 Bad Homburg vor der Höhe","latitude":50.221686,"longitude":8.609935},{"external_id":"300066392","name":"1410","description":"Oberdorfstraße 25, 35117 Münchhausen","latitude":50.946656,"longitude":8.702841},{"external_id":"300066394","name":"1411","description":"Diemelweg 12, 35274 Kirchhain","latitude":50.818874,"longitude":8.851642},{"external_id":"300066395","name":"1412","description":"An Der Ziegelei 4, 35085 Ebsdorfergrund","latitude":50.73744,"longitude":8.80777},{"external_id":"300066396","name":"1414","description":"Sandweg 8, 35112 Fronhausen","latitude":50.693657,"longitude":8.716265},{"external_id":"300066397","name":"1415","description":"Biegenstraße 8, 35112 Fronhausen","latitude":50.707397,"longitude":8.70491},{"external_id":"300066398","name":"1416","description":"Wasserwerk Wohratal 1, 35274 Kirchhain","latitude":50.84757,"longitude":8.926747},{"external_id":"300066399","name":"1417","description":"Ausbau Zur Radroute Geplant, 35279 Neustadt","latitude":50.860207,"longitude":9.131354},{"external_id":"300066400","name":"1418","description":"Emil-Rössler-Straße 10, 35279 Neustadt","latitude":50.841797,"longitude":9.087694},{"external_id":"300066401","name":"1419","description":"Försterweg 15, 35083 Wetter","latitude":50.92562,"longitude":8.770603},{"external_id":"300066402","name":"1420","description":"Mühlbergweg 5, 35083 Wetter","latitude":50.90718,"longitude":8.664738},{"external_id":"300066403","name":"1422","description":"Buchenauer Straße 1, 35232 Dautphetal","latitude":50.861786,"longitude":8.610586},{"external_id":"300066404","name":"1423","description":"Schelde-Lahn-Straße 70, 35236 Breidenbach","latitude":50.861156,"longitude":8.47303},{"external_id":"300066405","name":"1425","description":"Dilschhäuser Straße 13, 35075 Gladenbach","latitude":50.808907,"longitude":8.632998},{"external_id":"300066406","name":"1426","description":"Gladenbacher Straße 25, 35102 Lohra","latitude":50.737087,"longitude":8.624935},{"external_id":"300066407","name":"1427 M","description":"Niederwalgerner Mühle 1, 35096 Weimar","latitude":50.739494,"longitude":8.684207},{"external_id":"300066408","name":"1428 M","description":"Fleckenbühl 6, 35091 Cölbe","latitude":50.88079,"longitude":8.826204},{"external_id":"300066721","name":"1460","description":"Friedberger Straße 68, 61350 Bad Homburg vor der Höhe","latitude":50.247554,"longitude":8.620444},{"external_id":"300066723","name":"1680","description":"Pfarrwiese 42b, 61118 Bad Vilbel","latitude":50.190571,"longitude":8.748497},{"external_id":"300066727","name":"1380","description":"Stockstädter Straße, 64584 Biebesheim am Rhein","latitude":49.791083,"longitude":8.470652},{"external_id":"300066728","name":"1381","description":"Alter Mainzer Weg 3, 65428 Bischofsheim","latitude":49.973143,"longitude":8.396446},{"external_id":"300066729","name":"1382","description":"A 67, 64572 Büttelborn","latitude":49.920027,"longitude":8.504231},{"external_id":"300066730","name":"1383","description":"Bergstraße 11, 65451 Kelsterbach","latitude":50.066372,"longitude":8.528382},{"external_id":"300066731","name":"1384","description":"Ginsheimer Landstraße, 65474 Bischofsheim","latitude":49.982167,"longitude":8.350083},{"external_id":"300066732","name":"1385","description":"Okrifteler Straße, 65451 Kelsterbach","latitude":50.046248,"longitude":8.511247},{"external_id":"300066733","name":"1386","description":"Büttelborner Straße 39, 64521 Groß-Gerau","latitude":49.900869,"longitude":8.490651},{"external_id":"300066734","name":"1388","description":"Stockheimer Weg 7, 64569 Nauheim","latitude":49.939653,"longitude":8.454162},{"external_id":"300066735","name":"1389","description":"","latitude":49.893709,"longitude":8.480328},{"external_id":"300066736","name":"1390","description":"Walter-Flex-Straße 88, 65428 Rüsselsheim am Main","latitude":49.995703,"longitude":8.431374},{"external_id":"300066737","name":"1391","description":"Außerhalb 29, 65468 Trebur","latitude":49.917823,"longitude":8.368272},{"external_id":"300066738","name":"1392","description":"Am Lerchesberg 1, 64546 Mörfelden-Walldorf","latitude":49.986529,"longitude":8.572802},{"external_id":"300066739","name":"1393","description":"Rüsselsheimer Straße 78, 64546 Mörfelden-Walldorf","latitude":49.973121,"longitude":8.546428},{"external_id":"300066740","name":"1394","description":"Am Wallgraben 3, 64546 Mörfelden-Walldorf","latitude":49.972621,"longitude":8.571438},{"external_id":"300066741","name":"1395","description":"Mörfelder Straße 25, 64546 Mörfelden-Walldorf","latitude":49.999812,"longitude":8.570641},{"external_id":"300066742","name":"1396","description":"Darmstädter Straße 45, 65428 Rüsselsheim","latitude":49.990691,"longitude":8.412475},{"external_id":"300066745","name":"1399 M","description":"Weisenauer Straße 39, 65428 Rüsselsheim am Main","latitude":49.992792,"longitude":8.407855},{"external_id":"300066801","name":"1330","description":"Willy-Brandt-Straße 8, 61440 Oberursel","latitude":50.208952,"longitude":8.593424},{"external_id":"300066802","name":"1331","description":"Zeilweg 12, 61440 Oberursel","latitude":50.208821,"longitude":8.603026},{"external_id":"300066803","name":"1332","description":"Gattenhöferweg 43, 61440 Oberursel","latitude":50.191202,"longitude":8.583164},{"external_id":"300066804","name":"1333","description":"Hohemarkstraße 190, 61440 Oberursel","latitude":50.214981,"longitude":8.539191},{"external_id":"300066805","name":"1334","description":"Lahnstraße 57, 61440 Oberursel","latitude":50.219036,"longitude":8.578047},{"external_id":"300066806","name":"1335","description":"Wallstraße 102, 61440 Oberursel","latitude":50.194527,"longitude":8.605785},{"external_id":"300066819","name":"1397","description":"Hans-Sachs-Straße 98a, 65428 Rüsselsheim am Main","latitude":49.988861,"longitude":8.424007},{"external_id":"300067383","name":"1440","description":"Rödermarkring 29, 63322 Rödermark","latitude":49.992211,"longitude":8.822872},{"external_id":"300067384","name":"1441","description":"Rödermarkring 29, 63322 Rödermark","latitude":49.992141,"longitude":8.822575},{"external_id":"300067385","name":"1443","description":"Dieburger Straße 71a, 63303 Rödermark","latitude":49.978831,"longitude":8.764224},{"external_id":"300067386","name":"1444","description":"Forsthausweg 4, 63322 Rödermark","latitude":49.964904,"longitude":8.833094},{"external_id":"300067387","name":"1446","description":"Donaustraße 46a, 63322 Rödermark","latitude":49.976558,"longitude":8.817451},{"external_id":"300067390","name":"1540","description":"Am Gradierwerk 10, 61231 Bad Nauheim","latitude":50.358586,"longitude":8.751901},{"external_id":"300067391","name":"1541","description":"Friedberger Straße 100, 61231 Bad Nauheim","latitude":50.350058,"longitude":8.743573},{"external_id":"300067393","name":"1544","description":"Ludwigstraße 3, 61231 Bad Nauheim","latitude":50.365166,"longitude":8.743807},{"external_id":"300067401","name":"1300","description":"Dammühlenweg 3, 65510 Idstein","latitude":50.223789,"longitude":8.267836},{"external_id":"300067402","name":"1630","description":"Leukertsweg 102, 63225 Langen","latitude":49.980279,"longitude":8.658221},{"external_id":"300067781","name":"1640","description":"Dyckerhoffstraße 1, 65203 Wiesbaden","latitude":50.0288728,"longitude":8.2565807},{"external_id":"300067782","name":"1641","description":"Rheinufer 10, 55252 Wiesbaden","latitude":50.008154,"longitude":8.279928},{"external_id":"300067783","name":"1642","description":"Sonnenberger Straße 3, 65193 Wiesbaden","latitude":50.085065,"longitude":8.254723},{"external_id":"300067784","name":"1643","description":"Steinern Straße, 55246 Wiesbaden","latitude":50.0191403,"longitude":8.3115487},{"external_id":"300067785","name":"1645","description":"Uferstraße 5, 65203 Wiesbaden","latitude":50.037871,"longitude":8.228499},{"external_id":"300067966","name":"1610 Richtung Frankfurt","description":"Frankfurter Straße 151, 63067 Offenbach","latitude":50.101922,"longitude":8.744597},{"external_id":"300067967","name":"1610 Richtung Offenbach","description":"Frankfurter Straße 144, 63067 Offenbach","latitude":50.101749,"longitude":8.744721},{"external_id":"300067968","name":"1612","description":"Lortzingstraße 8, 63069 Offenbach","latitude":50.093403,"longitude":8.758437},{"external_id":"300067969","name":"1613","description":"Seligenstädter Straße 73, 63073 Offenbach","latitude":50.0851054,"longitude":8.8140816},{"external_id":"300067970","name":"1614","description":"Senefelderstraße 35, 63069 Offenbach","latitude":50.096893,"longitude":8.762923},{"external_id":"300067971","name":"1615","description":"Taunusstraße 38, 63067 Offenbach","latitude":50.109375,"longitude":8.753598},{"external_id":"300067972","name":"1616","description":"Von-Behring-Straße 84, 63075 Offenbach","latitude":50.116093,"longitude":8.785673},{"external_id":"300067973","name":"1650","description":"Spessartstraße 2, 65779 Kelkheim","latitude":50.143504,"longitude":8.433294},{"external_id":"300067974","name":"1651","description":"Sodener Straße 120, 65779 Kelkheim","latitude":50.148511,"longitude":8.436107},{"external_id":"300067975","name":"1700","description":"Philipp-Reis-Straße 17, 63128 Dietzenbach","latitude":50.016084,"longitude":8.789891},{"external_id":"300067976","name":"1702","description":"Offenthaler Straße 51, 63128 Dietzenbach","latitude":50.001438,"longitude":8.773084},{"external_id":"300067977","name":"1703","description":"Offenbacher Straße 3, 63128 Dietzenbach","latitude":50.014509,"longitude":8.778663},{"external_id":"300067978","name":"1704","description":"Michelstädter Weg 3, 63128 Dietzenbach","latitude":50.014404,"longitude":8.779065},{"external_id":"300067979","name":"1580","description":"Dieburger Straße 255, 64287 Darmstadt","latitude":49.885035,"longitude":8.687166},{"external_id":"300067980","name":"1581","description":"Eschollbrücker Straße 200, 64295 Darmstadt","latitude":49.847274,"longitude":8.616109},{"external_id":"300067981","name":"1584","description":"Otto-Röhm-Straße 85, 64293 Darmstadt","latitude":49.888814,"longitude":8.631675},{"external_id":"300067983","name":"1587","description":"Seeheimer Straße 99, 64297 Darmstadt","latitude":49.806544,"longitude":8.645383},{"external_id":"300067985","name":"1591","description":"Nieder-Ramstädter Straße 184, 64285 Darmstadt","latitude":49.854575,"longitude":8.669506},{"external_id":"300067986","name":"1592","description":"Nasser Weg, 64293 Darmstadt","latitude":49.885555,"longitude":8.617049},{"external_id":"300067987","name":"1510","description":"Ramsaystraße 5, 63450 Hanau","latitude":50.138485,"longitude":8.916046},{"external_id":"300067988","name":"1511 stadtauswärts","description":"Aschaffenburger Straße 64, 63457 Hanau","latitude":50.124785,"longitude":8.948019},{"external_id":"300067989","name":"1511 stadteinwärts","description":"Maria-Montessori-Allee 8, 63457 Hanau","latitude":50.125046,"longitude":8.947751},{"external_id":"300067990","name":"1512","description":"Philipp-August-Schleißner-Weg 2a, 63452 Hanau","latitude":50.135722,"longitude":8.930461},{"external_id":"300067991","name":"1590","description":"Rheinstraße, 64295 Darmstadt","latitude":49.869134,"longitude":8.625688},{"external_id":"300067992","name":"1351","description":"Ludwigstraße 40, 63263 Neu-Isenburg","latitude":50.055758,"longitude":8.694251},{"external_id":"300067993","name":"1354","description":"Rheinstraße 90, 63263 Neu-Isenburg","latitude":50.054368,"longitude":8.679211},{"external_id":"300067994","name":"1355","description":"Triebweg 188, 63263 Neu-Isenburg","latitude":50.055267,"longitude":8.710026},{"external_id":"300068882","name":"1471","description":"Arndtstraße 16, 34123 Kassel","latitude":51.3075038,"longitude":9.5060745},{"external_id":"300068883","name":"1473","description":"Salztorstraße 5, 34125 Kassel","latitude":51.3164309,"longitude":9.5107162},{"external_id":"300068884","name":"1476","description":"Christian-Reul-Straße 39, 34121 Kassel","latitude":51.3031819,"longitude":9.4545222},{"external_id":"300068885","name":"1477","description":"Neue Fahrt 11, 34117 Kassel","latitude":51.3143068,"longitude":9.4931761},{"external_id":"300068886","name":"1478","description":"Olebachweg 50a, 34123 Kassel","latitude":51.3008995,"longitude":9.5412794},{"external_id":"300068887","name":"1479","description":"Renthof 3, 34117 Kassel","latitude":51.3147468,"longitude":9.5039636},{"external_id":"300068888","name":"1480","description":"Schillerstraße 60-62, 34117 Kassel","latitude":51.3206865,"longitude":9.4811773},{"external_id":"300068889","name":"1481","description":"Sternbergstraße 31c, 34121 Kassel","latitude":51.3066935,"longitude":9.4609602},{"external_id":"300068890","name":"1482","description":"Sternstraße 19a, 34123 Kassel","latitude":51.311907,"longitude":9.5051667},{"external_id":"300068891","name":"1484","description":"Wahlershäuser Straße 58, 34130 Kassel","latitude":51.3200852,"longitude":9.4442726},{"external_id":"300068892","name":"1810","description":"Hafenstraße 69, 34125 Kassel","latitude":51.3170148,"longitude":9.5191947},{"external_id":"300068994","name":"1660","description":"Im Grund 4, 34317 Habichtswald","latitude":51.3345592,"longitude":9.3221639},{"external_id":"300069071","name":"1340","description":"In Den Schlangenäckern 9, 64395 Brensbach","latitude":49.753078,"longitude":8.878057},{"external_id":"300069072","name":"1341","description":"Neustädter Straße 33a, 64747 Breuberg","latitude":49.815449,"longitude":9.023055},{"external_id":"300069073","name":"1342","description":"Neckarstraße 157, 64711 Erbach","latitude":49.639157,"longitude":8.997476},{"external_id":"300069074","name":"1343","description":"Untere Siegfriedstraße 10, 64756 Mossautal","latitude":49.620643,"longitude":8.944041},{"external_id":"300069075","name":"1345","description":"Höchster Straße 102, 64395 Brensbach","latitude":49.772377,"longitude":8.889865},{"external_id":"300069163","name":"Zählstelle Sinntal Altengronau Rhönexpressradweg","description":"Aspenweg 52, 36391 Sinntal","latitude":50.254807,"longitude":9.636959},{"external_id":"300069164","name":"Zählstelle Gelnhausen Höchst R3","description":"Untere Schönau 13, 63571 Gelnhausen","latitude":50.204788,"longitude":9.226091},{"external_id":"300069324","name":"1690","description":"Quellenstraße 5, 34537 Bad Wildungen","latitude":51.111181,"longitude":9.090314},{"external_id":"300069410","name":"1550","description":"L 3199, 63619 Bad Orb","latitude":50.237935,"longitude":9.303873},{"external_id":"300069417","name":"1663","description":"An Den Herrnäckern 30, 63150 Heusenstamm","latitude":50.053022,"longitude":8.814157},{"external_id":"300069418","name":"1662","description":"Am Goldberg 34, 63150 Heusenstamm","latitude":50.061418,"longitude":8.819416},{"external_id":"300069419","name":"1661","description":"Frankfurter Straße 19, 63150 Heusenstamm","latitude":50.059434,"longitude":8.807676},{"external_id":"300069438","name":"1370","description":"Altenfeldsweg 6, 35394 Gießen","latitude":50.578741,"longitude":8.683931},{"external_id":"300069439","name":"1371","description":"Leimenkauter Weg 63, 35398 Gießen","latitude":50.596218,"longitude":8.669114},{"external_id":"300069440","name":"1372","description":"Goethestraße 52, 35390 Gießen","latitude":50.579672,"longitude":8.677358},{"external_id":"300069441","name":"1373","description":"Gottlieb-Daimler-Straße 1, 35398 Gießen","latitude":50.586522,"longitude":8.650516},{"external_id":"300069442","name":"1374","description":"Lahnstraße 31, 35398 Gießen","latitude":50.584607,"longitude":8.663103},{"external_id":"300069443","name":"1375","description":"Taubenweg 8, 35396 Gießen","latitude":50.596484,"longitude":8.691651},{"external_id":"300069444","name":"1376","description":"Marktstraße 10, 35390 Gießen","latitude":50.585941,"longitude":8.673337},{"external_id":"300070104","name":"1490","description":"Theodor-Stern-Kai 3, 60596 Frankfurt","latitude":50.095812,"longitude":8.658578},{"external_id":"300070105","name":"1492","description":"Ginnheimer Landstraße 1b, 60487 Frankfurt","latitude":50.128344,"longitude":8.640726},{"external_id":"300070106","name":"1493","description":"Alte Mainzer Gasse 23, 60311 Frankfurt","latitude":50.1087556,"longitude":8.6803453},{"external_id":"300070107","name":"1494","description":"Gerbermühlstraße 105, 60594 Frankfurt","latitude":50.1061185,"longitude":8.7214845},{"external_id":"300070108","name":"1495","description":"Gelastraße 117, 60388 Frankfurt","latitude":50.143361,"longitude":8.736621},{"external_id":"300070109","name":"1496 auswärts","description":"Schloßstraße 95, 60486 Frankfurt","latitude":50.117673,"longitude":8.645531},{"external_id":"300070110","name":"1496 einwärts","description":"Schloßstraße 95, 60486 Frankfurt","latitude":50.117627,"longitude":8.645436},{"external_id":"300070111","name":"1497","description":"Oeder Weg 12, 60318 Frankfurt","latitude":50.1188237,"longitude":8.6797508},{"external_id":"300070112","name":"1499 a","description":"Eschersheimer Landstraße 249, 60320 Frankfurt","latitude":50.135723,"longitude":8.671253},{"external_id":"300070113","name":"1500","description":"Vorm Wald 28, 65934 Frankfurt","latitude":50.1123951,"longitude":8.5819811}],"channels":[{"external_id":"300022489","station_external_id":"300022489","name":"064b"},{"external_id":"300022501","station_external_id":"300022501","name":"121"},{"external_id":"300022502","station_external_id":"300022502","name":"122"},{"external_id":"300022506","station_external_id":"300022506","name":"123"},{"external_id":"300022516","station_external_id":"300022516","name":"051"},{"external_id":"300022577","station_external_id":"300022577","name":"111"},{"external_id":"300022578","station_external_id":"300022578","name":"028"},{"external_id":"300022608","station_external_id":"300022608","name":"059"},{"external_id":"300022633","station_external_id":"300022633","name":"084"},{"external_id":"300022664","station_external_id":"300022664","name":"085"},{"external_id":"300022666","station_external_id":"300022666","name":"086"},{"external_id":"300022699","station_external_id":"300022699","name":"117"},{"external_id":"300022870","station_external_id":"300022870","name":"043"},{"external_id":"300022899","station_external_id":"300022899","name":"044"},{"external_id":"300023017","station_external_id":"300023017","name":"137a"},{"external_id":"300023018","station_external_id":"300023018","name":"137b"},{"external_id":"300023019","station_external_id":"300023019","name":"138a"},{"external_id":"300023020","station_external_id":"300023020","name":"138b"},{"external_id":"300023021","station_external_id":"300023021","name":"063"},{"external_id":"300023023","station_external_id":"300023023","name":"047"},{"external_id":"300023024","station_external_id":"300023024","name":"135a"},{"external_id":"300023025","station_external_id":"300023025","name":"135b"},{"external_id":"300023027","station_external_id":"300023027","name":"135c"},{"external_id":"300023094","station_external_id":"300023094","name":"087b"},{"external_id":"300023095","station_external_id":"300023095","name":"087a"},{"external_id":"300023096","station_external_id":"300023096","name":"045"},{"external_id":"300023219","station_external_id":"300023219","name":"052"},{"external_id":"300023225","station_external_id":"300023225","name":"054"},{"external_id":"300023310","station_external_id":"300023310","name":"048"},{"external_id":"300023417","station_external_id":"300023417","name":"071a"},{"external_id":"300023418","station_external_id":"300023418","name":"071c"},{"external_id":"300023481","station_external_id":"300023481","name":"073"},{"external_id":"300023562","station_external_id":"300023562","name":"056"},{"external_id":"300023574","station_external_id":"300023574","name":"032"},{"external_id":"300023583","station_external_id":"300023583","name":"055b"},{"external_id":"300023585","station_external_id":"300023585","name":"033"},{"external_id":"300023603","station_external_id":"300023603","name":"026"},{"external_id":"300023605","station_external_id":"300023605","name":"055a"},{"external_id":"300023608","station_external_id":"300023608","name":"034"},{"external_id":"300023629","station_external_id":"300023629","name":"005"},{"external_id":"300023639","station_external_id":"300023639","name":"110"},{"external_id":"300023654","station_external_id":"300023654","name":"049b"},{"external_id":"300023655","station_external_id":"300023655","name":"049a"},{"external_id":"300023661","station_external_id":"300023661","name":"128"},{"external_id":"300023683","station_external_id":"300023683","name":"062"},{"external_id":"300023706","station_external_id":"300023706","name":"127"},{"external_id":"300023733","station_external_id":"300023733","name":"119a"},{"external_id":"300023897","station_external_id":"300023897","name":"027"},{"external_id":"300023972","station_external_id":"300023972","name":"107c"},{"external_id":"300023989","station_external_id":"300023989","name":"093"},{"external_id":"300024019","station_external_id":"300024019","name":"142"},{"external_id":"300024063","station_external_id":"300024063","name":"008"},{"external_id":"300024065","station_external_id":"300024065","name":"018"},{"external_id":"300024072","station_external_id":"300024072","name":"126b"},{"external_id":"300024079","station_external_id":"300024079","name":"124"},{"external_id":"300024100","station_external_id":"300024100","name":"097"},{"external_id":"300024108","station_external_id":"300024108","name":"098"},{"external_id":"300024124","station_external_id":"300024124","name":"107a"},{"external_id":"300024125","station_external_id":"300024125","name":"107b"},{"external_id":"300024240","station_external_id":"300024240","name":"108"},{"external_id":"300024689","station_external_id":"300024689","name":"126a"},{"external_id":"300024708","station_external_id":"300024708","name":"120"},{"external_id":"300024729","station_external_id":"300024729","name":"074"},{"external_id":"300024746","station_external_id":"300024746","name":"130"},{"external_id":"300024832","station_external_id":"300024832","name":"134"},{"external_id":"300024956","station_external_id":"300024956","name":"023"},{"external_id":"300024971","station_external_id":"300024971","name":"115"},{"external_id":"300025055","station_external_id":"300025055","name":"076"},{"external_id":"300025106","station_external_id":"300025106","name":"099"},{"external_id":"300025131","station_external_id":"300025131","name":"031a"},{"external_id":"300025144","station_external_id":"300025144","name":"029a"},{"external_id":"300025166","station_external_id":"300025166","name":"125"},{"external_id":"300025186","station_external_id":"300025186","name":"094"},{"external_id":"300025203","station_external_id":"300025203","name":"141"},{"external_id":"300025221","station_external_id":"300025221","name":"092"},{"external_id":"300025228","station_external_id":"300025228","name":"091"},{"external_id":"300025264","station_external_id":"300025264","name":"102"},{"external_id":"300025274","station_external_id":"300025274","name":"131"},{"external_id":"300025305","station_external_id":"300025305","name":"039"},{"external_id":"300025313","station_external_id":"300025313","name":"040"},{"external_id":"300025339","station_external_id":"300025339","name":"104"},{"external_id":"300025387","station_external_id":"300025387","name":"069"},{"external_id":"300025483","station_external_id":"300025483","name":"106"},{"external_id":"300025528","station_external_id":"300025528","name":"038"},{"external_id":"300025551","station_external_id":"300025551","name":"119b"},{"external_id":"300025604","station_external_id":"300025604","name":"041"},{"external_id":"300025661","station_external_id":"300025661","name":"024"},{"external_id":"300025675","station_external_id":"300025675","name":"075"},{"external_id":"300025725","station_external_id":"300025725","name":"025"},{"external_id":"300025734","station_external_id":"300025734","name":"133"},{"external_id":"300025773","station_external_id":"300025773","name":"095"},{"external_id":"300025779","station_external_id":"300025779","name":"096"},{"external_id":"300025902","station_external_id":"300025902","name":"100"},{"external_id":"300025977","station_external_id":"300025977","name":"078"},{"external_id":"300025986","station_external_id":"300025986","name":"083"},{"external_id":"300026004","station_external_id":"300026004","name":"081"},{"external_id":"300026028","station_external_id":"300026028","name":"088"},{"external_id":"300026735","station_external_id":"300026735","name":"058"},{"external_id":"300026742","station_external_id":"300026742","name":"057"},{"external_id":"300026763","station_external_id":"300026763","name":"066"},{"external_id":"300026787","station_external_id":"300026787","name":"079"},{"external_id":"300026824","station_external_id":"300026824","name":"089"},{"external_id":"300026859","station_external_id":"300026859","name":"090"},{"external_id":"300026914","station_external_id":"300026914","name":"013"},{"external_id":"300026964","station_external_id":"300026964","name":"082"},{"external_id":"300027016","station_external_id":"300027016","name":"068"},{"external_id":"300027026","station_external_id":"300027026","name":"009"},{"external_id":"300027095","station_external_id":"300027095","name":"112"},{"external_id":"300027135","station_external_id":"300027135","name":"015"},{"external_id":"300027143","station_external_id":"300027143","name":"077"},{"external_id":"300027303","station_external_id":"300027303","name":"020"},{"external_id":"300027319","station_external_id":"300027319","name":"021"},{"external_id":"300027341","station_external_id":"300027341","name":"060"},{"external_id":"300027385","station_external_id":"300027385","name":"065"},{"external_id":"300027418","station_external_id":"300027418","name":"007"},{"external_id":"300027432","station_external_id":"300027432","name":"067"},{"external_id":"300027443","station_external_id":"300027443","name":"006"},{"external_id":"300027451","station_external_id":"300027451","name":"070"},{"external_id":"300027562","station_external_id":"300027562","name":"143"},{"external_id":"300027601","station_external_id":"300027601","name":"035"},{"external_id":"300027638","station_external_id":"300027638","name":"036"},{"external_id":"300027672","station_external_id":"300027672","name":"002"},{"external_id":"300027685","station_external_id":"300027685","name":"001"},{"external_id":"300027925","station_external_id":"300027925","name":"150"},{"external_id":"300027948","station_external_id":"300027948","name":"016"},{"external_id":"300027971","station_external_id":"300027971","name":"012"},{"external_id":"300028013","station_external_id":"300028013","name":"003"},{"external_id":"300028030","station_external_id":"300028030","name":"042"},{"external_id":"300028438","station_external_id":"300028438","name":"061"},{"external_id":"300028442","station_external_id":"300028442","name":"101"},{"external_id":"300028467","station_external_id":"300028467","name":"010"},{"external_id":"300028469","station_external_id":"300028469","name":"072"},{"external_id":"300028473","station_external_id":"300028473","name":"139"},{"external_id":"300028665","station_external_id":"300028665","name":"103"},{"external_id":"300028667","station_external_id":"300028667","name":"113"},{"external_id":"300029624","station_external_id":"300029624","name":"105"},{"external_id":"300029628","station_external_id":"300029628","name":"129"},{"external_id":"300029976","station_external_id":"300029976","name":"011"},{"external_id":"300032693","station_external_id":"300032693","name":"Leipziger Straße"},{"external_id":"300032699","station_external_id":"300032699","name":"520"},{"external_id":"300032700","station_external_id":"300032700","name":"730"},{"external_id":"300032707","station_external_id":"300032707","name":"800"},{"external_id":"300032708","station_external_id":"300032708","name":"801"},{"external_id":"300032709","station_external_id":"300032709","name":"802"},{"external_id":"300032710","station_external_id":"300032710","name":"804"},{"external_id":"300032711","station_external_id":"300032711","name":"808"},{"external_id":"300032712","station_external_id":"300032712","name":"810"},{"external_id":"300032713","station_external_id":"300032713","name":"850"},{"external_id":"300032714","station_external_id":"300032714","name":"851"},{"external_id":"300032715","station_external_id":"300032715","name":"852"},{"external_id":"300032716","station_external_id":"300032716","name":"853"},{"external_id":"300032717","station_external_id":"300032717","name":"854"},{"external_id":"300032718","station_external_id":"300032718","name":"855"},{"external_id":"300032719","station_external_id":"300032719","name":"856"},{"external_id":"300032720","station_external_id":"300032720","name":"857"},{"external_id":"300032721","station_external_id":"300032721","name":"858"},{"external_id":"300032722","station_external_id":"300032722","name":"859"},{"external_id":"300032723","station_external_id":"300032723","name":"860"},{"external_id":"300032724","station_external_id":"300032724","name":"861"},{"external_id":"300032725","station_external_id":"300032725","name":"862"},{"external_id":"300032726","station_external_id":"300032726","name":"863"},{"external_id":"300032727","station_external_id":"300032727","name":"864"},{"external_id":"300032728","station_external_id":"300032728","name":"865"},{"external_id":"300032729","station_external_id":"300032729","name":"880"},{"external_id":"300032730","station_external_id":"300032730","name":"881"},{"external_id":"300032731","station_external_id":"300032731","name":"883"},{"external_id":"300032732","station_external_id":"300032732","name":"884"},{"external_id":"300032733","station_external_id":"300032733","name":"885"},{"external_id":"300032734","station_external_id":"300032734","name":"886"},{"external_id":"300032735","station_external_id":"300032735","name":"887"},{"external_id":"300032736","station_external_id":"300032736","name":"888"},{"external_id":"300032737","station_external_id":"300032737","name":"889"},{"external_id":"300032739","station_external_id":"300032739","name":"834"},{"external_id":"300032740","station_external_id":"300032740","name":"830"},{"external_id":"300032742","station_external_id":"300032742","name":"832"},{"external_id":"300032743","station_external_id":"300032743","name":"833"},{"external_id":"300032744","station_external_id":"300032744","name":"831"},{"external_id":"300032745","station_external_id":"300032745","name":"420"},{"external_id":"300032747","station_external_id":"300032747","name":"430"},{"external_id":"300032748","station_external_id":"300032748","name":"807"},{"external_id":"300032749","station_external_id":"300032749","name":"780"},{"external_id":"300032751","station_external_id":"300032751","name":"771"},{"external_id":"300032752","station_external_id":"300032752","name":"772"},{"external_id":"300032753","station_external_id":"300032753","name":"770"},{"external_id":"300032802","station_external_id":"300032802","name":"740"},{"external_id":"300032803","station_external_id":"300032803","name":"390"},{"external_id":"300032804","station_external_id":"300032804","name":"391"},{"external_id":"300032805","station_external_id":"300032805","name":"410"},{"external_id":"300032806","station_external_id":"300032806","name":"411"},{"external_id":"300032807","station_external_id":"300032807","name":"412"},{"external_id":"300032808","station_external_id":"300032808","name":"413"},{"external_id":"300032809","station_external_id":"300032809","name":"414"},{"external_id":"300032810","station_external_id":"300032810","name":"510a"},{"external_id":"300032811","station_external_id":"300032811","name":"510b"},{"external_id":"300032812","station_external_id":"300032812","name":"511"},{"external_id":"300032813","station_external_id":"300032813","name":"512"},{"external_id":"300032814","station_external_id":"300032814","name":"513"},{"external_id":"300032815","station_external_id":"300032815","name":"514a"},{"external_id":"300032816","station_external_id":"300032816","name":"514b"},{"external_id":"300032817","station_external_id":"300032817","name":"515"},{"external_id":"300032818","station_external_id":"300032818","name":"514"},{"external_id":"300032820","station_external_id":"300032820","name":"370"},{"external_id":"300032821","station_external_id":"300032821","name":"371"},{"external_id":"300032822","station_external_id":"300032822","name":"372"},{"external_id":"300032823","station_external_id":"300032823","name":"373"},{"external_id":"300032824","station_external_id":"300032824","name":"374"},{"external_id":"300032825","station_external_id":"300032825","name":"470"},{"external_id":"300032826","station_external_id":"300032826","name":"471"},{"external_id":"300032827","station_external_id":"300032827","name":"472"},{"external_id":"300032829","station_external_id":"300032829","name":"500"},{"external_id":"300032830","station_external_id":"300032830","name":"501"},{"external_id":"300032831","station_external_id":"300032831","name":"502"},{"external_id":"300032833","station_external_id":"300032833","name":"574"},{"external_id":"300032834","station_external_id":"300032834","name":"573"},{"external_id":"300032835","station_external_id":"300032835","name":"572"},{"external_id":"300032836","station_external_id":"300032836","name":"570"},{"external_id":"300032839","station_external_id":"300032839","name":"533"},{"external_id":"300032840","station_external_id":"300032840","name":"532"},{"external_id":"300032841","station_external_id":"300032841","name":"531"},{"external_id":"300032842","station_external_id":"300032842","name":"530"},{"external_id":"300032867","station_external_id":"300032867","name":"360"},{"external_id":"300032868","station_external_id":"300032868","name":"361"},{"external_id":"300032869","station_external_id":"300032869","name":"362"},{"external_id":"300032871","station_external_id":"300032871","name":"340"},{"external_id":"300032872","station_external_id":"300032872","name":"341"},{"external_id":"300032873","station_external_id":"300032873","name":"400"},{"external_id":"300032874","station_external_id":"300032874","name":"401"},{"external_id":"300032875","station_external_id":"300032875","name":"402"},{"external_id":"300032876","station_external_id":"300032876","name":"403"},{"external_id":"300032877","station_external_id":"300032877","name":"404"},{"external_id":"300032878","station_external_id":"300032878","name":"440"},{"external_id":"300032879","station_external_id":"300032879","name":"450"},{"external_id":"300032880","station_external_id":"300032880","name":"451"},{"external_id":"300032881","station_external_id":"300032881","name":"452"},{"external_id":"300032884","station_external_id":"300032884","name":"490"},{"external_id":"300032885","station_external_id":"300032885","name":"310a"},{"external_id":"300032886","station_external_id":"300032886","name":"310b"},{"external_id":"300032887","station_external_id":"300032887","name":"540"},{"external_id":"300032888","station_external_id":"300032888","name":"541"},{"external_id":"300032889","station_external_id":"300032889","name":"542"},{"external_id":"300032890","station_external_id":"300032890","name":"550"},{"external_id":"300032891","station_external_id":"300032891","name":"551"},{"external_id":"300032892","station_external_id":"300032892","name":"553"},{"external_id":"300032993","station_external_id":"300032993","name":"900"},{"external_id":"300032994","station_external_id":"300032994","name":"910"},{"external_id":"300032995","station_external_id":"300032995","name":"710"},{"external_id":"300032996","station_external_id":"300032996","name":"701"},{"external_id":"300032997","station_external_id":"300032997","name":"554"},{"external_id":"300032998","station_external_id":"300032998","name":"560"},{"external_id":"300032999","station_external_id":"300032999","name":"561"},{"external_id":"300033000","station_external_id":"300033000","name":"562"},{"external_id":"300033002","station_external_id":"300033002","name":"590"},{"external_id":"300033003","station_external_id":"300033003","name":"591"},{"external_id":"300033004","station_external_id":"300033004","name":"592"},{"external_id":"300033005","station_external_id":"300033005","name":"320"},{"external_id":"300033006","station_external_id":"300033006","name":"330"},{"external_id":"300033007","station_external_id":"300033007","name":"380"},{"external_id":"300033008","station_external_id":"300033008","name":"381"},{"external_id":"300033286","station_external_id":"300033286","name":"300a"},{"external_id":"300033287","station_external_id":"300033287","name":"300b"},{"external_id":"300033288","station_external_id":"300033288","name":"301a"},{"external_id":"300033289","station_external_id":"300033289","name":"301b"},{"external_id":"300033290","station_external_id":"300033290","name":"302a"},{"external_id":"300033291","station_external_id":"300033291","name":"302b"},{"external_id":"300033292","station_external_id":"300033292","name":"303"},{"external_id":"300033293","station_external_id":"300033293","name":"304"},{"external_id":"300033295","station_external_id":"300033295","name":"350"},{"external_id":"300033296","station_external_id":"300033296","name":"351"},{"external_id":"300033297","station_external_id":"300033297","name":"352"},{"external_id":"300033298","station_external_id":"300033298","name":"353"},{"external_id":"300033299","station_external_id":"300033299","name":"354"},{"external_id":"300034327","station_external_id":"300034327","name":"Steinbacher Straße"},{"external_id":"300039700","station_external_id":"300039700","name":"920"},{"external_id":"300039701","station_external_id":"300039701","name":"921"},{"external_id":"300039702","station_external_id":"300039702","name":"922"},{"external_id":"300039703","station_external_id":"300039703","name":"923"},{"external_id":"300039704","station_external_id":"300039704","name":"924"},{"external_id":"300042071","station_external_id":"300042071","name":"1072 R"},{"external_id":"300042697","station_external_id":"300042697","name":"1072 M"},{"external_id":"300042698","station_external_id":"300042698","name":"1083"},{"external_id":"300042699","station_external_id":"300042699","name":"1084"},{"external_id":"300043174","station_external_id":"300043174","name":"1073 R"},{"external_id":"300043176","station_external_id":"300043176","name":"1085"},{"external_id":"300043177","station_external_id":"300043177","name":"1086"},{"external_id":"300043179","station_external_id":"300043179","name":"1066 M"},{"external_id":"300043180","station_external_id":"300043180","name":"1065 M"},{"external_id":"300043184","station_external_id":"300043184","name":"1078"},{"external_id":"300043185","station_external_id":"300043185","name":"1081"},{"external_id":"300043186","station_external_id":"300043186","name":"1079 M"},{"external_id":"300043189","station_external_id":"300043189","name":"1079 R"},{"external_id":"300043196","station_external_id":"300043196","name":"1001"},{"external_id":"300043260","station_external_id":"300043260","name":"1029"},{"external_id":"300043408","station_external_id":"300043408","name":"1006"},{"external_id":"300043450","station_external_id":"300043450","name":"1067 M"},{"external_id":"300043465","station_external_id":"300043465","name":"1067 R"},{"external_id":"300043646","station_external_id":"300043646","name":"1031"},{"external_id":"300043720","station_external_id":"300043720","name":"1032"},{"external_id":"300043825","station_external_id":"300043825","name":"1047"},{"external_id":"300044983","station_external_id":"300044983","name":"563"},{"external_id":"300045290","station_external_id":"300045290","name":"1004"},{"external_id":"300045358","station_external_id":"300045358","name":"1013"},{"external_id":"300045393","station_external_id":"300045393","name":"1010"},{"external_id":"300045415","station_external_id":"300045415","name":"1005"},{"external_id":"300045452","station_external_id":"300045452","name":"1520"},{"external_id":"300045851","station_external_id":"300045851","name":"1028M"},{"external_id":"300045880","station_external_id":"300045880","name":"1051"},{"external_id":"300045892","station_external_id":"300045892","name":"1024"},{"external_id":"300045912","station_external_id":"300045912","name":"1026 M"},{"external_id":"300045940","station_external_id":"300045940","name":"1027"},{"external_id":"300045960","station_external_id":"300045960","name":"1055"},{"external_id":"300046000","station_external_id":"300046000","name":"1063 M"},{"external_id":"300046031","station_external_id":"300046031","name":"1670"},{"external_id":"300046301","station_external_id":"300046301","name":"1065"},{"external_id":"300046345","station_external_id":"300046345","name":"1009"},{"external_id":"300046413","station_external_id":"300046413","name":"1076"},{"external_id":"300046505","station_external_id":"300046505","name":"1035"},{"external_id":"300046591","station_external_id":"300046591","name":"1050"},{"external_id":"300046658","station_external_id":"300046658","name":"1049"},{"external_id":"300046664","station_external_id":"300046664","name":"1037"},{"external_id":"300046693","station_external_id":"300046693","name":"1038"},{"external_id":"300046809","station_external_id":"300046809","name":"1064"},{"external_id":"300046815","station_external_id":"300046815","name":"1058"},{"external_id":"300046822","station_external_id":"300046822","name":"1061"},{"external_id":"300046860","station_external_id":"300046860","name":"1062"},{"external_id":"300046894","station_external_id":"300046894","name":"1044"},{"external_id":"300046901","station_external_id":"300046901","name":"1045"},{"external_id":"300046946","station_external_id":"300046946","name":"1041"},{"external_id":"300046977","station_external_id":"300046977","name":"1043"},{"external_id":"300046979","station_external_id":"300046979","name":"1039"},{"external_id":"300046981","station_external_id":"300046981","name":"1048"},{"external_id":"300047012","station_external_id":"300047012","name":"1053 M"},{"external_id":"300047050","station_external_id":"300047050","name":"1056 M"},{"external_id":"300047104","station_external_id":"300047104","name":"1060"},{"external_id":"300047138","station_external_id":"300047138","name":"1054 M"},{"external_id":"300047631","station_external_id":"300047631","name":"1046"},{"external_id":"300047639","station_external_id":"300047639","name":"1052"},{"external_id":"300047688","station_external_id":"300047688","name":"1057"},{"external_id":"300047741","station_external_id":"300047741","name":"1033"},{"external_id":"300047754","station_external_id":"300047754","name":"1040"},{"external_id":"300047800","station_external_id":"300047800","name":"1042"},{"external_id":"300047875","station_external_id":"300047875","name":"1034"},{"external_id":"300047923","station_external_id":"300047923","name":"1020 M"},{"external_id":"300047959","station_external_id":"300047959","name":"1016 M"},{"external_id":"300048048","station_external_id":"300048048","name":"1019"},{"external_id":"300048049","station_external_id":"300048049","name":"1023"},{"external_id":"300048067","station_external_id":"300048067","name":"1022"},{"external_id":"300048093","station_external_id":"300048093","name":"1015 R"},{"external_id":"300048125","station_external_id":"300048125","name":"1069 R"},{"external_id":"300048131","station_external_id":"300048131","name":"140"},{"external_id":"300048159","station_external_id":"300048159","name":"1059"},{"external_id":"300048181","station_external_id":"300048181","name":"1077"},{"external_id":"300048844","station_external_id":"300048844","name":"1014 M"},{"external_id":"300048857","station_external_id":"300048857","name":"1530"},{"external_id":"300048879","station_external_id":"300048879","name":"1017"},{"external_id":"300049446","station_external_id":"300049446","name":"1025"},{"external_id":"300049541","station_external_id":"300049541","name":"Woogsweg"},{"external_id":"300049542","station_external_id":"300049542","name":"Arheilger Straße"},{"external_id":"300052661","station_external_id":"300052661","name":"1150"},{"external_id":"300052686","station_external_id":"300052686","name":"1146"},{"external_id":"300052811","station_external_id":"300052811","name":"1151"},{"external_id":"300052836","station_external_id":"300052836","name":"1154"},{"external_id":"300052874","station_external_id":"300052874","name":"1145"},{"external_id":"300052977","station_external_id":"300052977","name":"1124"},{"external_id":"300053004","station_external_id":"300053004","name":"1135"},{"external_id":"300053036","station_external_id":"300053036","name":"1125"},{"external_id":"300053092","station_external_id":"300053092","name":"1140 M"},{"external_id":"300053153","station_external_id":"300053153","name":"1138 M"},{"external_id":"300053166","station_external_id":"300053166","name":"1138 R"},{"external_id":"300053210","station_external_id":"300053210","name":"1111"},{"external_id":"300053236","station_external_id":"300053236","name":"1106"},{"external_id":"300053298","station_external_id":"300053298","name":"1107"},{"external_id":"300053300","station_external_id":"300053300","name":"1112"},{"external_id":"300053370","station_external_id":"300053370","name":"1105"},{"external_id":"300053371","station_external_id":"300053371","name":"1102"},{"external_id":"300053372","station_external_id":"300053372","name":"1108"},{"external_id":"300053424","station_external_id":"300053424","name":"1101"},{"external_id":"300054607","station_external_id":"300054607","name":"1153"},{"external_id":"300054692","station_external_id":"300054692","name":"1903"},{"external_id":"300054880","station_external_id":"300054880","name":"1143"},{"external_id":"300054912","station_external_id":"300054912","name":"1920"},{"external_id":"300054923","station_external_id":"300054923","name":"1129"},{"external_id":"300055208","station_external_id":"300055208","name":"1130"},{"external_id":"300055231","station_external_id":"300055231","name":"1132"},{"external_id":"300060310","station_external_id":"300060310","name":"1139"},{"external_id":"300060329","station_external_id":"300060329","name":"1148"},{"external_id":"300060338","station_external_id":"300060338","name":"1142"},{"external_id":"300060374","station_external_id":"300060374","name":"1144"},{"external_id":"300060380","station_external_id":"300060380","name":"1133"},{"external_id":"300060402","station_external_id":"300060402","name":"1134"},{"external_id":"300060406","station_external_id":"300060406","name":"1137 R"},{"external_id":"300060439","station_external_id":"300060439","name":"1122"},{"external_id":"300060452","station_external_id":"300060452","name":"1119"},{"external_id":"300060521","station_external_id":"300060521","name":"1121"},{"external_id":"300060609","station_external_id":"300060609","name":"1141"},{"external_id":"300060779","station_external_id":"300060779","name":"1900"},{"external_id":"300060818","station_external_id":"300060818","name":"1117"},{"external_id":"300060826","station_external_id":"300060826","name":"1115"},{"external_id":"300060851","station_external_id":"300060851","name":"1116 R"},{"external_id":"300060887","station_external_id":"300060887","name":"1114"},{"external_id":"300060909","station_external_id":"300060909","name":"1104"},{"external_id":"300060917","station_external_id":"300060917","name":"1109"},{"external_id":"300061600","station_external_id":"300061600","name":"1136"},{"external_id":"300061632","station_external_id":"300061632","name":"1942"},{"external_id":"300062314","station_external_id":"300062314","name":"R4 Trendelburg"},{"external_id":"300062584","station_external_id":"300062584","name":"099b"},{"external_id":"300062610","station_external_id":"300062610","name":"1118"},{"external_id":"300062791","station_external_id":"300062791","name":"1128"},{"external_id":"300062795","station_external_id":"300062795","name":"1126"},{"external_id":"300065669","station_external_id":"300065669","name":"1800"},{"external_id":"300065670","station_external_id":"300065670","name":"1801"},{"external_id":"300065671","station_external_id":"300065671","name":"1802"},{"external_id":"300065672","station_external_id":"300065672","name":"1803"},{"external_id":"300065673","station_external_id":"300065673","name":"1804"},{"external_id":"300065674","station_external_id":"300065674","name":"1805"},{"external_id":"300065682","station_external_id":"300065682","name":"1320"},{"external_id":"300065683","station_external_id":"300065683","name":"1321"},{"external_id":"300065684","station_external_id":"300065684","name":"1322"},{"external_id":"300065765","station_external_id":"300065765","name":"1450"},{"external_id":"300065766","station_external_id":"300065766","name":"1451"},{"external_id":"300065767","station_external_id":"300065767","name":"1452"},{"external_id":"300065768","station_external_id":"300065768","name":"1453"},{"external_id":"300065773","station_external_id":"300065773","name":"1462"},{"external_id":"300065774","station_external_id":"300065774","name":"1463"},{"external_id":"300065777","station_external_id":"300065777","name":"1461"},{"external_id":"300066392","station_external_id":"300066392","name":"1410"},{"external_id":"300066394","station_external_id":"300066394","name":"1411"},{"external_id":"300066395","station_external_id":"300066395","name":"1412"},{"external_id":"300066396","station_external_id":"300066396","name":"1414"},{"external_id":"300066397","station_external_id":"300066397","name":"1415"},{"external_id":"300066398","station_external_id":"300066398","name":"1416"},{"external_id":"300066399","station_external_id":"300066399","name":"1417"},{"external_id":"300066400","station_external_id":"300066400","name":"1418"},{"external_id":"300066401","station_external_id":"300066401","name":"1419"},{"external_id":"300066402","station_external_id":"300066402","name":"1420"},{"external_id":"300066403","station_external_id":"300066403","name":"1422"},{"external_id":"300066404","station_external_id":"300066404","name":"1423"},{"external_id":"300066405","station_external_id":"300066405","name":"1425"},{"external_id":"300066406","station_external_id":"300066406","name":"1426"},{"external_id":"300066407","station_external_id":"300066407","name":"1427 M"},{"external_id":"300066408","station_external_id":"300066408","name":"1428 M"},{"external_id":"300066721","station_external_id":"300066721","name":"1460"},{"external_id":"300066723","station_external_id":"300066723","name":"1680"},{"external_id":"300066727","station_external_id":"300066727","name":"1380"},{"external_id":"300066728","station_external_id":"300066728","name":"1381"},{"external_id":"300066729","station_external_id":"300066729","name":"1382"},{"external_id":"300066730","station_external_id":"300066730","name":"1383"},{"external_id":"300066731","station_external_id":"300066731","name":"1384"},{"external_id":"300066732","station_external_id":"300066732","name":"1385"},{"external_id":"300066733","station_external_id":"300066733","name":"1386"},{"external_id":"300066734","station_external_id":"300066734","name":"1388"},{"external_id":"300066735","station_external_id":"300066735","name":"1389"},{"external_id":"300066736","station_external_id":"300066736","name":"1390"},{"external_id":"300066737","station_external_id":"300066737","name":"1391"},{"external_id":"300066738","station_external_id":"300066738","name":"1392"},{"external_id":"300066739","station_external_id":"300066739","name":"1393"},{"external_id":"300066740","station_external_id":"300066740","name":"1394"},{"external_id":"300066741","station_external_id":"300066741","name":"1395"},{"external_id":"300066742","station_external_id":"300066742","name":"1396"},{"external_id":"300066745","station_external_id":"300066745","name":"1399 M"},{"external_id":"300066801","station_external_id":"300066801","name":"1330"},{"external_id":"300066802","station_external_id":"300066802","name":"1331"},{"external_id":"300066803","station_external_id":"300066803","name":"1332"},{"external_id":"300066804","station_external_id":"300066804","name":"1333"},{"external_id":"300066805","station_external_id":"300066805","name":"1334"},{"external_id":"300066806","station_external_id":"300066806","name":"1335"},{"external_id":"300066819","station_external_id":"300066819","name":"1397"},{"external_id":"300067383","station_external_id":"300067383","name":"1440"},{"external_id":"300067384","station_external_id":"300067384","name":"1441"},{"external_id":"300067385","station_external_id":"300067385","name":"1443"},{"external_id":"300067386","station_external_id":"300067386","name":"1444"},{"external_id":"300067387","station_external_id":"300067387","name":"1446"},{"external_id":"300067390","station_external_id":"300067390","name":"1540"},{"external_id":"300067391","station_external_id":"300067391","name":"1541"},{"external_id":"300067393","station_external_id":"300067393","name":"1544"},{"external_id":"300067401","station_external_id":"300067401","name":"1300"},{"external_id":"300067402","station_external_id":"300067402","name":"1630"},{"external_id":"300067781","station_external_id":"300067781","name":"1640"},{"external_id":"300067782","station_external_id":"300067782","name":"1641"},{"external_id":"300067783","station_external_id":"300067783","name":"1642"},{"external_id":"300067784","station_external_id":"300067784","name":"1643"},{"external_id":"300067785","station_external_id":"300067785","name":"1645"},{"external_id":"300067966","station_external_id":"300067966","name":"1610 Richtung Frankfurt"},{"external_id":"300067967","station_external_id":"300067967","name":"1610 Richtung Offenbach"},{"external_id":"300067968","station_external_id":"300067968","name":"1612"},{"external_id":"300067969","station_external_id":"300067969","name":"1613"},{"external_id":"300067970","station_external_id":"300067970","name":"1614"},{"external_id":"300067971","station_external_id":"300067971","name":"1615"},{"external_id":"300067972","station_external_id":"300067972","name":"1616"},{"external_id":"300067973","station_external_id":"300067973","name":"1650"},{"external_id":"300067974","station_external_id":"300067974","name":"1651"},{"external_id":"300067975","station_external_id":"300067975","name":"1700"},{"external_id":"300067976","station_external_id":"300067976","name":"1702"},{"external_id":"300067977","station_external_id":"300067977","name":"1703"},{"external_id":"300067978","station_external_id":"300067978","name":"1704"},{"external_id":"300067979","station_external_id":"300067979","name":"1580"},{"external_id":"300067980","station_external_id":"300067980","name":"1581"},{"external_id":"300067981","station_external_id":"300067981","name":"1584"},{"external_id":"300067983","station_external_id":"300067983","name":"1587"},{"external_id":"300067985","station_external_id":"300067985","name":"1591"},{"external_id":"300067986","station_external_id":"300067986","name":"1592"},{"external_id":"300067987","station_external_id":"300067987","name":"1510"},{"external_id":"300067988","station_external_id":"300067988","name":"1511 stadtauswärts"},{"external_id":"300067989","station_external_id":"300067989","name":"1511 stadteinwärts"},{"external_id":"300067990","station_external_id":"300067990","name":"1512"},{"external_id":"300067991","station_external_id":"300067991","name":"1590"},{"external_id":"300067992","station_external_id":"300067992","name":"1351"},{"external_id":"300067993","station_external_id":"300067993","name":"1354"},{"external_id":"300067994","station_external_id":"300067994","name":"1355"},{"external_id":"300068882","station_external_id":"300068882","name":"1471"},{"external_id":"300068883","station_external_id":"300068883","name":"1473"},{"external_id":"300068884","station_external_id":"300068884","name":"1476"},{"external_id":"300068885","station_external_id":"300068885","name":"1477"},{"external_id":"300068886","station_external_id":"300068886","name":"1478"},{"external_id":"300068887","station_external_id":"300068887","name":"1479"},{"external_id":"300068888","station_external_id":"300068888","name":"1480"},{"external_id":"300068889","station_external_id":"300068889","name":"1481"},{"external_id":"300068890","station_external_id":"300068890","name":"1482"},{"external_id":"300068891","station_external_id":"300068891","name":"1484"},{"external_id":"300068892","station_external_id":"300068892","name":"1810"},{"external_id":"300068994","station_external_id":"300068994","name":"1660"},{"external_id":"300069071","station_external_id":"300069071","name":"1340"},{"external_id":"300069072","station_external_id":"300069072","name":"1341"},{"external_id":"300069073","station_external_id":"300069073","name":"1342"},{"external_id":"300069074","station_external_id":"300069074","name":"1343"},{"external_id":"300069075","station_external_id":"300069075","name":"1345"},{"external_id":"300069163","station_external_id":"300069163","name":"Zählstelle Sinntal Altengronau Rhönexpressradweg"},{"external_id":"300069164","station_external_id":"300069164","name":"Zählstelle Gelnhausen Höchst R3"},{"external_id":"300069324","station_external_id":"300069324","name":"1690"},{"external_id":"300069410","station_external_id":"300069410","name":"1550"},{"external_id":"300069417","station_external_id":"300069417","name":"1663"},{"external_id":"300069418","station_external_id":"300069418","name":"1662"},{"external_id":"300069419","station_external_id":"300069419","name":"1661"},{"external_id":"300069438","station_external_id":"300069438","name":"1370"},{"external_id":"300069439","station_external_id":"300069439","name":"1371"},{"external_id":"300069440","station_external_id":"300069440","name":"1372"},{"external_id":"300069441","station_external_id":"300069441","name":"1373"},{"external_id":"300069442","station_external_id":"300069442","name":"1374"},{"external_id":"300069443","station_external_id":"300069443","name":"1375"},{"external_id":"300069444","station_external_id":"300069444","name":"1376"},{"external_id":"300070104","station_external_id":"300070104","name":"1490"},{"external_id":"300070105","station_external_id":"300070105","name":"1492"},{"external_id":"300070106","station_external_id":"300070106","name":"1493"},{"external_id":"300070107","station_external_id":"300070107","name":"1494"},{"external_id":"300070108","station_external_id":"300070108","name":"1495"},{"external_id":"300070109","station_external_id":"300070109","name":"1496 auswärts"},{"external_id":"300070110","station_external_id":"300070110","name":"1496 einwärts"},{"external_id":"300070111","station_external_id":"300070111","name":"1497"},{"external_id":"300070112","station_external_id":"300070112","name":"1499 a"},{"external_id":"300070113","station_external_id":"300070113","name":"1500"}]}	2026-09-05 16:00:39.492286+00
+92dd56db-4601-4426-8a3f-d32cd14e57f0	2750a682-90bd-5d2c-8b86-c9038c228d9c	index_at	2026-09-05T16:00:39.497178737+00:00	2026-09-05 16:00:39.49756+00
+8c951a9c-93d4-462e-9ea2-ed8d80087a42	b9145b59-ec36-52da-9343-bde7f49d6046	index	{"timezone":"Europe/Berlin","stations":[{"external_id":"100005014","name":"KÖ Steinstraße","description":"Königsallee 52, 40212 Düsseldorf","latitude":51.223255,"longitude":6.779096},{"external_id":"100011631","name":"Kirchfeldstraße","description":"Kirchfeldstraße 4, 40217 Düsseldorf","latitude":51.212435,"longitude":6.770726},{"external_id":"100011632","name":"Lohauser Deich","description":"Der Grüne Weg 80, 40474 Düsseldorf","latitude":51.276819,"longitude":6.714056},{"external_id":"100011637","name":"Christophstraße","description":"Christophstraße 11, 40225 Düsseldorf","latitude":51.195957,"longitude":6.796619},{"external_id":"100016424","name":"Mannesmann Ufer","description":"Mannesmannufer 1a, 40213 Düsseldorf","latitude":51.220154,"longitude":6.767121},{"external_id":"100033660","name":"Elisabethstraße","description":"Elisabethstraße 16, 40217 Düsseldorf","latitude":51.216641,"longitude":6.775346},{"external_id":"100046689","name":"Bilker Allee","description":"Bilker Allee 92, 40217 Düsseldorf","latitude":51.21074,"longitude":6.771311},{"external_id":"100047053","name":"Münchener/Ickeswarder Str","description":"Fritz-Strassmann-Straße 11, 40591 Düsseldorf","latitude":51.176601,"longitude":6.809242},{"external_id":"100047054","name":"Fleher Deich","description":"Fleher Deich 49, 40223 Düsseldorf","latitude":51.18775,"longitude":6.77722},{"external_id":"100047279","name":"Koblenzer Straße","description":"Theodor-Litt-Straße 2a, 40593 Düsseldorf","latitude":51.149015,"longitude":6.886683},{"external_id":"100047280","name":"Oberkasseler Brücke","description":"Kaiser-Friedrich-Ring 1, 40545 Düsseldorf","latitude":51.23166,"longitude":6.7632},{"external_id":"100047281","name":"Fleher Deich Rampe","description":"Bückerbergweg 28, 40223 Düsseldorf","latitude":51.18834,"longitude":6.77571},{"external_id":"300029563","name":"Hofgartenrampe Oederallee","description":"Fritz-Roeber-Straße 2, 40213 Düsseldorf","latitude":51.231551,"longitude":6.776191}],"channels":[{"external_id":"100005014","station_external_id":"100005014","name":"KÖ Steinstraße"},{"external_id":"100011631","station_external_id":"100011631","name":"Kirchfeldstraße"},{"external_id":"100011632","station_external_id":"100011632","name":"Lohauser Deich"},{"external_id":"100011637","station_external_id":"100011637","name":"Christophstraße"},{"external_id":"100016424","station_external_id":"100016424","name":"Mannesmann Ufer"},{"external_id":"100033660","station_external_id":"100033660","name":"Elisabethstraße"},{"external_id":"100046689","station_external_id":"100046689","name":"Bilker Allee"},{"external_id":"100047053","station_external_id":"100047053","name":"Münchener/Ickeswarder Str"},{"external_id":"100047054","station_external_id":"100047054","name":"Fleher Deich"},{"external_id":"100047279","station_external_id":"100047279","name":"Koblenzer Straße"},{"external_id":"100047280","station_external_id":"100047280","name":"Oberkasseler Brücke"},{"external_id":"100047281","station_external_id":"100047281","name":"Fleher Deich Rampe"},{"external_id":"300029563","station_external_id":"300029563","name":"Hofgartenrampe Oederallee"}]}	2026-09-05 16:00:41.716063+00
+20b4a9b9-cf46-4ced-9197-702e2194e1c0	b9145b59-ec36-52da-9343-bde7f49d6046	index_at	2026-09-05T16:00:41.717281077+00:00	2026-09-05 16:00:41.717435+00
+c8331057-5d70-4e46-8fb9-e2e07daf91c6	eb62ba16-1a38-54c3-bfd4-81c271d10874	index	{"timezone":"Europe/Berlin","stations":[{"external_id":"100019755","name":"08 Vorgebirgspark","description":"Homburger Straße 14, 50969 Köln","latitude":50.913017,"longitude":6.948681},{"external_id":"100019756","name":"09 Alphons-Silbermann-Weg","description":"Zülpicher Wall 5, 50674 Köln","latitude":50.930084,"longitude":6.930417},{"external_id":"100019757","name":"10 Stadtwald","description":"Friedrich-Schmidt-Straße 60b, 50933 Köln","latitude":50.933098,"longitude":6.8929157},{"external_id":"100019758","name":"11 Niederländer Ufer","description":"An Der Schanz 14, 50735 Köln","latitude":50.962322,"longitude":6.986403},{"external_id":"100021727","name":"07 Alfred-Schütte-Allee","description":"Alfred-Schütte-Allee 76, 51105 Köln","latitude":50.914497,"longitude":6.9818854},{"external_id":"100023269","name":"01 Bonner Straße Rad","description":"Bonner Straße 41, 50677 Köln","latitude":50.9182,"longitude":6.960489},{"external_id":"100023270","name":"02 Venloer Straße Rad","description":"Venloer Straße 176, 50823 Köln","latitude":50.945816,"longitude":6.9266076},{"external_id":"100029854","name":"04 Hohenzollernbrücke","description":"Kennedy-Ufer 2a, 50679 Köln","latitude":50.94118,"longitude":6.9701},{"external_id":"100030418","name":"06 Neumarkt","description":"Neumarkt 10, 50667 Köln","latitude":50.93637257134968,"longitude":6.947836756773378},{"external_id":"100044729","name":"05 Deutzer Brücke","description":"Kennedy-Ufer 1, 50679 Köln","latitude":50.93649,"longitude":6.96658},{"external_id":"100045094","name":"12 Vorgebirgswall","description":"Vorgebirgswall 4-8, 50677 Köln","latitude":50.92054907885211,"longitude":6.94476961008295},{"external_id":"100057124","name":"03 Zülpicher Straße","description":"Zülpicher Straße 51, 50937 Köln","latitude":50.92719493078395,"longitude":6.933329933685668},{"external_id":"100059340","name":"13 Universitätsstr.","description":"Universitätsstraße 75, 50931 Köln","latitude":50.93311976074636,"longitude":6.925021246105153},{"external_id":"300014336","name":"14 Rodenkirchener Brücke","description":"Weidenweg 50, 51105 Köln","latitude":50.90295502231652,"longitude":6.993484497070313},{"external_id":"300016603","name":"15 Severinsbrücke","description":"Im Zollhafen 5, 50678 Köln","latitude":50.93071097591193,"longitude":6.967520713806153},{"external_id":"300021441","name":"16 Neusser Straße Rad","description":"Neusser Straße 153, 50733 Köln","latitude":50.95783433133611,"longitude":6.955429364340324},{"external_id":"300022210","name":"17 Hohe Pforte Rad","description":"Hohe Pforte 19, 50676 Köln","latitude":50.93375713622347,"longitude":6.956292986869813},{"external_id":"300028615","name":"18 Gladbacher Straße","description":"Gladbacher Straße 9, 50672 Köln","latitude":50.94546997818451,"longitude":6.940703988075257},{"external_id":"300037617","name":"19 Elisabeth-Schäfer-Weg","description":"Herler Straße 92a, 51067 Köln","latitude":50.95755663257499,"longitude":7.024080455303193},{"external_id":"300041441","name":"21 Hohenzollernring Rad","description":"Hohenzollernring 17, 50672 Köln","latitude":50.93719185680222,"longitude":6.939121484756471},{"external_id":"300041859","name":"20 Auenweg","description":"Auenweg 185, 51063 Köln","latitude":50.95320931360196,"longitude":6.986403465270997},{"external_id":"300049705","name":"22 Maybachstraße","description":"Maybachstraße 111, 50670 Köln","latitude":50.94902,"longitude":6.94953},{"external_id":"300050064","name":"23 Kalker Hauptstraße","description":"Kalker Hauptstraße 56, 51103 Köln","latitude":50.93728313036514,"longitude":6.996134519577027}],"channels":[{"external_id":"100019755","station_external_id":"100019755","name":"08 Vorgebirgspark"},{"external_id":"100019756","station_external_id":"100019756","name":"09 Alphons-Silbermann-Weg"},{"external_id":"100019757","station_external_id":"100019757","name":"10 Stadtwald"},{"external_id":"100019758","station_external_id":"100019758","name":"11 Niederländer Ufer"},{"external_id":"100021727","station_external_id":"100021727","name":"07 Alfred-Schütte-Allee"},{"external_id":"100023269","station_external_id":"100023269","name":"01 Bonner Straße Rad"},{"external_id":"100023270","station_external_id":"100023270","name":"02 Venloer Straße Rad"},{"external_id":"100029854","station_external_id":"100029854","name":"04 Hohenzollernbrücke"},{"external_id":"100030418","station_external_id":"100030418","name":"06 Neumarkt"},{"external_id":"100044729","station_external_id":"100044729","name":"05 Deutzer Brücke"},{"external_id":"100045094","station_external_id":"100045094","name":"12 Vorgebirgswall"},{"external_id":"100057124","station_external_id":"100057124","name":"03 Zülpicher Straße"},{"external_id":"100059340","station_external_id":"100059340","name":"13 Universitätsstr."},{"external_id":"300014336","station_external_id":"300014336","name":"14 Rodenkirchener Brücke"},{"external_id":"300016603","station_external_id":"300016603","name":"15 Severinsbrücke"},{"external_id":"300021441","station_external_id":"300021441","name":"16 Neusser Straße Rad"},{"external_id":"300022210","station_external_id":"300022210","name":"17 Hohe Pforte Rad"},{"external_id":"300028615","station_external_id":"300028615","name":"18 Gladbacher Straße"},{"external_id":"300037617","station_external_id":"300037617","name":"19 Elisabeth-Schäfer-Weg"},{"external_id":"300041441","station_external_id":"300041441","name":"21 Hohenzollernring Rad"},{"external_id":"300041859","station_external_id":"300041859","name":"20 Auenweg"},{"external_id":"300049705","station_external_id":"300049705","name":"22 Maybachstraße"},{"external_id":"300050064","station_external_id":"300050064","name":"23 Kalker Hauptstraße"}]}	2026-09-05 16:00:41.865684+00
+e693793a-e954-4cc8-b409-ff270e47056f	eb62ba16-1a38-54c3-bfd4-81c271d10874	index_at	2026-09-05T16:00:41.872661737+00:00	2026-09-05 16:00:41.872959+00
+6b238ac2-4d1b-4e33-bd8c-0b2e1d077ae6	a023b021-9754-56c7-8c4e-9c391069aff5	archive_downloaded_at	2026-09-05T16:00:39.019951503+00:00	2026-09-05 16:00:44.29909+00
+e0d6a475-9f9d-45be-bd77-6812ff2a6cba	a023b021-9754-56c7-8c4e-9c391069aff5	archive_file	/tmp/radverkehr-99fa49f6-5d6c-4a54-aef4-aa2a1a1b920e.zip	2026-09-05 16:00:44.300883+00
+27c71921-075d-42b9-a7f0-4c651452cd37	a023b021-9754-56c7-8c4e-9c391069aff5	archive_extracted_at	2026-09-05T16:00:39.019951503+00:00	2026-09-05 16:00:44.72524+00
+f4644e3b-07b0-4e2c-9e2a-b51bab897924	a023b021-9754-56c7-8c4e-9c391069aff5	archive_extracted_dir	/tmp/radverkehr-extracted-800be439-bfc0-4050-931c-42c4303752d7	2026-09-05 16:00:44.72823+00
+0a7a4381-cf24-400d-9598-f75494a5f4bb	a023b021-9754-56c7-8c4e-9c391069aff5	archive_etag	W/"592449b819126560f7a57979bf933aeedcc077aaeb786dc59cc971e46c93042e"	2026-09-05 16:00:44.729247+00
 \.
 
 
@@ -1333,13 +2599,13 @@ beb57642-c98a-4ce6-b870-559a7b0d98c8	a023b021-9754-56c7-8c4e-9c391069aff5	archiv
 -- PostgreSQL database dump complete
 --
 
-\unrestrict DBfQxfEAURJvTl9MWs6Np1BzZwHiF9Bd0JJzrxzQcw11s9H7VBWuOpXGmyZyyVp
+\unrestrict hGzLhaVPPrHRQJeHLUyASe0hABAQBDxVZQbYfDFWIqMgk66NkOqa2J7ieZVFuAY
 
 --
 -- PostgreSQL database dump
 --
 
-\restrict P355IYN2WUAxkAzYUdacdsmuwexfz5b0PjEz1j1u3deqJRef48GHKh0XUmTijvm
+\restrict kGGmKukop34zfzfDHdG2rN5g620Kle50UP0tTQp1H0QGEkHMLexXcrkTUTadDRc
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -1368,15 +2634,18 @@ COPY public.data_source_provider_messages (id, data_source_id, severity, message
 -- PostgreSQL database dump complete
 --
 
-\unrestrict P355IYN2WUAxkAzYUdacdsmuwexfz5b0PjEz1j1u3deqJRef48GHKh0XUmTijvm
+\unrestrict kGGmKukop34zfzfDHdG2rN5g620Kle50UP0tTQp1H0QGEkHMLexXcrkTUTadDRc
 
 
 -- Restore the default search_path (the dump above set it to ''), so the
 -- unqualified statements below resolve the tables.
 SET search_path = public;
 
--- Unlink provider images so the builtin fallback bike icon is used.
+-- Unlink provider images so the builtin fallback bike icon is used, and
+-- unlink the per-source logo assets (not present in the e2e MinIO bucket)
+-- so the bundled data-source SVG fallback is rendered instead.
 UPDATE counting_stations SET image_asset_id = NULL, image_sha256 = NULL;
+UPDATE data_sources SET logo_asset_id = NULL, logo_sha256 = NULL;
 
 -- Synthesized recent measurements for the alphabetically-first stations of each
 -- city (real station/channel structure from the DB; generated values keep the
@@ -1411,7 +2680,9 @@ WHERE (d.name = 'Münster' AND s.name IN ('Bismarckallee', 'Bohlweg', 'Coesfelde
 
 -- Pre-finished jobs: the schedulers skip their startup run (never overdue — the
 -- data_source_update finished_at is in the future so the cron-based overdue test
--- can never fire) and the stack boots without importing from the providers.
+-- can never fire). The jobs are belt-and-braces: the Playwright orchestrator
+-- additionally disables the schedulers via scheduled_jobs_enabled = false, so the
+-- stack boots without importing from the providers.
 INSERT INTO jobs (id, name, job_type, status, started_at, finished_at, failure_message, metadata, lifetime_until, max_lifetime_exceeded, created_at)
 VALUES
   (gen_random_uuid(), 'Data source update', 'data_source_update', 'FINISHED',

@@ -32,6 +32,10 @@ pub struct Configuration {
     asset_storage: AssetStorageConfiguration,
     /// Self-hosted vector basemap ("maps") configuration.
     maps: MapsConfiguration,
+    /// Whether the scheduled background jobs (data-source update, asset
+    /// cleanup, tiles update) are started at all. Defaults to `true`; disable
+    /// for test/e2e setups that must never reach out to the providers.
+    scheduled_jobs_enabled: bool,
 }
 
 impl Configuration {
@@ -86,6 +90,7 @@ impl Configuration {
             asset_cleanup_max_lifetime_seconds,
             asset_storage,
             maps,
+            scheduled_jobs_enabled: true,
         })
     }
 
@@ -135,6 +140,19 @@ impl Configuration {
     /// Self-hosted vector basemap ("maps") configuration.
     pub fn maps(&self) -> &MapsConfiguration {
         &self.maps
+    }
+
+    /// Whether the scheduled background jobs (data-source update, asset
+    /// cleanup, tiles update) are enabled. Defaults to `true`.
+    pub fn scheduled_jobs_enabled(&self) -> bool {
+        self.scheduled_jobs_enabled
+    }
+
+    /// Sets whether the scheduled background jobs run. Consumes and returns
+    /// `self` so it can be chained onto [`Configuration::new`].
+    pub fn with_scheduled_jobs_enabled(mut self, enabled: bool) -> Self {
+        self.scheduled_jobs_enabled = enabled;
+        self
     }
 }
 
@@ -736,6 +754,51 @@ mod tests {
             configuration.asset_storage().bucket(),
             "bike-counter-images"
         );
+    }
+
+    #[test]
+    fn scheduled_jobs_are_enabled_by_default() {
+        let configuration = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        assert!(configuration.scheduled_jobs_enabled());
+    }
+
+    #[test]
+    fn with_scheduled_jobs_enabled_disables_the_switch() {
+        let configuration = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap()
+        .with_scheduled_jobs_enabled(false);
+        assert!(!configuration.scheduled_jobs_enabled());
+    }
+
+    #[test]
+    fn with_scheduled_jobs_enabled_re_enables_the_switch() {
+        let configuration = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap()
+        .with_scheduled_jobs_enabled(false)
+        .with_scheduled_jobs_enabled(true);
+        assert!(configuration.scheduled_jobs_enabled());
     }
 
     #[test]

@@ -77,7 +77,7 @@ test('search + Find on map marks the found station as selected', async ({ page }
 
 // Gartenstraße is marked inactive by the e2e stack after startup
 // (scripts/e2e-playwright.sh) to exercise the persisted `status` reporting.
-const GARTENSTRASSE_ID = '06278fe5-c70b-4487-8a8b-4a68a75814cc'
+const GARTENSTRASSE_ID = '2b410a8a-3474-4ab3-9fa4-d88b92256bee'
 
 test('an inactive station renders with the inactive flag', async ({ page }) => {
   await page.goto(cityUrl('Münster'), { waitUntil: 'domcontentloaded' })

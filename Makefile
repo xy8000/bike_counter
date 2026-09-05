@@ -64,7 +64,7 @@ test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker requi
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
 	./scripts/docker-compose-test.sh
 
-test-playwright: ## Playwright browser e2e (Münster/Hamburg/Bonn) against the real stack seeded from a SQL fixture — no provider import (scripts/e2e-playwright.sh)
+test-playwright: ## Playwright browser e2e (all seven data sources) against the real stack seeded from a SQL fixture — jobs disabled, no provider import (scripts/e2e-playwright.sh)
 	./scripts/e2e-playwright.sh
 
 playwright-install: ## Install the Playwright Chromium browser into the frontend node_modules (once)

@@ -27,10 +27,18 @@ struct ConfigurationDto {
     asset_storage: AssetStorageDto,
     #[serde(default = "default_maps")]
     maps: MapsDto,
+    /// Whether the scheduled background jobs are started (default `true`).
+    /// Set to `false` for e2e/test setups that must never reach the providers.
+    #[serde(default = "default_scheduled_jobs_enabled")]
+    scheduled_jobs_enabled: bool,
     database_url: String,
     database_user: String,
     database_password: String,
     database_name: String,
+}
+
+fn default_scheduled_jobs_enabled() -> bool {
+    true
 }
 
 fn default_data_source_update_cron() -> String {
@@ -189,6 +197,7 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             dto.asset_cleanup_max_lifetime_seconds,
             maps,
         )
+        .map(|configuration| configuration.with_scheduled_jobs_enabled(dto.scheduled_jobs_enabled))
     }
 }
 
@@ -409,6 +418,59 @@ mod tests {
             configuration.data_source_update_max_lifetime_seconds(),
             3600
         );
+    }
+
+    #[test]
+    fn scheduled_jobs_are_enabled_when_the_key_is_omitted() {
+        let path = write_config(&with_asset_section(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n",
+        ));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert!(configuration.scheduled_jobs_enabled());
+    }
+
+    #[test]
+    fn reads_scheduled_jobs_enabled_false() {
+        let path = write_config(&with_asset_section(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
+            scheduled_jobs_enabled = false\n",
+        ));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert!(!configuration.scheduled_jobs_enabled());
+    }
+
+    #[test]
+    fn reads_scheduled_jobs_enabled_true() {
+        let path = write_config(&with_asset_section(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_lifetime_seconds = 3600\n\
+            scheduled_jobs_enabled = true\n",
+        ));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert!(configuration.scheduled_jobs_enabled());
     }
 
     #[test]
