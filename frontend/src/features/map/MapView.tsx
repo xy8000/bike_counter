@@ -142,7 +142,7 @@ export function MapView({
                 aria-label={`${count} stations`}
                 title={`${count} stations`}
                 data-count={count}
-                className="station-cluster flex h-9 min-w-9 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-2 border-background bg-primary px-1.5 text-sm leading-none font-semibold text-primary-foreground shadow-lg transition-transform hover:scale-110"
+                className="station-cluster flex h-9 min-w-9 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-2 border-foreground bg-primary px-1.5 text-sm leading-none font-semibold text-white shadow-lg transition-transform hover:scale-110"
                 onClick={(event) => {
                   event.stopPropagation()
                   zoomToCluster(feature.properties.cluster_id, longitude, latitude)
