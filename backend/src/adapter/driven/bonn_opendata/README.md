@@ -54,6 +54,7 @@ Read from the data source's provider vars in
 | `historical_urls` | no | (empty) | space-separated wide yearly hourly CSVs (2023–2025) |
 | `max_measurement_batch_size` | no | `500` | page size |
 | `cache_duration` | no | `300` | seconds to cache fetched bodies |
+| `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 
 Example block in [`config.toml.example`](../../../../../config.toml.example:39).
 

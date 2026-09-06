@@ -7,6 +7,8 @@
 use std::thread;
 use std::time::Duration;
 
+use crate::adapter::driven::http::{DEFAULT_REQUEST_TIMEOUT_SECS, timed_agent};
+
 /// Fetches a whole resource over HTTP. Real implementation is
 /// [`HttpResourceFetcher`]; tests inject a fake.
 pub trait ResourceFetcher: Send + Sync {
@@ -17,18 +19,31 @@ pub trait ResourceFetcher: Send + Sync {
 pub struct HttpResourceFetcher {
     /// Optional Bearer access token sent as `Authorization: Bearer <token>`.
     bearer: Option<String>,
+    /// Agent with an end-to-end request timeout so a hung upstream can never
+    /// block an import worker thread forever.
+    agent: ureq::Agent,
 }
 
 impl HttpResourceFetcher {
-    /// A plain fetcher without authentication.
+    /// A plain fetcher without authentication (default request timeout).
     pub fn new() -> Self {
-        Self { bearer: None }
+        Self::with_timeout(None, Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
     }
 
-    /// A fetcher that authenticates every request with a Bearer access token.
+    /// A fetcher that authenticates every request with a Bearer access token
+    /// (default request timeout).
     pub fn with_bearer(token: impl Into<String>) -> Self {
+        Self::with_timeout(
+            Some(token.into()),
+            Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
+        )
+    }
+
+    /// A fetcher with an explicit end-to-end request timeout.
+    pub fn with_timeout(bearer: Option<String>, timeout: Duration) -> Self {
         Self {
-            bearer: Some(token.into()),
+            bearer,
+            agent: timed_agent(timeout),
         }
     }
 
@@ -56,7 +71,7 @@ impl ResourceFetcher for HttpResourceFetcher {
         const ATTEMPTS: usize = 3;
         let mut last_error = String::new();
         for attempt in 0..ATTEMPTS {
-            let mut request = ureq::get(url);
+            let mut request = self.agent.get(url);
             if let Some(token) = &self.bearer {
                 request = request.header("Authorization", &format!("Bearer {token}"));
             }

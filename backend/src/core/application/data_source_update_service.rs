@@ -1407,6 +1407,16 @@ mod tests {
                 .max_by_key(|run| run.started_at)
                 .cloned())
         }
+
+        fn finalize_orphaned_running(
+            &self,
+            _older_than: DateTime<Utc>,
+        ) -> Result<u64, DomainError> {
+            // The update-service test double owns its runs only while its own
+            // worker is active; the reaper is exercised by the reconciliation
+            // service tests instead.
+            Ok(0)
+        }
     }
 
     /// A service wired to the given (fault-injectable) import-run repository.

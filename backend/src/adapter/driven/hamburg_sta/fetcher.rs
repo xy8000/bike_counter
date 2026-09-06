@@ -4,6 +4,8 @@
 use std::thread;
 use std::time::Duration;
 
+use crate::adapter::driven::http::{DEFAULT_REQUEST_TIMEOUT_SECS, timed_agent};
+
 /// Fetches a whole JSON resource over HTTP. Real implementation is
 /// [`HttpResourceFetcher`]; tests inject a fake.
 pub trait ResourceFetcher: Send + Sync {
@@ -11,9 +13,25 @@ pub trait ResourceFetcher: Send + Sync {
     fn fetch(&self, url: &str) -> Result<String, String>;
 }
 
-pub struct HttpResourceFetcher;
+pub struct HttpResourceFetcher {
+    /// Agent with an end-to-end request timeout so a hung upstream can never
+    /// block an import worker thread forever.
+    agent: ureq::Agent,
+}
 
 impl HttpResourceFetcher {
+    /// A fetcher with the default request timeout.
+    pub fn new() -> Self {
+        Self::with_timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+    }
+
+    /// A fetcher with an explicit end-to-end request timeout.
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            agent: timed_agent(timeout),
+        }
+    }
+
     /// Retries transient transport errors (`HostNotFound`, `ConnectionFailed`,
     /// `Timeout`, `Io`) a few times with a short backoff. The Hamburg API
     /// throttles large backfills (e.g. `EAI_AGAIN` while paging 5-min
@@ -30,12 +48,18 @@ impl HttpResourceFetcher {
     }
 }
 
+impl Default for HttpResourceFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResourceFetcher for HttpResourceFetcher {
     fn fetch(&self, url: &str) -> Result<String, String> {
         const ATTEMPTS: usize = 3;
         let mut last_error = String::new();
         for attempt in 0..ATTEMPTS {
-            match ureq::get(url).call() {
+            match self.agent.get(url).call() {
                 Ok(response) => {
                     return response
                         .into_body()

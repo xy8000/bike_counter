@@ -5,29 +5,44 @@
 //! moved to CANCELLATION_REQUESTED, and a CANCELLATION_REQUESTED job that is
 //! still stale is force-finalized as CANCELLED. This recovers jobs whose owning
 //! instance died (or stopped heartbeating) without waiting for an operator.
+//!
+//! It also finalizes **orphaned per-source import runs**: a `data_source_imports`
+//! row is normally transitioned by the worker thread that started it, which may
+//! be gone (crash/restart) or stuck in a provider call when its aggregate
+//! `data_source_update` job is force-cancelled. Such a run would otherwise stay
+//! `RUNNING` and the data-sources UI would show a perpetual "Running".
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::core::application::asset_cleanup_service::ASSET_CLEANUP_JOB_TYPE;
 use crate::core::application::data_source_update_service::DATA_SOURCE_UPDATE_JOB_TYPE;
 use crate::core::application::tiles_update_service::TILES_UPDATE_JOB_TYPE;
 use crate::core::domain::configuration::configuration::Configuration;
+use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::jobs::repository_port::JobRepository;
+
+/// Grace window before an unlinked (`job_id IS NULL`) RUNNING import run is
+/// treated as orphaned. Job-linked orphans need no grace: a run under a terminal
+/// job is orphaned by definition.
+const ORPHANED_IMPORT_RUN_GRACE: Duration = Duration::minutes(15);
 
 pub struct JobReconciliationService {
     job_repository: Arc<dyn JobRepository + Send + Sync>,
+    import_run_repository: Arc<dyn DataImportRunRepository + Send + Sync>,
     configuration: Arc<Configuration>,
 }
 
 impl JobReconciliationService {
     pub fn new(
         job_repository: Arc<dyn JobRepository + Send + Sync>,
+        import_run_repository: Arc<dyn DataImportRunRepository + Send + Sync>,
         configuration: Arc<Configuration>,
     ) -> Self {
         Self {
             job_repository,
+            import_run_repository,
             configuration,
         }
     }
@@ -65,6 +80,19 @@ impl JobReconciliationService {
                 Err(error) => eprintln!("Failed to reconcile stale {job_type} jobs: {error:?}"),
             }
         }
+        // Finalize per-source import runs orphaned by a force-cancelled or
+        // crashed aggregate job, so the data-sources UI can never keep showing a
+        // "Running" badge for a source whose job is already terminal.
+        match self
+            .import_run_repository
+            .finalize_orphaned_running(now - ORPHANED_IMPORT_RUN_GRACE)
+        {
+            Ok(0) => {}
+            Ok(finalized) => {
+                println!("Finalized {finalized} orphaned data-source import run(s)");
+            }
+            Err(error) => eprintln!("Failed to finalize orphaned import runs: {error:?}"),
+        }
     }
 }
 
@@ -77,7 +105,7 @@ mod tests {
     use serde_json::Value;
     use uuid::Uuid;
 
-    use super::JobReconciliationService;
+    use super::{JobReconciliationService, ORPHANED_IMPORT_RUN_GRACE};
     use crate::core::application::asset_cleanup_service::ASSET_CLEANUP_JOB_TYPE;
     use crate::core::application::data_source_update_service::DATA_SOURCE_UPDATE_JOB_TYPE;
     use crate::core::application::tiles_update_service::TILES_UPDATE_JOB_TYPE;
@@ -85,6 +113,9 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::{
         AssetStorageConfiguration, DatabaseConfiguration, MapsConfiguration,
     };
+    use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
+    use crate::core::domain::data_source::import_run::DataImportRun;
+    use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
     use crate::core::domain::error::DomainError;
     use crate::core::domain::jobs::job::{Job, JobStatus};
     use crate::core::domain::jobs::repository_port::JobRepository;
@@ -235,6 +266,64 @@ mod tests {
         }
     }
 
+    /// In-memory import-run store recording reaper invocations. The watcher
+    /// never writes runs itself — it only calls `finalize_orphaned_running` —
+    /// so all other trait methods are no-ops.
+    struct MemoryImportRunRepository {
+        reap_calls: Mutex<Vec<DateTime<Utc>>>,
+        reap_result: Mutex<Result<u64, String>>,
+    }
+
+    impl Default for MemoryImportRunRepository {
+        fn default() -> Self {
+            Self {
+                reap_calls: Mutex::new(Vec::new()),
+                reap_result: Mutex::new(Ok(0)),
+            }
+        }
+    }
+
+    impl MemoryImportRunRepository {
+        fn set_reap_result(&self, result: Result<u64, String>) {
+            *self.reap_result.lock().unwrap() = result;
+        }
+    }
+
+    impl DataImportRunRepository for MemoryImportRunRepository {
+        fn insert(&self, _run: &DataImportRun) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn finish(&self, _id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn fail(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+            _message: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn latest_by_data_source(
+            &self,
+            _data_source_id: DataSourceId,
+        ) -> Result<Option<DataImportRun>, DomainError> {
+            Ok(None)
+        }
+
+        fn finalize_orphaned_running(&self, older_than: DateTime<Utc>) -> Result<u64, DomainError> {
+            self.reap_calls.lock().unwrap().push(older_than);
+            self.reap_result
+                .lock()
+                .unwrap()
+                .clone()
+                .map_err(DomainError::Database)
+        }
+    }
+
     fn configuration() -> Configuration {
         let database = DatabaseConfiguration::new(
             "url".to_string(),
@@ -288,6 +377,7 @@ mod tests {
     fn service(jobs: Vec<Job>) -> JobReconciliationService {
         JobReconciliationService::new(
             Arc::new(MemoryJobRepository::new(jobs)),
+            Arc::new(MemoryImportRunRepository::default()),
             Arc::new(configuration()),
         )
     }
@@ -334,5 +424,51 @@ mod tests {
             .unwrap();
         assert_eq!(fresh_jobs.len(), 1);
         assert!(fresh_jobs[0].is_running());
+    }
+
+    #[test]
+    fn reconcile_all_reaps_orphaned_import_runs() {
+        let job_repo = Arc::new(MemoryJobRepository::new(Vec::new()));
+        let runs = Arc::new(MemoryImportRunRepository::default());
+        let service =
+            JobReconciliationService::new(job_repo, runs.clone(), Arc::new(configuration()));
+
+        let now = Utc::now();
+        service.reconcile_all(now);
+
+        let calls = runs.reap_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "the watcher must reap orphaned import runs");
+        assert_eq!(
+            calls[0],
+            now - ORPHANED_IMPORT_RUN_GRACE,
+            "the reaper is invoked with now minus the unlinked grace window"
+        );
+    }
+
+    #[test]
+    fn reconcile_all_handles_a_nonempty_reap_and_a_reaper_error() {
+        // A non-zero finalized count (the Ok(n > 0) branch) is logged without
+        // failing the reconciliation.
+        let runs = Arc::new(MemoryImportRunRepository::default());
+        runs.set_reap_result(Ok(3));
+        let service = JobReconciliationService::new(
+            Arc::new(MemoryJobRepository::new(Vec::new())),
+            runs.clone(),
+            Arc::new(configuration()),
+        );
+        service.reconcile_all(Utc::now());
+
+        // A reaper error is logged and does not abort the watcher.
+        let failing = Arc::new(MemoryImportRunRepository::default());
+        failing.set_reap_result(Err("reap failed".to_string()));
+        let service = JobReconciliationService::new(
+            Arc::new(MemoryJobRepository::new(Vec::new())),
+            failing.clone(),
+            Arc::new(configuration()),
+        );
+        service.reconcile_all(Utc::now());
+
+        assert_eq!(runs.reap_calls.lock().unwrap().len(), 1);
+        assert_eq!(failing.reap_calls.lock().unwrap().len(), 1);
     }
 }

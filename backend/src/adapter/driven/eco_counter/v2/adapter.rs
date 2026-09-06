@@ -89,9 +89,16 @@ impl EcoCounterV2Adapter {
                      Eco-Counter access token)"
                 ))
             })?;
+        let timeout = crate::adapter::driven::http::parse_request_timeout(
+            config.provider().var("request_timeout_seconds"),
+        )
+        .map_err(|message| ConfigError::InvalidFormat(format!("{PROVIDER_TYPE}: {message}")))?;
         Self::with_fetcher(
             config,
-            Arc::new(HttpResourceFetcher::with_bearer(access_token)),
+            Arc::new(HttpResourceFetcher::with_timeout(
+                Some(access_token),
+                timeout,
+            )),
         )
     }
 

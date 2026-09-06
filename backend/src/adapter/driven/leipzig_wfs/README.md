@@ -59,6 +59,7 @@ Read from the data source's provider vars in
 | `max_measurement_batch_size` | no | `500` | page size |
 | `cache_duration` | no | `300` | seconds to cache the parsed index |
 | `wfs_page_size` | no | `5000` | `count` per WFS page for the time-series layers |
+| `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 
 Example block in [`config.toml.example`](../../../../../config.toml.example).
 

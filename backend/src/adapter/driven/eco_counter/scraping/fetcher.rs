@@ -16,6 +16,8 @@
 use std::thread;
 use std::time::Duration;
 
+use crate::adapter::driven::http::{DEFAULT_REQUEST_TIMEOUT_SECS, timed_agent};
+
 /// Fetches a whole page body over HTTP. Real implementation is
 /// [`HttpPageFetcher`]; tests inject a fake.
 pub trait PageFetcher: Send + Sync {
@@ -24,9 +26,25 @@ pub trait PageFetcher: Send + Sync {
 }
 
 /// Fetches a Next.js RSC payload by sending the `RSC: 1` header.
-pub struct HttpPageFetcher;
+pub struct HttpPageFetcher {
+    /// Agent with an end-to-end request timeout so a hung upstream can never
+    /// block an import worker thread forever.
+    agent: ureq::Agent,
+}
 
 impl HttpPageFetcher {
+    /// A fetcher with the default request timeout.
+    pub fn new() -> Self {
+        Self::with_timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+    }
+
+    /// A fetcher with an explicit end-to-end request timeout.
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            agent: timed_agent(timeout),
+        }
+    }
+
     /// Retries transient transport errors a few times with a short backoff.
     fn is_transient(error: &ureq::Error) -> bool {
         matches!(
@@ -39,12 +57,20 @@ impl HttpPageFetcher {
     }
 }
 
+impl Default for HttpPageFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PageFetcher for HttpPageFetcher {
     fn fetch_page(&self, url: &str) -> Result<String, String> {
         const ATTEMPTS: usize = 3;
         let mut last_error = String::new();
         for attempt in 0..ATTEMPTS {
-            let request = ureq::get(url)
+            let request = self
+                .agent
+                .get(url)
                 // Ask for the React Server Components payload, not the HTML shell.
                 .header("RSC", "1")
                 // The dashboards are server-rendered for browsers; a plain ureq

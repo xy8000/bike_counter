@@ -43,7 +43,12 @@ max_measurement_batch_size = "500"
 cache_duration = "300"
 page_days = "7"
 import_days_back = "365"
+request_timeout_seconds = "30"
 ```
+
+All three adapters accept the optional shared `request_timeout_seconds` var
+(default `30`): their requests run on a ureq agent with an end-to-end timeout so
+a hung upstream can never block an import worker thread forever.
 
 - V1 stations are **never** in the TOML — they live in
   [`v1/stations.yml`](v1/stations.yml). Resolution is **not** configured: each

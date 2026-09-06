@@ -51,6 +51,7 @@ Read from the data source's provider vars in
 | `max_measurement_batch_size` | no | `1000` | rows kept per source-level batch (must be `>=` the `$top` page size) |
 | `cache_duration` | no | `300` | seconds to cache the discovery index |
 | `include_legacy` | no | `true` | merge the `(veraltet)` field series for history |
+| `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 | `concurrency` | no | `8` | fields paged in parallel per batch |
 
 ## Module layout

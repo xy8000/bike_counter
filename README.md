@@ -133,6 +133,11 @@ an array entry under `[[data_sources]]`:
   import time window) and `cache_duration` (optional seconds, defaults to `300` —
   the archive-cache window).
 
+All HTTP-backed providers additionally accept an optional
+`request_timeout_seconds` (whole seconds, default `30`): every provider request
+runs on a ureq agent with an end-to-end timeout, so a hung upstream can never
+block an import worker thread forever.
+
 The **Bonn** provider (`bonn_opendata_http_provider`) reads three official CC0
 resources: the station-locations **GeoJSON**
 (`stadtplan.bonn.de/geojson?Thema=22640`; `station_nr` + `lage` + coordinates),
@@ -187,6 +192,13 @@ Scheduling semantics:
   frees the type's `job_locks` row in the same database transaction, so a
   terminal job — including one whose worker is gone — can never keep the next
   run waiting with a stale "already active elsewhere" lock.
+- **Per-source import runs cannot be orphaned.** Each source additionally records
+  a `data_source_imports` run whose status drives the data-sources "Last import"
+  badge; because that row is normally only finalized by its worker thread, the
+  periodic watcher also finalizes any `RUNNING` run whose aggregate job is
+  already terminal (or that has no job link and is older than 15 minutes). A
+  force-cancelled or crashed import can therefore never leave a perpetual
+  "Running" badge, even when the owning worker is stuck or gone.
 - Updates are **incremental**: each data source's `imported_until` advances to
   the last processed measurement timestamp, so consecutive runs do not reprocess
   data. Per data source the order is strict: counting stations, then channels,

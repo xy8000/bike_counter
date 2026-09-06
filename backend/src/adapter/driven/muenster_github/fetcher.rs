@@ -4,6 +4,9 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::time::Duration;
+
+use crate::adapter::driven::http::{DEFAULT_REQUEST_TIMEOUT_SECS, timed_agent};
 
 /// Headers returned by the upstream that are used for change detection.
 #[derive(Debug, Clone, Default)]
@@ -39,11 +42,35 @@ pub trait ArchiveFetcher: Send + Sync {
     fn get(&self, url: &str, target: &Path) -> Result<UpstreamHeaders, String>;
 }
 
-pub struct HttpFetcher;
+pub struct HttpFetcher {
+    /// Agent with an end-to-end request timeout so a hung upstream can never
+    /// block an import worker thread forever.
+    agent: ureq::Agent,
+}
+
+impl HttpFetcher {
+    /// A fetcher with the default request timeout.
+    pub fn new() -> Self {
+        Self::with_timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+    }
+
+    /// A fetcher with an explicit end-to-end request timeout.
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            agent: timed_agent(timeout),
+        }
+    }
+}
+
+impl Default for HttpFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ArchiveFetcher for HttpFetcher {
     fn head(&self, url: &str) -> Option<UpstreamHeaders> {
-        let response = ureq::head(url).call().ok()?;
+        let response = self.agent.head(url).call().ok()?;
         Some(UpstreamHeaders {
             etag: header_value(&response, "ETag"),
             last_modified: header_value(&response, "Last-Modified"),
@@ -51,7 +78,11 @@ impl ArchiveFetcher for HttpFetcher {
     }
 
     fn get(&self, url: &str, target: &Path) -> Result<UpstreamHeaders, String> {
-        let response = ureq::get(url).call().map_err(|error| format!("{error}"))?;
+        let response = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|error| format!("{error}"))?;
         let headers = UpstreamHeaders {
             etag: header_value(&response, "ETag"),
             last_modified: header_value(&response, "Last-Modified"),

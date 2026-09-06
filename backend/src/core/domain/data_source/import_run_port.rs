@@ -26,4 +26,16 @@ pub trait DataImportRunRepository: Send + Sync {
         &self,
         data_source_id: DataSourceId,
     ) -> Result<Option<DataImportRun>, DomainError>;
+
+    /// Finalizes RUNNING import runs that can no longer be owned by a live
+    /// worker: a run whose aggregate `jobs` row is terminal (`FINISHED`/
+    /// `FAILED`/`CANCELLED`), or an unlinked run (`job_id IS NULL`) that started
+    /// before `older_than`. Returns the number of rows finalized.
+    ///
+    /// A per-source run is normally transitioned by its owning worker thread,
+    /// which may be gone (crash/restart) or stuck in a provider call when its
+    /// aggregate job is cancelled, so the run would otherwise stay `RUNNING` and
+    /// the UI would show a perpetual "Running". The periodic job watcher calls
+    /// this so such orphans are finalized promptly.
+    fn finalize_orphaned_running(&self, older_than: DateTime<Utc>) -> Result<u64, DomainError>;
 }

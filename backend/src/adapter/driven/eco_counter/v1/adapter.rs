@@ -115,7 +115,15 @@ impl EcoCounterV1Adapter {
         };
         let catalog = parse_catalog(&catalog_source)
             .map_err(|message| ConfigError::InvalidFormat(format!("{PROVIDER_TYPE}: {message}")))?;
-        Self::with_fetcher(config, catalog, Arc::new(HttpResourceFetcher::new()))
+        let timeout = crate::adapter::driven::http::parse_request_timeout(
+            config.provider().var("request_timeout_seconds"),
+        )
+        .map_err(|message| ConfigError::InvalidFormat(format!("{PROVIDER_TYPE}: {message}")))?;
+        Self::with_fetcher(
+            config,
+            catalog,
+            Arc::new(HttpResourceFetcher::with_timeout(None, timeout)),
+        )
     }
 
     pub(crate) fn with_fetcher(

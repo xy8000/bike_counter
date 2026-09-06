@@ -259,7 +259,7 @@ fn main() {
         counting_station_repo.clone(),
         channel_repo.clone(),
         measurement_repo.clone(),
-        import_run_repo,
+        import_run_repo.clone(),
         provider_message_repo.clone(),
     ));
 
@@ -286,6 +286,7 @@ fn main() {
     // schedulers when scheduled jobs are enabled.
     let job_reconciliation_service = Arc::new(JobReconciliationService::new(
         job_repo.clone(),
+        import_run_repo.clone(),
         configuration.clone(),
     ));
 

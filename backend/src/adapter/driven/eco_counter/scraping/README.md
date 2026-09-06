@@ -42,6 +42,7 @@ over the shared [`SourceScanner`](../../../../../src/adapter/driven/source_merge
 | `import_days_back` | no | `365` | initial lookback without an `imported_until` watermark (days) |
 | `timezone` | no | `Europe/Berlin` | IANA timezone of the daily series |
 | `max_measurement_batch_size` | no | `500` | declared batch size |
+| `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 
 Example:
 

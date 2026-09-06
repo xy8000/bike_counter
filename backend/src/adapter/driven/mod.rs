@@ -3,6 +3,7 @@ pub mod configuration_toml_adapter;
 pub mod data_provider_factory;
 pub mod eco_counter;
 pub mod hamburg_sta;
+pub mod http;
 pub mod leipzig_wfs;
 pub mod minio_asset_storage;
 pub mod muenster_github;

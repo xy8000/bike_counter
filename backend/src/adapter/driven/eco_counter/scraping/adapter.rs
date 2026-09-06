@@ -128,7 +128,11 @@ impl EcoCounterWebAdapter {
     /// `rate_limit_requests_per_second` (default `1`),
     /// `max_measurement_batch_size` (default `500`).
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
-        Self::with_fetcher(config, Arc::new(HttpPageFetcher))
+        let timeout = crate::adapter::driven::http::parse_request_timeout(
+            config.provider().var("request_timeout_seconds"),
+        )
+        .map_err(|message| ConfigError::InvalidFormat(format!("{PROVIDER_TYPE}: {message}")))?;
+        Self::with_fetcher(config, Arc::new(HttpPageFetcher::with_timeout(timeout)))
     }
 
     pub(crate) fn with_fetcher(

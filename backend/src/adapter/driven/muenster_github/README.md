@@ -38,6 +38,7 @@ Read from the data source's provider vars in
 | `max_measurement_batch_size` | no | `500` | page size |
 | `max_measurement_timeframe_hours` | no | `168` (7 days) | import time window per provider call |
 | `cache_duration` | no | `300` | seconds an extracted/downloaded archive stays fresh |
+| `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 
 Example block in [`config.toml.example`](../../../../../config.toml.example:25).
 

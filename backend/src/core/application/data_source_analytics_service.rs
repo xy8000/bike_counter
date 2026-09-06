@@ -623,6 +623,14 @@ mod tests {
                 .max_by_key(|run| run.started_at)
                 .cloned())
         }
+
+        fn finalize_orphaned_running(
+            &self,
+            _older_than: DateTime<Utc>,
+        ) -> Result<u64, DomainError> {
+            // The analytics service never owns runs; nothing to reap here.
+            Ok(0)
+        }
     }
 
     #[derive(Default)]

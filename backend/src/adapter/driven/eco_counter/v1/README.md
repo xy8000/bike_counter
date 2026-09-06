@@ -64,6 +64,7 @@ Plain (unprefixed) vars from the data source's provider vars. Stations are
 | `cache_duration` | no | `300` | seconds to cache the resolved station index |
 | `page_days` | no | `7` | day window requested per HTTP call |
 | `import_days_back` | no | `365` | initial lookback when no watermark exists |
+| `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 
 Example:
 

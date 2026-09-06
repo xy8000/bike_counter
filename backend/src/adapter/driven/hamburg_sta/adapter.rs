@@ -185,7 +185,11 @@ impl HamburgStaAdapter {
     /// fields paged in parallel). A missing/invalid value is a configuration
     /// error (blocks startup).
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
-        Self::with_fetcher(config, Arc::new(HttpResourceFetcher))
+        let timeout = crate::adapter::driven::http::parse_request_timeout(
+            config.provider().var("request_timeout_seconds"),
+        )
+        .map_err(|message| ConfigError::InvalidFormat(format!("{PROVIDER_TYPE}: {message}")))?;
+        Self::with_fetcher(config, Arc::new(HttpResourceFetcher::with_timeout(timeout)))
     }
 
     pub(crate) fn with_fetcher(
