@@ -27,6 +27,52 @@ and is built by [`DataProviderFactoryImpl`](backend/src/adapter/driven/data_prov
 The Münster provider ([`muenster_github/`](backend/src/adapter/driven/muenster_github/adapter.rs:1))
 is the reference implementation.
 
+## Local development
+
+Prerequisites:
+
+- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, edition
+  2024)
+- [Node.js](https://nodejs.org) 24 LTS (for the React frontend; pinned in
+  [`frontend/.nvmrc`](frontend/.nvmrc) — Vite 7 needs at least Node 20.19/22.12)
+- [Docker](https://www.docker.com) with the Compose v2 plugin (required by the
+  gate targets and the PostgreSQL test container)
+- A reachable PostgreSQL instance — for a local run, start one with the
+  development defaults:
+
+  ```bash
+  docker run --name bike_counter_db \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=bike_counter \
+    -p 5432:5432 \
+    -d postgres
+  ```
+
+Setup:
+
+```bash
+cp config.toml.example config.toml
+```
+
+Then run the backend binary locally — it reads `config.toml` from the working
+directory and applies the migrations on startup. Point `database_url` at your
+local instance (`postgres://localhost:5432`) and set `TILES_DIR` to a writable
+directory so the backend can build the basemap:
+
+```bash
+cd backend
+TILES_DIR=./tiles cargo run
+```
+
+The basemap is mandatory: the first run downloads the pinned `go-pmtiles` CLI
+and the Protomaps extract, so it needs network access and takes a few minutes.
+The whole stack (PostgreSQL + backend + frontend) can instead be started with
+`make run`; see the root [`README.md`](README.md) for the user-facing quick
+start. The Cargo-based gate targets operate on the [`backend/`](backend) crate,
+and the frontend is built with `make frontend-build` (or
+`cd frontend && npm run build`) after `npm ci` in [`frontend/`](frontend).
+
 ## Implementing a new Adapter (DataProvider)
 
 ### 1. Implement the `DataProvider` trait

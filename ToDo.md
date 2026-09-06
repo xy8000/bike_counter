@@ -1,3 +1,10 @@
+README user-oriented cleanup (plans/116_readme_cleanup_plan.md)
+
+- [x] [`README.md`](README.md): rewritten from a ~900-line mix of user, contributor and internal content into a user-oriented document — intro, features, quick start (Docker Compose), services/URL table, configuration basics (incl. the supported data-source providers), OpenData/API surfaces and a Contributing pointer to [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [x] [`CONTRIBUTING.md`](CONTRIBUTING.md): new "Local development" section absorbs the moved prerequisites + local-run instructions (Rust/Node/Postgres, `config.toml`, `TILES_DIR=./tiles cargo run`); the adapter guide is unchanged
+- [x] Deep per-provider/internals detail removed from the README stays where it already lives: the adapter READMEs (`backend/src/adapter/driven/*/README.md`), the commented `config.toml.example`, the Swagger/OpenAPI docs and `agents.md`
+- [x] Docs-only change (no Rust/TypeScript), so the code gates do not apply; `plans/116_readme_cleanup_plan.md` registered in `plans/README.md`
+
 Dependency version bump compatibility (plans/113_dependency_version_bump_compat_plan.md)
 
 - [x] Verified both sides against the bumped versions (`toml` 1.1.5, `ureq` 3.4.1, `testcontainers` 0.27.3; `lucide-react` 1.41, `maplibre-gl` 6.7, `@vis.gl/react-maplibre` 8.1.3, `@playwright/test` 1.63): frontend `npm run build` (tsc + vite) and backend `cargo check --all-targets` green — no source refactor required

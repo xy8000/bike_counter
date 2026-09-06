@@ -1,898 +1,137 @@
 # Bike-Counter
 
-This Repository can be used to analyse the Bike-Counter-Stations of Münster,
-Bonn, Hamburg, Leipzig and selected Eco-Counter stations (all imported from
-their official Open Data / public sources; see [Data sources](#data-sources)).
+**Bike-Counter** lets you explore and analyse the public bicycle-counting
+stations of **Münster, Bonn, Hamburg, Leipzig** and selected **Eco-Counter**
+stations. The measurement data is imported automatically from the cities'
+official Open Data / public sources — most cities need no API keys.
 
-It is a **monorepo** with two sub-projects:
+The project ships as a self-hosted web application plus an HTTP API:
 
-- [`backend/`](backend) — Rust (Axum, hexagonal architecture) HTTP API backed by
-  a PostgreSQL database, documented via auto-generated OpenAPI and browsable
-  through Swagger-UI. It exposes a **Backend-for-Frontend (BFF)** API under
-  `/api/bff` for the React frontend **only**, and a public **REST API** under
-  `/api/v1` for backend-to-backend integrations. Both appear in Swagger under
-  their own collections.
-- [`frontend/`](frontend) — React (Vite) single-page application served by nginx
-  in the Docker stack: a self-hosted MapLibre GL map (a static PMTiles vector
-  basemap served directly by nginx and read by the browser via range
-  requests — see [`tiles/`](tiles)) with one
-  marker per counting station that has GPS coordinates, a left sidebar listing
-  the stations currently visible in
-  the viewport (name, description, channel count, bikes in the last 24 h), a
-  Komoot-style header with a search dialog, a live aggregate summary, a
-  per-station detail page (`/stations/:id`) with the overview stat boxes (incl.
-  the YEAR stat), a shared timeframe selector (24 hours / current + last week /
-  last 30 days / last year) driving a full-width bar chart (multiple channels or
-  stations stack per period, the previous period draws side-by-side), a weekday
-  radar and an hour-of-day radar side by side, the channel pie and the
-  per-channel nerd stats (plus a "compare previous period" checkbox that draws
-  the previous period side-by-side on the bar chart and overlays it on both
-  radars), and a standalone monthly bar chart
-  showing the grand total. A **station summary page** (`/summary`,
-  opened from the sidebar's "Summarize visible stations" button) aggregates the
-  stations currently visible in the map view — fallback image, an interactive map
-  (click a flag to exclude a station, grayed out), the aggregated overview stats
-  and the same charts with per-**station** nerd stats. The map view + disabled
-  stations are encoded in the URL (`min_lat`/`min_lng`/`max_lat`/`max_lng` +
-  `disabled`), so a summary can be shared and restored; the page shows a loading
-  state while the backend aggregates (caching is planned later). A **Calculation
-  settings** button next to the timeframe controls on the detail and summary
-  pages opens a dialogue that toggles "exclude new stations from trends": when
-  on, the trend metrics, the current-vs-previous graph comparisons and the
-  summary's monthly bar chart only include stations with data covering the whole
-  compared period, so a newly-built station cannot skew the trends (a station
-  without a full-period baseline shows a neutral "New" instead of a misleading
-  arrow).
+- a **React frontend** with an interactive map, station statistics and charts;
+- a **Rust backend** (Axum) backed by **PostgreSQL** that imports, stores and
+  aggregates the data;
+- a **Docker Compose** stack that runs the whole system with one command.
 
-The layout is responsive and adapts to the viewport: on phones the station list
-becomes a full-screen drawer (collapsed by default, opened by a floating toggle
-button and closed by a header close button) with a compact header + search, while
-tablets and desktops keep the left overlay sidebar and the wide search trigger.
+## Features
 
-Docker Compose ramps up the whole stack (`db` + `backend` + `frontend`).
+- **Interactive map** — one marker per counting station that has GPS
+  coordinates, on a self-hosted basemap (no third-party tile servers). Stations
+  that sit close together are grouped into clusters that zoom in when clicked.
+- **Search** — find a station by name and jump straight to it on the map.
+- **Sidebar** — lists the stations currently visible on the map, each with its
+  name, description, channel count and the bikes counted in the latest full
+  local day.
+- **Live summary** — the header shows how many stations and channels are
+  tracked and how many bikes were counted across all of them, together with the
+  last successful data update.
+- **Station detail page** (`/stations/:id`) — per station: overview statistics
+  (bikes in the last day / week / month / year and the all-time total), its
+  image, and a shared timeframe selector (last 24 hours, current + previous
+  week, last 30 days, the current year, or an individual date range). The
+  selector drives bar charts that compare the selected period with the previous
+  one, weekday and hour-of-day radars, the share per channel, detailed
+  per-channel statistics and a "bikes per month" chart.
+- **Station summary page** (`/summary`) — aggregate the stations currently
+  visible on the map into one comparison view (charts + per-station
+  statistics). The view is encoded in the URL, so it can be shared and
+  restored.
+- **Trend settings** — an "exclude new stations from trends" option keeps
+  stations that only started counting recently from skewing comparisons.
+- **Dark mode & responsive layout** — the UI follows the operating system's
+  colour scheme and adapts from phones (full-screen drawer) to tablets and
+  desktops.
+- **Machine access** — a public REST API and an OpenData bulk export for
+  automated consumers (see [Open data & API](#open-data--api)).
 
-## Prerequisites
+## Quick start
 
-- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, edition 2024)
-- [Node.js](https://nodejs.org) 24 LTS (for the React frontend; pinned in
-  [`frontend/.nvmrc`](frontend/.nvmrc) — Vite 7 needs at least Node 20.19/22.12)
-- A running PostgreSQL server (see [Configuration](#configuration) below)
+Run the whole stack (PostgreSQL + backend + frontend) with Docker and the
+Compose v2 plugin:
+
+```bash
+# 1. Create your configuration from the tracked template
+cp config.toml.example config.toml
+
+# 2. Start the stack (via the Makefile, or directly: docker compose up --build)
+make run
+
+# 3. Open the web app
+open http://localhost:8081
+```
+
+The first start builds the Docker images and generates the self-hosted map
+basemap (this downloads the pinned map extract, so it needs internet access and
+takes a few minutes). `make down` stops the stack and keeps the database;
+`make logs` follows the logs of all services.
+
+> The template enables every supported city. If you only want a subset — or no
+> automatic imports at all — edit the `[[data_sources]]` entries in
+> [`config.toml`](config.toml); see [Configuration](#configuration).
+
+## Services
+
+Once running, the stack exposes:
+
+| What | URL |
+| --- | --- |
+| Web application | <http://localhost:8081> |
+| Swagger-UI (API documentation) | <http://localhost:8080/swagger-ui/> |
+| OpenAPI JSON document | <http://localhost:8080/api-docs/openapi.json> |
+| Public REST API | <http://localhost:8080/api/v1> |
+| BFF API (used by the web app only) | <http://localhost:8080/api/bff> |
+
+Operational health endpoints: `GET /health/live` (liveness) and
+`GET /health/ready` (readiness).
 
 ## Configuration
 
-All settings live in [`config.toml`](config.toml) (gitignored). Start from the
-tracked template [`config.toml.example`](config.toml.example):
-
-```bash
-cp config.toml.example config.toml
-```
-
-```toml
-database_url="postgres://db:5432"
-database_user="postgres"
-database_password="postgres"
-database_name="bike_counter"
-
-# CRON expression for the data-source update job (default: every hour).
-data_source_update_cron="0 * * * * *"
-# REQUIRED max heartbeat interval for the update job in seconds (no default).
-# A dedicated loop refreshes a running job every few seconds, so a few minutes
-# is plenty; a worker silent for longer is treated as dead and its lock reclaimed.
-data_source_update_max_heartbeat_interval_seconds=300
-
-# CRON expression for the asset cleanup job (default: daily at 04:00).
-asset_cleanup_cron="0 0 4 * * *"
-# REQUIRED max heartbeat interval for the asset cleanup job in seconds (no default).
-asset_cleanup_max_heartbeat_interval_seconds=300
-
-# S3-compatible object storage (MinIO) holding counting-station image binaries.
-# PostgreSQL stores only the metadata; the BFF streams the content to browsers.
-[asset_storage]
-endpoint = "http://minio:9000"
-access_key = "minioadmin"
-secret_key = "minioadmin"
-bucket = "bike-counter-images"
-region = "us-east-1"
-
-# OpenData export job: publishes the immutable daily/monthly measurement files
-# (parquet / csv.gz / json) under /api/v1/opendata (defaults shown; optional).
-[opendata]
-export_cron = "0 30 3 * * *"
-export_max_heartbeat_interval_seconds = 600
-
-# Dedicated bucket on the same MinIO server holding the immutable opendata files.
-[opendata_storage]
-endpoint = "http://minio:9000"
-access_key = "minioadmin"
-secret_key = "minioadmin"
-bucket = "bike-counter-opendata"
-region = "us-east-1"
-
-[[data_sources]]
-name = "Münster"
-
-[data_sources.provider]
-type = "münster_opendata_github_provider"
-# Minimum provider-message severity to persist (default: WARNING).
-log_level = "WARNING"
-
-[data_sources.provider.vars]
-url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
-max_measurement_batch_size = "500"
-# Import time window per provider call, in hours (default 7 days = 168).
-max_measurement_timeframe_hours = "168"
-```
-
-Adjust the `database_*` values to match your PostgreSQL instance. The database
-schema is created automatically on startup (refinery migrations from the
-`migrations/` directory).
-
-### Data sources
-
-External data is imported from one or more **data sources**, each configured as
-an array entry under `[[data_sources]]`:
-
-- `name` – unique display name (used to derive the stable data-source id and to
-  label the health component). UTF-8 names such as `Münster` are supported.
-- `provider.type` – the provider implementation to build (e.g.
-  `münster_opendata_github_provider`).
-- `provider.log_level` – minimum provider-message severity to persist, one of
-  `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default `WARNING`). The core
-  drops provider events below this level, so per-source noise can be tuned
-  without touching the adapter.
-- `provider.vars` – provider-specific key/value settings. The supported keys
-  depend on the provider only; the Münster provider understands `url` (required),
-  `max_measurement_batch_size` (optional, defaults to `500`),
-  `max_measurement_timeframe_hours` (optional hours, defaults to `168` — the
-  import time window) and `cache_duration` (optional seconds, defaults to `300` —
-  the archive-cache window).
-
-All HTTP-backed providers additionally accept an optional
-`request_timeout_seconds` (whole seconds, default `30`): every provider request
-runs on a ureq agent with an end-to-end timeout, so a hung upstream can never
-block an import worker thread forever.
-
-The **Bonn** provider (`bonn_opendata_http_provider`) reads three official CC0
-resources: the station-locations **GeoJSON**
-(`stadtplan.bonn.de/geojson?Thema=22640`; `station_nr` + `lage` + coordinates),
-the previous-day ("Vortag") measurements **CSV**
-(`stadtplan.bonn.de/csv?OD=4285`; hourly, `wann` is UTC, one count per station —
-no direction split) and an optional set of **historical** hourly wide CSVs
-(2023–2025) declared in `historical_urls` (space-separated URLs). Its vars are
-`stations_url` (required), `measurements_url` (required), `historical_urls`
-(optional) and the shared `max_measurement_batch_size` / `cache_duration`
-(optional, defaults `500` / `300`).
-
-On startup the application syncs the configured data sources into the
-`data_sources` table: new ones are added, ones that are no longer configured are
-removed. The `data_sources` list may be empty (no import happens, but the API
-and health checks still work).
-
-### Background data-source updates
-
-A cron-driven scheduler keeps the configured data sources up to date. Every run
-is recorded as a generic ShedLock-style **job** in the `jobs` table: the run
-first claims the job type's `job_locks` row (an atomic `INSERT ... ON CONFLICT
-... WHERE lock_until < now()`), then inserts a `RUNNING` job owned by this
-backend's random `instance_id` and moves it to `FINISHED` / `FAILED` /
-`CANCELLED`. Only one instance can own a job type at a time.
-
-- `data_source_update_cron` – CRON expression that re-triggers the update job.
-  Defaults to `"0 0 * * * *"` (every hour) and is validated at startup.
-- `data_source_update_max_heartbeat_interval_seconds` – **required** (no
-  default): the max time between two heartbeats before a job is treated as dead.
-  While a job runs, a dedicated loop refreshes its `heartbeat_at` (and the lock
-  lease) roughly every `min(interval/3, 5 s)`; a stale `RUNNING` job (heartbeat
-  older than the interval) is moved to `CANCELLATION_REQUESTED` by the periodic
-  watcher and, if it still does not heartbeat, force-finalized as `CANCELLED`,
-  so a crashed worker cannot block the type forever.
-
-Scheduling semantics:
-
-- The same always-on rule applies at startup and on every cron tick: the job runs
-  if it has never succeeded or if the last successful run is overdue (the next
-  scheduled trigger after its `finished_at` has already passed). A missed slot
-  while the process was down is therefore caught up on the next startup.
-- Afterwards it runs on the CRON schedule.
-- While an active job of the same type (`RUNNING` or `CANCELLATION_REQUESTED`)
-  exists, new runs are skipped (a warning is printed).
-- Every job type is cancellable through
-  `POST /api/v1/jobs/{id}/cancel` (see the [API overview](#api-overview)): a
-  non-`force` request sets `CANCELLATION_REQUESTED` so the worker stops
-  gracefully at the next sub-task boundary, `{"force": true}` sets `CANCELLED`
-  immediately, and stale jobs are recovered by the periodic watcher. Every
-  terminal transition (`FINISHED`/`FAILED` by the worker, `CANCELLED` by the
-  cancel endpoint, the worker's cooperative stop or the watcher's force-cancel)
-  frees the type's `job_locks` row in the same database transaction, so a
-  terminal job — including one whose worker is gone — can never keep the next
-  run waiting with a stale "already active elsewhere" lock.
-- **Per-source import runs cannot be orphaned.** Each source additionally records
-  a `data_source_imports` run whose status drives the data-sources "Last import"
-  badge; because that row is normally only finalized by its worker thread, the
-  periodic watcher also finalizes any `RUNNING` run whose aggregate job is
-  already terminal (or that has no job link and is older than 15 minutes). A
-  force-cancelled or crashed import can therefore never leave a perpetual
-  "Running" badge, even when the owning worker is stuck or gone.
-- Updates are **incremental**: each data source's `imported_until` advances to
-  the last processed measurement timestamp, so consecutive runs do not reprocess
-  data. Per data source the order is strict: counting stations, then channels,
-  then measurements (paged in batches; the running `processed_measurements` and
-  `added_measurements` counts are persisted to the job metadata after each
-  batch). `DELETE /api/v1/data-sources/{id}/imported_until` clears the cursor to
-  force a full re-import of one data source.
-
-The Münster provider downloads the configured GitHub ZIP, extracts it into an
-obscured `/tmp` folder, and serves counting stations, channels and measurements
-from the extracted files. The archive is cached with the persistent-state handle
-(`archive_downloaded_at`, `archive_extracted_at`, `archive_file`,
-`archive_extracted_dir`, `archive_etag`, `archive_last_modified`): a fresh
-extracted folder is reused, a fresh ZIP is re-extracted, and once the
-`cache_duration` window passes the provider re-downloads (skipped when a
-best-effort `HEAD` shows the upstream `ETag`/`Last-Modified` is unchanged). The
-station/channel metadata comes from `site_min.json`; measurements come from the
-per-station `YYYY-MM.csv` files (15-minute intervals, interpreted as
-Europe/Berlin local time and stored as UTC). The station-aggregate column and the
-`-status` columns are ignored. The channel→file map is derived from the station
-directories (every channel of a station lives in that station's monthly files),
-so building the index never reads CSV headers.
-
-The Bonn provider serves the same three levels from the official resources. The
-station metadata comes from the GeoJSON; the **Vortag CSV** supplies the rolling
-current data (its `station_id` is joined to a station by the `lage` name) and the
-optional **2023–2025 hourly backfill** is parsed from the wide yearly CSVs
-(per-station columns, German local timestamps converted DST-aware to UTC, a small
-alias table for the stations Bonn renamed between years). The three
-`(errechnete Gesamtzahl)` aggregate stations and the historical aggregate columns
-are excluded so the global summary is not double-counted. The first import serves
-the backfill plus the current data; the `imported_until` watermark then keeps
-only the current data flowing — that first run may require raising
-`data_source_update_max_heartbeat_interval_seconds`. Older Bonn years (2015–2022) are
-published on govdata but their resources resolve to HTML pages, so they are not
-enabled by default.
-
-The **Hamburg** provider (`hamburg_sta_http_provider`) reads the **official
-Hamburg SensorThings API** (`iot.hamburg.de/v1.0/`, dataset
-`HH_STA_Verkehrsdaten_Rad_Infrarotdetektoren`) — no Eco-Counter, no scraping. It
-maps each **MQ** (measurement cross-section, `knotenName`) to a counting station
-and each **`Zählfeld`** (directional infrared field, `assetID`) to a channel
-(`<F> (<richtung>)`), and serves the **5-minute** field series. The legacy
-`(veraltet)` field datastreams are merged into the same channel for history
-(dedup keep-last, the current live value wins on overlaps), while the deprecated
-station-level series is not imported. The SensorThings `phenomenonTime` interval
-drives the per-measurement `resolution_seconds` (300) and the exact `interval_end`.
-Its vars are `base_url` (optional, defaults to the official root),
-`max_measurement_batch_size` / `cache_duration` (optional, defaults `500` / `300`)
-and `include_legacy` (optional, defaults `true`).
-
-The **Leipzig** provider (`leipzig_wfs_http_provider`) reads the **official
-Leipzig WFS layers** (`geodienste.leipzig.de`, GeoServer,
-`outputFormat=application/json`): the static station locations
-(`radverkehr_dauerzaehlstelle_standort_statisch`) and **both** the hourly
-(`radverkehr_dauerzaehlstelle_anzahl_stunde_zeitreihe`, 3600 s) and the daily
-(`radverkehr_dauerzaehlstelle_anzahl_tag_zeitreihe`, 86400 s, calendar-anchored)
-time-series layers. Its vars are the three `stations_url` / `hourly_url` /
-`daily_url` `GetFeature` URLs (plus optional `max_measurement_batch_size` /
-`cache_duration` / `wfs_page_size`). Each station maps to one channel keyed by
-`stationid`; the hourly and daily rows coexist per channel at their respective
-resolutions. The `geometry.coordinates` are **ETRS89 / UTM zone 33N** and are
-converted to WGS84 in code; the hourly `phenomenontime` is RFC 3339 with a UTC
-offset, the daily one is a Europe/Berlin calendar date converted DST-aware. See
-[`backend/src/adapter/driven/leipzig_wfs/`](backend/src/adapter/driven/leipzig_wfs/README.md:1)
-for the details.
-
-Eco-Counter is imported through **three separate providers**, each with its own
-`type` and its own `[[data_sources]]` entry (there is **no `modes` var**):
-- **`eco_counter_v1_http_provider`** reads the **public legacy Eco-Visio API**
-  (`https://www.eco-visio.net/api/aladdin/1.0.0`) for the counters listed in the
-  bundled [`v1/stations.yml`](backend/src/adapter/driven/eco_counter/v1/stations.yml:1)
-  catalog. Because the German Eco-Visio tenants (Bonn, Hessen, Köln, …) have
-  migrated to the new, API-key-gated platform, the legacy API no longer
-  auto-discovers them; the operator lists the counters (`idPdc`) in the catalog
-  instead of in the TOML config. Each counter is resolved against
-  `publicwebpage/{idPdc}` (token/domain, cached) and its **cumulative** count
-  series paged from `publicwebpage/data/{idPdc}` in day windows. A station maps
-  to one channel (the site total), so values are never double-counted. The
-  resolution is **auto-detected per counter** — 15 min when available, else
-  hourly, else daily (no `step` var).
-- **`eco_counter_v2_http_provider`** reads the **official Eco-Counter API**
-  (`https://apieco.eco-counter-tools.com/api/1.0`) with an organisation OAuth
-  **access token**; stations are discovered at runtime from `/site` (no catalog)
-  and their series paged from `/data/site/{id}`.
-- **`eco_counter_web_http_provider`** scrapes a public **`*.eco-counter.com`**
-  dashboard that has no usable API (one tenant per data source, pointed at its
-  root via `scrape_url`) and imports each station's **daily** count series
-  (`resolution_seconds` 86400, DST-aware).
-
-Each provider reads plain (unprefixed) vars from its own data source (e.g. V2's
-`access_token`). See
-[`backend/src/adapter/driven/eco_counter/`](backend/src/adapter/driven/eco_counter/README.md:1)
-for the details.
-
-The measurements import is bounded by a **time window** so even the first
-multi-year import stays responsive: each provider call only reads the monthly
-files overlapping `(cursor, cursor + max_measurement_timeframe_hours]` (default
-7 days), and the core keeps paging until every channel is fully imported. Rows
-are written idempotently on the natural key
-`(channel_id, timestamp, resolution_seconds)` (`INSERT ... ON CONFLICT DO
-NOTHING`), so a partially-completed run can always be resumed without
-duplicating data. Every measurement carries its **resolution** — the length in
-seconds of the interval its count covers (`resolution_seconds`, e.g. 300 = 5 min,
-900 = 15 min, 3600 = 1 h) — as an open value, so a channel can hold counts at
-several resolutions at once and the analytics can combine them without double
-counting. A database **overlap guard** (a `BEFORE INSERT/UPDATE` trigger backed
-by a btree index) rejects corrupt rows of the same resolution whose intervals
-overlap in a channel (e.g. a 60-second row followed by one a second later)
-rather than silently accepting them — without the multi-hour GiST index build a
-constraint would need on a large history.
-
-Every job is exposed through the read-only jobs API (see below).
-
-### Asset storage (counting-station images)
-
-Counting-station images live in an **S3-compatible object store** (MinIO in the
-docker-compose stack). PostgreSQL stores only the asset **metadata** and the
-station↔asset link; the binary bytes never touch the database.
-
-- `[asset_storage]` – the S3 connection settings: `endpoint`, `access_key`,
-  `secret_key`, `bucket`, `region`. Under docker compose the bucket is created
-  automatically by a one-shot `mc` container (`minio-init`) that runs before the
-  backend starts.
-- Images come from two places:
-  - **data-source providers**, with hash-based change detection
-    (`CountingStation.image_sha256`): the provider reports a hash with each
-    station record and the core only fetches the image bytes when the hash
-    changed or the station has no linked asset yet;
-  - **built-in** images embedded in the backend binary. The list is derived by
-    scanning `backend/assets/` at compile time (`include_dir`): every file in the
-    folder becomes a `builtin/{path}` object with its content type inferred from
-    the extension, so adding or removing a file is the only step needed to change
-    what is synced. The emerald plain bike icon
-    (`builtin/bike-icon-black-transparent.svg`) is the fallback every station
-    without a provider image points to. The built-in sync is idempotent and
-    reconciles **both directions** — it uploads/updates the bundled images and
-    **removes** stale ones whose files were deleted from the folder, so the
-    bucket and `assets` table mirror the assets folder. The frontend brand bike
-    icon (favicon + header) lives separately in `frontend/public/bike-icon.svg`
-    and is never streamed through the BFF; frontend brand assets belong in
-    `frontend/public/`, backend builtin assets in `backend/assets/`. The MapLibre
-    map markers (also never streamed) live in the map feature as three Vite
-    assets imported by `frontend/src/lib/map.tsx`: `station-flag.svg` (active,
-    the emerald pin + bike), `station-flag-selected.svg` (amber, the currently
-    selected station) and `station-flag-inactive.svg` (gray, a station the
-    provider no longer serves). Editing those SVGs restyles the map and
-    detail-preview markers without a code change.
-- The **BFF streams** image bytes to the browser
-  (`GET /api/bff/assets/{id}/content`); MinIO is reachable only from the backend
-  (private `asset_network`) and never exposed to the browser.
-- A dedicated **asset cleanup** scheduled job (`asset_cleanup`, default daily at
-  04:00) deletes **orphaned objects** — object keys in the bucket that have no
-  row in the `assets` table (left behind when a provider image hash changes or
-  after a crash between `put` and `save`):
-  - `asset_cleanup_cron` – validated CRON expression, defaults to
-    `"0 0 4 * * *"`.
-  - `asset_cleanup_max_heartbeat_interval_seconds` – **required** (no default),
-    same ShedLock-style heartbeat semantics as the data-source update job.
-
-### OpenData files (bulk export)
-
-The processed, immutable measurement data is published as **OpenData** under
-`/api/v1/opendata` for backend-to-backend consumers: per global and per
-per-station **daily** (`YYYY-MM-DD`) and **monthly** (`YYYY-MM`) periods, three
-distribution files are served — `parquet`, `csv.gz` and `json` — containing the
-raw processed rows (`station_id`, `channel_id`, `channel_name`, `timestamp`
-without UTC offset in `Europe/Berlin`, `value`, `resolution_seconds`).
-
-- A dedicated `opendata_export` **scheduled job** (default daily at `03:30`)
-  computes every **complete** period in `Europe/Berlin` (yesterday for daily, the
-  previous calendar month for monthly) that is not yet published and appends the
-  missing files. It runs under the shared ShedLock-style job protocol (claim,
-  RUNNING job, per-period heartbeat, cooperative cancellation) and is
-  cancellable through `POST /api/v1/jobs/{id}/cancel` like every other job.
-- The files are **append-only and immutable**: each run only adds missing files
-  and never rewrites existing ones. The `opendata_files` table is both the
-  ledger (unique object keys) and the job's persisted state, so a crashed or
-  cancelled run is completed on the next invocation (including filling the
-  missing formats of a partially published newest period).
-- The binaries live in the dedicated `bike-counter-opendata` MinIO bucket
-  (`[opendata_storage]`, created by the same `minio-init` container as the image
-  bucket). The registry stores only the metadata (`object_key`, `sha256`,
-  `byte_size`, `period`, `format`, `created_at`).
-- The REST tree streams the files **from the backend** with a strong `ETag`
-  (the `sha256`), `Content-Length`, an immutable `Cache-Control` and
-  `If-None-Match → 304`; MinIO/S3 is never exposed. The `/metadata` document
-  describes the dataset including the JSON schemata for stations and the
-  measurement rows; the station schema/data also carries the provider-native
-  `external_datasource_id` as a note field.
-
-The export-related settings are optional and grouped in `[opendata]` /
-`[opendata_storage]` (see [Configuration](#configuration)); when the sections are
-absent the defaults (above) apply.
-
-### Persistent provider state
-
-Each configured data source can remember opaque **runtime state** that survives
-restarts (for example archive-cache metadata). The state lives in the
-`data_source_persistent_state` table, scoped per data source:
-
-- `data_source_id` – foreign key to `data_sources` (`ON DELETE CASCADE`); a data
-  source has exactly one provider, so the id fully scopes the state.
-- `key` / `value` – arbitrary opaque strings (`UNIQUE (data_source_id, key)`).
-- `id` – surrogate UUID (application-generated) used purely for identification.
-
-At startup every provider receives a scoped state handle **after** its data source
-is persisted (two-phase handover): the provider is constructed first without the
-handle, then `StartupService` calls `attach_persistent_state` to hand it the
-handle. Neither the core nor REST interprets keys or values — only the provider
-adapter does.
-
-When a data source's `provider_type` changes, a database trigger
-(`AFTER UPDATE OF provider_type`) deletes its state rows, so a different provider
-never inherits the previous provider's memory; deleting a data source cascades to
-its state.
-
-The state is exposed through the core as
-`GET/PUT/DELETE /api/v1/data-sources/{id}/persistent_state` (see
-[API overview](#api-overview)): the driving adapter calls a core application
-service (`PersistentStateService`), never a repository port directly. The
-pre-existing read endpoints still call their repositories directly; migrating them
-to core services is a separate follow-up.
-
-### Data-provider messages
-
-Each data source can also accumulate **provider messages** (events) that the
-import records as it works. These are stored in the
-`data_source_provider_messages` table, scoped per data source:
-
-- `data_source_id` – foreign key to `data_sources` (`ON DELETE CASCADE`).
-- `severity` – one of `INFO`, `WARNING`, `ERROR`, `DEBUG`, `TRACE`.
-- `message` – human-readable event text.
-- `occurred_at` – `TIMESTAMPTZ` auto-generated by the database on insert.
-- `id` – surrogate UUID (application-generated) used purely for identification.
-
-At startup every provider receives a scoped message sink **after** its data
-source is persisted (the same two-phase handover as persistent state):
-`StartupService` wraps the scoped sink in a core policy filter
-(`FilteringProviderMessageSink`) and calls `attach_provider_messages`, handing
-the provider a `ProviderMessageSink` whose `provider_event_occurred(severity,
-message)` writes a row. Emitting a message is best-effort and never fails the
-import.
-
-The core filter enforces the provider's `log_level` (default `WARNING`) and a
-per-data-source cap: events below the level are dropped, only the first **1000**
-events are persisted, and on overflow a single truncation `WARNING` is recorded
-(and printed to stdout). The database additionally caps at **1001** rows per data
-source (migration `V13`), so the limit holds even if the core is bypassed.
-
-The Münster provider uses provider messages to report non-fatal data quirks
-instead of aborting: when a channel has no column in a monthly CSV file it
-records a `DEBUG` event (with the channel id and file path) and skips that file,
-so the update continues and finishes. Because `DEBUG` is below the default
-`WARNING` log level, these events are dropped unless `log_level` is lowered.
-Genuinely fatal conditions still abort.
-
-Messages are exposed read-only through the core as
-`GET /api/v1/data-sources/{id}/messages` (see [API overview](#api-overview)):
-the driving adapter calls a core application service (`ProviderMessageService`),
-never a repository port directly.
-
-## Start the database
-
-If you do not have a PostgreSQL instance yet, start one matching the defaults:
-
-```bash
-docker run --name bike_counter_db \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=bike_counter \
-  -p 5432:5432 \
-  -d postgres
-```
-
-## Run
-
-The easiest way to run the whole stack (PostgreSQL + backend + frontend) is
-through the [`Makefile`](Makefile):
-
-```bash
-make run    # docker compose up --build (foreground, follows logs; Ctrl-C to stop)
-make down   # stop and remove the stack (keeps the database volume)
-make logs   # follow the logs of all services
-```
-
-This requires a [`config.toml`](config.toml) with `database_url` set to the
-compose service name `db` (see [Run with Docker Compose](#run-with-docker-compose)).
-
-Alternatively, run the backend binary locally (reads `config.toml` from the
-working directory, applies migrations, serves the API) — this needs a reachable
-PostgreSQL, so set `database_url="postgres://localhost:5432"`:
-
-```bash
-cd backend
-TILES_DIR=./tiles cargo run
-```
-
-The basemap is **mandatory**: set `TILES_DIR` to a writable directory (default
-`/data`, the compose mount) so the backend can build `tiles/map.pmtiles` on
-startup. The first run downloads the pinned `go-pmtiles` CLI and the Protomaps
-extract, so it needs network access and takes a few minutes (progress is
-streamed to the console).
-
-The backend prints the loaded configuration and then serves:
-
-| Resource               | URL                                        |
-|------------------------|--------------------------------------------|
-| Frontend (React)       | <http://localhost:8081>                    |
-| BFF API base           | <http://localhost:8080/api/bff>            |
-| REST API base (B2B)    | <http://localhost:8080/api/v1>             |
-| Swagger-UI             | <http://localhost:8080/swagger-ui/>        |
-| OpenAPI JSON document  | <http://localhost:8080/api-docs/openapi.json> |
-| Liveness               | <http://localhost:8080/health/live>        |
-| Readiness              | <http://localhost:8080/health/ready>       |
-
-## Run with Docker Compose
-
-The repository includes Dockerfiles for both sub-projects and a
-[`docker-compose.yml`](docker-compose.yml) that ramps up the whole stack:
-
-```bash
-# Copy the template, adjust database_url to "postgres://db:5432", then start
-cp config.toml.example config.toml
-# Either directly, or via the Makefile:
-docker compose up --build        # make run
-docker compose down              # make down
-docker compose logs -f           # make logs
-```
-
-- The `db` service runs PostgreSQL with the development defaults
-  (`postgres` / `postgres` / `bike_counter`) and persists data in a named volume.
-  Like MinIO, it lives on an **internal-only** `db_network` (no host port), so
-  Postgres is reachable only from within Docker — from the `backend` service and
-  via `docker compose exec db psql …`. There is no `5432` binding on the host.
-  If you still need a host-side `psql`/`pg_dump` for the compose database, run it
-  inside the container:
-  `docker compose exec db psql -U postgres -d bike_counter`.
-- The `minio` service runs a private S3-compatible object store for counting-
-  station images on an **internal-only** `asset_network` (no host port) with its
-  own named volume; the one-shot `minio-init` service (MinIO client `mc`) creates
-  the image bucket before the backend starts. Only the backend is attached to
-  `asset_network`, so MinIO is never reachable from `db`, `frontend` or outside.
-- The `backend` service builds the Rust binary inside a multi-stage Docker build
-  and mounts [`config.toml`](config.toml) into the container. Its
-  [`backend/docker/entrypoint.sh`](backend/docker/entrypoint.sh) refuses to start
-  without a `config.toml` and otherwise just runs the HTTP API server (which
-  applies the refinery migrations on startup). The backend also builds the
-  self-hosted
-  basemap (`tiles/map.pmtiles` — mandatory, see
-  [`tiles/README.md`](tiles/README.md)) during its init phase from the `[maps]`
-  configuration, and a cron-scheduled `tiles_update` job refreshes it atomically
-  (build into a temp file, then swap). `make tiles` runs just that build step.
-- The `frontend` service builds the React app (Vite) into static assets served by
-  nginx, which reverse-proxies `/api` to the `backend` service so the browser
-  only ever talks same-origin (no CORS). It is exposed on <http://localhost:8081>.
-- **All configuration is TOML-only.** There are no configuration environment
-  variables and no `.env` file – neither for the database nor for data sources.
-  When running under docker compose, set `database_url` to the compose service
-  name `db`:
-
-  ```toml
-  database_url="postgres://db:5432"
-  database_user="postgres"
-  database_password="postgres"
-  database_name="bike_counter"
-
-  data_source_update_cron="0 0 * * * *"
-  data_source_update_max_heartbeat_interval_seconds=300
-
-  asset_cleanup_cron="0 0 4 * * *"
-  asset_cleanup_max_heartbeat_interval_seconds=300
-
-  [asset_storage]
-  endpoint = "http://minio:9000"
-  access_key = "minioadmin"
-  secret_key = "minioadmin"
-  bucket = "bike-counter-images"
-  region = "us-east-1"
-
-  [[data_sources]]
-  name = "Münster"
-
-  [data_sources.provider]
-  type = "münster_opendata_github_provider"
-  log_level = "WARNING"
-
-  [data_sources.provider.vars]
-  url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.zip"
-  max_measurement_batch_size = "500"
-  ```
-
-  The mounted `config.toml` is used as-is and can contain both the database
-  settings and the `[[data_sources]]` sections.
-
-Useful commands:
-
-```bash
-docker compose logs -f app   # follow application logs
-docker compose down          # stop containers (keep the database volume)
-docker compose down -v       # stop containers and delete the database volume
-```
-
-## API overview
-
-The API uses a flat URL hierarchy under `/api/v1`. The resource endpoints are
-**read-only (GET)**; the `persistent_state` endpoints additionally support `PUT`
-and `DELETE` to manage the opaque per-data-source provider state, and the
-counting-station endpoint supports `PATCH` to set a station's GPS coordinates:
-
-- `GET /api/v1` – root discovery with HATEOAS links
-- `GET /api/v1/data-sources` / `GET /api/v1/data-sources/{id}` – list / fetch the configured (persisted) data sources
-- `GET /api/v1/data-sources/{id}/persistent_state` – full opaque persistent-state map for a data source
-- `PUT /api/v1/data-sources/{id}/persistent_state/{key}` with body `{"value": "..."}` – upsert one entry (`200`; `404` unknown data source; `400` blank key)
-- `DELETE /api/v1/data-sources/{id}/persistent_state/{key}` – delete one entry (`204`; `404` unknown data source)
-- `DELETE /api/v1/data-sources/{id}/persistent_state` – clear the whole store (`204`; `404` unknown data source)
-- `GET /api/v1/data-sources/{id}/messages` – read-only provider messages for a data source, newest first
-- `GET /api/v1/jobs` (optional `?job_type=` and `?status=` filters) / `GET /api/v1/jobs/{id}` – list / fetch the tracked background jobs
-- `POST /api/v1/jobs/{id}/cancel` with optional body `{"force": true}` – cancel a job: `RUNNING` → `CANCELLATION_REQUESTED` (the worker stops at the next sub-task boundary) or, with `force`, directly `CANCELLED`; `200` returns the updated job, `404` unknown job, `400` terminal job
-- `GET /api/v1/counting-stations` (optional `?name=` substring filter) / `GET /api/v1/counting-stations/{id}` — stations carry optional `latitude`/`longitude` (WGS84)
-- `PATCH /api/v1/counting-stations/{id}` with body `{"latitude": ..., "longitude": ...}` (fields optional; `null` clears a coordinate) — sets a station's GPS coordinates
-- `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
-- `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` defaults to 5000 with no upper bound) / `GET /api/v1/measurements/{id}`
-- `GET /api/v1/measurements/raw` – lean bulk export: same `?channel_id=`, `?offset=`/`?limit=` parameters, but returns a bare JSON array of plain measurement objects (no HATEOAS links and no pagination envelope) for scraping large volumes
-
-The **OpenData** tree (see [OpenData files](#opendata-files-bulk-export)) is
-read-only and discoverable from the root:
-- `GET /api/v1/opendata` – root with HATEOAS links to the metadata, stations and
-  measurement index sub-trees
-- `GET /api/v1/opendata/metadata` – dataset metadata incl. JSON schemata
-- `GET /api/v1/opendata/stations` / `GET /api/v1/opendata/stations.geojson` –
-  the published counting stations (plain JSON / GeoJSON FeatureCollection)
-- `GET /api/v1/opendata/measurements/daily` /
-  `GET /api/v1/opendata/measurements/monthly` (+
-  `/api/v1/opendata/measurements/{daily|monthly}/{date|year_month}`) – global
-  period indices and per-year file listings
-- `GET /api/v1/opendata/stations/{station_id}/measurements/{daily|monthly}` (+
-  the same per-period sub-paths) – per-station period indices and listings
-- File downloads append `/{period}.{parquet|csv.gz|json}`, e.g.
-  `GET /api/v1/opendata/measurements/daily/2026-09-05.parquet` — served with an
-  `ETag` (sha256), `Content-Length`, immutable `Cache-Control` and
-  `If-None-Match → 304`
-
-Every resource includes a `_links` object (HAL-style) pointing to related
-resources, e.g. a station links to its own `self`, its `channels`, its
-`collection`, and its `data_source`; counting stations also expose the
-`data_source_id` field of the data source they were imported from. A data
-source links to its `self`, `collection`, `persistent_state`, and
-`messages`, plus an RFC 6570 templated `persistent_state_entry` for a single key
-(marked `"templated": true`). The root discovery endpoint (`/api/v1`)
-additionally links to the operational health endpoints via `health-live` and
-`health-ready`.
-
-### BFF API (frontend-only)
-
-Besides the public `/api/v1` REST API (used for backend-to-backend
-integrations), the backend exposes a **Backend-for-Frontend** API reserved for
-the React frontend. It lives under `/api/bff` and is documented in the **same**
-Swagger document as the REST API, grouped under its own `BFF API`
-collection/tag so the frontend-facing calls are easy to spot:
-
-- `GET /api/bff/stations` – map markers for the current viewport. Requires the
-  `min_lat`/`min_lng`/`max_lat`/`max_lng` bounding-box query and returns only the
-  **positioned** stations inside it. Each item carries only what the map needs:
-  `id`, `name`, `latitude`, `longitude`, `status` (`active` when the provider
-  still serves the station, `inactive` when it stopped including it). The
-  frontend derives the `selected` flag from the URL `station` param.
-- `GET /api/bff/stations/sidebar` – the **sidebar shell** for the current
-  viewport (same required bounding box): the station **identity** — `id`, `name`,
-  `description`, `latitude`, `longitude`, `image_url` (the station's image or the
-  built-in fallback) — plus `visible_count` / `total_count` (stations visible in
-  the viewport vs. all counting stations) and a HATEOAS `_links.stats` link to
-  the stats sub-resource below. Cheap, so the sidebar renders the identity
-  immediately.
-- `GET /api/bff/stations/sidebar/stats` – the per-station stats for the current
-  viewport: `station_id`, `channel_count` and `bikes_last_day` (the sum of
-  `measurements.value` across the station's channels on the **previous complete
-  local day**, computed on the fly in the station's own timezone, DST-aware),
-  fetched in parallel with the shell's rendering.
-- `GET /api/bff/stations/search` – every counting-station summary (no bounds)
-  plus the map of possible actions (for now `find_on_map` is always enabled).
-- `GET /api/bff/global-summary` – whole-system statistics for the header:
-  `station_count`, `channel_count`, `bikes_last_day_total` (sum of every
-  station's previous local-day total) and the `last_update` timestamp of the most
-  recent successful data-source update. Optional `exclude_new_stations=true`
-  (Bike-Trends) restricts `bikes_last_day_total` to stations with data covering
-  the whole last day and its comparison day.
-- `GET /api/bff/station-overview/{id}` – the overview panel **shell** for one
-  station: `id`, `name`, `description`, `latitude`, `longitude`,
-  `channel_count`, `image_url`, `last_update`, `detail_url` (`/stations/{id}`)
-  and a HATEOAS `_links.stats` link to the stats sub-resource below. Cheap, so
-  the overview panel renders the station name/image immediately.
-- `GET /api/bff/station-overview/{id}/stats` – the overview stats card:
-  `total_bikes` (all-time total across the station's channels) and a `metrics`
-  array — each with `key` (`last_day` / `last_7_days` / `last_month` /
-  `last_year`), `current`, `previous`, `trend` (`up`/`down`/`flat`) and
-  `delta_percent`. The metrics use **complete calendar periods** in the station's
-  own timezone (previous full local day, previous 7 full local days, previous
-  full calendar month, previous full calendar year), each compared with the
-  immediately preceding equal-length period. Fetched in parallel with the
-  shell's rendering.
-- `GET /api/bff/station-detail/{id}` – a light **page shell** for the detail
-  page: the station metadata (incl. `total_bikes`, the all-time total), a
-  `channels` array (id + name for legends/pie labels), `last_update` and a
-  HATEOAS `_links` map pointing at the per-card sub-resources below. Each link
-  carries an `as_of` reference-time query param (RFC 3339 `Z`), so a card URL is
-  a pure function of the reference time and therefore cacheable.
-- `GET /api/bff/station-detail/{id}/overview` – the overview card: the four
-  overview metrics (each with `key` = `last_day` / `last_7_days` /
-  `last_month` / `last_year`, `current`, `previous`, `trend`, `delta_percent`
-  and `is_new`) plus `total_bikes`. The metrics use **complete calendar
-  periods** in the station's own timezone, each compared with the immediately
-  preceding equal-length period. With `exclude_new_stations=true` (Bike-Trends),
-  `is_new` is true when the station has no data covering the whole current +
-  previous window, so the UI shows a neutral "New" instead of a misleading
-  trend.
-- `GET /api/bff/station-detail/{id}/graphs/{timeframe}` – one timeframe's graphs
-  for the selected key — `day` (last day vs the day before, 5 min), `week`
-  (current vs last week, 1 h), `last_30_days` (last 30 days vs the 30 days
-  before, 1 day) or `year` (current vs last year, 1 day). Each timeframe holds
-  its `current` / `previous` series, a `weekday_radar` and `channel_pie` for its
-  current period and a `per_channel` copy for the nerd stats. Buckets are
-  aligned to the station's own timezone via PostgreSQL `date_bin` and are
-  **data-only** (no zero-filling, so a running week/year simply ends at the
-  latest measurement).
-- `GET /api/bff/station-detail/{id}/monthly` – `monthly_totals`, feeding the
-  standalone monthly bar chart.
-- `GET /api/bff/stations/summary` – a light **page shell** for the aggregated
-  summary of the stations visible in the bounding box (all four bounds required;
-  optional `exclude=<comma-separated station ids>` drops stations from the
-  aggregation while keeping them in the returned `stations` list so the map can
-  gray them out; optional `exclude_new_stations=true` (Bike-Trends) only
-  aggregates stations with data covering the whole current + previous window).
-  The shell holds a fallback `image_url`, the `stations`
-  (id/name/lat/lng/channel_count), `last_update` and a HATEOAS `_links` map
-  (carrying `as_of` and the bounds) pointing at the same per-card sub-resources:
-  `/overview` (aggregated metrics + `total_bikes`), `/graphs/{timeframe}` (same
-  four timeframes, with nerd stats keyed by **station** — `per_station`,
-  `station_pie` — instead of channel) and `/monthly` (with
-  `exclude_new_stations=true`, the summary monthly chart drops stations without
-  data covering the whole current + previous calendar year — the same windows as
-  the `year` timeframe). All bucketed reads reuse the existing
-  `MeasurementRepository` primitives over the union of the included stations'
-  channels, so no new data fields are introduced.
-- `GET /api/bff/assets/{id}/content` – streams an asset (e.g. the station image)
-  from MinIO with `Content-Type`, `ETag`, `Content-Length` and a `Cache-Control`
-  (`immutable` for built-in assets, short-lived for provider assets). Only the
-  BFF exposes MinIO; there are no upload/delete artifact endpoints.
-- **HTTP caching (BFF-controlled)** – the BFF drives the browser cache with
-  standard RFC headers via the generic helper
-  [`backend/src/adapter/driving/bff/cache.rs`](backend/src/adapter/driving/bff/cache.rs):
-  every JSON response carries a `Cache-Control` and a strong `ETag` (a SHA-256 of
-  the body) and answers `If-None-Match` with `304 Not Modified`. The header
-  summary (`/api/bff/global-summary`) is short-lived
-  (`public, max-age=60, stale-while-revalidate=300`), the `as_of`-pinned
-  windowed cards are cached for an hour (`public, max-age=3600,
-  must-revalidate`), and live `Utc::now()`-driven endpoints are `no-store`.
-  The basemap archive `/tiles/map.pmtiles` is served by nginx with
-  `public, max-age=604800, must-revalidate` plus `ETag`/`Last-Modified`
-  revalidation (it is rebuilt only every ~2 months) — see
-  [`tiles/README.md`](tiles/README.md).
-
-The aggregations are computed **on the fly** per request by the core
-[`StationAnalyticsService`](backend/src/core/application/station_analytics/service.rs:38).
-The `as_of` reference-time query params keep every windowed card URL a stable
-cache key (the browser cache is served first; the `ETag` revalidation keeps it
-correct as data lands). The `graph_windows` / `metric_windows` helpers already
-take the reference time as an argument, which is also the seam for a future
-date/time picker or a server-side cache. The BFF module lives in
-[`backend/src/adapter/driving/bff/`](backend/src/adapter/driving/bff) and is the
-seam for future frontend-only endpoints (for example aggregations or
-transformations of the `/api/v1` data).
-
-## Name uniqueness
-
-Two naming invariants are enforced on imported data (see
-[`plans/19_counting_station_channel_name_uniqueness_plan.md`](plans/19_counting_station_channel_name_uniqueness_plan.md)):
-
-- A counting-station name is unique **per data source**
-  (`UNIQUE (data_source_id, name)` where `data_source_id IS NOT NULL`).
-- A counting station has no two channels with the same name
-  (`UNIQUE (counting_station_id, name)`).
-
-When an upstream source does not provide unique names (true for the Münster
-archive, which repeats channel names within a station), the adapter appends the
-channel's/station's external id to the duplicate name, e.g.
-`Bohlweg Fahrräder Stadteinwärts (353484923)`. Migration `V8` repairs rows that
-were imported before this rule and creates the two unique indexes.
-
-Counting stations always carry their importing `data_source_id`, enforced by
-the database: `counting_stations.data_source_id` is `NOT NULL`. Rows imported
-before data-source linking existed are backfilled by migration `V9` (only when
-exactly one data source is configured); `V9` also switches the FK chain to
-`ON DELETE CASCADE` so removing a data source removes its stations (and their
-channels/measurements) instead of orphaning them.
-
-## Health checks
-
-The application exposes two unversioned operational endpoints:
-
-- `GET /health/live` – liveness probe. Answers `200 {"status":"up"}` while the
-  backend process is running (it requires no database access).
-- `GET /health/ready` – readiness probe. Opens a fresh PostgreSQL connection and
-  runs `SELECT 1`, and checks the health of every configured data-source
-  provider. It answers `200 {"status":"ready", ...}` only when every downstream
-  service is available, otherwise `503 {"status":"not_ready", ...}` with a
-  per-component breakdown (including the failure reason).
-
-Each data source contributes a component named
-`<data-source-name>/<provider-type>` (e.g. `Münster/münster_opendata_github_provider`).
-A provider that is temporarily unreachable marks the component as `down` but
-does **not** block startup: the process only refuses to start on configuration
-errors.
-
-Both the `Dockerfile` `HEALTHCHECK` and the docker-compose `app` service use
-`/health/ready`, so a container is only marked *healthy* while PostgreSQL is
-reachable.
-
-## Running tests
-
-A [`Makefile`](Makefile) wraps the common commands. Run `make help` for the full
-list:
-
-```bash
-make check      # CI gate: cargo fmt --check + cargo clippy --all-targets -- -D warnings + frontend prettier --check + cargo audit
-make audit      # backend: cargo audit (fails on any advisory)
-make test       # backend: all tests (repository tests spin up a Postgres test container via Docker)
-make test-rest  # backend: only the REST endpoint tests (in-memory mocks, no database required)
-make test-e2e   # end-to-end smoke test against the real docker-compose stack (requires Docker)
-make test-playwright # frontend Playwright browser e2e (all seven data sources) against the real stack seeded from a SQL fixture (jobs disabled, no provider import)
-make playwright-install # install the Playwright Chromium browser once
-make test-all   # make check + make test
-make coverage   # backend coverage gate: overall (production) >= 80% AND core (src/core) >= 95% via cargo-llvm-cov
-make coverage-open  # open the HTML coverage report in a browser
-make frontend-build # build the React frontend (production bundle into frontend/dist)
-```
-
-The Cargo-based targets operate on the [`backend/`](backend) crate; the
-frontend is built with `make frontend-build` (or `cd frontend && npm run build`).
-
-Under the hood the scripts are:
-
-- [`scripts/fmt-test.sh`](scripts/fmt-test.sh) – CI-style gate: `cargo fmt --check`
-  and `cargo clippy --all-targets -- -D warnings`, failing non-zero on any drift.
-- [`scripts/audit.sh`](scripts/audit.sh) – `cargo audit` security gate: fails
-  non-zero on any advisory. The `backend/.cargo/audit.toml` lists the two known
-  unfixable `quick-xml` advisories (via `rust-s3`/`aws-creds`, with a
-  justification); anything else is a hard failure. Install once with
-  `cargo install cargo-audit`.
-- [`scripts/docker-compose-test.sh`](scripts/docker-compose-test.sh) – boots the
-  real docker-compose stack (PostgreSQL + app), waits for readiness, asserts the
-  jobs + data-sources APIs return `200`, verifies a `data_source_update` job with
-  an `instance_id` was recorded, and checks `jobs.instance_id`/`heartbeat_at`,
-  the `job_locks` table and `data_sources.imported_until` via `psql`, then tears
-  everything down.
-- [`scripts/e2e-playwright.sh`](scripts/e2e-playwright.sh) – Playwright browser
-  e2e tests against the real stack, seeded from the committed
-  [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) fixture via the
-  [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml)
-  override (all seven data sources configured, scheduled jobs disabled via
-  `scheduled_jobs_enabled = false`, no provider import; backend healthcheck is
-  `/health/live`). Waits for readiness and the seeded stations per city, then
-  runs the specs in [`frontend/e2e/`](frontend/e2e): map markers + popup/overview,
-  search → find-on-map, sidebar visible stations, the detail page and the
-  per-city map/overview/detail flows. Tears the stack down (dropping the
-  dedicated e2e DB volume, never the dev `postgres_data`) and restores any
-  pre-existing `config.toml`.
-- [`scripts/coverage.sh`](scripts/coverage.sh) – coverage gate: runs the full
-  test suite under `cargo-llvm-cov` instrumentation, writes the standard lcov +
-  HTML report under `target/coverage/`, and fails non-zero when **overall
-  production** line coverage drops below `COVERAGE_THRESHOLD` (default 80%) or
-  when the **core** (`src/core/`) drops below `CORE_COVERAGE_THRESHOLD` (default
-  95%). Both thresholds count production code only — `#[cfg(test)]` scaffolding
-  and standalone test files are excluded — so the gate's percentages are printed
-  to the terminal and differ from the totals in the standard HTML report (which
-  still includes test scaffolding). The core is expected to be unit-tested in
-  isolation with in-memory mocks, hence the higher bar.
-
-`fmt-test.sh` and `coverage.sh` are intended to be wired into CI;
-`docker-compose-test.sh` requires Docker and `docker compose` v2. Install the
-coverage tooling once (`rustup component add llvm-tools-preview` and
-`cargo install cargo-llvm-cov`); the full coverage run needs Docker for the
-Postgres repository tests, like `make test`.
+All configuration lives in a single [`config.toml`](config.toml) file
+(gitignored), and every option is documented line by line in the tracked
+template [`config.toml.example`](config.toml.example). The database schema is
+created and migrated automatically on startup; scheduled background jobs keep
+the imported data up to date.
+
+- **Database** — `database_url`, `database_user`, `database_password`,
+  `database_name`. Under Docker Compose point them at the `db` service
+  (`postgres://db:5432`, as in the template).
+- **Data sources** — one `[[data_sources]]` entry per source, with a display
+  `name`, a provider `type` and provider-specific `vars`. Currently supported:
+
+  | Source | Provider type |
+  | --- | --- |
+  | Münster (public Open Data archive) | `münster_opendata_github_provider` |
+  | Bonn (official GeoJSON + CSV) | `bonn_opendata_http_provider` |
+  | Hamburg (official SensorThings API) | `hamburg_sta_http_provider` |
+  | Leipzig (official WFS layers) | `leipzig_wfs_http_provider` |
+  | Eco-Counter (public Eco-Visio API) | `eco_counter_v1_http_provider` |
+  | Eco-Counter (official API, access token) | `eco_counter_v2_http_provider` |
+  | Eco-Counter (public dashboard scrape) | `eco_counter_web_http_provider` |
+
+  The exact `vars` for every provider are documented in the template and in the
+  adapter READMEs under
+  [`backend/src/adapter/driven/`](backend/src/adapter/driven).
+- **Optional services** — `[asset_storage]` (S3/MinIO bucket holding the
+  counting-station images), `[opendata]`/`[opendata_storage]` (bulk-export
+  schedule and bucket) and `[maps]` (self-hosted basemap settings).
+
+## Open data & API
+
+Machine consumers get two HTTP surfaces plus a bulk export:
+
+- **Public REST API** (`/api/v1`) — read-only resources for counting stations,
+  channels, measurements, data sources and background jobs, with HATEOAS links.
+- **OpenData bulk export** (`/api/v1/opendata`) — the processed, immutable
+  measurement data as per-station and global **daily** and **monthly** files in
+  `parquet`, `csv.gz` and `json`. Files are published once per period and never
+  rewritten.
+- **BFF API** (`/api/bff`) — the aggregation API used by the web frontend.
+
+The complete endpoint reference (parameters, schemas, examples) is served by
+Swagger-UI at <http://localhost:8080/swagger-ui/>.
+
+## Contributing
+
+Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+repository layout, how to implement a new data-source adapter, and the workflow
++ gates every change must pass ([`agents.md`](agents.md)). Work is planned and
+tracked in the numbered documents under [`plans/`](plans).
