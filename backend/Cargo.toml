@@ -30,8 +30,8 @@ sha2 = "0.11"
 tar = "0.4"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-toml = "1.1"
-ureq = "3.4"
+toml = "1.1.5"
+ureq = "3.4.1"
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
@@ -41,6 +41,6 @@ zip = "8.6"
 http-body-util = "0.1"
 # `testcontainers-modules` 0.15 (latest) pins `testcontainers ^0.27`, so the
 # latest stable combination is kept at 0.27.
-testcontainers = { version = "0.27", features = ["blocking"] }
+testcontainers = { version = "0.27.3", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
 tower = { version = "0.5", features = ["util"] }

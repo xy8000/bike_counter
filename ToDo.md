@@ -1,3 +1,10 @@
+Dependency version bump compatibility (plans/113_dependency_version_bump_compat_plan.md)
+
+- [x] Verified both sides against the bumped versions (`toml` 1.1.5, `ureq` 3.4.1, `testcontainers` 0.27.3; `lucide-react` 1.41, `maplibre-gl` 6.7, `@vis.gl/react-maplibre` 8.1.3, `@playwright/test` 1.63): frontend `npm run build` (tsc + vite) and backend `cargo check --all-targets` green — no source refactor required
+- [x] Backend [`backend/Cargo.toml`](backend/Cargo.toml:33): dropped the semver build metadata (`+spec-1.1.0`, which cargo ignores in requirements) from the `toml` dependency to silence the manifest warning
+- [x] Frontend [`frontend/package-lock.json`](frontend/package-lock.json:1): regenerated via `npm install` against the bumped [`package.json`](frontend/package.json:17) (was stale)
+- [x] Gates green: `make check`, `make test-rest` (128), `make test` (739), `make test-playwright` (72)
+
 Sort sidebar by last-day counts, keep search alphabetical (plans/102_sidebar_sort_by_last_day_counts_plan.md)
 
 - [x] Frontend `frontend/src/features/sidebar/Sidebar.tsx`: order the visible stations by `bikes_last_day` descending (ties broken by name ascending) by joining the shell identities with the stats map — falling back to the shell's alphabetical order while the stats sub-resource is still loading

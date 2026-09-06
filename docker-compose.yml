@@ -10,13 +10,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: bike_counter
-    # Postgres 18+ images expect a single mount at /var/lib/postgresql (the data
-    # lives in a major-version subdirectory), so `pg_upgrade` works across
-    # future major bumps without mount-point boundary issues.
     volumes:
       - postgres_data:/var/lib/postgresql
-    # Reachable only from within the dedicated internal `db_network` (i.e. only
-    # the backend); no host port is published, so Postgres is never exposed.
+    # Reachable only from within the dedicated internal `db_network`
     networks:
       - db_network
     healthcheck:
