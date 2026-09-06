@@ -265,7 +265,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
   const cfg: TimeframeConfig = !isIndividual
     ? fixedTimeframeConfig(timeframe as FixedTimeframe, granularity)
     : from && to
-      ? customTimeframeConfig(granularity)
+      ? customTimeframeConfig(granularity, from, to)
       : TIMEFRAMES.week
   const graphLink = withResolutionParam(
     !isIndividual
@@ -397,6 +397,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
               <TimeSeriesBarChart
                 series={mainSeries}
                 xFormatter={cfg.axis}
+                axisRotate={cfg.axisRotate}
                 tooltipFormatter={cfg.tooltip}
                 className="aspect-[20/15.3] sm:aspect-[20/7.65]"
               />
@@ -433,6 +434,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
               <TimeSeriesBarChart
                 series={perChannelSeries}
                 xFormatter={cfg.axis}
+                axisRotate={cfg.axisRotate}
                 tooltipFormatter={cfg.tooltip}
                 className="aspect-[21/18] sm:aspect-[21/9]"
               />

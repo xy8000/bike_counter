@@ -327,7 +327,7 @@ function SummaryContent({
   const cfg: TimeframeConfig = !isIndividual
     ? fixedTimeframeConfig(timeframe as FixedTimeframe, granularity)
     : from && to
-      ? customTimeframeConfig(granularity)
+      ? customTimeframeConfig(granularity, from, to)
       : TIMEFRAMES.week
   const graphLink = withResolutionParam(
     !isIndividual
@@ -458,6 +458,7 @@ function SummaryContent({
               <TimeSeriesBarChart
                 series={mainSeries}
                 xFormatter={cfg.axis}
+                axisRotate={cfg.axisRotate}
                 tooltipFormatter={cfg.tooltip}
                 className="aspect-[20/15.3] sm:aspect-[20/7.65]"
               />
@@ -494,6 +495,7 @@ function SummaryContent({
               <TimeSeriesBarChart
                 series={perStationSeries}
                 xFormatter={cfg.axis}
+                axisRotate={cfg.axisRotate}
                 tooltipFormatter={cfg.tooltip}
                 className="aspect-[21/18] sm:aspect-[21/9]"
               />

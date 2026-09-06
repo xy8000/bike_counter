@@ -53,11 +53,15 @@ function mergeSeries(series: BarSeries[]): MergedPoint[] {
 export function TimeSeriesBarChart({
   series,
   xFormatter,
+  axisRotate = false,
   tooltipFormatter,
   className,
 }: {
   series: BarSeries[]
   xFormatter: (time: number) => string
+  /** True when the view's x-axis labels are long (e.g. `dd.MM., HH:mm` across 30
+   *  days), so they are rotated -45° and given more room on a dense axis. */
+  axisRotate?: boolean
   tooltipFormatter?: (time: number) => string
   className?: string
 }) {
@@ -85,19 +89,30 @@ export function TimeSeriesBarChart({
     <ChartContainer config={config} className={cn('aspect-[20/9]', className)}>
       <BarChart accessibilityLayer data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid vertical={false} />
+        {/* `interval="preserveStartEnd"` keeps Recharts' width-aware tick
+            spacing (it measures each label and drops any that would overlap —
+            a numeric `interval` would force-render every nth tick and overlap on
+            narrow widths). Preserving the start also keeps the first-of-run
+            month labels from being skipped by the duplicate collapse. Rotated
+            axes reserve extra height for the -45° labels and can sit ~25%
+            tighter (their angled footprint is smaller). */}
         <XAxis
           dataKey="time"
           type="category"
           tickLine={false}
           axisLine={false}
-          tickMargin={8}
+          tickMargin={axisRotate ? 12 : 8}
           tickFormatter={xFormatter}
-          minTickGap={24}
+          minTickGap={axisRotate ? 18 : 24}
+          interval="preserveStartEnd"
+          angle={axisRotate ? -45 : 0}
+          textAnchor={axisRotate ? 'end' : 'middle'}
+          height={axisRotate ? 64 : 30}
         />
         <YAxis
           tickLine={false}
           axisLine={false}
-          width={68}
+          width={80}
           tickMargin={8}
           allowDecimals={false}
           tickFormatter={(value) => formatNumber(Number(value))}

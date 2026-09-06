@@ -24,6 +24,40 @@ function timeAxis(unit: TimeUnit): (time: number) => string {
   }
 }
 
+/// Axis label for sub-day buckets spanning several days: `dd.MM., HH:mm`. A bare
+/// `HH:mm` repeats on every day (all ticks collapse to `00:00`), so the day is
+/// prepended once a window crosses more than one day.
+function dayTimeAxis(time: number): string {
+  const date = new Date(time)
+  const day = date.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
+  const timeOfDay = date.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' })
+  return `${day}, ${timeOfDay}`
+}
+
+/// Axis label with a 2-digit year (`dd.MM.yy`), used when day/week-granularity
+/// buckets can cross a year boundary and a bare `dd.MM.` would be ambiguous.
+function dayYearAxis(time: number): string {
+  return new Date(time).toLocaleDateString(LOCALE, {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  })
+}
+
+/// Wraps an axis formatter so consecutive duplicate labels collapse to a single
+/// tick (e.g. the year view: several day/week buckets fall in the same month and
+/// would repeat `Jan Jan Jan …`). Each config builds its own closure per render,
+/// so the per-tick sequence resets cleanly between renders.
+function dedupe(axis: (time: number) => string): (time: number) => string {
+  let previous = ''
+  return (time) => {
+    const label = axis(time)
+    if (label === previous) return ''
+    previous = label
+    return label
+  }
+}
+
 /// Axis label for the overlapped week chart: the aligned domain is anchored on a
 /// Monday, so a short weekday name marks each day. The week timeframe uses
 /// 1-hour buckets, so the local time is appended — a bare weekday name would
@@ -69,6 +103,9 @@ export interface TimeframeConfig {
   currentLabel: string
   previousLabel: string
   axis: (time: number) => string
+  /** True when this view's x-axis labels are long and dense (e.g. `dd.MM.,
+   *  HH:mm` across 30 days), so the chart rotates the ticks -45° to fit. */
+  axisRotate?: boolean
   tooltip: (time: number) => string
   periodStart: (time: number) => number
 }
@@ -266,20 +303,38 @@ function fixedAxis(
   timeframe: FixedTimeframe,
   granularity: GranularityKey,
 ): (time: number) => string {
+  const subDay = granularity === '15m' || granularity === '30m' || granularity === 'hour'
   switch (timeframe) {
     case 'week':
-      if (granularity === '15m' || granularity === '30m' || granularity === 'hour') {
-        return weekdayAxis
-      }
-      return weekdayDayAxis
+      // A single overlapped week keeps its weekday (+time) axis at every
+      // resolution: sub-day buckets show `Mo HH:mm`, day buckets just `Mo`.
+      return subDay ? weekdayAxis : weekdayDayAxis
     case 'year':
-      return timeAxis('month')
+      // Month buckets land on one label per month; day/week buckets fall many
+      // times inside one month, so consecutive duplicates are collapsed into a
+      // single month label (the "JanJanFebFeb…" regression).
+      return granularity === 'month' ? timeAxis('month') : dedupe(timeAxis('month'))
     case 'day':
+      // A single 24 h window never repeats a time-of-day label.
+      return timeAxis('hour')
     case 'last_30_days':
-      return granularity === '15m' || granularity === '30m' || granularity === 'hour'
-        ? timeAxis('hour')
-        : timeAxis('day')
+      // Hourly buckets across 30 days repeat `HH:mm` daily (after tick thinning
+      // every visible tick lands on a day's `00:00`); prepend the day so every
+      // label is unique. Day/week buckets stay on `dd.MM.`.
+      return subDay ? dayTimeAxis : timeAxis('day')
   }
+}
+
+/// Whether a fixed timeframe's axis at a resolution emits long, dense labels
+/// (e.g. `dd.MM., HH:mm` on every hour of the 30-day view) that need a -45°
+/// rotation to stay readable. Short labels (`HH:mm`, `dd.MM.`, month names)
+/// stay horizontal.
+function fixedAxisRotate(timeframe: FixedTimeframe, granularity: GranularityKey): boolean {
+  if (timeframe === 'week') {
+    // 30-minute / 1-hour buckets over seven days carry long `Mo HH:mm` labels.
+    return granularity === '30m' || granularity === 'hour'
+  }
+  return timeframe === 'last_30_days' && granularity === 'hour'
 }
 
 /// The presentation config of a fixed timeframe at a chosen resolution: the
@@ -294,6 +349,7 @@ export function fixedTimeframeConfig(
     ...base,
     subtitle: granularitySubtitle(granularity),
     axis: fixedAxis(timeframe, granularity),
+    axisRotate: fixedAxisRotate(timeframe, granularity),
     tooltip: granularityTooltip(granularity),
   }
 }
@@ -301,15 +357,34 @@ export function fixedTimeframeConfig(
 /// The presentation config of the "Individual" timeframe for a chosen
 /// resolution. There is no previous period (compare is disabled), so
 /// `previousLabel` is unused; the axis width covers the whole range.
-export function customTimeframeConfig(granularity: GranularityKey): TimeframeConfig {
+export function customTimeframeConfig(
+  granularity: GranularityKey,
+  from: string,
+  to: string,
+): TimeframeConfig {
   const subDay = granularity === '15m' || granularity === '30m' || granularity === 'hour'
+  const fromDate = dateFromInput(from)
+  const toDate = dateFromInput(to)
+  // Inclusive day count (00:00 `from` → 00:00 of the day after `to`), mirroring
+  // the frontend span semantics that pick the resolution set.
+  const days = (toDate.getTime() + 86_400_000 - fromDate.getTime()) / 86_400_000
+  const crossesYear = fromDate.getFullYear() !== toDate.getFullYear()
+  // Sub-day buckets repeat `HH:mm` every day once a range spans several days;
+  // `dd.MM.` day/week buckets become dense and ambiguous once they cross a year.
   const axis = subDay
-    ? timeAxis('hour')
+    ? days > 2
+      ? dayTimeAxis
+      : timeAxis('hour')
     : granularity === 'month'
       ? monthAxis
       : granularity === 'quarter'
         ? quarterAxis
-        : weekAxis
+        : crossesYear
+          ? dayYearAxis
+          : weekAxis
+  // Sub-day labels with a day prefix and cross-year `dd.MM.yy` labels are long
+  // enough to need a -45° rotation on a dense axis.
+  const axisRotate = subDay ? days > 2 : granularity !== 'month' && granularity !== 'quarter'
   return {
     key: 'individual' as Timeframe,
     label: 'Individual',
@@ -321,6 +396,7 @@ export function customTimeframeConfig(granularity: GranularityKey): TimeframeCon
     currentLabel: 'Selected range',
     previousLabel: '',
     axis,
+    axisRotate,
     tooltip: granularityTooltip(granularity),
     // Identity period start: the aligned anchor is the first bucket (a custom
     // range has no previous-period overlay).

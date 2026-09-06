@@ -339,3 +339,69 @@ test('an individual range beyond one year drops the day resolution', async ({ pa
   await expect(dialog.getByRole('button', { name: 'Quarter', exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Day', exact: true })).toBeHidden()
 })
+
+/// The aggregate "Detailed statistics" section on the station-detail page (it
+/// holds the settings-driven bar chart; its weekday/hour companions are polar
+/// radars, so any cartesian x-axis inside it belongs to the main chart).
+function statsSection(page: Page) {
+  return page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Detailed statistics' }),
+  })
+}
+
+/// The recharts x-axis tick labels of the main chart.
+function xAxisLabels(page: Page) {
+  return statsSection(page).locator(
+    '.recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value',
+  )
+}
+
+test('the Last-30-days hourly x-axis shows unique dated labels, not repeated 00:00', async ({
+  page,
+}) => {
+  await openDetailPage(page)
+  const dialog = await openSettings(page)
+
+  // 30 days + the high (Hour) resolution of the 30-day set = ~720 hourly
+  // buckets. The regression labelled every visible tick with the bare
+  // time-of-day, so they all collapsed to "00:00"; the fix dates each label
+  // (`dd.MM., HH:mm`). Apply (closing the dialog) between settings changes, as
+  // the timeframe assertion only settles once the dialogue is closed.
+  await dialog.getByRole('button', { name: 'Last 30 days', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
+  await expect(page).toHaveURL(/[?&]timeframe=last_30_days/)
+  await expect(statsSection(page).getByText('1-day buckets', { exact: true })).toBeVisible()
+
+  const highDialog = await openSettings(page)
+  await highDialog.getByRole('button', { name: 'Hour', exact: true }).click()
+  await highDialog.getByRole('button', { name: 'Apply' }).click()
+  await expect(page).toHaveURL(/[?&]resolution=high/)
+  await expect(statsSection(page).getByText('1-hour buckets', { exact: true })).toBeVisible()
+
+  const labels = (await xAxisLabels(page).allTextContents())
+    .map((label) => label.trim())
+    .filter(Boolean)
+  expect(labels.length).toBeGreaterThan(3)
+  expect(labels.every((label) => label !== '00:00')).toBe(true)
+  expect(new Set(labels).size).toBeGreaterThan(1)
+  expect(labels.every((label) => /^\d{2}\.\d{2}\., \d{2}:\d{2}$/.test(label))).toBe(true)
+})
+
+test('the This-year weekly x-axis shows each month once, no JanJanFebFeb', async ({ page }) => {
+  await openDetailPage(page)
+  const dialog = await openSettings(page)
+
+  // "This year" defaults to the mid resolution = 1-week buckets; the regression
+  // repeated the bare month name across several week buckets in each month.
+  await dialog.getByRole('button', { name: 'This year', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Apply' }).click()
+  await expect(statsSection(page).getByText('1-week buckets', { exact: true })).toBeVisible()
+
+  const labels = (await xAxisLabels(page).allTextContents())
+    .map((label) => label.trim())
+    .filter(Boolean)
+  expect(labels.length).toBeGreaterThan(0)
+  for (let i = 1; i < labels.length; i += 1) {
+    expect(labels[i]).not.toBe(labels[i - 1])
+  }
+})
