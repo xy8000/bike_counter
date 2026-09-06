@@ -58,7 +58,7 @@ fn default_log_level() -> String {
 /// so 2 h is a generous bound for the ShedLock-style job lifetime.
 const DEFAULT_MAPS_UPDATE_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 7200;
 /// Default pinned Protomaps build when the `[maps]` table is omitted.
-const DEFAULT_MAPS_PROTOMAPS_BUILD_URL: &str = "https://build.protomaps.com/20260829.pmtiles";
+const DEFAULT_MAPS_PROTOMAPS_BUILD_URL: &str = "https://build.protomaps.com/20260905.pmtiles";
 /// Default pinned go-pmtiles CLI version when the `[maps]` table is omitted.
 const DEFAULT_MAPS_GO_PMTILES_VERSION: &str = "1.31.2";
 
@@ -257,7 +257,7 @@ mod tests {
             [maps]\n\
             update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
             update_max_heartbeat_interval_seconds = 7200\n\
-            protomaps_build_url = \"https://build.protomaps.com/20260829.pmtiles\"\n\
+            protomaps_build_url = \"https://build.protomaps.com/20260905.pmtiles\"\n\
             go_pmtiles_version = \"1.31.2\"\n"
     }
 
@@ -734,7 +734,7 @@ mod tests {
         );
         assert_eq!(
             configuration.maps().protomaps_build_url(),
-            "https://build.protomaps.com/20260829.pmtiles"
+            "https://build.protomaps.com/20260905.pmtiles"
         );
         assert_eq!(configuration.maps().go_pmtiles_version(), "1.31.2");
     }

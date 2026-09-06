@@ -25,7 +25,7 @@ reads individual tiles via range requests as usual.
 
 ## What's in `map.pmtiles`
 
-A single archive combining two *extracts* (not full downloads) of the public
+A single archive combining three *extracts* (not full downloads) of the public
 [Protomaps basemap](https://docs.protomaps.com/basemaps/downloads)
 (OpenStreetMap-derived, continuously updated, free daily builds at
 `build.protomaps.com`):
@@ -33,12 +33,20 @@ A single archive combining two *extracts* (not full downloads) of the public
 - A **worldwide** low-zoom sub-pyramid (z0-5) — real coastlines everywhere on
   Earth, not just Germany, so the map is never blank when zoomed out or when
   panning outside Germany.
-- A **Germany-only** detail extract (z6-15, bbox `5.8,47.2,15.1,55.1`) — full
+- A **surroundings** detail extract around Germany (z6-7, bbox
+  `-11.112889,43.555498,27.187828,57.470545` — a wide Western/Central Europe
+  box) — real z6-7 detail for the area around Germany (Benelux, France,
+  Denmark, Poland, Czechia, Austria, ...) so the Germany bbox edge is not
+  visible as a seam at mid zoom. Two zoom layers beyond the world backdrop
+  (z0-5). The box fully contains Germany, so it also covers Germany at z6-7.
+- A **Germany-only** detail extract (z8-15, bbox `5.8,47.2,15.1,55.1`) — full
   street-level OSM detail (roads, buildings, boundaries) for the integrated
-  cities (Münster, Bonn, Hamburg).
+  cities (Münster, Bonn, Hamburg). It starts at z8 so the three extracts form
+  **disjoint zoom bands** (z0-5 / z6-7 / z8-15), which `pmtiles merge` requires
+  — it refuses overlapping inputs. Germany at z6-7 comes from the surroundings
+  extract (identical source tiles).
 
-These two zoom ranges don't overlap, so they can be combined into one archive
-with `pmtiles merge`. The style
+The style
 ([`frontend/public/styles/basemap.json`](../frontend/public/styles/basemap.json))
 uses the real [Protomaps basemap layer schema](https://docs.protomaps.com/basemaps/layers)
 (`earth`, `water`, `landcover`, `landuse`, `roads`, `boundaries`, `buildings`)
@@ -52,10 +60,12 @@ The basemap is **mandatory** and built by the backend itself (a Rust driven
 adapter, [`backend/src/adapter/driven/tiles_init/`](../backend/src/adapter/driven/tiles_init/)):
 at startup the backend downloads the pinned
 [`pmtiles` CLI](https://github.com/protomaps/go-pmtiles) (version from the
-`[maps]` TOML section) and runs two `pmtiles extract` calls against the pinned
-Protomaps build plus a `pmtiles merge`. The server only reports ready once the
-archive exists — there is **no `SKIP_TILES`**, the application cannot run
-without tiles.
+`[maps]` TOML section) and runs three `pmtiles extract` calls against the
+pinned Protomaps build plus a `pmtiles merge`
+(`world.pmtiles` → `surroundings.pmtiles` → `germany.pmtiles` → `map.pmtiles`).
+The extracts are three disjoint zoom bands (z0-5 / z6-7 / z8-15), which the
+merge requires. The server only reports ready once the archive exists — there
+is **no `SKIP_TILES`**, the application cannot run without tiles.
 
 ```bash
 make tiles   # docker compose run --rm --no-deps backend tiles -> tiles/map.pmtiles

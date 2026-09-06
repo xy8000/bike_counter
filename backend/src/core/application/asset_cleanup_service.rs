@@ -352,7 +352,7 @@ mod tests {
                     crate::core::domain::configuration::configuration::DEFAULT_MAPS_UPDATE_CRON
                         .to_string(),
                     7200,
-                    "https://build.protomaps.com/20260829.pmtiles".to_string(),
+                    "https://build.protomaps.com/20260905.pmtiles".to_string(),
                     "1.31.2".to_string(),
                 )
                 .unwrap(),

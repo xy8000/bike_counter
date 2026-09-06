@@ -12,7 +12,7 @@
 //!
 //! The `go-pmtiles` CLI is downloaded once (pinned by
 //! `maps.go_pmtiles_version`) into `<tiles_dir>/.pmtiles-bin` and cached across
-//! runs. The Germany bounding box is hard-coded here for now.
+//! runs. The Germany and surroundings bounding boxes are hard-coded here for now.
 
 use std::env;
 use std::fs;
@@ -27,12 +27,19 @@ use crate::core::domain::tiles::provisioning_port::TilesProvisioningPort;
 
 /// Germany bounding box (`min_lon,min_lat,max_lon,max_lat`) — hard-coded for now.
 pub const GERMANY_BBOX: &str = "5.8,47.2,15.1,55.1";
+/// Surroundings bounding box (`min_lon,min_lat,max_lon,max_lat`) — a wide
+/// Western/Central Europe box around Germany, hard-coded for now. It is
+/// rendered at z6-z7 (two zoom layers beyond the world backdrop's z0-5) so the
+/// Germany bbox edge no longer shows as a seam at mid zoom.
+pub const SURROUNDINGS_BBOX: &str = "-11.112889,43.555498,27.187828,57.470545";
 /// Basemap archive name written into the tiles directory.
 pub const MAP_ARCHIVE: &str = "map.pmtiles";
 /// Temporary archive name; renamed atomically over `MAP_ARCHIVE` on success.
 const TMP_ARCHIVE: &str = "map.pmtiles.tmp";
 /// Intermediate worldwide backdrop extract.
 const WORLD_ARCHIVE: &str = "world.pmtiles";
+/// Intermediate surroundings (around Germany) detail extract.
+const SURROUNDINGS_ARCHIVE: &str = "surroundings.pmtiles";
 /// Intermediate Germany detail extract.
 const GERMANY_ARCHIVE: &str = "germany.pmtiles";
 /// How many times a transient `extract` failure is retried.
@@ -100,23 +107,41 @@ impl TilesInit {
     }
 
     /// Builds the archive at `target`: extract the worldwide backdrop (z0-5),
-    /// extract the Germany detail (z6-15, hard-coded bbox), merge both, and
-    /// remove the intermediate archives.
+    /// extract the surroundings detail (z6-7, hard-coded bbox around Germany —
+    /// two zoom levels beyond the world), extract the Germany detail (z8-15,
+    /// hard-coded bbox), and merge the three **disjoint** zoom bands into
+    /// `target`, then remove the intermediate archives.
+    ///
+    /// The bands are disjoint by zoom range (z0-5 / z6-7 / z8-15), which
+    /// `pmtiles merge` requires — it refuses overlapping inputs. The
+    /// surroundings bbox fully contains Germany, so at z6-7 Germany is covered
+    /// by the surroundings extract with the identical source tiles.
     fn build_to(&self, target: &Path) -> Result<(), String> {
         fs::create_dir_all(&self.tiles_dir)
             .map_err(|e| format!("failed to create {}: {e}", self.tiles_dir.display()))?;
         let cli = self.ensure_cli()?;
 
         let world = self.tiles_dir.join(WORLD_ARCHIVE);
+        let surroundings = self.tiles_dir.join(SURROUNDINGS_ARCHIVE);
         let germany = self.tiles_dir.join(GERMANY_ARCHIVE);
         self.cleanup_intermediates();
 
         self.extract_with_retry(&cli, &world, &["--maxzoom=5"])?;
+        let surroundings_bbox_flag = format!("--bbox={SURROUNDINGS_BBOX}");
+        self.extract_with_retry(
+            &cli,
+            &surroundings,
+            &[
+                surroundings_bbox_flag.as_str(),
+                "--minzoom=6",
+                "--maxzoom=7",
+            ],
+        )?;
         let bbox_flag = format!("--bbox={GERMANY_BBOX}");
         self.extract_with_retry(
             &cli,
             &germany,
-            &[bbox_flag.as_str(), "--minzoom=6", "--maxzoom=15"],
+            &[bbox_flag.as_str(), "--minzoom=8", "--maxzoom=15"],
         )?;
 
         println!("Merging into tiles/{MAP_ARCHIVE} ...");
@@ -125,6 +150,9 @@ impl TilesInit {
             &[
                 "merge",
                 world.to_str().ok_or("world path is not UTF-8")?,
+                surroundings
+                    .to_str()
+                    .ok_or("surroundings path is not UTF-8")?,
                 germany.to_str().ok_or("germany path is not UTF-8")?,
                 target.to_str().ok_or("target path is not UTF-8")?,
             ],
@@ -138,6 +166,7 @@ impl TilesInit {
     /// Removes leftover intermediate extracts (safe no-op if absent).
     fn cleanup_intermediates(&self) {
         let _ = fs::remove_file(self.tiles_dir.join(WORLD_ARCHIVE));
+        let _ = fs::remove_file(self.tiles_dir.join(SURROUNDINGS_ARCHIVE));
         let _ = fs::remove_file(self.tiles_dir.join(GERMANY_ARCHIVE));
     }
 
@@ -263,14 +292,16 @@ mod tests {
         MapsConfiguration::new(
             "0 0 3 1 1,3,5,7,9,11 *".to_string(),
             7200,
-            "https://build.protomaps.com/20260829.pmtiles".to_string(),
+            "https://build.protomaps.com/20260905.pmtiles".to_string(),
             "1.31.2".to_string(),
         )
         .unwrap()
     }
 
     /// Writes an executable fake `pmtiles` CLI that creates its destination
-    /// archive file (extract -> argv[2], merge -> argv[3]) and exits 0.
+    /// archive file and exits 0. The merge destination is the **last** argument
+    /// (extract keeps argv[2], which is the destination after `extract <source>
+    /// <dest> ...`).
     #[cfg(unix)]
     fn write_fake_cli(bin_dir: &Path) {
         fs::create_dir_all(bin_dir).unwrap();
@@ -278,7 +309,10 @@ mod tests {
                       cmd=\"$1\"\n\
                       shift\n\
                       if [ \"$cmd\" = \"merge\" ]; then\n\
-                        dest=\"$3\"\n\
+                        while [ \"$#\" -gt 1 ]; do\n\
+                          shift\n\
+                        done\n\
+                        dest=\"$1\"\n\
                       else\n\
                         dest=\"$2\"\n\
                       fi\n\
@@ -315,6 +349,7 @@ mod tests {
         assert!(tiles_dir.join(MAP_ARCHIVE).exists());
         // Intermediates are cleaned up.
         assert!(!tiles_dir.join(WORLD_ARCHIVE).exists());
+        assert!(!tiles_dir.join(SURROUNDINGS_ARCHIVE).exists());
         assert!(!tiles_dir.join(GERMANY_ARCHIVE).exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -378,5 +413,13 @@ mod tests {
     #[test]
     fn germany_bbox_is_hard_coded() {
         assert_eq!(GERMANY_BBOX, "5.8,47.2,15.1,55.1");
+    }
+
+    #[test]
+    fn surroundings_bbox_is_hard_coded() {
+        assert_eq!(
+            SURROUNDINGS_BBOX,
+            "-11.112889,43.555498,27.187828,57.470545"
+        );
     }
 }
