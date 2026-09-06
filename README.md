@@ -94,6 +94,20 @@ secret_key = "minioadmin"
 bucket = "bike-counter-images"
 region = "us-east-1"
 
+# OpenData export job: publishes the immutable daily/monthly measurement files
+# (parquet / csv.gz / json) under /api/v1/opendata (defaults shown; optional).
+[opendata]
+export_cron = "0 30 3 * * *"
+export_max_heartbeat_interval_seconds = 600
+
+# Dedicated bucket on the same MinIO server holding the immutable opendata files.
+[opendata_storage]
+endpoint = "http://minio:9000"
+access_key = "minioadmin"
+secret_key = "minioadmin"
+bucket = "bike-counter-opendata"
+region = "us-east-1"
+
 [[data_sources]]
 name = "Münster"
 
@@ -359,6 +373,41 @@ station↔asset link; the binary bytes never touch the database.
   - `asset_cleanup_max_heartbeat_interval_seconds` – **required** (no default),
     same ShedLock-style heartbeat semantics as the data-source update job.
 
+### OpenData files (bulk export)
+
+The processed, immutable measurement data is published as **OpenData** under
+`/api/v1/opendata` for backend-to-backend consumers: per global and per
+per-station **daily** (`YYYY-MM-DD`) and **monthly** (`YYYY-MM`) periods, three
+distribution files are served — `parquet`, `csv.gz` and `json` — containing the
+raw processed rows (`station_id`, `channel_id`, `channel_name`, `timestamp`
+without UTC offset in `Europe/Berlin`, `value`, `resolution_seconds`).
+
+- A dedicated `opendata_export` **scheduled job** (default daily at `03:30`)
+  computes every **complete** period in `Europe/Berlin` (yesterday for daily, the
+  previous calendar month for monthly) that is not yet published and appends the
+  missing files. It runs under the shared ShedLock-style job protocol (claim,
+  RUNNING job, per-period heartbeat, cooperative cancellation) and is
+  cancellable through `POST /api/v1/jobs/{id}/cancel` like every other job.
+- The files are **append-only and immutable**: each run only adds missing files
+  and never rewrites existing ones. The `opendata_files` table is both the
+  ledger (unique object keys) and the job's persisted state, so a crashed or
+  cancelled run is completed on the next invocation (including filling the
+  missing formats of a partially published newest period).
+- The binaries live in the dedicated `bike-counter-opendata` MinIO bucket
+  (`[opendata_storage]`, created by the same `minio-init` container as the image
+  bucket). The registry stores only the metadata (`object_key`, `sha256`,
+  `byte_size`, `period`, `format`, `created_at`).
+- The REST tree streams the files **from the backend** with a strong `ETag`
+  (the `sha256`), `Content-Length`, an immutable `Cache-Control` and
+  `If-None-Match → 304`; MinIO/S3 is never exposed. The `/metadata` document
+  describes the dataset including the JSON schemata for stations and the
+  measurement rows; the station schema/data also carries the provider-native
+  `external_datasource_id` as a note field.
+
+The export-related settings are optional and grouped in `[opendata]` /
+`[opendata_storage]` (see [Configuration](#configuration)); when the sections are
+absent the defaults (above) apply.
+
 ### Persistent provider state
 
 Each configured data source can remember opaque **runtime state** that survives
@@ -588,6 +637,24 @@ counting-station endpoint supports `PATCH` to set a station's GPS coordinates:
 - `GET /api/v1/channels` (optional `?counting_station_id=` and `?name=` substring filters) / `GET /api/v1/channels/{id}`
 - `GET /api/v1/measurements` (optional `?channel_id=` filter plus `?offset=`/`?limit=` pagination, newest first; `limit` defaults to 5000 with no upper bound) / `GET /api/v1/measurements/{id}`
 - `GET /api/v1/measurements/raw` – lean bulk export: same `?channel_id=`, `?offset=`/`?limit=` parameters, but returns a bare JSON array of plain measurement objects (no HATEOAS links and no pagination envelope) for scraping large volumes
+
+The **OpenData** tree (see [OpenData files](#opendata-files-bulk-export)) is
+read-only and discoverable from the root:
+- `GET /api/v1/opendata` – root with HATEOAS links to the metadata, stations and
+  measurement index sub-trees
+- `GET /api/v1/opendata/metadata` – dataset metadata incl. JSON schemata
+- `GET /api/v1/opendata/stations` / `GET /api/v1/opendata/stations.geojson` –
+  the published counting stations (plain JSON / GeoJSON FeatureCollection)
+- `GET /api/v1/opendata/measurements/daily` /
+  `GET /api/v1/opendata/measurements/monthly` (+
+  `/api/v1/opendata/measurements/{daily|monthly}/{date|year_month}`) – global
+  period indices and per-year file listings
+- `GET /api/v1/opendata/stations/{station_id}/measurements/{daily|monthly}` (+
+  the same per-period sub-paths) – per-station period indices and listings
+- File downloads append `/{period}.{parquet|csv.gz|json}`, e.g.
+  `GET /api/v1/opendata/measurements/daily/2026-09-05.parquet` — served with an
+  `ETag` (sha256), `Content-Length`, immutable `Cache-Control` and
+  `If-None-Match → 304`
 
 Every resource includes a `_links` object (HAL-style) pointing to related
 resources, e.g. a station links to its own `self`, its `channels`, its

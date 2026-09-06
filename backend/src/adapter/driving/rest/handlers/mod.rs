@@ -11,6 +11,7 @@ mod data_sources;
 mod health;
 mod jobs;
 mod measurements;
+mod opendata;
 mod persistent_state;
 mod root;
 
@@ -20,6 +21,7 @@ pub use self::data_sources::*;
 pub use self::health::*;
 pub use self::jobs::*;
 pub use self::measurements::*;
+pub use self::opendata::*;
 pub use self::persistent_state::*;
 pub use self::root::*;
 
@@ -41,6 +43,7 @@ use crate::core::domain::error::DomainError;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::opendata::service_port::OpenDataServicePort;
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 
 #[derive(Clone)]
@@ -57,6 +60,10 @@ pub struct AppState {
     pub data_source_analytics_service: Arc<dyn DataSourceAnalyticsServicePort + Send + Sync>,
     pub asset_service: Arc<dyn AssetServicePort>,
     pub asset_storage: Arc<dyn AssetStorage>,
+    /// OpenData file-registry read model (indices + file lookups).
+    pub opendata_service: Arc<dyn OpenDataServicePort + Send + Sync>,
+    /// Dedicated object storage holding the immutable opendata files.
+    pub opendata_storage: Arc<dyn AssetStorage>,
 }
 
 /// Default `offset`/`limit` for the measurements endpoint. `limit` has no upper

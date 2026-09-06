@@ -23,6 +23,24 @@ asset_cleanup_cron="0 0 4 * * *"
 # default); same semantics and guidance as the data-source update interval.
 asset_cleanup_max_heartbeat_interval_seconds=300
 
+# OpenData export job: publishes the immutable daily/monthly measurement files
+# (parquet / csv.gz / json) under /api/v1/opendata.
+[opendata]
+# CRON expression for the export job (default: daily at 03:30, after the
+# previous day's data has landed from every provider).
+export_cron = "0 30 3 * * *"
+# Max heartbeat interval for the export job in seconds (default: 600).
+export_max_heartbeat_interval_seconds = 600
+
+# Dedicated bucket on the same MinIO server holding the immutable opendata files
+# (kept separate from the station-image bucket).
+[opendata_storage]
+endpoint = "http://minio:9000"
+access_key = "minioadmin"
+secret_key = "minioadmin"
+bucket = "bike-counter-opendata"
+region = "us-east-1"
+
 # S3-compatible object storage (MinIO) holding counting-station image binaries.
 # PostgreSQL stores only the metadata; the BFF streams the content to browsers.
 [asset_storage]

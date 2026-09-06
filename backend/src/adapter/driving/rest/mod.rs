@@ -26,8 +26,17 @@ pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
     cancel_job, clear_persistent_state, delete_persistent_state_entry, get_api_root,
     get_channel_by_id, get_counting_station_by_id, get_data_source_by_id, get_health_live,
-    get_health_ready, get_job_by_id, get_measurement_by_id, get_persistent_state, list_channels,
-    list_counting_stations, list_data_sources, list_jobs, list_measurements, list_measurements_raw,
+    get_health_ready, get_job_by_id, get_measurement_by_id, get_opendata_global_daily_file,
+    get_opendata_global_daily_index, get_opendata_global_daily_year,
+    get_opendata_global_monthly_file, get_opendata_global_monthly_index,
+    get_opendata_global_monthly_period, get_opendata_measurements,
+    get_opendata_measurements_metadata, get_opendata_metadata, get_opendata_root,
+    get_opendata_station, get_opendata_station_daily_file, get_opendata_station_daily_index,
+    get_opendata_station_daily_year, get_opendata_station_measurements,
+    get_opendata_station_measurements_metadata, get_opendata_station_monthly_file,
+    get_opendata_station_monthly_index, get_opendata_station_monthly_period, get_persistent_state,
+    list_channels, list_counting_stations, list_data_sources, list_jobs, list_measurements,
+    list_measurements_raw, list_opendata_stations, list_opendata_stations_geojson,
     list_provider_messages, patch_counting_station, put_persistent_state_entry,
     reset_imported_until,
 };
@@ -43,6 +52,7 @@ use crate::core::domain::data_source_analytics::DataSourceAnalyticsServicePort;
 use crate::core::domain::health::service_port::HealthServicePort;
 use crate::core::domain::jobs::service_port::JobServicePort;
 use crate::core::domain::measurements::service_port::MeasurementServicePort;
+use crate::core::domain::opendata::service_port::OpenDataServicePort;
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 
 pub struct RestApiAdapter {
@@ -65,6 +75,8 @@ impl RestApiAdapter {
         data_source_analytics_service: Arc<dyn DataSourceAnalyticsServicePort + Send + Sync>,
         asset_service: Arc<dyn AssetServicePort>,
         asset_storage: Arc<dyn AssetStorage>,
+        opendata_service: Arc<dyn OpenDataServicePort + Send + Sync>,
+        opendata_storage: Arc<dyn AssetStorage>,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -80,6 +92,8 @@ impl RestApiAdapter {
                 data_source_analytics_service,
                 asset_service,
                 asset_storage,
+                opendata_service,
+                opendata_storage,
             },
         }
     }
@@ -177,6 +191,82 @@ impl RestApiAdapter {
             .route("/api/v1/jobs", get(list_jobs))
             .route("/api/v1/jobs/{id}", get(get_job_by_id))
             .route("/api/v1/jobs/{id}/cancel", post(cancel_job))
+            // Public OpenData tree (immutable, append-only measurement files).
+            .route("/api/v1/opendata", get(get_opendata_root))
+            .route("/api/v1/opendata/metadata", get(get_opendata_metadata))
+            .route("/api/v1/opendata/stations", get(list_opendata_stations))
+            .route(
+                "/api/v1/opendata/stations.geojson",
+                get(list_opendata_stations_geojson),
+            )
+            .route(
+                "/api/v1/opendata/measurements",
+                get(get_opendata_measurements),
+            )
+            .route(
+                "/api/v1/opendata/measurements/metadata",
+                get(get_opendata_measurements_metadata),
+            )
+            .route(
+                "/api/v1/opendata/measurements/daily",
+                get(get_opendata_global_daily_index),
+            )
+            .route(
+                "/api/v1/opendata/measurements/daily/{year}",
+                get(get_opendata_global_daily_year),
+            )
+            .route(
+                "/api/v1/opendata/measurements/daily/{year}/{file}",
+                get(get_opendata_global_daily_file),
+            )
+            .route(
+                "/api/v1/opendata/measurements/monthly",
+                get(get_opendata_global_monthly_index),
+            )
+            .route(
+                "/api/v1/opendata/measurements/monthly/{year_month}",
+                get(get_opendata_global_monthly_period),
+            )
+            .route(
+                "/api/v1/opendata/measurements/monthly/{year_month}/{file}",
+                get(get_opendata_global_monthly_file),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}",
+                get(get_opendata_station),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements",
+                get(get_opendata_station_measurements),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/metadata",
+                get(get_opendata_station_measurements_metadata),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/daily",
+                get(get_opendata_station_daily_index),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/daily/{year}",
+                get(get_opendata_station_daily_year),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/daily/{year}/{file}",
+                get(get_opendata_station_daily_file),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/monthly",
+                get(get_opendata_station_monthly_index),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/monthly/{year_month}",
+                get(get_opendata_station_monthly_period),
+            )
+            .route(
+                "/api/v1/opendata/stations/{station_id}/measurements/monthly/{year_month}/{file}",
+                get(get_opendata_station_monthly_file),
+            )
             .route("/health/live", get(get_health_live))
             .route("/health/ready", get(get_health_ready))
             .with_state(app_state)

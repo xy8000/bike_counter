@@ -18,6 +18,7 @@ use crate::core::application::counting_station_service::CountingStationService;
 use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
+use crate::core::application::opendata_service::OpenDataService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::station_analytics::StationAnalyticsService;
@@ -53,6 +54,7 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::MeasurementRepository;
+use crate::core::domain::opendata::service_port::OpenDataServicePort;
 
 pub struct MockCountingStationRepository {
     pub stations: Mutex<Vec<CountingStation>>,
@@ -1012,4 +1014,167 @@ pub fn sample_provider_message_service_with(
         data_sources: vec![data_source_a()],
     });
     Arc::new(ProviderMessageService::new(store, data_source_repository))
+}
+
+// -- OpenData test doubles -----------------------------------------------------
+
+/// In-memory opendata-file registry standing in for the `opendata_files` table.
+#[derive(Default)]
+pub struct MockOpenDataFileRepository {
+    files: Mutex<Vec<crate::core::domain::opendata::file::OpenDataFile>>,
+}
+
+impl MockOpenDataFileRepository {
+    pub fn seed(&self, files: Vec<crate::core::domain::opendata::file::OpenDataFile>) {
+        self.files.lock().unwrap().extend(files);
+    }
+}
+
+impl crate::core::domain::opendata::file_repository_port::OpenDataFileRepository
+    for MockOpenDataFileRepository
+{
+    fn insert(
+        &self,
+        file: &crate::core::domain::opendata::file::OpenDataFile,
+    ) -> Result<(), DomainError> {
+        self.files.lock().unwrap().push(file.clone());
+        Ok(())
+    }
+
+    fn find_by_object_key(
+        &self,
+        object_key: &str,
+    ) -> Result<Option<crate::core::domain::opendata::file::OpenDataFile>, DomainError> {
+        Ok(self
+            .files
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|file| file.object_key == object_key)
+            .cloned())
+    }
+
+    fn list_periods(
+        &self,
+        granularity: crate::core::domain::opendata::file::Granularity,
+        station_id: Option<Uuid>,
+    ) -> Result<Vec<String>, DomainError> {
+        let mut periods: Vec<String> = self
+            .files
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|file| file.granularity == granularity && file.station_id == station_id)
+            .map(|file| file.period.clone())
+            .collect();
+        periods.sort();
+        periods.dedup();
+        Ok(periods)
+    }
+
+    fn find_by_period(
+        &self,
+        granularity: crate::core::domain::opendata::file::Granularity,
+        period: &str,
+        station_id: Option<Uuid>,
+    ) -> Result<Vec<crate::core::domain::opendata::file::OpenDataFile>, DomainError> {
+        Ok(self
+            .files
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|file| {
+                file.granularity == granularity
+                    && file.period == period
+                    && file.station_id == station_id
+            })
+            .cloned()
+            .collect())
+    }
+
+    fn max_period(
+        &self,
+        granularity: crate::core::domain::opendata::file::Granularity,
+        station_id: Option<Uuid>,
+    ) -> Result<Option<String>, DomainError> {
+        Ok(self
+            .list_periods(granularity, station_id)?
+            .into_iter()
+            .next_back())
+    }
+}
+
+/// An [`OpenDataServicePort`] backed by an empty in-memory registry.
+pub fn sample_opendata_service() -> Arc<dyn OpenDataServicePort> {
+    Arc::new(OpenDataService::new(Arc::new(
+        MockOpenDataFileRepository::default(),
+    )))
+}
+
+/// In-memory object storage keyed by object key (stands in for the opendata
+/// MinIO bucket). `put` stores the bytes; `get_stream` streams them back.
+#[derive(Default)]
+pub struct MockObjectStorage {
+    objects: Mutex<HashMap<String, Vec<u8>>>,
+}
+
+impl MockObjectStorage {
+    /// Seeds (or overwrites) the stored bytes of one object key.
+    pub fn put_bytes(&self, object_key: &str, bytes: Vec<u8>) {
+        self.objects
+            .lock()
+            .unwrap()
+            .insert(object_key.to_string(), bytes);
+    }
+
+    /// The stored bytes of one object key.
+    pub fn bytes(&self, object_key: &str) -> Option<Vec<u8>> {
+        self.objects.lock().unwrap().get(object_key).cloned()
+    }
+}
+
+impl AssetStorage for MockObjectStorage {
+    fn ensure_bucket(&self) -> Result<(), DomainError> {
+        Ok(())
+    }
+    fn put(
+        &self,
+        object_key: &ObjectKey,
+        _content_type: &ContentType,
+        bytes: &[u8],
+    ) -> Result<AssetObjectInfo, DomainError> {
+        self.put_bytes(&object_key.0, bytes.to_vec());
+        Ok(AssetObjectInfo {
+            byte_size: bytes.len() as i64,
+        })
+    }
+    fn list_object_keys(&self) -> Result<Vec<ObjectKey>, DomainError> {
+        Ok(self
+            .objects
+            .lock()
+            .unwrap()
+            .keys()
+            .map(|key| ObjectKey(key.clone()))
+            .collect())
+    }
+    fn delete(&self, object_key: &ObjectKey) -> Result<(), DomainError> {
+        self.objects.lock().unwrap().remove(&object_key.0);
+        Ok(())
+    }
+    fn get_stream(
+        &self,
+        object_key: &ObjectKey,
+    ) -> Pin<Box<dyn Future<Output = Result<AssetObjectStream, DomainError>> + Send + '_>> {
+        let bytes = self.bytes(&object_key.0).unwrap_or_default();
+        Box::pin(async move {
+            let body: Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin> =
+                Box::new(futures::stream::iter(vec![Ok(bytes::Bytes::from(bytes))]));
+            Ok(AssetObjectStream { body })
+        })
+    }
+}
+
+/// An [`AssetStorage`] double for the opendata bucket (empty by default).
+pub fn sample_opendata_storage() -> Arc<dyn AssetStorage> {
+    Arc::new(MockObjectStorage::default())
 }

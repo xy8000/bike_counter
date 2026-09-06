@@ -15,6 +15,15 @@ pub const DEFAULT_MAPS_UPDATE_CRON: &str = "0 0 3 1 1,3,5,7,9,11 *";
 /// Default provider log level: provider messages below this severity are
 /// dropped by the core before they are persisted.
 pub const DEFAULT_PROVIDER_LOG_LEVEL: &str = "WARNING";
+/// Default opendata export frequency: daily at 03:30 (CRON syntax), after the
+/// previous day's data has landed from every provider.
+pub const DEFAULT_OPENDATA_EXPORT_CRON: &str = "0 30 3 * * *";
+/// Default max heartbeat interval for the opendata export job in seconds.
+pub const DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 600;
+/// Default bucket name for the opendata file storage (dedicated bucket on the
+/// same MinIO server, kept separate from the station-image bucket so the asset
+/// cleanup job never sees opendata objects).
+pub const DEFAULT_OPENDATA_STORAGE_BUCKET: &str = "bike-counter-opendata";
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
@@ -32,9 +41,17 @@ pub struct Configuration {
     asset_storage: AssetStorageConfiguration,
     /// Self-hosted vector basemap ("maps") configuration.
     maps: MapsConfiguration,
+    /// CRON expression defining when the opendata export job re-triggers.
+    opendata_export_cron: String,
+    /// Required max interval between heartbeats for the opendata export job.
+    opendata_export_max_heartbeat_interval_seconds: i64,
+    /// S3-compatible object storage holding the immutable opendata files
+    /// (dedicated bucket on the same MinIO server as the image assets).
+    opendata_storage: value_objects::OpenDataStorageConfiguration,
     /// Whether the scheduled background jobs (data-source update, asset
-    /// cleanup, tiles update) are started at all. Defaults to `true`; disable
-    /// for test/e2e setups that must never reach out to the providers.
+    /// cleanup, tiles update, opendata export) are started at all. Defaults to
+    /// `true`; disable for test/e2e setups that must never reach out to the
+    /// providers.
     scheduled_jobs_enabled: bool,
 }
 
@@ -92,8 +109,26 @@ impl Configuration {
             asset_cleanup_max_heartbeat_interval_seconds,
             asset_storage,
             maps,
+            opendata_export_cron: DEFAULT_OPENDATA_EXPORT_CRON.to_string(),
+            opendata_export_max_heartbeat_interval_seconds:
+                DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS,
+            opendata_storage: Self::default_opendata_storage(),
             scheduled_jobs_enabled: true,
         })
+    }
+
+    /// The default opendata storage points at the same MinIO server as the
+    /// image assets but uses its own dedicated bucket. The literal values are
+    /// safe, so the fallible constructor is unwrapped here.
+    fn default_opendata_storage() -> value_objects::OpenDataStorageConfiguration {
+        value_objects::OpenDataStorageConfiguration::new(
+            "http://minio:9000".to_string(),
+            "minioadmin".to_string(),
+            "minioadmin".to_string(),
+            DEFAULT_OPENDATA_STORAGE_BUCKET.to_string(),
+            "us-east-1".to_string(),
+        )
+        .expect("the default opendata storage configuration is valid")
     }
 
     pub fn database(&self) -> &DatabaseConfiguration {
@@ -144,8 +179,56 @@ impl Configuration {
         &self.maps
     }
 
+    /// CRON expression defining when the opendata export job re-triggers.
+    pub fn opendata_export_cron(&self) -> &str {
+        &self.opendata_export_cron
+    }
+
+    /// Required max interval between heartbeats for the opendata export job.
+    pub fn opendata_export_max_heartbeat_interval_seconds(&self) -> i64 {
+        self.opendata_export_max_heartbeat_interval_seconds
+    }
+
+    /// The configured opendata export max heartbeat interval as a
+    /// `chrono::Duration` for the domain.
+    pub fn opendata_export_max_heartbeat_interval(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.opendata_export_max_heartbeat_interval_seconds)
+    }
+
+    /// S3-compatible object storage holding the immutable opendata files.
+    pub fn opendata_storage(&self) -> &value_objects::OpenDataStorageConfiguration {
+        &self.opendata_storage
+    }
+
+    /// Overrides the opendata export settings. Consumes and returns `self` so it
+    /// can be chained onto [`Configuration::new`]. Validates the CRON expression
+    /// and the heartbeat interval like the other jobs' configuration.
+    pub fn with_opendata(
+        mut self,
+        opendata_export_cron: String,
+        opendata_export_max_heartbeat_interval_seconds: i64,
+        opendata_storage: value_objects::OpenDataStorageConfiguration,
+    ) -> Result<Self, ConfigError> {
+        cron::Schedule::from_str(&opendata_export_cron).map_err(|error| {
+            ConfigError::InvalidFormat(format!(
+                "invalid opendata.export_cron '{opendata_export_cron}': {error}"
+            ))
+        })?;
+        if opendata_export_max_heartbeat_interval_seconds <= 0 {
+            return Err(ConfigError::InvalidFormat(
+                "opendata.export_max_heartbeat_interval_seconds must be a positive integer"
+                    .to_string(),
+            ));
+        }
+        self.opendata_export_cron = opendata_export_cron;
+        self.opendata_export_max_heartbeat_interval_seconds =
+            opendata_export_max_heartbeat_interval_seconds;
+        self.opendata_storage = opendata_storage;
+        Ok(self)
+    }
+
     /// Whether the scheduled background jobs (data-source update, asset
-    /// cleanup, tiles update) are enabled. Defaults to `true`.
+    /// cleanup, tiles update, opendata export) are enabled. Defaults to `true`.
     pub fn scheduled_jobs_enabled(&self) -> bool {
         self.scheduled_jobs_enabled
     }
@@ -244,6 +327,74 @@ pub mod value_objects {
                 ("asset_storage.secret_key", secret_key),
                 ("asset_storage.bucket", bucket),
                 ("asset_storage.region", region),
+            ];
+            if let Some((name, _)) = values.iter().find(|(_, value)| value.trim().is_empty()) {
+                return Err(ConfigError::EmptyValue(name));
+            }
+
+            let [
+                (_, endpoint),
+                (_, access_key),
+                (_, secret_key),
+                (_, bucket),
+                (_, region),
+            ] = values;
+            Ok(Self {
+                endpoint,
+                access_key,
+                secret_key,
+                bucket,
+                region,
+            })
+        }
+
+        pub fn endpoint(&self) -> &str {
+            &self.endpoint
+        }
+
+        pub fn access_key(&self) -> &str {
+            &self.access_key
+        }
+
+        pub fn secret_key(&self) -> &str {
+            &self.secret_key
+        }
+
+        pub fn bucket(&self) -> &str {
+            &self.bucket
+        }
+
+        pub fn region(&self) -> &str {
+            &self.region
+        }
+    }
+
+    /// S3-compatible object storage (e.g. MinIO) holding the immutable opendata
+    /// files. Same shape as [`AssetStorageConfiguration`]; typically the same
+    /// server/credentials with a dedicated bucket.
+    #[derive(Debug, Clone)]
+    pub struct OpenDataStorageConfiguration {
+        endpoint: String,
+        access_key: String,
+        secret_key: String,
+        bucket: String,
+        region: String,
+    }
+
+    impl OpenDataStorageConfiguration {
+        pub fn new(
+            endpoint: String,
+            access_key: String,
+            secret_key: String,
+            bucket: String,
+            region: String,
+        ) -> Result<Self, ConfigError> {
+            let values = [
+                ("opendata_storage.endpoint", endpoint),
+                ("opendata_storage.access_key", access_key),
+                ("opendata_storage.secret_key", secret_key),
+                ("opendata_storage.bucket", bucket),
+                ("opendata_storage.region", region),
             ];
             if let Some((name, _)) = values.iter().find(|(_, value)| value.trim().is_empty()) {
                 return Err(ConfigError::EmptyValue(name));
@@ -448,9 +599,11 @@ mod tests {
     use super::DEFAULT_ASSET_CLEANUP_CRON;
     use super::DEFAULT_DATA_SOURCE_UPDATE_CRON;
     use super::DEFAULT_MAPS_UPDATE_CRON;
+    use super::DEFAULT_OPENDATA_EXPORT_CRON;
+    use super::DEFAULT_OPENDATA_STORAGE_BUCKET;
     use super::value_objects::{
         AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
-        DatabaseConfiguration, MapsConfiguration,
+        DatabaseConfiguration, MapsConfiguration, OpenDataStorageConfiguration,
     };
     use crate::core::domain::configuration::error::ConfigError;
 
@@ -865,6 +1018,147 @@ mod tests {
                     3600,
                     DEFAULT_ASSET_CLEANUP_CRON.to_string(),
                     interval,
+                ),
+                Err(ConfigError::InvalidFormat(_))
+            ));
+        }
+    }
+
+    fn opendata_storage_config() -> OpenDataStorageConfiguration {
+        OpenDataStorageConfiguration::new(
+            "http://minio:9000".to_string(),
+            "minioadmin".to_string(),
+            "minioadmin".to_string(),
+            DEFAULT_OPENDATA_STORAGE_BUCKET.to_string(),
+            "us-east-1".to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rejects_empty_opendata_storage_values() {
+        let cases = [
+            (
+                "opendata_storage.endpoint",
+                "",
+                "key",
+                "secret",
+                "bucket",
+                "region",
+            ),
+            (
+                "opendata_storage.access_key",
+                "endpoint",
+                "",
+                "secret",
+                "bucket",
+                "region",
+            ),
+            (
+                "opendata_storage.secret_key",
+                "endpoint",
+                "key",
+                "",
+                "bucket",
+                "region",
+            ),
+            (
+                "opendata_storage.bucket",
+                "endpoint",
+                "key",
+                "secret",
+                "",
+                "region",
+            ),
+            (
+                "opendata_storage.region",
+                "endpoint",
+                "key",
+                "secret",
+                "bucket",
+                "",
+            ),
+        ];
+
+        for (name, endpoint, access_key, secret_key, bucket, region) in cases {
+            assert!(matches!(
+                OpenDataStorageConfiguration::new(
+                    endpoint.to_string(),
+                    access_key.to_string(),
+                    secret_key.to_string(),
+                    bucket.to_string(),
+                    region.to_string(),
+                ),
+                Err(ConfigError::EmptyValue(actual)) if actual == name
+            ));
+        }
+    }
+
+    #[test]
+    fn exposes_opendata_storage_values() {
+        let storage = opendata_storage_config();
+        assert_eq!(storage.endpoint(), "http://minio:9000");
+        assert_eq!(storage.access_key(), "minioadmin");
+        assert_eq!(storage.secret_key(), "minioadmin");
+        assert_eq!(storage.bucket(), DEFAULT_OPENDATA_STORAGE_BUCKET);
+        assert_eq!(storage.region(), "us-east-1");
+    }
+
+    #[test]
+    fn with_opendata_overrides_the_export_settings() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        let configured = base
+            .with_opendata(
+                DEFAULT_OPENDATA_EXPORT_CRON.to_string(),
+                43200,
+                opendata_storage_config(),
+            )
+            .unwrap();
+        assert_eq!(
+            configured.opendata_export_cron(),
+            DEFAULT_OPENDATA_EXPORT_CRON
+        );
+        assert_eq!(
+            configured.opendata_export_max_heartbeat_interval_seconds(),
+            43200
+        );
+        assert_eq!(
+            configured.opendata_export_max_heartbeat_interval(),
+            chrono::Duration::seconds(43200)
+        );
+        let storage = configured.opendata_storage();
+        assert_eq!(storage.endpoint(), "http://minio:9000");
+        assert_eq!(storage.access_key(), "minioadmin");
+        assert_eq!(storage.secret_key(), "minioadmin");
+        assert_eq!(storage.bucket(), DEFAULT_OPENDATA_STORAGE_BUCKET);
+        assert_eq!(storage.region(), "us-east-1");
+    }
+
+    #[test]
+    fn with_opendata_rejects_non_positive_heartbeat_interval() {
+        for interval in [0, -1] {
+            let base = configuration(
+                database_config(),
+                vec![],
+                DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                3600,
+                DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+                3600,
+            )
+            .unwrap();
+            assert!(matches!(
+                base.with_opendata(
+                    DEFAULT_OPENDATA_EXPORT_CRON.to_string(),
+                    interval,
+                    opendata_storage_config(),
                 ),
                 Err(ConfigError::InvalidFormat(_))
             ));

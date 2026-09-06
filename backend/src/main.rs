@@ -10,10 +10,12 @@ use uuid::Uuid;
 use crate::adapter::driven::configuration_toml_adapter::ConfigurationTomlAdapter;
 use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
 use crate::adapter::driven::minio_asset_storage::MinioAssetStorage;
+use crate::adapter::driven::opendata_file_generator::OpendataFileGenerator;
 use crate::adapter::driven::postgres::{
     PostgresAssetRepository, PostgresChannelRepository, PostgresCountingStationRepository,
     PostgresDataSourceRepository, PostgresHealthCheck, PostgresImportRunRepository,
-    PostgresJobRepository, PostgresMeasurementRepository, PostgresPersistentStateRepository,
+    PostgresJobRepository, PostgresMeasurementRepository, PostgresOpenDataFileRepository,
+    PostgresOpenDataMeasurementReader, PostgresPersistentStateRepository,
     PostgresProviderMessageRepository, create_pool,
 };
 use crate::adapter::driven::provider_handles::ProviderHandles;
@@ -31,6 +33,8 @@ use crate::core::application::data_source_update_service::DataSourceUpdateServic
 use crate::core::application::job_reconciliation_service::JobReconciliationService;
 use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
+use crate::core::application::opendata_export_service::OpenDataExportService;
+use crate::core::application::opendata_service::OpenDataService;
 use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
@@ -40,6 +44,7 @@ use crate::core::domain::assets::asset::BuiltinImage;
 use crate::core::domain::assets::asset::value_objects::{ContentType, ObjectKey};
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
 use crate::core::domain::assets::service_port::AssetServicePort;
+use crate::core::domain::configuration::configuration::value_objects::AssetStorageConfiguration;
 use crate::core::domain::configuration::repository_port::ConfigurationRepository;
 use crate::core::domain::data_source::persistent_state_port::PersistentStateHandleFactory;
 use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
@@ -281,6 +286,46 @@ fn main() {
         instance_id,
     ));
 
+    // OpenData: a dedicated MinIO bucket holds the immutable measurement files
+    // (separate from the image bucket so the asset-cleanup job never touches
+    // them). The registry is the append-only state; the daily export job
+    // publishes missing global + per-station daily/monthly files.
+    // The opendata storage config has the same shape as the asset one; build an
+    // `AssetStorageConfiguration` for the shared MinIO adapter.
+    let opendata_storage_config = {
+        let config = configuration.opendata_storage();
+        AssetStorageConfiguration::new(
+            config.endpoint().to_string(),
+            config.access_key().to_string(),
+            config.secret_key().to_string(),
+            config.bucket().to_string(),
+            config.region().to_string(),
+        )
+        .expect("the configured opendata storage is valid")
+    };
+    let opendata_storage = Arc::new(
+        MinioAssetStorage::new(&opendata_storage_config).unwrap_or_else(|error| {
+            panic!("Failed to initialize OpenData object storage: {error:?}")
+        }),
+    );
+    opendata_storage
+        .ensure_bucket()
+        .unwrap_or_else(|error| panic!("Failed to ensure opendata storage bucket: {error:?}"));
+    let opendata_file_repo = Arc::new(PostgresOpenDataFileRepository::new(&pool));
+    let opendata_measurement_reader = Arc::new(PostgresOpenDataMeasurementReader::new(&pool));
+    let opendata_file_generator = Arc::new(OpendataFileGenerator);
+    let opendata_service = Arc::new(OpenDataService::new(opendata_file_repo.clone()));
+    let opendata_export_service = Arc::new(OpenDataExportService::new(
+        job_repo.clone(),
+        opendata_file_repo.clone(),
+        opendata_measurement_reader,
+        opendata_file_generator,
+        opendata_storage.clone(),
+        counting_station_repo.clone(),
+        configuration.clone(),
+        instance_id,
+    ));
+
     // Periodic watcher that reconciles stale/cancelled jobs via their
     // heartbeats (see JobReconciliationService); spawned alongside the cron
     // schedulers when scheduled jobs are enabled.
@@ -314,6 +359,8 @@ fn main() {
         data_source_analytics_service,
         asset_service,
         asset_storage,
+        opendata_service,
+        opendata_storage,
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
@@ -338,6 +385,10 @@ fn main() {
             tokio::spawn(job_scheduler::run_scheduler(
                 tiles_update_service,
                 configuration.maps().update_cron().to_string(),
+            ));
+            tokio::spawn(job_scheduler::run_scheduler(
+                opendata_export_service,
+                configuration.opendata_export_cron().to_string(),
             ));
             // The job watcher reconciles stale/cancelled jobs on a fixed short
             // interval independent of the (possibly sparse) cron schedules.

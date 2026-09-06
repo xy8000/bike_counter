@@ -25,6 +25,8 @@ async fn root_returns_hateoas_links() {
     assert_eq!(links["channels"]["href"], "/api/v1/channels");
     assert_eq!(links["measurements"]["href"], "/api/v1/measurements");
     assert_eq!(links["data-sources"]["href"], "/api/v1/data-sources");
+    assert_eq!(links["jobs"]["href"], "/api/v1/jobs");
+    assert_eq!(links["opendata"]["href"], "/api/v1/opendata");
     assert_eq!(links["health-live"]["href"], "/health/live");
     assert_eq!(links["health-ready"]["href"], "/health/ready");
     assert_eq!(links["swagger-ui"]["href"], "/swagger-ui/");
@@ -60,6 +62,69 @@ async fn openapi_document_is_served() {
             "OpenAPI document should contain {path}"
         );
     }
+}
+
+#[tokio::test]
+async fn openapi_examples_list_the_root_and_opendata_hateoas_links() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api-docs/openapi.json").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let response_example = |path: &str| -> serde_json::Value {
+        body["paths"][path]["get"]["responses"]["200"]["content"]["application/json"]["example"]
+            .clone()
+    };
+
+    // The REST root documents every HATEOAS link of the discovery payload.
+    let root = response_example("/api/v1");
+    let root_links = root["_links"]
+        .as_object()
+        .expect("root OpenAPI example must list _links");
+    assert_eq!(root_links["self"]["href"], "/api/v1");
+    assert_eq!(root_links["opendata"]["href"], "/api/v1/opendata");
+    assert_eq!(root_links["jobs"]["href"], "/api/v1/jobs");
+    assert_eq!(
+        root_links["counting-stations"]["href"],
+        "/api/v1/counting-stations"
+    );
+
+    // The OpenData JSON endpoints that return a `_links` payload document their
+    // real links (each entry keeps `{ href }`).
+    let opendata_root = response_example("/api/v1/opendata");
+    let opendata_root_links = opendata_root["_links"]
+        .as_object()
+        .expect("opendata root example must list _links");
+    assert_eq!(
+        opendata_root_links["metadata"]["href"],
+        "/api/v1/opendata/metadata"
+    );
+    assert_eq!(
+        opendata_root_links["stations_geojson"]["href"],
+        "/api/v1/opendata/stations.geojson"
+    );
+
+    let measurements = response_example("/api/v1/opendata/measurements");
+    let measurements_links = measurements["_links"]
+        .as_object()
+        .expect("measurements example must list _links");
+    assert_eq!(
+        measurements_links["daily"]["href"],
+        "/api/v1/opendata/measurements/daily"
+    );
+    assert_eq!(
+        measurements_links["monthly"]["href"],
+        "/api/v1/opendata/measurements/monthly"
+    );
+
+    let station_measurements =
+        response_example("/api/v1/opendata/stations/{station_id}/measurements");
+    let station_links = station_measurements["_links"]
+        .as_object()
+        .expect("station measurements example must list _links");
+    assert_eq!(
+        station_links["self"]["href"],
+        "/api/v1/opendata/stations/11111111-1111-1111-1111-111111111111/measurements"
+    );
 }
 
 #[tokio::test]

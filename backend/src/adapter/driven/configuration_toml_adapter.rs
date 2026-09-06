@@ -3,11 +3,13 @@ use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
     AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
-    DatabaseConfiguration, MapsConfiguration,
+    DatabaseConfiguration, MapsConfiguration, OpenDataStorageConfiguration,
 };
 use crate::core::domain::configuration::configuration::{
     Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
-    DEFAULT_MAPS_UPDATE_CRON, DEFAULT_PROVIDER_LOG_LEVEL,
+    DEFAULT_MAPS_UPDATE_CRON, DEFAULT_OPENDATA_EXPORT_CRON,
+    DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS, DEFAULT_OPENDATA_STORAGE_BUCKET,
+    DEFAULT_PROVIDER_LOG_LEVEL,
 };
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::configuration::repository_port::ConfigurationRepository;
@@ -27,6 +29,13 @@ struct ConfigurationDto {
     asset_storage: AssetStorageDto,
     #[serde(default = "default_maps")]
     maps: MapsDto,
+    /// Optional opendata export job settings (defaults when omitted).
+    #[serde(default = "default_opendata")]
+    opendata: OpenDataDto,
+    /// Optional opendata object storage settings (defaults to the MinIO server
+    /// with a dedicated bucket when omitted).
+    #[serde(default = "default_opendata_storage")]
+    opendata_storage: OpenDataStorageDto,
     /// Whether the scheduled background jobs are started (default `true`).
     /// Set to `false` for e2e/test setups that must never reach the providers.
     #[serde(default = "default_scheduled_jobs_enabled")]
@@ -88,6 +97,27 @@ fn default_maps() -> MapsDto {
     }
 }
 
+/// Default `[opendata]` table used when the section is omitted entirely.
+fn default_opendata() -> OpenDataDto {
+    OpenDataDto {
+        export_cron: DEFAULT_OPENDATA_EXPORT_CRON.to_string(),
+        export_max_heartbeat_interval_seconds:
+            DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS,
+    }
+}
+
+/// Default `[opendata_storage]` table used when the section is omitted
+/// entirely: the same MinIO server/credentials as the images, dedicated bucket.
+fn default_opendata_storage() -> OpenDataStorageDto {
+    OpenDataStorageDto {
+        endpoint: "http://minio:9000".to_string(),
+        access_key: "minioadmin".to_string(),
+        secret_key: "minioadmin".to_string(),
+        bucket: DEFAULT_OPENDATA_STORAGE_BUCKET.to_string(),
+        region: "us-east-1".to_string(),
+    }
+}
+
 /// Validates a provider `log_level` string against the known severity values
 /// and returns it unchanged on success (the upper-case wire representation).
 fn parse_log_level(raw: &str) -> Result<String, ConfigError> {
@@ -134,6 +164,56 @@ struct MapsDto {
     protomaps_build_url: String,
     #[serde(default = "default_maps_go_pmtiles_version")]
     go_pmtiles_version: String,
+}
+
+#[derive(Deserialize)]
+struct OpenDataDto {
+    #[serde(default = "default_opendata_export_cron")]
+    export_cron: String,
+    #[serde(default = "default_opendata_export_max_heartbeat_interval")]
+    export_max_heartbeat_interval_seconds: i64,
+}
+
+fn default_opendata_export_cron() -> String {
+    DEFAULT_OPENDATA_EXPORT_CRON.to_string()
+}
+
+fn default_opendata_export_max_heartbeat_interval() -> i64 {
+    DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS
+}
+
+#[derive(Deserialize)]
+struct OpenDataStorageDto {
+    #[serde(default = "default_opendata_storage_endpoint")]
+    endpoint: String,
+    #[serde(default = "default_opendata_storage_access_key")]
+    access_key: String,
+    #[serde(default = "default_opendata_storage_secret_key")]
+    secret_key: String,
+    #[serde(default = "default_opendata_storage_bucket")]
+    bucket: String,
+    #[serde(default = "default_opendata_storage_region")]
+    region: String,
+}
+
+fn default_opendata_storage_endpoint() -> String {
+    "http://minio:9000".to_string()
+}
+
+fn default_opendata_storage_access_key() -> String {
+    "minioadmin".to_string()
+}
+
+fn default_opendata_storage_secret_key() -> String {
+    "minioadmin".to_string()
+}
+
+fn default_opendata_storage_bucket() -> String {
+    DEFAULT_OPENDATA_STORAGE_BUCKET.to_string()
+}
+
+fn default_opendata_storage_region() -> String {
+    "us-east-1".to_string()
 }
 
 pub struct ConfigurationTomlAdapter {
@@ -187,6 +267,14 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             dto.maps.go_pmtiles_version,
         )?;
 
+        let opendata_storage = OpenDataStorageConfiguration::new(
+            dto.opendata_storage.endpoint,
+            dto.opendata_storage.access_key,
+            dto.opendata_storage.secret_key,
+            dto.opendata_storage.bucket,
+            dto.opendata_storage.region,
+        )?;
+
         Configuration::new(
             database,
             data_sources,
@@ -196,6 +284,11 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             dto.asset_cleanup_cron,
             dto.asset_cleanup_max_heartbeat_interval_seconds,
             maps,
+        )?
+        .with_opendata(
+            dto.opendata.export_cron,
+            dto.opendata.export_max_heartbeat_interval_seconds,
+            opendata_storage,
         )
         .map(|configuration| configuration.with_scheduled_jobs_enabled(dto.scheduled_jobs_enabled))
     }
@@ -796,6 +889,106 @@ mod tests {
             result,
             Err(ConfigError::InvalidFormat(message))
                 if message.contains("maps.update_max_heartbeat_interval_seconds")
+        ));
+    }
+
+    #[test]
+    fn defaults_opendata_settings_when_sections_absent() {
+        let path = write_config(&with_asset_section(
+            "database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n",
+        ));
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(
+            configuration.opendata_export_cron(),
+            super::DEFAULT_OPENDATA_EXPORT_CRON
+        );
+        assert_eq!(
+            configuration.opendata_export_max_heartbeat_interval_seconds(),
+            super::DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            configuration.opendata_storage().bucket(),
+            "bike-counter-opendata"
+        );
+    }
+
+    #[test]
+    fn reads_explicit_opendata_sections() {
+        let path = write_config(
+            "asset_cleanup_cron = \"0 0 4 * * *\"\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
+            database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
+            [asset_storage]\n\
+            endpoint = \"http://minio:9000\"\n\
+            access_key = \"minioadmin\"\n\
+            secret_key = \"minioadmin\"\n\
+            bucket = \"bike-counter-images\"\n\
+            region = \"us-east-1\"\n\
+            [opendata]\n\
+            export_cron = \"0 15 4 * * *\"\n\
+            export_max_heartbeat_interval_seconds = 1800\n\
+            [opendata_storage]\n\
+            endpoint = \"http://minio:9000\"\n\
+            access_key = \"minioadmin\"\n\
+            secret_key = \"minioadmin\"\n\
+            bucket = \"bike-counter-opendata\"\n\
+            region = \"eu-central-1\"\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        let configuration = result.unwrap();
+        assert_eq!(configuration.opendata_export_cron(), "0 15 4 * * *");
+        assert_eq!(
+            configuration.opendata_export_max_heartbeat_interval_seconds(),
+            1800
+        );
+        assert_eq!(
+            configuration.opendata_storage().bucket(),
+            "bike-counter-opendata"
+        );
+        assert_eq!(configuration.opendata_storage().region(), "eu-central-1");
+    }
+
+    #[test]
+    fn rejects_invalid_opendata_export_cron() {
+        let path = write_config(
+            "asset_cleanup_cron = \"0 0 4 * * *\"\n\
+            asset_cleanup_max_heartbeat_interval_seconds = 3600\n\
+            database_url = \"postgres://localhost\"\n\
+            database_user = \"user\"\n\
+            database_password = \"password\"\n\
+            database_name = \"database\"\n\
+            data_source_update_max_heartbeat_interval_seconds = 3600\n\
+            [asset_storage]\n\
+            endpoint = \"http://minio:9000\"\n\
+            access_key = \"minioadmin\"\n\
+            secret_key = \"minioadmin\"\n\
+            bucket = \"bike-counter-images\"\n\
+            region = \"us-east-1\"\n\
+            [opendata]\n\
+            export_cron = \"not a cron\"\n",
+        );
+
+        let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(matches!(
+            result,
+            Err(ConfigError::InvalidFormat(message)) if message.contains("opendata")
         ));
     }
 }

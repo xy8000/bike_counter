@@ -22,6 +22,7 @@ pub mod jobs;
 pub mod measurements;
 pub mod messages;
 pub mod mocks;
+pub mod opendata;
 pub mod persistent_state;
 pub mod root;
 
@@ -41,12 +42,14 @@ use crate::core::application::persistent_state_service::PersistentStateService;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::health::{HealthService, HealthStatus};
+use crate::core::domain::opendata::service_port::OpenDataServicePort;
 use fixtures::sample_job_repository;
 use mocks::{
     MockDataSourceRepository, MockJobRepository, mock_health_service, sample_asset_service,
     sample_asset_storage, sample_channel_service, sample_counting_station_service,
     sample_data_source_analytics_service, sample_data_source_service, sample_job_service,
-    sample_measurement_service, sample_persistent_state_service, sample_provider_message_service,
+    sample_measurement_service, sample_opendata_service, sample_opendata_storage,
+    sample_persistent_state_service, sample_provider_message_service,
     sample_station_analytics_service,
 };
 
@@ -109,6 +112,8 @@ impl TestApp {
             sample_data_source_analytics_service(),
             sample_asset_service(),
             sample_asset_storage(),
+            sample_opendata_service(),
+            sample_opendata_storage(),
         )
         .router();
         Self { router }
@@ -132,6 +137,8 @@ impl TestApp {
             sample_data_source_analytics_service(),
             sample_asset_service(),
             sample_asset_storage(),
+            sample_opendata_service(),
+            sample_opendata_storage(),
         )
         .router();
         Self { router }
@@ -155,6 +162,8 @@ impl TestApp {
             sample_data_source_analytics_service(),
             sample_asset_service(),
             sample_asset_storage(),
+            sample_opendata_service(),
+            sample_opendata_storage(),
         )
         .router();
         Self { router }
@@ -178,6 +187,8 @@ impl TestApp {
             sample_data_source_analytics_service(),
             sample_asset_service(),
             sample_asset_storage(),
+            sample_opendata_service(),
+            sample_opendata_storage(),
         )
         .router();
         Self { router }
@@ -202,6 +213,34 @@ impl TestApp {
             sample_data_source_analytics_service(),
             sample_asset_service(),
             sample_asset_storage(),
+            sample_opendata_service(),
+            sample_opendata_storage(),
+        )
+        .router();
+        Self { router }
+    }
+
+    /// Builds a router with custom OpenData read-model service and object
+    /// storage (used by the opendata index/file tests).
+    pub fn with_opendata(
+        opendata_service: Arc<dyn OpenDataServicePort + Send + Sync>,
+        opendata_storage: Arc<dyn crate::core::domain::assets::asset_storage_port::AssetStorage>,
+    ) -> Self {
+        let router = RestApiAdapter::new(
+            sample_counting_station_service(),
+            sample_channel_service(),
+            sample_measurement_service(),
+            sample_data_source_service(MockDataSourceRepository::default()),
+            sample_job_service(sample_job_repository()),
+            mock_health_service(HealthStatus::Up),
+            sample_persistent_state_service(),
+            sample_provider_message_service(),
+            sample_station_analytics_service(),
+            sample_data_source_analytics_service(),
+            sample_asset_service(),
+            sample_asset_storage(),
+            opendata_service,
+            opendata_storage,
         )
         .router();
         Self { router }

@@ -8,5 +8,6 @@ pub mod error;
 pub mod health;
 pub mod jobs;
 pub mod measurements;
+pub mod opendata;
 pub mod station_analytics;
 pub mod tiles;

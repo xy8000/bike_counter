@@ -31,6 +31,7 @@ impl ApiRootDto {
             LinkDto::new("/api/v1/data-sources"),
         );
         links.insert("jobs".to_string(), LinkDto::new("/api/v1/jobs"));
+        links.insert("opendata".to_string(), LinkDto::new("/api/v1/opendata"));
         links.insert("health-live".to_string(), LinkDto::new("/health/live"));
         links.insert("health-ready".to_string(), LinkDto::new("/health/ready"));
         links.insert("swagger-ui".to_string(), LinkDto::new("/swagger-ui/"));

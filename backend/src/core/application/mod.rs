@@ -10,6 +10,8 @@ pub mod job_heartbeat;
 pub mod job_reconciliation_service;
 pub mod job_service;
 pub mod measurement_service;
+pub mod opendata_export_service;
+pub mod opendata_service;
 pub mod persistent_state_service;
 pub mod provider_message_service;
 pub mod startup_service;

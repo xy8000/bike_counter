@@ -7,6 +7,7 @@ pub mod http;
 pub mod leipzig_wfs;
 pub mod minio_asset_storage;
 pub mod muenster_github;
+pub mod opendata_file_generator;
 pub mod postgres;
 pub mod provider_handles;
 pub mod source_merge;
