@@ -11,6 +11,7 @@ import { stationMarkerImage } from '../../lib/map'
 import {
   buildStationClusterIndex,
   clusterExpansionZoom,
+  clusterMarkerKey,
   clusterStationsForView,
   isClusterFeature,
   stationFromPoint,
@@ -84,11 +85,21 @@ export function MapView({
   // between, so the index is reused across moves).
   const stationIndex = useMemo(() => buildStationClusterIndex(stations ?? []), [stations])
 
-  // The features to render for the current view: cluster circles + ungrouped
-  // station flags. Empty until the map has reported its first viewport.
-  const clusterFeatures = useMemo(() => {
+  // The items to render for the current view: cluster circles + ungrouped
+  // station flags, each paired with a stable React key. Circle markers are
+  // keyed by their sorted member station ids (see `clusterMarkerKey`) rather
+  // than the Supercluster-internal cluster id, which churns when a pan/zoom
+  // refetch changes the visible set — a changed key remounts the marker and
+  // blinks it for a frame. Flag markers keep their station id. Empty until the
+  // map has reported its first viewport.
+  const viewItems = useMemo(() => {
     if (!stationIndex || !viewportBounds || zoom === null) return []
-    return clusterStationsForView(stationIndex, viewportBounds, zoom)
+    return clusterStationsForView(stationIndex, viewportBounds, zoom).map((feature) => ({
+      feature,
+      key: isClusterFeature(feature)
+        ? clusterMarkerKey(stationIndex, feature.properties.cluster_id)
+        : stationFromPoint(feature).id,
+    }))
   }, [stationIndex, viewportBounds, zoom])
 
   // "Click a circle to zoom into it": ease to the cluster's expansion zoom, the
@@ -122,16 +133,12 @@ export function MapView({
         onDeselect()
       }}
     >
-      {clusterFeatures.map((feature) => {
+      {viewItems.map(({ feature, key }) => {
         if (isClusterFeature(feature)) {
           const [longitude, latitude] = feature.geometry.coordinates
           const count = feature.properties.point_count
           return (
-            <Marker
-              key={`cluster-${feature.properties.cluster_id}`}
-              longitude={longitude}
-              latitude={latitude}
-            >
+            <Marker key={key} longitude={longitude} latitude={latitude}>
               {/* A numbered circle instead of the stacked flags it stands for.
                   `-translate-x/y-1/2` centres it on the coordinate; the marker
                   DOM element is a child of the map container, so its click
@@ -160,7 +167,7 @@ export function MapView({
         // void-click guard ignores .maplibregl-marker clicks as a second layer).
         const station = stationFromPoint(feature)
         return (
-          <Marker key={station.id} longitude={station.longitude} latitude={station.latitude}>
+          <Marker key={key} longitude={station.longitude} latitude={station.latitude}>
             <div
               className="cursor-pointer"
               onClick={(event) => {

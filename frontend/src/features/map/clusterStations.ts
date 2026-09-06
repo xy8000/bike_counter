@@ -41,15 +41,25 @@ export function buildStationClusterIndex(stations: StationMap[]): StationCluster
     maxZoom: CLUSTER_MAX_ZOOM,
     minPoints: CLUSTER_MIN_POINTS,
   })
-  const points: InputFeature<StationClusterProps>[] = stations.map((station) => ({
-    type: 'Feature',
-    properties: {
-      id: station.id,
-      name: station.name,
-      status: station.status,
-    },
-    geometry: { type: 'Point', coordinates: [station.longitude, station.latitude] },
-  }))
+  // Sort the points by a stable key (id) so the cluster ids Supercluster assigns
+  // depend only on the station set, not on the order the BFF happens to return
+  // them in. Identical circles then keep identical keys across refetches and are
+  // reconciled instead of remounted (which would make them blink).
+  const points: InputFeature<StationClusterProps>[] = stations
+    .map(
+      // The explicit return type keeps `type` as the literal 'Feature' (and the
+      // sortable element as `InputFeature`) after the chained `.sort`.
+      (station): InputFeature<StationClusterProps> => ({
+        type: 'Feature',
+        properties: {
+          id: station.id,
+          name: station.name,
+          status: station.status,
+        },
+        geometry: { type: 'Point', coordinates: [station.longitude, station.latitude] },
+      }),
+    )
+    .sort((a, b) => a.properties.id.localeCompare(b.properties.id))
   index.load(points)
   return index
 }
@@ -81,6 +91,20 @@ export function isClusterFeature(feature: StationFeature): feature is ClusterFea
 /// ("click to zoom": flying there un-groups the circle).
 export function clusterExpansionZoom(index: StationClusterIndex, clusterId: number): number {
   return index.getClusterExpansionZoom(clusterId)
+}
+
+/// A stable React key for a cluster circle: the sorted member station ids joined
+/// with '|'. Unlike the Supercluster-internal `cluster_id` — assigned by tree
+/// order, so it shifts whenever a pan/zoom refetch changes the visible station
+/// set — this key stays identical for a circle that keeps the same members
+/// across a refetch. A stable key lets React reconcile the marker instead of
+/// remounting it, which would make the circle blink for a frame.
+export function clusterMarkerKey(index: StationClusterIndex, clusterId: number): string {
+  return index
+    .getLeaves(clusterId, Infinity)
+    .map((leaf) => leaf.properties.id)
+    .sort()
+    .join('|')
 }
 
 /// Rebuild a `StationMap`-shaped marker from an ungrouped point feature.
