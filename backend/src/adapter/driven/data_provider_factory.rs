@@ -8,6 +8,7 @@ use crate::adapter::driven::eco_counter::{
     EcoCounterV1Adapter, EcoCounterV2Adapter, EcoCounterWebAdapter,
 };
 use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
+use crate::adapter::driven::leipzig_wfs::LeipzigWfsAdapter;
 use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
@@ -27,6 +28,8 @@ impl DataProviderFactory for DataProviderFactoryImpl {
             Ok(Arc::new(BonnOpendataAdapter::new(config)?))
         } else if config.provider().provider_type() == HamburgStaAdapter::provider_type() {
             Ok(Arc::new(HamburgStaAdapter::new(config)?))
+        } else if config.provider().provider_type() == LeipzigWfsAdapter::provider_type() {
+            Ok(Arc::new(LeipzigWfsAdapter::new(config)?))
         } else if config.provider().provider_type() == EcoCounterV1Adapter::provider_type() {
             Ok(Arc::new(EcoCounterV1Adapter::new(config)?))
         } else if config.provider().provider_type() == EcoCounterV2Adapter::provider_type() {
@@ -52,6 +55,7 @@ mod tests {
         EcoCounterV1Adapter, EcoCounterV2Adapter, EcoCounterWebAdapter,
     };
     use crate::adapter::driven::hamburg_sta::HamburgStaAdapter;
+    use crate::adapter::driven::leipzig_wfs::LeipzigWfsAdapter;
     use crate::adapter::driven::muenster_github::MuensterGithubAdapter;
     use crate::core::domain::configuration::configuration::value_objects::{
         DataProviderConfiguration, DataSourceConfiguration,
@@ -99,6 +103,27 @@ mod tests {
             "https://iot.hamburg.de/v1.0/".to_string(),
         );
         let config = data_source(HamburgStaAdapter::provider_type(), vars);
+
+        let factory = DataProviderFactoryImpl;
+        assert!(factory.build(&config).is_ok());
+    }
+
+    #[test]
+    fn builds_leipzig_provider_type() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "stations_url".to_string(),
+            "https://geodienste.leipzig.de/l3/OpenData/wfs?service=WFS".to_string(),
+        );
+        vars.insert(
+            "hourly_url".to_string(),
+            "https://geodienste.leipzig.de/l3/OpenData/wfs?service=WFS".to_string(),
+        );
+        vars.insert(
+            "daily_url".to_string(),
+            "https://geodienste.leipzig.de/l3/OpenData/wfs?service=WFS".to_string(),
+        );
+        let config = data_source(LeipzigWfsAdapter::provider_type(), vars);
 
         let factory = DataProviderFactoryImpl;
         assert!(factory.build(&config).is_ok());

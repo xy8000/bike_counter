@@ -1,8 +1,8 @@
 # Bike-Counter
 
 This Repository can be used to analyse the Bike-Counter-Stations of Münster,
-Bonn, Hamburg and selected Eco-Counter stations (all imported from their
-official Open Data / public sources; see [Data sources](#data-sources)).
+Bonn, Hamburg, Leipzig and selected Eco-Counter stations (all imported from
+their official Open Data / public sources; see [Data sources](#data-sources)).
 
 It is a **monorepo** with two sub-projects:
 
@@ -237,6 +237,22 @@ drives the per-measurement `resolution_seconds` (300) and the exact `interval_en
 Its vars are `base_url` (optional, defaults to the official root),
 `max_measurement_batch_size` / `cache_duration` (optional, defaults `500` / `300`)
 and `include_legacy` (optional, defaults `true`).
+
+The **Leipzig** provider (`leipzig_wfs_http_provider`) reads the **official
+Leipzig WFS layers** (`geodienste.leipzig.de`, GeoServer,
+`outputFormat=application/json`): the static station locations
+(`radverkehr_dauerzaehlstelle_standort_statisch`) and **both** the hourly
+(`radverkehr_dauerzaehlstelle_anzahl_stunde_zeitreihe`, 3600 s) and the daily
+(`radverkehr_dauerzaehlstelle_anzahl_tag_zeitreihe`, 86400 s, calendar-anchored)
+time-series layers. Its vars are the three `stations_url` / `hourly_url` /
+`daily_url` `GetFeature` URLs (plus optional `max_measurement_batch_size` /
+`cache_duration` / `wfs_page_size`). Each station maps to one channel keyed by
+`stationid`; the hourly and daily rows coexist per channel at their respective
+resolutions. The `geometry.coordinates` are **ETRS89 / UTM zone 33N** and are
+converted to WGS84 in code; the hourly `phenomenontime` is RFC 3339 with a UTC
+offset, the daily one is a Europe/Berlin calendar date converted DST-aware. See
+[`backend/src/adapter/driven/leipzig_wfs/`](backend/src/adapter/driven/leipzig_wfs/README.md:1)
+for the details.
 
 Eco-Counter is imported through **three separate providers**, each with its own
 `type` and its own `[[data_sources]]` entry (there is **no `modes` var**):

@@ -103,6 +103,30 @@ include_legacy = "true"
 concurrency = "8"
 
 [[data_sources]]
+name = "Leipzig"
+
+[data_sources.provider]
+type = "leipzig_wfs_http_provider"
+# Minimum provider-message severity to persist (default: WARNING).
+log_level = "WARNING"
+
+[data_sources.provider.vars]
+# Official Leipzig WFS layers (geodienste.leipzig.de, GeoServer, GeoJSON output).
+# Station coordinates are ETRS89 / UTM zone 33N; the adapter converts them to
+# WGS84 in code. Measurement `phenomenontime` carries the counted interval start.
+# Stations (static locations).
+stations_url = "https://geodienste.leipzig.de/l3/OpenData/wfs?service=WFS&version=2.0.0&request=GetFeature&typeName=OpenData%3Aradverkehr_dauerzaehlstelle_standort_statisch&outputFormat=application%2Fjson"
+# Hourly counts (3600 s resolution; phenomenontime is RFC 3339 with UTC offset).
+hourly_url = "https://geodienste.leipzig.de/l3/OpenData/wfs?service=WFS&version=2.0.0&request=GetFeature&typeName=OpenData%3Aradverkehr_dauerzaehlstelle_anzahl_stunde_zeitreihe&outputFormat=application%2Fjson"
+# Daily counts (86400 s, calendar-anchored Europe/Berlin; phenomenontime is a date).
+daily_url = "https://geodienste.leipzig.de/l3/OpenData/wfs?service=WFS&version=2.0.0&request=GetFeature&typeName=OpenData%3Aradverkehr_dauerzaehlstelle_anzahl_tag_zeitreihe&outputFormat=application%2Fjson"
+max_measurement_batch_size = "500"
+# Cache window for the parsed index, in seconds (default 300).
+cache_duration = "300"
+# WFS `count` per page when fetching the time-series layers (default 5000).
+wfs_page_size = "5000"
+
+[[data_sources]]
 name = "Eco-Counter"
 
 [data_sources.provider]
