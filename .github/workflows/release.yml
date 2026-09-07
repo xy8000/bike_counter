@@ -1,0 +1,109 @@
+name: Release
+
+# Publishes a new version: on every pushed `v*` tag the workflow builds the
+# backend and frontend images (linux/amd64 + linux/arm64), pushes them to
+# Docker Hub under the `xy8000` namespace, signs them with Sigstore keyless
+# cosign, and creates the GitHub Release.
+#
+# Pushed tags (semver without the `v` prefix) and a `latest` alias:
+#   v0.0.1 -> xy8000/bike-counter-backend:0.0.1 + :latest
+#            xy8000/bike-counter-frontend:0.0.1 + :latest
+#
+# Signing is keyless (no stored keys): the GitHub Actions OIDC identity signs
+# each image digest via Sigstore Fulcio/Rekor, which is why the `id-token:
+# write` permission below is required. Consumers verify with:
+#   cosign verify \
+#     --certificate-identity-regexp 'https://github.com/xy8000/bike_counter/.github/workflows/release.yml@refs/tags/v[0-9.]+' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     xy8000/bike-counter-backend:0.0.1
+#
+# Prerequisites (owner-side, done once):
+#   - Docker Hub repositories xy8000/bike-counter-backend and
+#     xy8000/bike-counter-frontend (or allow auto-creation on push)
+#   - GitHub repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN
+#     (a Docker Hub access token with Read & Write scope, not the account
+#     password — cosign stores signatures in the same repository)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-and-push:
+    name: Build, push and sign images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            file: ./backend/Dockerfile
+            image: xy8000/bike-counter-backend
+          - name: frontend
+            context: ./frontend
+            file: ./frontend/Dockerfile
+            image: xy8000/bike-counter-frontend
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the images with cosign (keyless)
+        env:
+          COSIGN_YES: "true"
+          # Sign the immutable digest, not a mutable tag.
+          IMAGE_REF: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "${IMAGE_REF}"
+
+  release:
+    name: Create GitHub Release
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
