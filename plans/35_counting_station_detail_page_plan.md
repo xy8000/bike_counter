@@ -1,6 +1,6 @@
 # 35 - Counting-station detail page (layout + stats + graphs)
 
-Status: drafted
+Status: implemented
 
 ## Problem
 
@@ -342,13 +342,13 @@ flowchart TD
 
 ## Definition of done
 
-- [ ] Detail page renders image, highlighted map, name/description, overview
+- [x] Detail page renders image, highlighted map, name/description, overview
       cards (with year), the five graphs (labeled axes, half-page) and the
       nerd-stats (per-channel + pie) with the 30-day info note.
-- [ ] Back navigation to `/` works without breaking the map UI.
-- [ ] Clicking the detail-page map preview opens the full map view at the same
+- [x] Back navigation to `/` works without breaking the map UI.
+- [x] Clicking the detail-page map preview opens the full map view at the same
       visible bounds.
-- [ ] `GET /api/bff/station-detail/{id}` returns the page-shaped payload and is in
+- [x] `GET /api/bff/station-detail/{id}` returns the page-shaped payload and is in
       Swagger.
-- [ ] All gates green; plan registered in [`plans/README.md`](../plans/README.md:1).
+- [x] All gates green.
 

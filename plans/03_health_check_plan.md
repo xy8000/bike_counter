@@ -1,5 +1,7 @@
 # Architectural Plan: Health-Check (Liveness + Readiness)
 
+Status: implemented
+
 ## Overview
 Add operational health endpoints to the bike-counter REST service:
 - `GET /health/live` — liveness: always `200` while the backend process is running.

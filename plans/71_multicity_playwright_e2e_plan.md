@@ -165,9 +165,8 @@ flowchart TD
 
 ## Definition of done
 
-- [ ] Fixture generator + committed seed added and verified.
-- [ ] e2e script boots once, seeds the DB, and runs without provider imports.
-- [ ] `cities.spec.ts` covers map/overview/detail for Münster, Hamburg, Bonn.
-- [ ] `make test-playwright` green.
-- [ ] `agents.md` / `README.md` / [`plans/README.md`](../plans/README.md:1)
-      updated.
+- [x] Fixture generator + committed seed added and verified.
+- [x] e2e script boots once, seeds the DB, and runs without provider imports.
+- [x] `cities.spec.ts` covers map/overview/detail for Münster, Hamburg, Bonn.
+- [x] `make test-playwright` green.
+- [x] `agents.md` / `README.md` updated.

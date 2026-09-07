@@ -1,5 +1,7 @@
 # Architectural Plan: Optimize the Persistence Adapter
 
+Status: implemented
+
 ## Goal
 
 Optimize the Postgres-driven persistence layer without changing the domain

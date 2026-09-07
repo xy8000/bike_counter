@@ -142,4 +142,3 @@ See the plan todo list (tracked via `update_todo_list`).
 - [x] The open station overview (`station=<id>`) is in the URL and restored.
 - [x] `make frontend-build` and `make test-playwright` green (6 specs), plus
       `make check` / `make test-rest` (backend untouched).
-- [x] `plans/README.md` and `ToDo.md` updated.

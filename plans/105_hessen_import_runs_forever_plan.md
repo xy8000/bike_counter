@@ -1,6 +1,10 @@
 # 105 — "Hessen is running for ages": stale RUNNING job after a backend restart
 
-## Status: in progress / diagnosis (corrected)
+## Status: resolved
+
+> Fixed by plans 106 (heartbeat + watcher/reconciliation) and 110 (orphaned
+> per-source import-run reaper): a backend restart mid-import no longer leaves a
+> stale `RUNNING` job/run, and no source shows a dead run as "Running" anymore.
 
 > **Correction (v2):** an earlier version of this plan blamed the screen-scraper
 > throughput for the multi-hour "Running" state. Direct measurement proved that

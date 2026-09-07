@@ -137,4 +137,3 @@ See the plan todo list (tracked via `update_todo_list`).
 - [x] e2e specs updated; `make check`, `make test-rest`, core unit tests and
       `frontend-build` green (Docker gates `make test` / `make coverage` /
       `make test-playwright` still to run).
-- [x] [`plans/README.md`](../plans/README.md:1) / [`ToDo.md`](../ToDo.md:1) updated.

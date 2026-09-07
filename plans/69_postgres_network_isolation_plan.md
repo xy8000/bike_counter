@@ -97,5 +97,4 @@ backend, frontend or data-model changes.
 
 - [x] Postgres has no host port and is reachable only inside Docker.
 - [x] Backend reaches Postgres over the internal `db_network`.
-- [x] README updated; [`plans/README.md`](../plans/README.md:1) registration
-      updated.
+- [x] README updated.

@@ -1,6 +1,6 @@
-con# 23 - Visible stations BFF endpoint + config consolidation + frontend header/list
+# 23 - Visible stations BFF endpoint + config consolidation + frontend header/list
 
-Status: drafted
+Status: implemented
 
 ## Problem
 

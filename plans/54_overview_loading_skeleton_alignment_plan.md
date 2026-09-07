@@ -59,6 +59,5 @@ rendered `TotalBikesCard` + `<ul className="flex flex-col gap-2">` in
 
 ## Definition of done
 
-- [ ] Plan registered in [`plans/README.md`](plans/README.md)
-- [ ] `npm run build` green in [`frontend/`](frontend) (type-check + bundle)
-- [ ] `make test-playwright` green (frontend UI change)
+- [x] `npm run build` green in [`frontend/`](frontend) (type-check + bundle)
+- [x] `make test-playwright` green (frontend UI change)

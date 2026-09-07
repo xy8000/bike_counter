@@ -146,7 +146,6 @@ For each year button:
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:1)
 - [x] `YAxis` with formatted tick labels added to the monthly bar chart
 - [x] `bikes` suffix shown on every year button total
 - [x] p-% + up/down/flat arrow shown per year (vs. the previous year), with `–`

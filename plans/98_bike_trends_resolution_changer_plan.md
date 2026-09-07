@@ -219,8 +219,7 @@ In
 
 ## Definition of done
 
-- [ ] `make check` green
-- [ ] `make test-rest` green
-- [ ] `make coverage` green
-- [ ] `make test-playwright` green (frontend UI touched)
-- [ ] Plan registered in [`plans/README.md`](../plans/README.md)
+- [x] `make check` green
+- [x] `make test-rest` green
+- [x] `make coverage` green
+- [x] `make test-playwright` green (frontend UI touched)

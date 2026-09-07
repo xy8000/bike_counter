@@ -1,5 +1,7 @@
 # 88 — Data-sources UI
 
+Status: implemented
+
 ## Goal
 
 Add a data-sources section to the Bike Counter frontend, reachable from the top bar

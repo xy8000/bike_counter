@@ -1,5 +1,7 @@
 # 91 - Global summary database index
 
+Status: implemented
+
 ## Context
 
 `GET /api/bff/global-summary` (the header's whole-system stats) is slow. Its
@@ -65,9 +67,8 @@ startup on a dedicated connection before the pool is handed out.
 
 ## Definition of done
 
-- [ ] `V20__add_measurements_timestamp_index.sql` added
-- [ ] Plan registered in [`plans/README.md`](../plans/README.md)
-- [ ] `make check` green
-- [ ] `make test` green (Postgres repository tests run the new migration)
-- [ ] Optional: regenerate [`frontend/e2e/e2e-seed.sql`](../frontend/e2e/e2e-seed.sql)
+- [x] `V20__add_measurements_timestamp_index.sql` added
+- [x] `make check` green
+- [x] `make test` green (Postgres repository tests run the new migration)
+- [x] Optional: regenerate [`frontend/e2e/e2e-seed.sql`](../frontend/e2e/e2e-seed.sql)
       via `scripts/dump-e2e-fixture.sh` and run `make test-playwright`

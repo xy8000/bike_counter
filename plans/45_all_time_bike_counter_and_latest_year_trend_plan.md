@@ -114,7 +114,6 @@ metrics' trends, and the timeframe "compare previous period" charts.
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:1)
 - [x] `total_bikes` exposed on overview/detail/summary BFF payloads
 - [x] All-time counter rendered on the overview panel, detail page and summary
       page

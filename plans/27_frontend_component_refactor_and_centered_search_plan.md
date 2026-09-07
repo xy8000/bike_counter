@@ -197,8 +197,6 @@ unaffected (no Rust changes).
       identical to today.
 - [x] Search trigger centered via the header grid change in
       [`index.css`](../frontend/src/index.css:29).
-- [x] [`plans/README.md`](../plans/README.md:1) updated with this plan.
-- [x] [`ToDo.md`](../ToDo.md:1) updated with this plan's checklist.
 - [x] `make frontend-build` green (`tsc` + `vite build`).
 - [x] Manual check with `make run` (http://localhost:8081): map, sidebar, search
       dialog and find-on-map all behave as before; search trigger is centered.

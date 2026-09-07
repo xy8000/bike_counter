@@ -161,7 +161,6 @@ Strategy:
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](plans/README.md)
 - [x] Clusters render as numbered circles on the main map when stations overlap
 - [x] Clicking a cluster zooms to the expansion zoom and the stations render
       individually

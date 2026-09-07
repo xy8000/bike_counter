@@ -191,10 +191,9 @@ provider.attach_provider_messages(filtered);
 
 ## Definition of done
 
-- [x] Plan registered in `plans/README.md`
 - [x] Missing-column event reclassified to `DEBUG`
 - [x] Per-provider `log_level` parsed with default `WARNING`
 - [x] Core filters by level and caps at 1000 + one truncation warning (stdout)
 - [x] Migration trims existing rows and adds the 1001-row trigger
-- [x] `CONTRIBUTING.md` added; `plans/README.md` shortened
+- [x] `CONTRIBUTING.md` added
 - [x] `make check`, `make test`/`make test-rest`, `make coverage` green

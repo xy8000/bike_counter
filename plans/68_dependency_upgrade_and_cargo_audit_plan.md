@@ -147,4 +147,3 @@ major upgrades may require code refactoring.
 - [x] Rust deps at latest stable majors, refactored, all backend gates green.
 - [x] Docker base images + pinned map versions bumped and documented.
 - [x] `cargo audit` gate added, run green, documented in agents.md.
-- [x] [`plans/README.md`](../plans/README.md:1) registration updated.

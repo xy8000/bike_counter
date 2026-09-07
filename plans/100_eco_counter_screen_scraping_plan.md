@@ -1,6 +1,6 @@
 # 100 - Eco-Counter ScreenScraping mode implementation
 
-Status: in progress
+Status: implemented
 
 ## Problem
 

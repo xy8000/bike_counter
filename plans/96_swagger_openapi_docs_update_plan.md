@@ -118,7 +118,6 @@ immediately surfaces any syntax drift).
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:1)
 - [x] Swagger-UI heading no longer says "REST API"
 - [x] BFF schemas show descriptions + examples in Swagger-UI
 - [x] BFF endpoints document `Cache-Control`/`ETag`/`304`/`If-None-Match`

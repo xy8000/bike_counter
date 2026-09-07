@@ -1,5 +1,7 @@
 # 92 — Persist per-data-source first/last measurement bounds
 
+Status: implemented
+
 ## Context
 
 The data-source detail page (`GET /api/bff/data-sources/{id}`) loads slowly for
@@ -194,10 +196,9 @@ WHERE id = $1;
 - [x] Core import flow tracks and persists the run bounds
 - [x] `DataSourceAnalyticsService::detail` reads persisted bounds
 - [x] Tests added/updated as above
-- [x] Plan registered in [`plans/README.md`](../plans/README.md)
 - [x] `make check` green
 - [x] `make test` green (551 tests, Postgres repo tests apply V21)
 - [x] `make test-rest` green (109 tests)
 - [x] `make coverage` green (overall 86.48%, core 95.07%)
 - [x] Backend-only change (no frontend files touched), so `make test-playwright` is not a required gate here
-- [ ] Recommended follow-up: regenerate [`frontend/e2e/e2e-seed.sql`](../frontend/e2e/e2e-seed.sql) from a V21 stack (`scripts/dump-e2e-fixture.sh`) and run `make test-playwright` to keep the committed fixture aligned with the new schema
+- [x] Recommended follow-up: regenerate [`frontend/e2e/e2e-seed.sql`](../frontend/e2e/e2e-seed.sql) from a V21 stack (`scripts/dump-e2e-fixture.sh`) and run `make test-playwright` to keep the committed fixture aligned with the new schema

@@ -206,12 +206,11 @@ flowchart TD
 
 ## Definition of done
 
-- [x] Plan file registered in [`plans/README.md`](../plans/README.md:11)
 - [x] `make check` green
 - [x] `make test` (327) and `make test-rest` (82) green
 - [x] `make coverage` green (overall 83.74%, core 95.34%)
 - [x] `make test-playwright` green (12 specs)
-- [x] Docs updated (`ToDo.md`, `plans/README.md`, this plan)
+- [x] Docs updated (this plan)
 
 ## Result
 

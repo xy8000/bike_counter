@@ -1,6 +1,6 @@
 # 47 - Fix Münster import cursor overshoot that silently stops importing plan
 
-Status: proposed
+Status: implemented
 
 ## Problem
 

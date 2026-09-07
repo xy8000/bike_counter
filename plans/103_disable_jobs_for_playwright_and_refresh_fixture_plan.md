@@ -1,5 +1,7 @@
 # 103 — Disable scheduled jobs for Playwright + refresh e2e fixture from the current DB
 
+Status: implemented
+
 ## Context / problem
 
 `make test-playwright` boots the real Docker Compose stack (nginx → backend BFF →
@@ -170,4 +172,4 @@ Additionally the committed fixture is stale:
 - [x] `make test` / `make test-rest` green.
 - [x] `make coverage` green (overall ≥ 80%, core ≥ 95%).
 - [x] `make test-playwright` green with jobs disabled.
-- [x] Docs (`agents.md`, `README.md`, ToDo.md, plan registry) updated.
+- [x] Docs (`agents.md`, `README.md`) updated.

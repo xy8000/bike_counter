@@ -74,9 +74,8 @@ getting a fresh, seeded database on every run, but the dev `postgres_data` /
 
 ## Definition of done
 
-- [ ] e2e uses dedicated `postgres_data_e2e`/`minio_data_e2e` volumes.
-- [ ] Dev `postgres_data`/`minio_data` are no longer referenced by the e2e
+- [x] e2e uses dedicated `postgres_data_e2e`/`minio_data_e2e` volumes.
+- [x] Dev `postgres_data`/`minio_data` are no longer referenced by the e2e
       compose config, so `down -v` cannot delete them.
-- [ ] Script + [`agents.md`](../agents.md:85) docs updated.
-- [ ] [`plans/README.md`](../plans/README.md:1) updated.
-- [ ] `make check` green.
+- [x] Script + [`agents.md`](../agents.md:85) docs updated.
+- [x] `make check` green.

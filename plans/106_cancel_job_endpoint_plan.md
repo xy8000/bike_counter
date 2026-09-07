@@ -353,7 +353,6 @@ Common `execute` shape per service:
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:1)
 - [x] `POST /api/v1/jobs/{id}/cancel` (with optional `{"force": true}`) cancels
       every job type; unknown → 404, terminal → 400
 - [x] `job_locks` table provides atomic, ShedLock-style claim (no hand-rolled

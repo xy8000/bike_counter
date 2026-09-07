@@ -7,13 +7,16 @@ this repository. **Read this file before making any change.**
 
 1. **Write a plan first.** Before implementing anything, create or update a
    numbered plan document in [`plans/`](plans) — `plans/NN_<topic>_plan.md`,
-   following the existing format — and register it in
-   [`plans/README.md`](plans/README.md). This is **mandatory**: every change
-   gets a plan file, no exceptions.
+   following the existing format. This is **mandatory**: every change gets a
+   plan file, no exceptions.
 2. **Implement** the change, keeping it scoped to the plan.
 3. **Run the gates** before finishing (see below) — all must pass.
-4. **Update the docs** the change touches ([`README.md`](README.md),
-   [`ToDo.md`](ToDo.md), and the plan file itself).
+4. **Update the docs** the change touches ([`README.md`](README.md) and the
+   plan file itself).
+   Keep the plan file current as you go: tick every Definition-of-done /
+   implementation checkbox (`- [ ]` → `- [x]`) the moment the item is done and
+   keep its `Status:` line accurate — a finished plan must never carry unticked
+   boxes or a stale status.
 5. Do not risk wasting tokens for commands. Use tail / head when possible. The
    Make targets and [`scripts/`](scripts) are intentionally quiet: cargo runs
    with `--quiet`, and docker/npm build logs are redirected to a temp log that
@@ -21,6 +24,15 @@ this repository. **Read this file before making any change.**
    check` / `make test-rest` over raw cargo, and pipe anything verbose through
    `tail -n 40` (or the script's own failure-only output) instead of dumping the
    full log.
+
+### Plan-file format
+
+Follow the layout of the existing numbered plans in [`plans/`](plans): a single
+`# NN - <topic>` H1, immediately followed by a `Status:` line (e.g.
+`Status: implemented`, `Status: in progress`, `Status: superseded`,
+`Status: dropped`), then the plan body and a `## Definition of done` checklist.
+Do not reference `ToDo.md` or `plans/README.md` (those files do not exist any
+more).
 
 ## Required gates (run before finishing any change)
 
@@ -105,10 +117,9 @@ is backed up and restored).
 
 ## Definition of done
 
-- [ ] Plan file in [`plans/`](plans) updated and registered in
-      [`plans/README.md`](plans/README.md)
+- [ ] Plan file in [`plans/`](plans) updated
 - [ ] `make check` green
 - [ ] `make test` and/or `make test-rest` green
 - [ ] `make coverage` green (coverage at/above the threshold)
 - [ ] `make test-playwright` green when the change touches the frontend UI
-- [ ] `README.md` / `ToDo.md` / plan docs updated as needed
+- [ ] `README.md` and plan docs updated as needed

@@ -395,7 +395,6 @@ audit gate before committing.
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](plans/README.md:1)
 - [x] `/api/v1/opendata` tree serves metadata, stations (+ GeoJSON), indices and
       the parquet/csv.gz/json files with ETag/304, `Content-Length`, immutable
       cache headers, and never exposes MinIO

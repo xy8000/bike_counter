@@ -278,7 +278,6 @@ showing the full month + year. No per-channel buttons — a single total series.
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:1)
 - [x] Backend domain/service/DTO/repository changes implemented and tested
 - [x] Frontend timeframe selector, checkbox, main chart, radar, pie and nerd
       stats wired to the dropdown

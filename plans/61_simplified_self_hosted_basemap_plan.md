@@ -327,7 +327,7 @@ These were the actual root causes in 59/60 — do not regress them:
 
 ## Definition of done
 
-- [x] Plan file registered in [`plans/README.md`](../plans/README.md:1); plans 59/60 marked superseded.
+- [x] plans 59/60 marked superseded.
 - [x] BFF route `/api/map/*path` wired; no `Cache-Control` header.
 - [x] Martin serves `world.mbtiles` + `basemap.pmtiles`; frontend renders the
       world zoomed out, Germany at mid zoom, and city streets at z12–14.

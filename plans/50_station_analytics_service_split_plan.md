@@ -129,4 +129,3 @@ were previously pulled in implicitly via `use super::*`.
 - [x] No new traits; `StationAnalyticsServicePort` remains the single port.
 - [x] Import sites updated; `make check` and `make test-rest` green.
 - [x] `make test` and `make coverage` green (core >= 95%).
-- [x] Plan registered in [`plans/README.md`](plans/README.md).

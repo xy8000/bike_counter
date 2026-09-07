@@ -84,6 +84,5 @@ or any backend code.
 
 - [x] `DialogContent` clips (`overflow-hidden`) and the search-bar row is `shrink-0`.
 - [x] `ScrollArea` scrolls the list (`min-h-0 flex-1`), input row pinned above it.
-- [x] [`plans/README.md`](../plans/README.md:1) updated with this plan.
 - [x] `make frontend-build` (or `cd frontend && npm run build`) green.
 - [x] `make test-playwright` green (frontend e2e).

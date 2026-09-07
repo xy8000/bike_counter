@@ -1,6 +1,6 @@
 # 95 - Global summary popup dialog
 
-Status: drafted
+Status: implemented
 
 ## Problem
 
@@ -153,10 +153,9 @@ flowchart TD
 
 ## Definition of done
 
-- [ ] `frontend/src/features/header/GlobalSummaryDialog.tsx` created.
-- [ ] `frontend/src/features/header/TopBar.tsx` updated (trigger + skeleton + dialog wiring).
-- [ ] Mobile layout shows the date trigger next to the search icon.
-- [ ] Playwright e2e added/updated for the new popup.
-- [ ] Layout-stability gate passes: skeleton and loaded trigger share the same height and the app bar does not shift.
-- [ ] `make check` and `make test-playwright` green.
-- [ ] [`plans/README.md`](../plans/README.md) updated.
+- [x] `frontend/src/features/header/GlobalSummaryDialog.tsx` created.
+- [x] `frontend/src/features/header/TopBar.tsx` updated (trigger + skeleton + dialog wiring).
+- [x] Mobile layout shows the date trigger next to the search icon.
+- [x] Playwright e2e added/updated for the new popup.
+- [x] Layout-stability gate passes: skeleton and loaded trigger share the same height and the app bar does not shift.
+- [x] `make check` and `make test-playwright` green.

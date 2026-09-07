@@ -1,5 +1,7 @@
 # Architectural Plan: Generic Job Tracking, Cron Scheduler & Data Source Updater
 
+Status: implemented
+
 ## Overview
 
 This plan adds ShedLock-style generic job tracking plus a cron-driven background

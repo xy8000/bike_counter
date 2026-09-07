@@ -1,5 +1,7 @@
 # Plan: Data source persistent-state storage + REST API through the core (Clean Hexagonal)
 
+Status: implemented
+
 ## Overview
 
 Provider adapters sometimes need to remember **runtime state** that is specific to

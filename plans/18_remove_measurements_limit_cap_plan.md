@@ -1,6 +1,6 @@
 # 18 - Raise the measurements `limit` default to 5000 and drop the upper cap plan
 
-Status: proposed
+Status: implemented
 
 ## Problem
 

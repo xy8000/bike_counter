@@ -76,10 +76,9 @@ bumps themselves were supplied by the user and are left as-is.
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:11)
 - [x] `make check` green (incl. no cargo manifest warning)
 - [x] `make test-rest` green (128)
 - [x] `make test` green (739)
 - [x] `make test-playwright` green (72)
 - [x] Frontend `npm run build` green
-- [x] `ToDo.md` / plan docs updated
+- [x] plan docs updated

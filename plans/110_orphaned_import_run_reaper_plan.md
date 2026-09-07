@@ -232,7 +232,6 @@ guarantees the stale `RUNNING` badge is cleared even if a call still hangs.
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](plans/README.md:1)
 - [x] `finalize_orphaned_running` added to the port, Postgres impl and all test doubles
 - [x] A `RUNNING` import run under a terminal job is finalized within one watcher tick
 - [x] Unlinked `RUNNING` runs older than the grace window are finalized

@@ -146,12 +146,11 @@ Fetch the shell, then the stats sub-resource from its link. Return
 
 ## Definition of done
 
-- [ ] Overview shell returns identity + `_links.stats`; the stats sub-resource
+- [x] Overview shell returns identity + `_links.stats`; the stats sub-resource
       returns `total_bikes` + `metrics`; the panel renders the name immediately.
-- [ ] `MeasurementRepository` and the measurement domain unchanged; `detail` /
+- [x] `MeasurementRepository` and the measurement domain unchanged; `detail` /
       `summary` / `sidebar` endpoints unchanged.
-- [ ] `make check`, `make test-rest`, `make test`, `make coverage` green
+- [x] `make check`, `make test-rest`, `make test`, `make coverage` green
       (core ≥ 95%).
-- [ ] `make frontend-build` green.
-- [ ] `make test-playwright` green.
-- [ ] Plan registered in [`plans/README.md`](plans/README.md).
+- [x] `make frontend-build` green.
+- [x] `make test-playwright` green.

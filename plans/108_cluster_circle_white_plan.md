@@ -66,7 +66,6 @@ behaviour), so the Playwright suite is unaffected; `make check` (frontend
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](plans/README.md)
 - [x] Cluster-circle count renders white in both light and dark scheme
 - [x] No other element recoloured; selectors/locators unchanged
 - [x] `make check` green

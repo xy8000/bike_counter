@@ -1,5 +1,7 @@
 # 104 — Run all data-source imports in parallel (one shared job) with per-source metadata
 
+Status: implemented
+
 ## Context / problem
 
 The `data_source_update` job currently imports every configured data source

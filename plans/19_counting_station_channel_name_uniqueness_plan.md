@@ -1,6 +1,6 @@
 # 19 - Unique counting-station and channel names plan
 
-Status: proposed
+Status: implemented
 
 ## Problem
 

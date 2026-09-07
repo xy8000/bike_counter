@@ -135,8 +135,7 @@ be loaded because too many data-streams need to be rendered.
 
 ## Definition of done
 
-- [ ] `MAX_DATA_STREAMS` + `ChartLimitNotice` added.
-- [ ] All four chart components guard against >5 streams.
-- [ ] Fixture extended + detail/summary e2e tests added.
-- [ ] [`plans/README.md`](../plans/README.md:1) updated.
-- [ ] `make check` + `make test-playwright` green.
+- [x] `MAX_DATA_STREAMS` + `ChartLimitNotice` added.
+- [x] All four chart components guard against >5 streams.
+- [x] Fixture extended + detail/summary e2e tests added.
+- [x] `make check` + `make test-playwright` green.

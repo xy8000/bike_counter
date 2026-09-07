@@ -1,5 +1,7 @@
 # Station summary view — aggregate the visible stations into a shareable detail-like page
 
+Status: implemented
+
 ## Summary
 
 Add a "Summary-Detail-View": while flying over the map the user sees the visible
@@ -240,8 +242,6 @@ expected candidate entry.
 
 ## Status / definition of done
 
-- [x] Plan file registered in [`plans/README.md`](plans/README.md); `ToDo.md` updated
-      (incl. the one-time genuine tech-debt findings).
 - [x] `make check` green (fmt + clippy `-D warnings`).
 - [x] `make test` (351) and `make test-rest` (87) green.
 - [x] `make coverage` green — overall 84.98%, core 95.78% (thresholds unchanged).

@@ -1,6 +1,6 @@
 # 57 - Hamburg SensorThings adapter + measurement resolution dimension
 
-Status: drafted
+Status: implemented
 
 ## Problem
 

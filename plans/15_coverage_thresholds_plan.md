@@ -1,6 +1,6 @@
 # 15 - Coverage thresholds: 80% overall, 95% core
 
-Status: decided
+Status: implemented
 
 ## Problem
 
@@ -111,7 +111,7 @@ reports:
 - [x] Core unit tests to reach 95% in `src/core` (96.45%)
 - [x] Adapter tests to reach 80% overall (80.36%)
 - [x] Orphaned `rest/tests/jobs.rs` wired into the suite
-- [x] `Makefile` / `agents.md` / `README.md` / `plans/README.md` updated; plan 14 closed
+- [x] `Makefile` / `agents.md` / `README.md` updated; plan 14 closed
 - [x] Gate green: `make check`, `make test-rest`, `make coverage`
 
 ## Out of scope

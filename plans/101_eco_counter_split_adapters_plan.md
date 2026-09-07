@@ -1,6 +1,6 @@
 # 101 - Split Eco-Counter into three separate adapters (+ V1 multi-resolution)
 
-Status: planned
+Status: implemented
 
 ## Problem
 

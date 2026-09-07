@@ -89,8 +89,7 @@ package-lock.json
 
 ## Definition of done
 
-- [ ] Prettier installed + `.prettierrc` + `.prettierignore` added.
-- [ ] `make fmt` and `make check` cover the frontend.
-- [ ] Formatting-only diff committed.
-- [ ] `agents.md` / `README.md` / [`plans/README.md`](../plans/README.md:1)
-      updated.
+- [x] Prettier installed + `.prettierrc` + `.prettierignore` added.
+- [x] `make fmt` and `make check` cover the frontend.
+- [x] Formatting-only diff committed.
+- [x] `agents.md` / `README.md` updated.

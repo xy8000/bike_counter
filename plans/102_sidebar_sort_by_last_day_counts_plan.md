@@ -104,6 +104,5 @@ flowchart TD
 
 - [x] Sidebar lists visible stations by `bikes_last_day` descending, ties by name
 - [x] Search dialog results remain alphabetical
-- [x] Plan registered in [`plans/README.md`](plans/README.md)
 - [x] `make check` green
 - [x] `make test-playwright` green

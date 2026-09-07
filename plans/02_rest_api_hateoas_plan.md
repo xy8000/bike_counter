@@ -1,5 +1,7 @@
 # Architectural Plan: REST-Ful READ ONLY API with HATEOAS & Swagger UI
 
+Status: implemented
+
 ## Overview
 This plan describes the implementation of a driving REST adapter for the bike counter application using `axum` and `utoipa`. The API is strictly READ-ONLY (`GET` endpoints), follows a flat URL hierarchy starting at `/api/v1`, includes HATEOAS hypermedia links (`_links`), and serves interactive Swagger UI documentation at `/swagger-ui`.
 

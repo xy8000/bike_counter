@@ -81,7 +81,6 @@ flowchart TD
 
 ## Definition of done
 
-- [x] Plan file updated and registered in [`plans/README.md`](../plans/README.md)
 - [x] Frontend Prettier check + TypeScript production build green (the change is
       frontend-only, so the backend gates — `cargo fmt`/`clippy`/`audit`,
       `make test-rest`, `make coverage` — are unaffected)

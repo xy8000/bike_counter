@@ -336,7 +336,6 @@ See the plan todo list (tracked via `update_todo_list`).
 - [x] Station-overview domain service + BFF overview + streaming endpoints.
 - [x] Frontend overview panel, map popup link, void-click close.
 - [x] Config + docker-compose MinIO wiring, sample image embedded.
-- [x] [`plans/README.md`](../plans/README.md:1) / [`ToDo.md`](../ToDo.md:1) /
-      [`README.md`](../README.md:1) updated.
+- [x] [`README.md`](../README.md:1) updated.
 - [x] All gates green (fmt/clippy, unit + rest tests, coverage, frontend build,
       Playwright).

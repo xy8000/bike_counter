@@ -1,6 +1,6 @@
 # 65 - Bundle the tiles init into the backend startup (reuse go-pmtiles)
 
-Status: planned
+Status: implemented
 
 ## Problem
 
@@ -146,15 +146,14 @@ Mirrors [`AssetCleanupService`](../backend/src/core/application/asset_cleanup_se
 
 ## Definition of done
 
-- [ ] Plan file created and registered in [`plans/README.md`](../plans/README.md)
-- [ ] `MapsConfiguration` + `[maps]` parsing added to `Configuration`, the TOML
+- [x] `MapsConfiguration` + `[maps]` parsing added to `Configuration`, the TOML
       adapter, `config.toml.example`, and the test scripts' generated configs
-- [ ] `TilesInit` adapter in `backend/src/adapter/driven/tiles_init/` with
+- [x] `TilesInit` adapter in `backend/src/adapter/driven/tiles_init/` with
       `ensure_available()` / `update()` (atomic rename) and a hard-coded bbox
-- [ ] `TilesProvisioningPort` + `TilesUpdateService` (`tiles_update` scheduled
+- [x] `TilesProvisioningPort` + `TilesUpdateService` (`tiles_update` scheduled
       job) added and tested
-- [ ] `main.rs` ensures tiles in the init phase; `tiles` subcommand added
-- [ ] `docker-compose.yml` removes the `tiles` service, mounts `./tiles` into
+- [x] `main.rs` ensures tiles in the init phase; `tiles` subcommand added
+- [x] `docker-compose.yml` removes the `tiles` service, mounts `./tiles` into
       the backend, and makes the frontend wait on backend readiness
-- [ ] `Makefile` updated; docs updated (`tiles/README.md`, `README.md`, `ToDo.md`)
-- [ ] Validation steps above pass
+- [x] `Makefile` updated; docs updated (`tiles/README.md`, `README.md`)
+- [x] Validation steps above pass

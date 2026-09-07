@@ -55,11 +55,11 @@ including the Postgres repository tests that spin up a test container via Docker
 
 ## Deliverables
 
-- [ ] `scripts/coverage.sh` — the coverage gate
-- [ ] `Makefile` — `coverage` + `coverage-open` targets, `.PHONY`, header/`help`
-- [ ] `agents.md` — coverage + plan-file conventions for agents
-- [ ] `.gitignore` — coverage artifacts
-- [ ] `README.md` — Running tests section update
+- [x] `scripts/coverage.sh` — the coverage gate
+- [x] `Makefile` — `coverage` + `coverage-open` targets, `.PHONY`, header/`help`
+- [x] `agents.md` — coverage + plan-file conventions for agents
+- [x] `.gitignore` — coverage artifacts
+- [x] `README.md` — Running tests section update
 - [x] Baseline measured (**76.68% lines**); threshold calibrated to **75%**;
       gate green (`make check`, `make coverage`, `make test-rest`, and
       `make test` where Docker is available)

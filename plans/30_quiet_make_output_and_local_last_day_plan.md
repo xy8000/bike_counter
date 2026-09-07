@@ -1,5 +1,7 @@
 # Plan 30 — Quiet make output + local "last day" summary
 
+Status: implemented
+
 ## Context
 
 Two user requests plus the design refinements agreed during clarification:
@@ -129,8 +131,8 @@ Two user requests plus the design refinements agreed during clarification:
 
 ## Gates (per [`agents.md`](../agents.md:19))
 
-- [ ] `make check`
-- [ ] `make test` / `make test-rest`
-- [ ] `make coverage`
-- [ ] `make test-playwright` (frontend UI changed)
-- [ ] docs updated
+- [x] `make check`
+- [x] `make test` / `make test-rest`
+- [x] `make coverage`
+- [x] `make test-playwright` (frontend UI changed)
+- [x] docs updated

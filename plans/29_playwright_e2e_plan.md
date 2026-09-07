@@ -1,6 +1,6 @@
 # 29 - Playwright end-to-end testing plan
 
-Status: drafted
+Status: implemented
 
 ## Problem
 

@@ -161,7 +161,6 @@ database.
 ## Definition of done
 
 - [x] `V15__optimize_measurements_overlap_guard.sql` added
-- [x] Plan registered in [`plans/README.md`](plans/README.md)
 - [x] `make check` green
 - [x] `make test` green (repository tests exercise the new trigger)
 - [x] `make coverage` green

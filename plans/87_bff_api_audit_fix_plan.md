@@ -185,9 +185,8 @@ found to be deliberate contracts rather than flaws):
 
 ## Definition of done
 
-- [ ] Plan registered in [`plans/README.md`](../plans/README.md:1)
-- [ ] `make check` green
-- [ ] `make test` / `make test-rest` green
-- [ ] `make coverage` green
-- [ ] `make test-playwright` green
-- [ ] BFF endpoints no longer load full tables for viewport reads and no longer N+1 on stations
+- [x] `make check` green
+- [x] `make test` / `make test-rest` green
+- [x] `make coverage` green
+- [x] `make test-playwright` green
+- [x] BFF endpoints no longer load full tables for viewport reads and no longer N+1 on stations

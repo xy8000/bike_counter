@@ -126,7 +126,7 @@ flowchart LR
 - [x] Extended `resolution.rs` `covers_window` boundary tests (1 test)
 - [x] Playwright e2e: new-station filter real effect (no fixture change needed — the seeded ~45-day history already makes the month/year metrics "new")
 - [x] Playwright e2e: "Individual" range real buckets + no previous-period overlay
-- [x] `plans/README.md` registered; this plan updated with final numbers
+- [x] this plan updated with final numbers
 - [x] Gates green: `make check`, `make test-rest`, `make test`, `make coverage`, `make test-playwright`
 
 ## Result (measured, final)

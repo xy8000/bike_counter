@@ -139,8 +139,7 @@ functions.
 
 ## Definition of done
 
-- [ ] `station_analytics` module + single service replace the five modules/services.
-- [ ] `MeasurementRepository::sum` takes `&[ChannelId]`; no per-channel loops remain.
-- [ ] BFF payloads unchanged (frontend untouched, `make test-rest` green).
-- [ ] `make check`, `make test-rest`, `make test`, `make coverage` green.
-- [ ] Plan registered in [`plans/README.md`](plans/README.md).
+- [x] `station_analytics` module + single service replace the five modules/services.
+- [x] `MeasurementRepository::sum` takes `&[ChannelId]`; no per-channel loops remain.
+- [x] BFF payloads unchanged (frontend untouched, `make test-rest` green).
+- [x] `make check`, `make test-rest`, `make test`, `make coverage` green.

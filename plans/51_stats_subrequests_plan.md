@@ -344,11 +344,10 @@ truncated "up to `as_of`") are deferred to the date-picker plan.
 
 ## Definition of done
 
-- [ ] Page endpoints return shells with HATEOAS `_links`; sub-resource endpoints
+- [x] Page endpoints return shells with HATEOAS `_links`; sub-resource endpoints
       return exactly one card each.
-- [ ] `MeasurementRepository` and the measurement domain models unchanged.
-- [ ] `make check`, `make test-rest`, `make test`, `make coverage` green
+- [x] `MeasurementRepository` and the measurement domain models unchanged.
+- [x] `make check`, `make test-rest`, `make test`, `make coverage` green
       (core ≥ 95%).
-- [ ] `make frontend-build` green.
-- [ ] `make test-playwright` green.
-- [ ] Plan registered in [`plans/README.md`](plans/README.md).
+- [x] `make frontend-build` green.
+- [x] `make test-playwright` green.

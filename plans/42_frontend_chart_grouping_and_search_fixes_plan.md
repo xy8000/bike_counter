@@ -145,4 +145,3 @@ switches the rendered bar series.
       accessible.
 - [x] `detail.spec.ts` assertions updated; `make frontend-build` (tsc + vite) and
       `make test-playwright` (19 specs) green.
-- [x] Plan registered in [`plans/README.md`](../plans/README.md:1).

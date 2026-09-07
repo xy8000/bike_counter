@@ -1,7 +1,6 @@
 # 24 - Backend station-summary refactor: reuse DTOs, windowed sum, owned bounds, separated aggregate
 
-Status: current — drafted (consolidates the earlier draft of plan 24 and supersedes the
-direction drafted in plan 25)
+Status: implemented (2026-08-25)
 
 Supersedes / builds on: [plan 23](23_visible_stations_bff_and_config_plan.md) (implemented).
 

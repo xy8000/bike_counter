@@ -184,11 +184,10 @@ same image to the search results:
 
 ## Definition of done
 
-- [ ] Plan registered in [`plans/README.md`](../plans/README.md).
-- [ ] Makefile no longer uses `cd`; targets still work.
-- [ ] e2e script no longer uses `cd`; `rm` calls grouped in `cleanup()`; three
+- [x] Makefile no longer uses `cd`; targets still work.
+- [x] e2e script no longer uses `cd`; `rm` calls grouped in `cleanup()`; three
       milestone lines print.
-- [ ] Header links the brand to `/`, widens the search trigger (magnifier only),
+- [x] Header links the brand to `/`, widens the search trigger (magnifier only),
       and truncates the global summary on one line without wrapping.
-- [ ] Search results show the station image (bike-icon fallback) via `image_url`.
-- [ ] `make check`, `make test-rest` and a frontend build are green.
+- [x] Search results show the station image (bike-icon fallback) via `image_url`.
+- [x] `make check`, `make test-rest` and a frontend build are green.

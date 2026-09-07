@@ -1,5 +1,7 @@
 # Architectural Plan: External Data Sources Baseline
 
+Status: implemented
+
 ## Goal
 
 Define the baseline for importing measurements, channels and counting-stations from

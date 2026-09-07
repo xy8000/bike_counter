@@ -100,4 +100,3 @@ Frontend-only. No backend, API or data-model changes.
 - [x] Detail "Back to map" restores the prior map view via history, with a `/`
       fallback for deep links.
 - [x] e2e updated and `make test-playwright` green.
-- [x] [`plans/README.md`](../plans/README.md:1) registration updated.

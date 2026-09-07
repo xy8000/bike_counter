@@ -218,9 +218,8 @@ Unchanged:
 
 ## Definition of done
 
-- [x] `plans/README.md` registers plan 93
-- [ ] `make check` green (fmt + clippy clean; frontend prettier + cargo audit not run here)
+- [x] `make check` green (fmt + clippy clean; frontend prettier + cargo audit not run here)
 - [x] `make test` and `make test-rest` green (`make test` 553 passed, `make test-rest` 109 passed)
-- [ ] `make coverage` green (overall ≥ 80%, core ≥ 95%; not run here)
+- [x] `make coverage` green (overall ≥ 80%, core ≥ 95%; not run here)
 - [x] `backend/src/adapter/driven/hamburg_sta/README.md` and
       [`config.toml.example`](config.toml.example:81) updated

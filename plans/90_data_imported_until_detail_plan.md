@@ -1,5 +1,7 @@
 # 90 — Data imported until on the data-source detail page
 
+Status: implemented
+
 ## Goal
 
 Expose the persisted `imported_until` import watermark on the BFF data-source

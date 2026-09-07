@@ -221,7 +221,6 @@ flowchart LR
 
 ## Definition of done
 
-- [x] Plan registered in [`plans/README.md`](plans/README.md)
 - [x] `make check` green
 - [x] `make test` and/or `make test-rest` green
 - [x] `make coverage` green

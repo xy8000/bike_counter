@@ -1,6 +1,6 @@
 # 44 - Single-tab navigation, responsive search actions and detail/summary fixes
 
-Status: in progress
+Status: implemented
 
 ## Problem
 

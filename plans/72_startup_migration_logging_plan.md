@@ -58,6 +58,5 @@ necessary` when none ran. Keep it terse — no per-step verbose output.
 
 ## Definition of done
 
-- [ ] Migration logging added and terse.
-- [ ] `make check` + `make test` green.
-- [ ] [`plans/README.md`](../plans/README.md:1) updated.
+- [x] Migration logging added and terse.
+- [x] `make check` + `make test` green.

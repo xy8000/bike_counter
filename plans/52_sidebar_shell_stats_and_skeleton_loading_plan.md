@@ -314,15 +314,14 @@ from here), containing small `Card`-wrapped `Skeleton` pieces used by both pages
 
 ## Definition of done
 
-- [ ] Sidebar shell returns identity + `image_url` + counters + `_links.stats`;
+- [x] Sidebar shell returns identity + `image_url` + counters + `_links.stats`;
       the stats sub-resource returns `channel_count` + `bikes_last_day` per
       station.
-- [ ] `MeasurementRepository` and the measurement domain models unchanged;
+- [x] `MeasurementRepository` and the measurement domain models unchanged;
       search endpoint + `StationListItem` unchanged.
-- [ ] shadcn `Skeleton` used for all detail/summary/sidebar loading states (no
+- [x] shadcn `Skeleton` used for all detail/summary/sidebar loading states (no
       bare `Loading …` text left in these views).
-- [ ] `make check`, `make test-rest`, `make test`, `make coverage` green
+- [x] `make check`, `make test-rest`, `make test`, `make coverage` green
       (core ≥ 95%).
-- [ ] `make frontend-build` green.
-- [ ] `make test-playwright` green.
-- [ ] Plan registered in [`plans/README.md`](plans/README.md).
+- [x] `make frontend-build` green.
+- [x] `make test-playwright` green.

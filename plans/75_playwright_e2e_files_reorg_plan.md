@@ -73,8 +73,7 @@ working unchanged.
 
 ## Definition of done
 
-- [ ] Compose override + SQL fixture live in [`frontend/e2e/`](../frontend/e2e).
-- [ ] All references (scripts, agents.md, README, plans) point at the new paths.
-- [ ] Merged compose config resolves the seed from `frontend/e2e/e2e-seed.sql`.
-- [ ] [`plans/README.md`](../plans/README.md:1) updated.
-- [ ] `make check` green.
+- [x] Compose override + SQL fixture live in [`frontend/e2e/`](../frontend/e2e).
+- [x] All references (scripts, agents.md, README, plans) point at the new paths.
+- [x] Merged compose config resolves the seed from `frontend/e2e/e2e-seed.sql`.
+- [x] `make check` green.

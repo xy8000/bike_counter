@@ -217,7 +217,6 @@ match MapLibre instead of Leaflet:
 
 ## Definition of done
 
-- [x] Plan file registered in [`plans/README.md`](../plans/README.md:1).
 - [x] `docker compose up` starts Martin; the BFF tile proxy route
       `/api/bff/tiles/*path` is wired and forwards to Martin (returns `502`
       while no tile file is mounted, see
@@ -234,7 +233,7 @@ match MapLibre instead of Leaflet:
 - [x] The zoomed-out world view renders from the coarse `world` source (z0-10)
       and the Germany detail renders from the `basemap` source, with the frontend
       on `maplibre-gl@^6.6.0` (worker bundled via `?worker&url`).
-- [x] `README.md`, `ToDo.md` and the plan status updated.
+- [x] `README.md` and the plan status updated.
 
 ## Implementation notes / risks
 
