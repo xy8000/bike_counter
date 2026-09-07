@@ -2,6 +2,7 @@
 name = "bike_counter"
 version = "0.0.1"
 edition = "2024"
+license = "Apache-2.0"
 
 [dependencies]
 arrow = "59.3.0"

@@ -1,5 +1,9 @@
 # Bike-Counter
 
+[![GitHub Release](https://img.shields.io/github/v/release/xy8000/bike_counter?sort=semver)](https://github.com/xy8000/bike_counter/releases)
+[![Backend image](https://img.shields.io/docker/v/xy8000/bike-counter-backend?sort=semver&label=backend)](https://hub.docker.com/r/xy8000/bike-counter-backend)
+[![Frontend image](https://img.shields.io/docker/v/xy8000/bike-counter-frontend?sort=semver&label=frontend)](https://hub.docker.com/r/xy8000/bike-counter-frontend)
+
 **Bike-Counter** lets you explore and analyse the public bicycle-counting
 stations of **Münster, Bonn, Hamburg, Leipzig** and selected **Eco-Counter**
 stations. The measurement data is imported automatically from the cities'
@@ -68,6 +72,31 @@ takes a few minutes). `make down` stops the stack and keeps the database;
 > automatic imports at all — edit the `[[data_sources]]` entries in
 > [`config.toml`](config.toml); see [Configuration](#configuration).
 
+### Running the released images
+
+Instead of building from source, the released images on Docker Hub can be
+pulled directly — the `backend` and `frontend` services in
+[`docker-compose.yml`](docker-compose.yml) pin the published image names
+(`xy8000/bike-counter-backend:0.0.1`, `xy8000/bike-counter-frontend:0.0.1`)
+alongside their `build:` blocks, so `docker compose pull` fetches the release
+and `docker compose up` (without `--build`) runs it:
+
+```bash
+# 1. Create your configuration from the tracked template
+cp config.toml.example config.toml
+
+# 2. Pull the released images
+docker compose pull
+
+# 3. Start the stack
+docker compose up -d
+```
+
+The first start downloads and builds the self-hosted map basemap (it needs
+internet access and takes a few minutes); `make down` stops the stack and keeps
+the database. New releases ship as GitHub releases with matching Docker Hub
+tags (`0.0.1`, `latest`).
+
 ## Services
 
 Once running, the stack exposes:
@@ -135,3 +164,7 @@ Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
 repository layout, how to implement a new data-source adapter, and the workflow
 + gates every change must pass ([`agents.md`](agents.md)). Work is planned and
 tracked in the numbered documents under [`plans/`](plans).
+
+## License
+
+Bike-Counter is licensed under the [Apache License 2.0](LICENSE).
