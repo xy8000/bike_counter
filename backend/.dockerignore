@@ -8,11 +8,3 @@ debug/
 
 # Local configuration / secrets (all configuration lives in config.toml)
 config.toml
-
-# Compose / docs / orchestration (not needed for the image build)
-docker-compose.yml
-README.md
-ToDo.md
-plans/
-scripts/
-Makefile

@@ -55,6 +55,16 @@ coverage/
 .history
 .ionide
 
+### Operating System ###
+# macOS / Windows / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+
+### Roo ###
+# Local agent/IDE state (mcp.json may carry machine-specific MCP server config)
+.roo/
+
 ### Configuration ###
 config.toml
 
