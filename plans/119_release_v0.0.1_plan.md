@@ -144,6 +144,13 @@ changes are implemented, gated (`make check`, `make test-rest` — 128 passed)
 and committed on the local feature branch `release/v0.0.1-release-prep`
 (remote `main` is protected, so it is merged via PR).
 
+Post-merge CI hygiene: after the tag-triggered run flagged the GitHub Node-20
+deprecation, the release workflow's actions were bumped to Node-24 majors
+(`actions/checkout@v7`, `docker/login-action@v4`,
+`docker/setup-buildx-action@v4`, `docker/setup-qemu-action@v4`) — committed on
+`chore/ci-node24-action-bumps`. This is cosmetic for future runs; the `v0.0.1`
+publish itself only still needs the Docker Hub secrets configured and a re-run.
+
 Remaining **owner actions** (require GitHub + Docker Hub credentials not
 available in this environment):
 
