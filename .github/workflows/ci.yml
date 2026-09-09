@@ -1,0 +1,104 @@
+name: CI
+
+# Continuous integration: on every push to the default branch and on every pull
+# request the repo's coverage gates run and the resulting lcov reports are
+# uploaded to Codecov (flags `backend` and `frontend`) so the README badge and
+# the Codecov dashboard stay current:
+#   * backend  — ./scripts/coverage.sh (cargo-llvm-cov over the whole suite,
+#     Postgres via a testcontainers Docker container, enforcing the ≥ 80 % /
+#     ≥ 95 % production-only thresholds), upload reduced to production-only
+#     lines by scripts/lcov-production-only.sh so Codecov matches make coverage;
+#   * frontend — Vitest unit tests with v8 coverage (pure-logic modules; React
+#     components stay covered by the Playwright e2e suite, which is not part of
+#     this workflow).
+#
+# Prerequisite (owner-side, done once): add the Codecov repository upload token
+# as the GitHub secret CODECOV_TOKEN. Uploads run with fail_ci_if_error: false,
+# so a fork pull request without the secret cannot fail the workflow.
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend coverage (Rust)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain with LLVM coverage tools
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Check formatting (cargo fmt)
+        run: cargo fmt --manifest-path backend/Cargo.toml --check --quiet
+
+      - name: Lint (cargo clippy, all targets, -D warnings)
+        run: cargo clippy --manifest-path backend/Cargo.toml --quiet --all-targets -- -D warnings
+
+      - name: Run the coverage gate (instrumented test suite + thresholds)
+        run: ./scripts/coverage.sh
+
+      - name: Reduce the lcov report to production-only lines
+        run: ./scripts/lcov-production-only.sh backend/target/coverage/lcov.info > backend/target/coverage/lcov.production.info
+
+      - name: Upload backend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/target/coverage/lcov.production.info
+          flags: backend
+          name: backend
+          fail_ci_if_error: false
+
+  frontend:
+    name: Frontend unit coverage (Vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check formatting (Prettier)
+        run: npm run format:check
+
+      - name: Run unit tests with coverage (Vitest)
+        run: npm run test:unit:coverage
+
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          name: frontend
+          fail_ci_if_error: false
