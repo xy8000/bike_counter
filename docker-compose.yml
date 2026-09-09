@@ -107,9 +107,11 @@ services:
     container_name: bike_counter_frontend
     restart: unless-stopped
     depends_on:
-      # Wait for the backend to be fully ready. The backend only reports ready
-      # (and only starts its HTTP server) once the database is migrated and the
-      # basemap exists, so the frontend never serves a map without tiles.
+      # Wait for the backend to be fully ready. The backend reports ready (and
+      # starts its HTTP server) once the database is migrated and the startup
+      # sync is done — the basemap is built in the background afterwards. The
+      # frontend starts immediately and shows a loading state until
+      # tiles/map.pmtiles appears in the shared ./tiles mount.
       backend:
         condition: service_healthy
     volumes:

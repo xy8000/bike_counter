@@ -58,6 +58,11 @@ function makeServer(
     if (url.includes('/api/bff/data-sources/ms')) {
       return Promise.resolve(ok(options.payload ?? detail({})))
     }
+    // The BaseMap tiles-readiness probe: the archive is served so the preview
+    // map mounts under jsdom.
+    if (url.includes('/tiles/map.pmtiles')) {
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }
     if (url.includes('/styles/basemap.json')) {
       return Promise.resolve(ok({ sources: {} }))
     }

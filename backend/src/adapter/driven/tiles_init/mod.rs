@@ -2,13 +2,15 @@
 //! (`tiles/map.pmtiles`) by driving the official `go-pmtiles` CLI as a
 //! subprocess.
 //!
-//! The basemap is **mandatory**: [`TilesInit::ensure_available`] is called
-//! during the startup init phase (before the HTTP server binds) and builds the
-//! archive if it is missing. The cron-scheduled
+//! The basemap is **mandatory** but is built in the background: startup no
+//! longer blocks on it (the HTTP server binds immediately), and the
+//! cron-scheduled
 //! [`TilesUpdateService`](crate::core::application::tiles_update_service::TilesUpdateService)
-//! calls [`TilesInit::update`], which builds into a temporary file and swaps it
-//! in atomically (`fs::rename`) so nginx keeps serving a complete archive at
-//! all times.
+//! drives the build on first boot (or whenever the archive is missing) and
+//! refreshes it, building into a temporary file and swapping it in atomically
+//! (`fs::rename`) so nginx keeps serving a complete archive at all times.
+//! [`TilesInit::ensure_available`] remains for the standalone
+//! `bike_counter tiles` subcommand (`make tiles`).
 //!
 //! The `go-pmtiles` CLI is downloaded once (pinned by
 //! `maps.go_pmtiles_version`) into `<tiles_dir>/.pmtiles-bin` and cached across
@@ -79,9 +81,15 @@ impl TilesInit {
         self.tiles_dir.join(MAP_ARCHIVE)
     }
 
-    /// Ensures the basemap exists, building it if missing. Blocks until done.
+    /// Whether the basemap archive already exists (no build is needed).
+    pub fn is_available(&self) -> bool {
+        self.archive().exists()
+    }
+
+    /// Ensures the basemap exists, building it if missing. Blocks until done;
+    /// used by the standalone `bike_counter tiles` subcommand (`make tiles`).
     pub fn ensure_available(&self) -> Result<(), String> {
-        if self.archive().exists() {
+        if self.is_available() {
             println!("tiles/{MAP_ARCHIVE} already exists — nothing to do");
             return Ok(());
         }
@@ -271,6 +279,10 @@ fn make_executable(bin: &Path) {
 fn make_executable(_bin: &Path) {}
 
 impl TilesProvisioningPort for TilesInit {
+    fn is_available(&self) -> bool {
+        self.is_available()
+    }
+
     fn ensure_available(&self) -> Result<(), String> {
         self.ensure_available()
     }
@@ -365,6 +377,20 @@ mod tests {
 
         init.ensure_available().unwrap();
         assert!(tiles_dir.join(MAP_ARCHIVE).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn is_available_reflects_archive_presence() {
+        let root = temp_dir("is_available");
+        let tiles_dir = root.join("tiles");
+        fs::create_dir_all(&tiles_dir).unwrap();
+        let init = TilesInit::with_dirs(maps_configuration(), tiles_dir.clone(), root.join("bin"));
+
+        // Missing archive -> not available (the scheduler then builds it).
+        assert!(!init.is_available());
+        fs::write(tiles_dir.join(MAP_ARCHIVE), b"pmtiles").unwrap();
+        assert!(init.is_available());
         fs::remove_dir_all(root).unwrap();
     }
 
