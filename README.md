@@ -1,8 +1,8 @@
 # Bike-Counter
 
 [![GitHub Release](https://img.shields.io/github/v/release/xy8000/bike_counter?sort=semver)](https://github.com/xy8000/bike_counter/releases)
-[![Backend image](https://img.shields.io/docker/v/xy8000/bike-counter-backend?sort=semver&label=backend)](https://hub.docker.com/r/xy8000/bike-counter-backend)
-[![Frontend image](https://img.shields.io/docker/v/xy8000/bike-counter-frontend?sort=semver&label=frontend)](https://hub.docker.com/r/xy8000/bike-counter-frontend)
+[![Backend pulls](https://img.shields.io/docker/pulls/xy8000/bike-counter-backend?label=backend%20pulls)](https://hub.docker.com/r/xy8000/bike-counter-backend)
+[![Frontend pulls](https://img.shields.io/docker/pulls/xy8000/bike-counter-frontend?label=frontend%20pulls)](https://hub.docker.com/r/xy8000/bike-counter-frontend)
 
 **Bike-Counter** lets you explore and analyse the public bicycle-counting
 stations of **Münster, Bonn, Hamburg, Leipzig** and selected **Eco-Counter**
