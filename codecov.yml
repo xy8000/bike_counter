@@ -3,24 +3,29 @@
 # Coverage is uploaded by .github/workflows/ci.yml from two lcov reports:
 #   * backend  — Rust production-only line coverage (cargo-llvm-cov + the
 #     scripts/lcov-production-only.sh filter, matching the make coverage gate)
-#   * frontend — TypeScript pure-logic modules covered by the Vitest unit suite
+#   * frontend — the whole frontend/src covered by the Vitest unit suite (jsdom,
+#     React components included; the ≥ 80 % whole-src gate lives in
+#     frontend/vitest.config.ts)
 #
-# Reporting is intentionally informational for now: nothing here can fail a
-# pull request. The strict local gates stay `make coverage` (Rust) and
-# `make test-unit` (frontend), see agents.md.
+# Both flags are mandated by Codecov: the per-flag project status below
+# enforces ≥ 80 % coverage and can fail a pull request, mirroring the local
+# `make coverage` gate (backend + frontend, see agents.md).
 codecov:
   require_ci_to_pass: false
 
 coverage:
   status:
     project:
-      default:
-        target: auto # compare against the base commit's coverage of the same flag
+      backend:
+        target: 80%
         threshold: 1%
-        informational: true
-    patch:
-      default:
-        informational: true
+        flags:
+          - backend
+      frontend:
+        target: 80%
+        threshold: 1%
+        flags:
+          - frontend
 
 comment:
   layout: "reach, diff, flags, files"

@@ -7,13 +7,13 @@
 #   make frontend-fmt -> Prettier-write the frontend
 #   make frontend-fmt-check -> Prettier-check the frontend (CI gate)
 #   make audit     -> backend dependency security audit (scripts/audit.sh)
-#   make test-unit -> frontend unit tests (Vitest; pure-logic modules, no DOM)
-#   make test-unit-coverage -> frontend unit tests + v8 coverage (Codecov `frontend` flag)
+#   make test-unit -> frontend unit tests (Vitest under jsdom; whole frontend/src)
+#   make test-unit-coverage -> frontend unit tests + v8 whole-src coverage, >= 80% lines (Codecov `frontend` flag)
 #   make test-e2e  -> end-to-end docker-compose smoke test (scripts/docker-compose-test.sh)
 #   make test-playwright -> Playwright browser e2e tests against the real stack (scripts/e2e-playwright.sh)
 #   make playwright-install -> install the Playwright Chromium browser (once)
-#   make coverage  -> backend line-coverage gate, overall >= 80% and core >= 95% (scripts/coverage.sh)
-#   make coverage-open -> open the HTML coverage report in a browser
+#   make coverage  -> backend line-coverage gate (scripts/coverage.sh; overall >= 80%, core >= 95%) AND frontend Vitest whole-src coverage gate (>= 80% lines)
+#   make coverage-open -> open the backend HTML coverage report in a browser
 
 .PHONY: help build tiles tiles-update run down logs fmt frontend-fmt frontend-fmt-check check audit test test-rest test-unit test-unit-coverage test-e2e test-playwright playwright-install test-all coverage coverage-open clean frontend-build
 
@@ -63,10 +63,10 @@ test: ## Run all backend tests (repository tests spin up a Postgres test contain
 test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker required)
 	cargo test --manifest-path backend/Cargo.toml --quiet adapter::driving::rest::tests
 
-test-unit: ## Frontend unit tests with Vitest (pure-logic modules, no DOM)
+test-unit: ## Frontend unit tests with Vitest (jsdom, whole frontend/src)
 	npm run test:unit --prefix frontend
 
-test-unit-coverage: ## Frontend unit tests + v8 coverage report (uploaded to Codecov as the `frontend` flag)
+test-unit-coverage: ## Frontend unit tests + v8 whole-src coverage (fails below the 80% thresholds in frontend/vitest.config.ts)
 	npm run test:unit:coverage --prefix frontend
 
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
@@ -80,8 +80,9 @@ playwright-install: ## Install the Playwright Chromium browser into the frontend
 
 test-all: check test ## Formatting/lint gate, then the full test suite
 
-coverage: ## Coverage gate (production lines only): overall >= COVERAGE_THRESHOLD (default 80%) and core >= CORE_COVERAGE_THRESHOLD (default 95%) via cargo-llvm-cov (scripts/coverage.sh)
+coverage: ## Coverage gates: backend production lines (overall >= COVERAGE_THRESHOLD (default 80%) and core >= CORE_COVERAGE_THRESHOLD (default 95%) via scripts/coverage.sh) AND frontend Vitest whole-src coverage (>= 80% lines per frontend/vitest.config.ts)
 	./scripts/coverage.sh
+	npm run test:unit:coverage --prefix frontend
 
 coverage-open: coverage ## Open the HTML coverage report in a browser
 	@(command -v xdg-open >/dev/null 2>&1 && xdg-open backend/target/coverage/html/index.html) || \
