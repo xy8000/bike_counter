@@ -96,7 +96,7 @@ mod tests {
                 .get(&data_source_id)
                 .cloned()
                 .unwrap_or_default();
-            messages.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
+            messages.sort_by_key(|a| std::cmp::Reverse(a.occurred_at));
             Ok(messages)
         }
     }

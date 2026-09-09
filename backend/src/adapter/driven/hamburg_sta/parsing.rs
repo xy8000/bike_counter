@@ -307,9 +307,9 @@ pub fn parse_observation(o: &RawObservation) -> Option<MeasurementRecord> {
     if resolution_seconds <= 0 {
         return None;
     }
-    let value = match o.result.as_ref() {
-        Some(v) => v.as_i64().or_else(|| v.as_u64().map(|u| u as i64))?,
-        None => return None,
+    let value = {
+        let v = o.result.as_ref()?;
+        v.as_i64().or_else(|| v.as_u64().map(|u| u as i64))?
     };
     Some(MeasurementRecord {
         value,

@@ -115,7 +115,7 @@ mod tests {
                 .filter(|measurement| channel_id.is_none_or(|id| measurement.channel_id.0 == id.0))
                 .cloned()
                 .collect();
-            measurements.sort_by(|a, b| b.timestamp.0.cmp(&a.timestamp.0));
+            measurements.sort_by_key(|a| std::cmp::Reverse(a.timestamp.0));
             Ok(measurements.into_iter().skip(offset).take(limit).collect())
         }
 
