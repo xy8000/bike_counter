@@ -41,22 +41,32 @@ more).
 | `make check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + frontend `prettier --check` + `cargo audit` (fails on any advisory; [`scripts/audit.sh`](scripts/audit.sh)) |
 | `make test` | Full test suite (Postgres repository tests spin up a Docker test container) |
 | `make test-rest` | REST endpoint tests only (in-memory mocks, no Docker required) |
-| `make coverage` | **Coverage gate — fails when overall *production* line coverage is below `COVERAGE_THRESHOLD` (default 80%) or the core (`src/core/`) is below `CORE_COVERAGE_THRESHOLD` (default 95%)** |
+| `make coverage` | **Coverage gates — backend: fails when overall *production* line coverage is below `COVERAGE_THRESHOLD` (default 80%) or the core (`src/core/`) is below `CORE_COVERAGE_THRESHOLD` (default 95%); frontend: fails when whole-`src` Vitest line coverage drops below 80 % (see [`frontend/vitest.config.ts`](frontend/vitest.config.ts)); both mirrored by the mandated Codecov project status in [`codecov.yml`](codecov.yml)** |
 | `make test-playwright` | **Frontend browser e2e — Playwright against the real Docker Compose stack seeded from a committed SQL fixture (all seven data sources; scheduled jobs disabled via config, no provider import — see [Frontend e2e](#frontend-e2e-playwright) below)** |
 
 ### Coverage
 
-`make coverage` runs [`scripts/coverage.sh`](scripts/coverage.sh), which executes
-the whole test suite with LLVM instrumentation (`cargo-llvm-cov`) and **fails the
-build when overall production line coverage drops below `COVERAGE_THRESHOLD`
-(default 80%)** or when the **core** (`src/core/`, the domain + application
-layer) drops below `CORE_COVERAGE_THRESHOLD` (default 95%). Both thresholds are
-measured on **production code only**: lines inside `#[cfg(test)]` modules and
-standalone test files are excluded, so test scaffolding can never inflate the
-number. The core is pure hexagonal logic and is expected to be fully unit-tested
-in isolation with in-memory mocks, so its bar is higher than the adapters'. New
-code must keep coverage at or above the thresholds — prefer adding tests for new
-behavior over lowering them.
+`make coverage` gates **both halves of the repo**:
+
+- **Backend** — [`scripts/coverage.sh`](scripts/coverage.sh) runs the whole Rust
+  test suite with LLVM instrumentation (`cargo-llvm-cov`) and **fails the build
+  when overall production line coverage drops below `COVERAGE_THRESHOLD`
+  (default 80%)** or when the **core** (`src/core/`, the domain + application
+  layer) drops below `CORE_COVERAGE_THRESHOLD` (default 95%). Both thresholds
+  are measured on **production code only**: lines inside `#[cfg(test)]` modules
+  and standalone test files are excluded, so test scaffolding can never inflate
+  the number. The core is pure hexagonal logic and is expected to be fully
+  unit-tested in isolation with in-memory mocks, so its bar is higher than the
+  adapters'.
+- **Frontend** — it then runs `npm run test:unit:coverage` (Vitest + v8 over
+  the whole `frontend/src`, React components included), which fails when the
+  whole-`src` line coverage drops below the thresholds in
+  [`frontend/vitest.config.ts`](frontend/vitest.config.ts) (lines/statements
+  ≥ 80 %, functions ≥ 75 %, branches ≥ 70 %), mirroring the backend bar. The
+  produced `frontend/coverage/lcov.info` feeds the Codecov `frontend` flag.
+
+New code must keep coverage at or above the thresholds — prefer adding tests for
+new behavior over lowering them.
 
 Install the tooling once:
 
@@ -87,13 +97,17 @@ on every push / pull request and shown as the README badge:
   **production-only** lcov (test scaffolding filtered by
   [`scripts/lcov-production-only.sh`](scripts/lcov-production-only.sh)), so the
   Codecov numbers match the gate thresholds above.
-- **frontend** flag — the Vitest unit suite, which covers the pure-logic
-  modules (`format`, `geo`, `utils`, map clustering, timeframe/resolution
-  helpers). Run it locally with `make test-unit` (or `make test-unit-coverage`
-  to also produce `frontend/coverage/lcov.info`). Codecov is **informational**
-  for now: [`codecov.yml`](codecov.yml) sets no thresholds that could fail a
-  pull request. React components are covered by the Playwright e2e suite, not by
-  this unit lcov.
+- **frontend** flag — the Vitest unit suite (jsdom + Testing Library) covers
+  the **whole `frontend/src`**, React components included, and is gated at the
+  same bar as the backend: [`frontend/vitest.config.ts`](frontend/vitest.config.ts)
+  enforces ≥ 80 % lines/statements (plus 75 % functions / 70 % branches), so
+  `npm run test:unit:coverage` fails below it. Run it standalone with
+  `make test-unit` (no coverage) or together with the backend via
+  `make coverage` / `make test-unit-coverage` (also produces
+  `frontend/coverage/lcov.info`). Codecov **mandates** both flags: the per-flag
+  project status in [`codecov.yml`](codecov.yml) enforces ≥ 80 % and can fail a
+  pull request. The Playwright browser e2e suite is an additional layer and does
+  not contribute to this unit coverage number.
 
 ### Frontend e2e (Playwright)
 
