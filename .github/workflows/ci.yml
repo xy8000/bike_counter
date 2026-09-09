@@ -8,9 +8,13 @@ name: CI
 #     Postgres via a testcontainers Docker container, enforcing the ≥ 80 % /
 #     ≥ 95 % production-only thresholds), upload reduced to production-only
 #     lines by scripts/lcov-production-only.sh so Codecov matches make coverage;
-#   * frontend — Vitest unit tests with v8 coverage (pure-logic modules; React
-#     components stay covered by the Playwright e2e suite, which is not part of
-#     this workflow).
+#   * frontend — Vitest unit tests with v8 coverage over the whole frontend/src
+#     (React components included), enforcing the ≥ 80 % whole-src thresholds in
+#     frontend/vitest.config.ts; the Playwright e2e suite is a separate browser
+#     layer and is not part of this workflow.
+#
+# Both flags are additionally mandated on Codecov by the per-flag project
+# status in codecov.yml (≥ 80 %), mirroring the local make coverage gate.
 #
 # Prerequisite (owner-side, done once): add the Codecov repository upload token
 # as the GitHub secret CODECOV_TOKEN. Uploads run with fail_ci_if_error: false,

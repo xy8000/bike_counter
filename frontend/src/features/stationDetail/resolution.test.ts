@@ -76,3 +76,74 @@ describe('DEFAULT_RESOLUTION', () => {
     expect(DEFAULT_RESOLUTION).toBe('mid')
   })
 })
+
+describe('resolutionOptions fixed sets', () => {
+  it('returns the week set for the week timeframe', () => {
+    expect(resolutionOptions('week', null, null).map((o) => o.granularity)).toEqual([
+      '30m',
+      'hour',
+      'day',
+    ])
+  })
+
+  it('returns the 30-day set for the last_30_days timeframe', () => {
+    expect(resolutionOptions('last_30_days', null, null).map((o) => o.granularity)).toEqual([
+      'hour',
+      'day',
+      'week',
+    ])
+  })
+
+  it('returns the year set for the year timeframe', () => {
+    expect(resolutionOptions('year', null, null).map((o) => o.granularity)).toEqual([
+      'day',
+      'week',
+      'month',
+    ])
+  })
+})
+
+describe('resolutionOptions individual spans', () => {
+  it('picks the week set for a 3–7 day range', () => {
+    expect(
+      resolutionOptions('individual', '2024-01-01', '2024-01-07').map((o) => o.granularity),
+    ).toEqual(['30m', 'hour', 'day'])
+  })
+
+  it('picks the 30-day set for an 8–45 day range', () => {
+    expect(
+      resolutionOptions('individual', '2024-01-01', '2024-02-14').map((o) => o.granularity),
+    ).toEqual(['hour', 'day', 'week'])
+  })
+
+  it('picks the year set for a 46–366 day range (incl. leap years)', () => {
+    expect(
+      resolutionOptions('individual', '2024-01-01', '2024-12-31').map((o) => o.granularity),
+    ).toEqual(['day', 'week', 'month'])
+  })
+
+  it('falls back to the week set when only one bound is present', () => {
+    expect(resolutionOptions('individual', '2024-01-01', null)).toEqual(
+      resolutionOptions('week', null, null),
+    )
+  })
+})
+
+describe('resolutionGranularity across selections', () => {
+  it('derives the granularity for an individual range', () => {
+    expect(resolutionGranularity('low', 'individual', '2020-01-01', '2024-12-31')).toBe('quarter')
+    expect(resolutionGranularity('mid', 'individual', '2024-01-01', '2024-01-02')).toBe('30m')
+  })
+
+  it('derives the granularity for every fixed timeframe', () => {
+    expect(resolutionGranularity('high', 'day', null, null)).toBe('15m')
+    expect(resolutionGranularity('mid', 'last_30_days', null, null)).toBe('day')
+    expect(resolutionGranularity('low', 'week', null, null)).toBe('day')
+  })
+
+  it('defaults to the middle option for an unknown level', () => {
+    expect(resolutionGranularity('ultra' as never, 'individual', '2024-01-01', '2024-12-31')).toBe(
+      'week',
+    )
+  })
+})
