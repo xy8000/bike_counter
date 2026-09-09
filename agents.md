@@ -77,6 +77,24 @@ Notes:
   `CORE_COVERAGE_THRESHOLD=<percent> make coverage` — never commit a lowered
   threshold.
 
+### Coverage reporting (Codecov)
+
+Coverage is reported to [Codecov](https://codecov.io/gh/xy8000/bike_counter)
+from the CI workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
+on every push / pull request and shown as the README badge:
+
+- **backend** flag — the same `make coverage` run, uploaded as a
+  **production-only** lcov (test scaffolding filtered by
+  [`scripts/lcov-production-only.sh`](scripts/lcov-production-only.sh)), so the
+  Codecov numbers match the gate thresholds above.
+- **frontend** flag — the Vitest unit suite, which covers the pure-logic
+  modules (`format`, `geo`, `utils`, map clustering, timeframe/resolution
+  helpers). Run it locally with `make test-unit` (or `make test-unit-coverage`
+  to also produce `frontend/coverage/lcov.info`). Codecov is **informational**
+  for now: [`codecov.yml`](codecov.yml) sets no thresholds that could fail a
+  pull request. React components are covered by the Playwright e2e suite, not by
+  this unit lcov.
+
 ### Frontend e2e (Playwright)
 
 `make test-playwright` runs the browser e2e suite against the **real** Docker

@@ -206,6 +206,9 @@ upstream is reachable/authenticated and `Down` otherwise. The core wraps it in a
   [`muenster_github/tests.rs`](backend/src/adapter/driven/muenster_github/tests.rs:1)).
 - Keep **core** coverage ≥ 95% and overall ≥ 80% (`make coverage`); add tests
   for new behavior instead of lowering thresholds.
+- Frontend unit tests (Vitest, pure-logic modules) run with `make test-unit`;
+  their coverage is reported to Codecov under the `frontend` flag alongside the
+  Rust `backend` flag (see [`agents.md`](agents.md)).
 - Run all gates before finishing: `make check`, `make test`/`make test-rest`,
   `make coverage` (see [`agents.md`](agents.md:25)).
 

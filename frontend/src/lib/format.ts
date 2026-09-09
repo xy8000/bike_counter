@@ -41,10 +41,10 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => {
     const replacements: Record<string, string> = {
       '&': ampersand + 'amp;',
-      '<': String.fromCharCode(60) + 'lt;',
-      '>': String.fromCharCode(62) + 'gt;',
-      '"': String.fromCharCode(34) + 'quot;',
-      "'": String.fromCharCode(39) + '#39;',
+      '<': ampersand + 'lt;',
+      '>': ampersand + 'gt;',
+      '"': ampersand + 'quot;',
+      "'": ampersand + '#39;',
     }
     return replacements[char] ?? char
   })
