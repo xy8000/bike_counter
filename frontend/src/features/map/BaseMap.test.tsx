@@ -104,16 +104,47 @@ afterEach(() => {
 })
 
 describe('BaseMap', () => {
-  it('renders nothing while the basemap style is still being fetched', () => {
+  it('renders nothing while the basemap style is still being fetched', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => new Promise<Response>(() => {})),
+      vi.fn((input: RequestInfo | URL) => {
+        // The tiles archive is already served; only the style fetch stays
+        // pending, so the map is withheld (empty container) rather than
+        // flashing partial UI.
+        if (String(input).includes('/tiles/map.pmtiles')) {
+          return Promise.resolve(new Response(null, { status: 200 }))
+        }
+        return new Promise<Response>(() => {})
+      }),
     )
 
     const { container } = renderBaseMap({})
 
+    // Let the async tiles probe resolve (ready) while the style fetch stays
+    // pending: no map is rendered, the container remains empty.
+    await waitFor(() => expect(container).toBeEmptyDOMElement())
     expect(document.querySelector('[data-testid="maplibre-Map"]')).toBeNull()
-    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('shows the tiles loading state while the basemap archive is not served yet', () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        // The archive is still being built in the background (404): the map
+        // must not mount and the loading state stands in for it.
+        if (String(input).includes('/tiles/map.pmtiles')) {
+          return Promise.resolve(new Response(null, { status: 404 }))
+        }
+        return Promise.resolve(ok(stylePayload()))
+      }),
+    )
+
+    const { container } = renderBaseMap({})
+
+    const loading = container.querySelector('[data-testid="tiles-loading"]')
+    expect(loading).not.toBeNull()
+    expect(loading).toHaveTextContent('Downloading map…')
+    expect(document.querySelector('[data-testid="maplibre-Map"]')).toBeNull()
   })
 
   it('renders the Map once the style loads, replacing the runtime origin in vector sources', async () => {
@@ -187,7 +218,16 @@ describe('BaseMap', () => {
 
   it('falls back to the style URL and logs when the style fetch rejects', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        // The archive is served; only the style request fails.
+        if (String(input).includes('/tiles/map.pmtiles')) {
+          return Promise.resolve(new Response(null, { status: 200 }))
+        }
+        return Promise.reject(new Error('network down'))
+      }),
+    )
 
     renderBaseMap({})
 

@@ -1,8 +1,10 @@
 import { Map, NavigationControl } from '@vis.gl/react-maplibre'
 import type { Map as MaplibreMap, LngLatBoundsLike, StyleSpecification } from 'maplibre-gl'
+import { Loader2 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Bounds } from '../../lib/geo'
 import { mapBounds } from '../../lib/geo'
+import { useTilesReady } from './useTilesReady'
 
 /// The self-hosted vector basemap style (served by nginx as a static asset).
 /// Its single vector source reads `/tiles/map.pmtiles` directly via HTTP range
@@ -30,6 +32,25 @@ function useBasemapStyle(): string {
 /// The default Münster view, used when a map has no explicit bounds (the map
 /// starts centred on Münster, matching the previous Leaflet default).
 export const DEFAULT_CENTER = { longitude: 7.63, latitude: 51.96, zoom: 13 }
+
+/// The loading state shown while the self-hosted basemap archive is still being
+/// built in the background (startup no longer blocks on it — see plan 123): a
+/// full-size panel in the app's loading style (spinner + muted text) standing in
+/// for the map until `/tiles/map.pmtiles` is served.
+function TilesLoading() {
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground"
+      aria-busy="true"
+      data-testid="tiles-loading"
+    >
+      <Loader2 aria-hidden="true" className="h-8 w-8 animate-spin" />
+      <p aria-live="polite" className="text-sm">
+        Downloading map…
+      </p>
+    </div>
+  )
+}
 
 /// Shared MapLibre wrapper used by all three maps. Owns the style, the container
 /// sizing, attribution, keyboard zoom and the bounds/ready reporting; each map
@@ -71,6 +92,12 @@ export function BaseMap({
       ]
     : undefined
 
+  // The basemap archive is built in the background on a fresh deployment; the
+  // MapLibre map is only mounted once `/tiles/map.pmtiles` is served (a 404
+  // source never recovers on its own, so mounting early would leave a blank map
+  // once the archive appears). Until then the loading state explains the wait.
+  const tilesReady = useTilesReady()
+
   // The pmtiles protocol requires a full URL with its own scheme after
   // `pmtiles://` (e.g. `pmtiles://https://host/map.pmtiles`) — a bare relative
   // path is not a valid PMTiles URL (protomaps/PMTiles#509) and silently never
@@ -100,6 +127,8 @@ export function BaseMap({
       cancelled = true
     }
   }, [styleUrl])
+
+  if (!tilesReady) return <TilesLoading />
 
   if (style === null) return null
 

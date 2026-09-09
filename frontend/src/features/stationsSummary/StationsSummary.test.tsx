@@ -154,6 +154,11 @@ function makeServer(options: ServerOptions = {}) {
       if (options.shellError) return Promise.reject(new Error('shell failed'))
       return Promise.resolve(ok(rawShell(stations)))
     }
+    // The BaseMap tiles-readiness probe: the archive is served so the summary
+    // map mounts under jsdom.
+    if (url.includes('/tiles/map.pmtiles')) {
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }
     if (url.includes('/styles/basemap.json')) {
       return Promise.resolve(ok({ sources: {} }))
     }

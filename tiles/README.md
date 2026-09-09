@@ -58,22 +58,30 @@ runtime).
 
 The basemap is **mandatory** and built by the backend itself (a Rust driven
 adapter, [`backend/src/adapter/driven/tiles_init/`](../backend/src/adapter/driven/tiles_init/)):
-at startup the backend downloads the pinned
+it downloads the pinned
 [`pmtiles` CLI](https://github.com/protomaps/go-pmtiles) (version from the
 `[maps]` TOML section) and runs three `pmtiles extract` calls against the
 pinned Protomaps build plus a `pmtiles merge`
 (`world.pmtiles` → `surroundings.pmtiles` → `germany.pmtiles` → `map.pmtiles`).
 The extracts are three disjoint zoom bands (z0-5 / z6-7 / z8-15), which the
-merge requires. The server only reports ready once the archive exists — there
-is **no `SKIP_TILES`**, the application cannot run without tiles.
+merge requires.
+
+The build no longer blocks startup: the backend binds its HTTP server and
+reports healthy immediately (database migrations + startup sync are the only
+prerequisites), and the cron-scheduled `tiles_update` job runs the build in the
+background on first boot or whenever `tiles/map.pmtiles` is missing (e.g. a
+wiped tiles directory). Until it finishes, the frontend shows a "Downloading
+map…" loading state over the map; the basemap appears once the job has swapped
+the archive into place.
+
+To build it out-of-band (e.g. before the first `docker compose up`):
 
 ```bash
 make tiles   # docker compose run --rm --no-deps backend tiles -> tiles/map.pmtiles
 ```
 
-`docker compose up`/`make run` build it automatically as part of the backend's
-startup. Once `tiles/map.pmtiles` exists it is reused (cached across runs).
-Refreshing it is the job of the cron-scheduled `tiles_update` job (see
+Once `tiles/map.pmtiles` exists it is reused (cached across runs). Refreshing
+it is the job of the cron-scheduled `tiles_update` job (see
 [below](#updating-the-pinned-protomaps-build)), which rebuilds into a temporary
 file and swaps it in atomically so the running app stays online.
 
@@ -101,7 +109,7 @@ make tiles-update   # drops the cached tiles/map.pmtiles, re-runs the tiles buil
 
 ## Resilience
 
-Extraction only happens when provisioning (the mandatory startup build or the
+Extraction only happens when provisioning (the initial background build or the
 scheduled `tiles_update` run), exactly like the previous
 Geofabrik/Planetiler download this replaced: once `tiles/map.pmtiles` exists,
 the running app never makes another request to Protomaps. If

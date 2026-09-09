@@ -64,10 +64,12 @@ make run
 open http://localhost:8081
 ```
 
-The first start builds the Docker images and generates the self-hosted map
-basemap (this downloads the pinned map extract, so it needs internet access and
-takes a few minutes). `make down` stops the stack and keeps the database;
-`make logs` follows the logs of all services.
+The first start builds the Docker images. The backend comes up immediately and
+generates the self-hosted map basemap in the background (this downloads the
+pinned map extract, so it needs internet access and can take a while); the map
+shows a "Downloading map…" loading state until the basemap is ready. `make down`
+stops the stack and keeps the database; `make logs` follows the logs of all
+services.
 
 > The template enables every supported city. If you only want a subset — or no
 > automatic imports at all — edit the `[[data_sources]]` entries in
@@ -93,10 +95,12 @@ docker compose pull
 docker compose up -d
 ```
 
-The first start downloads and builds the self-hosted map basemap (it needs
-internet access and takes a few minutes); `make down` stops the stack and keeps
-the database. New releases ship as GitHub releases with matching Docker Hub
-tags (`0.0.1`, `latest`).
+The first start downloads and builds the self-hosted map basemap in the
+background (it needs internet access and can take a while); the backend reports
+healthy immediately and the map shows a "Downloading map…" loading state until
+the basemap is ready. `make down` stops the stack and keeps the database. New
+releases ship as GitHub releases with matching Docker Hub tags (`0.0.1`,
+`latest`).
 
 ## Services
 

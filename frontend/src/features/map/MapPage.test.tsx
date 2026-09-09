@@ -108,6 +108,12 @@ function makeServer(options: { failStations?: boolean } = {}) {
   const state = { failStations: options.failStations ?? false }
   const mock = vi.fn((input: unknown): Promise<Response> => {
     const url = String(input)
+    // The BaseMap tiles-readiness probe: the archive is considered served so
+    // the map mounts (the archive itself is never fetched by MapLibre under
+    // jsdom, the Map component is a fake).
+    if (url.includes('/tiles/map.pmtiles')) {
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }
     if (url.includes('/styles/basemap')) return Promise.resolve(ok(basemapPayload()))
     if (url.includes('/global-summary')) {
       return Promise.resolve(
