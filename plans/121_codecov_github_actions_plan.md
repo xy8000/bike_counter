@@ -167,6 +167,14 @@ The requested badge to add to [`README.md`](../README.md):
   [`lib/format.ts`](../frontend/src/lib/format.ts): it prepended the literal
   character (`<` → `<lt;`) instead of the `&`-entity prefix. Corrected to the
   documented behaviour — the helper has no callers, so no behaviour changes.
+- When the CI backend job first ran on the current stable Rust (1.98.0), its
+  newer clippy flagged six pre-existing `-D warnings` lints in code untouched
+  by this plan: a `match` that can be `?` in
+  [`hamburg_sta/parsing.rs`](../backend/src/adapter/driven/hamburg_sta/parsing.rs)
+  and reverse `sort_by` calls that clippy wants as `sort_by_key(Reverse(...))`
+  in the REST mocks and the data-import/measurement/provider-message services.
+  Fixed per clippy's own suggestions (behaviour-preserving) so `make check`
+  stays green on the newest stable toolchain.
 
 ## Definition of done
 
@@ -179,3 +187,4 @@ The requested badge to add to [`README.md`](../README.md):
 - [x] Codecov badge added to `README.md` (exact URL requested by the owner)
 - [x] `agents.md` and `CONTRIBUTING.md` updated
 - [x] Local gates green: frontend `npm run test:unit` (50 tests), `npm run format:check`, `npm run build` (tsc), shell/awk syntax + self-consistency validation; plan `Status:` + checkboxes current
+- [x] Backend clippy lints surfaced by CI's Rust 1.98 toolchain fixed (six behaviour-preserving changes); `cargo fmt --check`, local `cargo clippy -D warnings` (exit 0) and `make test-rest` (128 tests) green
