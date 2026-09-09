@@ -111,10 +111,12 @@ fn main() {
     // scheduling/cancellation). Regenerated on every startup.
     let instance_id = Uuid::new_v4();
 
-    // The self-hosted basemap is mandatory. `TilesInit` builds it during the
-    // init phase (before the HTTP server binds) if it is missing, and the
-    // scheduled `TilesUpdateService` refreshes it atomically on the `[maps]`
-    // cron schedule.
+    // The self-hosted basemap is mandatory but no longer blocks startup: the
+    // HTTP server binds and the app reports ready immediately, while the
+    // scheduled `TilesUpdateService` builds the archive in the background on
+    // first boot (or whenever it is missing) and refreshes it atomically on the
+    // `[maps]` cron schedule. The standalone `bike_counter tiles` subcommand
+    // below builds it out-of-band (`make tiles`).
     let tiles_init: Arc<dyn TilesProvisioningPort> = Arc::new(TilesInit::new(maps_configuration));
 
     // Standalone basemap build: `bike_counter tiles` runs only the tiles init
@@ -127,12 +129,6 @@ fn main() {
         }
         return;
     }
-
-    // The application can only run with tiles: block until the basemap exists so
-    // `/health/ready` is only reachable once migrations and tiles are done.
-    tiles_init
-        .ensure_available()
-        .unwrap_or_else(|error| panic!("Failed to ensure tiles/map.pmtiles: {error}"));
 
     // Log a redacted summary. NEVER print the full `DatabaseConfiguration` via
     // Debug, as it contains the plaintext password.

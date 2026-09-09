@@ -10,6 +10,11 @@
 //! (the `TilesInit` adapter), which swaps the archive in atomically so the
 //! running application stays online during the update.
 //!
+//! Startup is never blocked on the basemap: the generic scheduler runs this job
+//! on the blocking pool right away when the archive is missing (first boot or a
+//! wiped tiles directory), so the HTTP server can bind and report healthy while
+//! the (potentially multi-hour) build proceeds in the background.
+//!
 //! Multi-instance cancellation: the service first claims the type's `job_locks`
 //! row (only the winner proceeds), then records a RUNNING job owned by this
 //! instance. The atomic provisioning build cannot be interrupted, so the job is
@@ -59,9 +64,10 @@ impl TilesUpdateService {
     }
 
     /// Decides whether the tiles update job should run now and executes it if
-    /// so. Same always-on rule as the data-source update and asset cleanup jobs:
-    /// run at startup (never succeeded) and whenever the last successful run is
-    /// overdue; skip while an active (RUNNING or awaiting-finalize) job exists.
+    /// so. It runs when the basemap archive is missing (the initial background
+    /// build), when the job has never succeeded, or when the last successful run
+    /// is overdue; it skips while an active (RUNNING or awaiting-finalize) job
+    /// exists.
     pub fn run_if_due(&self) {
         let now = Utc::now();
 
@@ -87,6 +93,15 @@ impl TilesUpdateService {
                 eprintln!("Failed to check for an active tiles update job: {error:?}");
                 return;
             }
+        }
+
+        // The basemap is mandatory but is built in the background (startup never
+        // blocks on it). If the archive is missing — first boot or a wiped tiles
+        // directory — run the build now, regardless of the job history.
+        if !self.tiles_provisioning.is_available() {
+            println!("Basemap (map.pmtiles) is missing — building it in the background");
+            self.execute(now);
+            return;
         }
 
         match self
@@ -344,13 +359,25 @@ mod tests {
     struct MockTilesProvisioning {
         updates: Mutex<u32>,
         fail: bool,
+        available: bool,
     }
 
     impl MockTilesProvisioning {
+        /// Archive present; the scheduler triggers only via the job history.
         fn new(fail: bool) -> Self {
             Self {
                 updates: Mutex::new(0),
                 fail,
+                available: true,
+            }
+        }
+
+        /// Archive missing; the scheduler triggers the initial background build.
+        fn new_missing(fail: bool) -> Self {
+            Self {
+                updates: Mutex::new(0),
+                fail,
+                available: false,
             }
         }
 
@@ -360,6 +387,10 @@ mod tests {
     }
 
     impl TilesProvisioningPort for MockTilesProvisioning {
+        fn is_available(&self) -> bool {
+            self.available
+        }
+
         fn ensure_available(&self) -> Result<(), String> {
             Ok(())
         }
@@ -635,6 +666,20 @@ mod tests {
         service(repo.clone(), provisioning.clone()).run_if_due();
 
         assert_eq!(provisioning.update_count(), 0);
+    }
+
+    #[test]
+    fn runs_when_the_archive_is_missing_even_if_a_run_is_recent() {
+        // Startup decoupling: the basemap is built in the background whenever it
+        // is missing, regardless of the job history (e.g. a wiped tiles dir with
+        // an already-finished job record).
+        let now = Utc::now();
+        let repo = Arc::new(MemoryJobRepository::new(vec![finished_job(now)]));
+        let provisioning = Arc::new(MockTilesProvisioning::new_missing(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 1);
     }
 
     #[test]
