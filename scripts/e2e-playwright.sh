@@ -98,7 +98,7 @@ database_name="bike_counter"
 # are disabled for the offline e2e run.
 scheduled_jobs_enabled = false
 
-data_source_update_cron="0 0 * * * *"
+data_source_update_cron="0 0 3 * * *"
 data_source_update_max_heartbeat_interval_seconds=3600
 
 asset_cleanup_cron="0 0 4 * * *"

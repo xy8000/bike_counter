@@ -9,8 +9,10 @@ database_name="bike_counter"
 # providers.
 scheduled_jobs_enabled = true
 
-# CRON expression for the data-source update job (default: every hour).
-data_source_update_cron="0 * * * * *"
+# CRON expression for the data-source update job (default: once a day at 03:00,
+# i.e. just before the daily OpenData export so the export sees the previous
+# day's freshly imported data).
+data_source_update_cron="0 0 3 * * *"
 # REQUIRED max heartbeat interval for the update job in seconds (no default).
 # While a job runs, a dedicated loop refreshes it every few seconds, so a few
 # minutes is plenty — a worker silent for longer than this is treated as dead
