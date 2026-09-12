@@ -6,8 +6,8 @@ name: Release
 # cosign, and creates the GitHub Release.
 #
 # Pushed tags (semver without the `v` prefix) and a `latest` alias:
-#   v0.0.1 -> xy8000/bike-counter-backend:0.0.1 + :latest
-#            xy8000/bike-counter-frontend:0.0.1 + :latest
+#   v0.0.2 -> xy8000/bike-counter-backend:0.0.2 + :latest
+#            xy8000/bike-counter-frontend:0.0.2 + :latest
 #
 # Signing is keyless (no stored keys): the GitHub Actions OIDC identity signs
 # each image digest via Sigstore Fulcio/Rekor, which is why the `id-token:
@@ -15,7 +15,7 @@ name: Release
 #   cosign verify \
 #     --certificate-identity-regexp 'https://github.com/xy8000/bike_counter/.github/workflows/release.yml@refs/tags/v[0-9.]+' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-#     xy8000/bike-counter-backend:0.0.1
+#     xy8000/bike-counter-backend:0.0.2
 #
 # Prerequisites (owner-side, done once):
 #   - Docker Hub repositories xy8000/bike-counter-backend and

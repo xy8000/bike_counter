@@ -26,7 +26,7 @@ services:
     # block stays alongside `image:` so `docker compose up --build` (make run)
     # keeps building from source for development, while `docker compose pull`
     # fetches the released image.
-    image: xy8000/bike-counter-backend:0.0.1
+    image: xy8000/bike-counter-backend:0.0.2
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -100,7 +100,7 @@ services:
   frontend:
     # Published image name (see .github/workflows/release.yml); `build:` stays
     # for local development via `docker compose up --build` (make run).
-    image: xy8000/bike-counter-frontend:0.0.1
+    image: xy8000/bike-counter-frontend:0.0.2
     build:
       context: ./frontend
       dockerfile: Dockerfile
