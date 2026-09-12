@@ -1514,10 +1514,9 @@ mod tests {
 
     #[test]
     fn runs_when_last_run_is_overdue() {
-        // The last successful run finished ~2 hours ago: with the hourly cron
-        // at least one trigger (the last hour boundary) has been missed, so the
-        // job must run now.
-        let finished = Utc::now() - Duration::hours(2);
+        // The last successful run finished ~2 days ago: with the daily cron at
+        // 03:00 at least one trigger has been missed, so the job must run now.
+        let finished = Utc::now() - Duration::days(2);
         let job_repo = Arc::new(MockJobRepository::new(vec![finished_job_at(
             DATA_SOURCE_UPDATE_JOB_TYPE,
             finished,

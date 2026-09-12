@@ -6,8 +6,10 @@ use crate::core::domain::configuration::configuration::value_objects::{
 };
 use crate::core::domain::configuration::error::ConfigError;
 
-/// Default data-source update frequency: once per hour (CRON syntax).
-pub const DEFAULT_DATA_SOURCE_UPDATE_CRON: &str = "0 0 * * * *";
+/// Default data-source update frequency: once a day at 03:00 (CRON syntax),
+/// i.e. just before the daily OpenData export (03:30) so the export sees the
+/// previous day's freshly imported data.
+pub const DEFAULT_DATA_SOURCE_UPDATE_CRON: &str = "0 0 3 * * *";
 /// Default asset cleanup frequency: daily at 04:00 (CRON syntax).
 pub const DEFAULT_ASSET_CLEANUP_CRON: &str = "0 0 4 * * *";
 /// Default maps/tiles refresh frequency: every two months (CRON syntax).

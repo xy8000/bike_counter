@@ -68,8 +68,8 @@ database_user="${DB_USER}"
 database_password="postgres"
 database_name="${DB_NAME}"
 
-# Data-source update job settings (cron default is hourly).
-data_source_update_cron="0 0 * * * *"
+# Data-source update job settings (cron default is daily at 03:00).
+data_source_update_cron="0 0 3 * * *"
 data_source_update_max_heartbeat_interval_seconds=3600
 
 # Asset cleanup job settings (cron default is daily at 04:00).
