@@ -13,21 +13,28 @@ if (!target) {
   process.exit(1)
 }
 
-const root = path.resolve('.')
-const abs = path.resolve(target)
-const isWithinRoot = abs === root || abs.startsWith(`${root}${path.sep}`)
-if (!isWithinRoot) {
+let root
+let abs
+try {
+  root = await fs.promises.realpath('.')
+  abs = await fs.promises.realpath(target)
+} catch {
   console.error(`invalid target path: ${target}`)
   process.exit(1)
 }
-if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+const relative = path.relative(root, abs)
+if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  console.error(`invalid target path: ${target}`)
+  process.exit(1)
+}
+if (!(await fs.promises.stat(abs)).isFile()) {
   console.error(`file not found: ${target}`)
   process.exit(1)
 }
 
 const W = 120
 const H = 50
-const b64 = fs.readFileSync(abs).toString('base64')
+const b64 = (await fs.promises.readFile(abs)).toString('base64')
 const dataUrl = `data:image/png;base64,${b64}`
 
 const browser = await chromium.launch()
