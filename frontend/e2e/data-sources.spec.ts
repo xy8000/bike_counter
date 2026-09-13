@@ -36,7 +36,7 @@ test('clicking a data source opens the detail page', async ({ page }) => {
 
   // The detail shows the (large) image, the map of provided stations and the
   // station/channel facts.
-  await expect(page.getByAltText('Münster image')).toBeVisible()
+  await expect(page.getByAltText('Münster', { exact: true })).toBeVisible()
   await expect(page.getByText('Stations', { exact: true })).toBeVisible()
   await expect(page.getByText('Channels', { exact: true })).toBeVisible()
   await expect(page.getByText('First data from', { exact: true })).toBeVisible()

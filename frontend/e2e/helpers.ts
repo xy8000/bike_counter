@@ -28,6 +28,15 @@ export function mapMarkers(page: Page): Locator {
   return page.locator('.station-marker')
 }
 
+/// The map flag `<img class="station-marker">` for `name`. The station name is
+/// also used as the banner image `alt` on the overview/summary/detail views, so
+/// a bare `getByAltText(name)` resolves to several images once a panel is open;
+/// scoping to the `.station-marker` class keeps the locator on the map flag
+/// (see `stationMarkerImage` in frontend/src/lib/map.tsx).
+export function stationMarker(page: Page, name: string): Locator {
+  return page.locator(`.station-marker[alt=${JSON.stringify(name)}]`)
+}
+
 /// A MapLibre cluster circle: renders instead of a group of overlapping station
 /// flags and shows how many stations it folds together (`data-count`).
 export function mapClusters(page: Page): Locator {
