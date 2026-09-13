@@ -1,6 +1,6 @@
 # 127 - Fix open Sonar issues
 
-Status: in progress
+Status: implemented
 
 ## Problem
 
@@ -14,9 +14,17 @@ The current SonarCloud branch report contains five open findings: one path-trave
 
 ## Definition of done
 
-- [ ] Screenshot analyzer rejects traversal and symlink escape paths
-- [ ] Backend Dockerfile uses digest-only image references
-- [ ] Frontend Dockerfile uses digest-only image references
-- [ ] Focused validation passes
-- [ ] Required repository gates pass or are documented if unavailable
-- [ ] Plan status updated to implemented
+- [x] Screenshot analyzer rejects traversal and symlink escape paths
+- [x] Backend Dockerfile uses digest-only image references
+- [x] Frontend Dockerfile uses digest-only image references
+- [x] Focused validation passes
+- [x] Required repository gates pass or are documented if unavailable
+- [x] Plan status updated to implemented
+
+## Validation
+
+- Focused analyzer and Docker reference checks passed.
+- `make check` passed: formatting, Clippy, Prettier, and cargo audit.
+- `make test-rest` passed: 128 tests.
+- `make coverage` passed: backend production coverage 85.69% overall and
+	95.41% core coverage; frontend coverage 94.92% lines across 543 tests.
