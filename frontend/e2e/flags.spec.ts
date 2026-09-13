@@ -4,6 +4,7 @@ import {
   SEARCH_PLACEHOLDER,
   SEARCH_TRIGGER_TEXT,
   stationBoundsUrl,
+  stationMarker,
   waitForStations,
 } from './helpers'
 
@@ -23,12 +24,10 @@ test('clicking a map marker marks it as selected on the map', async ({ page }) =
 
   // The selected station id lands in the URL and that marker switches to the
   // selected flag (the frontend derives `selected` from the URL station param).
-  // `exact` keeps this on the marker img (the overview adds `<img alt="… icon">`
-  // and `<img alt="… image">` that would otherwise substring-match).
+  // Target the marker by class: the overview banner reuses the station name as
+  // its image `alt`, so a bare `getByAltText` would match both.
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
-  await expect(page.getByAltText(stationName, { exact: true })).toHaveClass(
-    /station-marker--selected/,
-  )
+  await expect(stationMarker(page, stationName)).toHaveClass(/station-marker--selected/)
 })
 
 test('a map void click clears the selected flag again', async ({ page }) => {
@@ -39,9 +38,7 @@ test('a map void click clears the selected flag again', async ({ page }) => {
   const stationName = (await marker.getAttribute('alt')) ?? ''
   expect(stationName).not.toBe('')
   await marker.click()
-  await expect(page.getByAltText(stationName, { exact: true })).toHaveClass(
-    /station-marker--selected/,
-  )
+  await expect(stationMarker(page, stationName)).toHaveClass(/station-marker--selected/)
 
   // Click the map void (far right edge, away from any marker).
   const map = page.locator('.maplibregl-map')
@@ -51,9 +48,7 @@ test('a map void click clears the selected flag again', async ({ page }) => {
 
   // The station param is dropped and the marker returns to the normal flag.
   await expect(page).not.toHaveURL(/[?&]station=/)
-  await expect(page.getByAltText(stationName, { exact: true })).not.toHaveClass(
-    /station-marker--selected/,
-  )
+  await expect(stationMarker(page, stationName)).not.toHaveClass(/station-marker--selected/)
 })
 
 test('search + Find on map marks the found station as selected', async ({ page }) => {
@@ -69,9 +64,7 @@ test('search + Find on map marks the found station as selected', async ({ page }
 
   // The dialog closes and the found station's marker gets the selected flag.
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
-  await expect(page.getByAltText('Bohlweg', { exact: true })).toHaveClass(
-    /station-marker--selected/,
-  )
+  await expect(stationMarker(page, 'Bohlweg')).toHaveClass(/station-marker--selected/)
 })
 
 // Gartenstraße is marked inactive by the e2e stack after startup
@@ -88,9 +81,7 @@ test('an inactive station renders with the inactive flag', async ({ page }) => {
   })
   await waitForStations(page)
 
-  await expect(page.getByAltText('Gartenstraße', { exact: true })).toHaveClass(
-    /station-marker--inactive/,
-  )
+  await expect(stationMarker(page, 'Gartenstraße')).toHaveClass(/station-marker--inactive/)
 })
 
 test('an inactive station stays inactive even when it is the selected station', async ({
@@ -104,7 +95,7 @@ test('an inactive station stays inactive even when it is the selected station', 
   )
   // Selecting a station via the URL opens the overview panel (not the sidebar),
   // so wait for the marker itself instead of `waitForStations`.
-  const marker = page.getByAltText('Gartenstraße', { exact: true })
+  const marker = stationMarker(page, 'Gartenstraße')
   await expect(marker).toBeVisible()
   await expect(marker).toHaveClass(/station-marker--inactive/)
   await expect(marker).not.toHaveClass(/station-marker--selected/)

@@ -82,8 +82,8 @@ test('clicking a map marker opens the overview panel and a map void click closes
     'href',
     /^\/stations\//,
   )
-  // The large station image (the banner also carries a small icon thumbnail).
-  await expect(overview.getByAltText(`${stationName} image`)).toBeVisible()
+  // The large station image, whose alt is now the bare station name.
+  await expect(overview.getByAltText(stationName, { exact: true })).toBeVisible()
   // The old sidebar counter is gone while the overview is open.
   await expect(sidebarBadge(page)).toHaveCount(0)
 

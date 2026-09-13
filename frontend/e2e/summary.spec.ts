@@ -82,7 +82,7 @@ test.describe('station summary', () => {
     await page.goto(await smallSummaryUrl(page), { waitUntil: 'domcontentloaded' })
 
     await expect(page.getByRole('link', { name: 'Back to map' })).toBeVisible()
-    await expect(page.getByRole('img', { name: 'Station summary image' })).toBeVisible()
+    await expect(page.getByRole('img', { name: 'Station summary' })).toBeVisible()
     await waitForSummaryContent(page)
     await expect(mapMarkers(page).first()).toBeVisible()
 

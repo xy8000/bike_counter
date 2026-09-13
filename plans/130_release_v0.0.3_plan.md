@@ -24,6 +24,9 @@ The following work landed after the `v0.0.2` tag:
   [`README.md`](../README.md).
 - [plan 129](129_sonar_active_findings_plan.md) — fixed the active Sonar
   findings (frontend accessibility/alt text and backend coding conventions).
+- [plan 131](131_fix_playwright_locators_after_alt_text_change_plan.md) — fixed
+  the Playwright e2e locators that plan 129's alt-text change broke, so
+  `make test-playwright` is green again (74 passed).
 
 The release infrastructure from
 [plan 119](119_release_v0.0.1_plan.md) (Apache-2.0 license, Docker Hub image
@@ -104,9 +107,12 @@ flowchart TD
 ## Progress (local prep done, release not yet cut)
 
 The version bump, image tags, docs and this plan file are committed on
-`release/v0.0.3-release-prep`; `make check` and
-`make test-rest` (128 passed) are green. No application logic changed, so the
-release prep differs from `main` only in version strings and the two image tags.
+`release/v0.0.3-release-prep`; `make check`, `make test-rest` (128 passed) and
+`make test-playwright` (74 passed) are green. Apart from this plan's version
+strings / image tags and the e2e locator fix of
+[plan 131](131_fix_playwright_locators_after_alt_text_change_plan.md) — which
+repairs the regressions plan 129 introduced on `main` — no application logic
+changed.
 
 Remaining **owner actions** (require GitHub credentials not available in this
 environment):
@@ -129,6 +135,7 @@ environment):
 - [x] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.3`
 - [x] `make check` green
 - [x] `make test-rest` green
+- [x] `make test-playwright` green (74 passed)
 - [ ] PR merged to `main` — **owner action**
 - [ ] Annotated tag `v0.0.3` pushed and the release workflow completed green — **owner action**
 - [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.3` / `:latest` and `xy8000/bike-counter-frontend:0.0.3` / `:latest` — **owner action**
