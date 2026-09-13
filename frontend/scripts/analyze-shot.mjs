@@ -13,9 +13,20 @@ if (!target) {
   process.exit(1)
 }
 
+const root = path.resolve('.')
+const abs = path.resolve(target)
+const isWithinRoot = abs === root || abs.startsWith(`${root}${path.sep}`)
+if (!isWithinRoot) {
+  console.error(`invalid target path: ${target}`)
+  process.exit(1)
+}
+if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+  console.error(`file not found: ${target}`)
+  process.exit(1)
+}
+
 const W = 120
 const H = 50
-const abs = path.resolve(target)
 const b64 = fs.readFileSync(abs).toString('base64')
 const dataUrl = `data:image/png;base64,${b64}`
 

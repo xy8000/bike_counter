@@ -189,15 +189,15 @@ var max = function(a) {
   return m;
 };
 var bits = function(d, p, m) {
-  var o = p / 8 | 0;
+  var o = Math.trunc(p / 8);
   return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
 };
 var bits16 = function(d, p) {
-  var o = p / 8 | 0;
+  var o = Math.trunc(p / 8);
   return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
 };
 var shft = function(p) {
-  return (p + 7) / 8 | 0;
+  return Math.trunc((p + 7) / 8);
 };
 var slc = function(v, s, e) {
   if (s == null || s < 0)

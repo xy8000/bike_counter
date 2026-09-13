@@ -37,7 +37,10 @@ const MONTH_NAMES = [
 /// dropdown.
 export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
   // Sorted distinct years that have data.
-  const years = useMemo(() => [...new Set(totals.map((entry) => entry.year))].sort(), [totals])
+  const years = useMemo(
+    () => [...new Set(totals.map((entry) => entry.year))].sort((a, b) => a - b),
+    [totals],
+  )
 
   // One row per month with a column per year; a missing year key means no data
   // for that month, so Recharts draws no bar for it.

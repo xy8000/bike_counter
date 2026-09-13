@@ -58,7 +58,7 @@ BUILD_LOG=""
 cleanup() {
   echo "--- Tearing down the Docker Compose stack"
   docker compose -f "${COMPOSE_FILE}" -f "${COMPOSE_OVERRIDE}" down -v --remove-orphans >/dev/null 2>&1 || true
-  if [ "${HAD_CONFIG}" -eq 1 ]; then
+  if [[ "${HAD_CONFIG}" -eq 1 ]]; then
     mv "${CONFIG_BACKUP}" "${CONFIG_FILE}"
     echo "--- Restored original ${CONFIG_FILE}"
   else
@@ -77,7 +77,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Back up an existing config.toml so it can be restored afterwards.
-if [ -f "${CONFIG_FILE}" ]; then
+if [[ -f "${CONFIG_FILE}" ]]; then
   cp "${CONFIG_FILE}" "${CONFIG_BACKUP}"
   HAD_CONFIG=1
 fi
@@ -195,7 +195,7 @@ for _ in $(seq 1 60); do
   fi
   sleep 5
 done
-if [ "${READY}" -ne 1 ]; then
+if [[ "${READY}" -ne 1 ]]; then
   echo "ERROR: app did not become ready at ${APP_URL}/health/live" >&2
   docker compose -f "${COMPOSE_FILE}" logs backend 2>/dev/null | tail -n 40 || true
   exit 1

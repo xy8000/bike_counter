@@ -36,20 +36,20 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
 
       - name: Install Rust toolchain with LLVM coverage tools
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           components: llvm-tools-preview
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           workspaces: backend
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
 
       - name: Check formatting (cargo fmt)
         run: cargo fmt --manifest-path backend/Cargo.toml --check --quiet
@@ -64,7 +64,7 @@ jobs:
         run: ./scripts/lcov-production-only.sh backend/target/coverage/lcov.info > backend/target/coverage/lcov.production.info
 
       - name: Upload backend coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: backend/target/coverage/lcov.production.info
@@ -80,17 +80,17 @@ jobs:
         working-directory: frontend
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@94196ee1d15439c1b6651cd87ef14e88ec435966
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Check formatting (Prettier)
         run: npm run format:check
@@ -99,7 +99,7 @@ jobs:
         run: npm run test:unit:coverage
 
       - name: Upload frontend coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: frontend/coverage/lcov.info
