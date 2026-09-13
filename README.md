@@ -4,6 +4,7 @@
 [![Backend pulls](https://img.shields.io/docker/pulls/xy8000/bike-counter-backend?label=backend%20pulls)](https://hub.docker.com/r/xy8000/bike-counter-backend)
 [![Frontend pulls](https://img.shields.io/docker/pulls/xy8000/bike-counter-frontend?label=frontend%20pulls)](https://hub.docker.com/r/xy8000/bike-counter-frontend)
 [![codecov](https://codecov.io/gh/xy8000/bike_counter/graph/badge.svg?token=SVV43HD622)](https://codecov.io/gh/xy8000/bike_counter)
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=xy8000_bike_counter&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=xy8000_bike_counter)
 
 **Bike-Counter** lets you explore and analyse the public bicycle-counting
 stations of **Münster, Bonn, Hamburg, Leipzig** and selected **Eco-Counter**
