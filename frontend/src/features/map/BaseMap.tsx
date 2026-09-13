@@ -67,7 +67,7 @@ export function BaseMap({
   onVoidClick,
   navigationControl = false,
   navigationControlPosition = 'top-right',
-}: {
+}: Readonly<{
   children?: ReactNode
   /// When false, drag/scroll/rotate/double-click zoom and keyboard zoom are all
   /// disabled (used by the non-interactive detail-page preview).
@@ -84,7 +84,7 @@ export function BaseMap({
   onVoidClick?: (map: MaplibreMap) => void
   navigationControl?: boolean
   navigationControlPosition?: 'top-right' | 'top-left'
-}) {
+}>) {
   const fitBounds: LngLatBoundsLike | undefined = bounds
     ? [
         [bounds.min_lng, bounds.min_lat],
@@ -113,7 +113,7 @@ export function BaseMap({
       .then((raw: StyleSpecification) => {
         if (cancelled) return
         for (const source of Object.values(raw.sources ?? {})) {
-          if (source && source.type === 'vector' && typeof source.url === 'string') {
+          if (source?.type === 'vector' && typeof source.url === 'string') {
             source.url = source.url.replace('REPLACED_AT_RUNTIME', window.location.origin)
           }
         }

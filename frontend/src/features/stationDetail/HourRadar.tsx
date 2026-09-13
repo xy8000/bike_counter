@@ -28,10 +28,10 @@ const HOUR_LABELS = Array.from({ length: 24 }, (_, hour) => String(hour).padStar
 export function HourRadar({
   series,
   className,
-}: {
+}: Readonly<{
   series: HourRadarSeries[]
   className?: string
-}) {
+}>) {
   // A per-channel/per-station radar with more than MAX_DATA_STREAMS series is
   // unreadable; show an info note instead of rendering it.
   if (series.length > MAX_DATA_STREAMS) {

@@ -35,11 +35,11 @@ export function SettingsDialog({
   open,
   onOpenChange,
   settings,
-}: {
+}: Readonly<{
   open: boolean
   onOpenChange: (open: boolean) => void
   settings: TimeframeSettingsValue
-}) {
+}>) {
   const { excludeNewStations, setExcludeNewStations } = useTrendSettings()
   const {
     timeframe,

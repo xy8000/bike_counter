@@ -15,14 +15,14 @@ export function StationListItem({
   onDetail,
   showFind,
   showDetail,
-}: {
+}: Readonly<{
   station: StationSummary
   onSelect: (station: StationSummary) => void
   onFind?: (station: StationSummary) => void
   onDetail?: (station: StationSummary) => void
   showFind: boolean
   showDetail?: boolean
-}) {
+}>) {
   const findable = station.latitude !== null && station.longitude !== null
   // The row wraps so the action buttons move below the station text on narrow
   // widths instead of overflowing the layout; on sm+ everything stays on one

@@ -21,11 +21,11 @@ function StatCard({
   label,
   children,
   className = '',
-}: {
+}: Readonly<{
   label: string
   children: ReactNode
   className?: string
-}) {
+}>) {
   return (
     <div
       className={`flex min-w-0 flex-col gap-1 rounded-lg border bg-card px-3 py-2.5 text-card-foreground shadow-sm ${className}`}
@@ -150,17 +150,18 @@ export function DataSourceDetail() {
   )
 }
 
-function DetailContent({ detail }: { detail: DataSourceDetailType }) {
+/// The import run's duration label: a finished run formats its seconds, a
+/// still-running run shows "Unknown" and a missing run an em dash.
+function formatImportDuration(run: DataSourceDetailType['last_import']): string {
+  if (!run) return '—'
+  return run.duration_seconds !== null ? formatSeconds(run.duration_seconds) : 'Unknown'
+}
+
+function DetailContent({ detail }: Readonly<{ detail: DataSourceDetailType }>) {
   const failed = detail.last_import?.status === 'FAILED'
-  const lastImport = detail.last_import
   // A run that has not finished has no duration yet: show "Unknown" instead of
   // pretending it ran for a final amount of time.
-  const importDuration =
-    lastImport && lastImport.duration_seconds !== null
-      ? formatSeconds(lastImport.duration_seconds)
-      : lastImport
-        ? 'Unknown'
-        : '—'
+  const importDuration = formatImportDuration(detail.last_import)
 
   return (
     <div className="flex flex-col gap-6">

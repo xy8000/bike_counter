@@ -18,12 +18,12 @@ export function SearchDialog({
   onSelect,
   onFind,
   onDetail,
-}: {
+}: Readonly<{
   onClose: () => void
   onSelect: (station: StationSummary) => void
   onFind: (station: StationSummary) => void
   onDetail: (station: StationSummary) => void
-}) {
+}>) {
   const { query, setQuery, results, loading, error, findOnMapEnabled, openDetailEnabled } =
     useStationSearch()
 

@@ -24,43 +24,44 @@ export function useVisibleStations(bounds: Bounds | null) {
   useEffect(() => {
     if (!bounds) return
     let cancelled = false
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       // The loading flag only drives the skeleton on the very first load (the
       // sidebar shows it when `shell === null`); on a refetch the previous
       // shell/stats/markers stay visible until the new data lands.
       setLoading(true)
       setError(false)
       setStatsError(false)
-      // Map markers + shell in parallel; the shell is cheap, so the sidebar
-      // identity renders as soon as it lands.
-      Promise.all([fetchMapStations(bounds), fetchSidebarShell(bounds)])
-        .then(([mapData, shellData]) => {
+      try {
+        // Map markers + shell in parallel; the shell is cheap, so the sidebar
+        // identity renders as soon as it lands.
+        const [mapData, shellData] = await Promise.all([
+          fetchMapStations(bounds),
+          fetchSidebarShell(bounds),
+        ])
+        if (cancelled) return
+        // Replace the map markers only when the visible set actually changed,
+        // so re-fetching the same stations (e.g. zooming around an unchanged
+        // view) does not rebuild the cluster index and remount the markers.
+        setMapStations((previous) =>
+          previous !== null && sameMapStations(previous, mapData) ? previous : mapData,
+        )
+        setShell(shellData)
+        setLoading(false)
+        // The stats sub-resource runs in parallel with the shell's rendering
+        // (it does not block the identity).
+        try {
+          const statsData = await fetchSidebarStats(shellData._links.stats)
           if (cancelled) return
-          // Replace the map markers only when the visible set actually changed,
-          // so re-fetching the same stations (e.g. zooming around an unchanged
-          // view) does not rebuild the cluster index and remount the markers.
-          setMapStations((previous) =>
-            previous !== null && sameMapStations(previous, mapData) ? previous : mapData,
-          )
-          setShell(shellData)
+          setStats(new Map(statsData.items.map((item) => [item.station_id, item])))
+        } catch {
+          if (!cancelled) setStatsError(true)
+        }
+      } catch {
+        if (!cancelled) {
+          setError(true)
           setLoading(false)
-          // The stats sub-resource runs in parallel with the shell's rendering
-          // (it does not block the identity).
-          fetchSidebarStats(shellData._links.stats)
-            .then((statsData) => {
-              if (cancelled) return
-              setStats(new Map(statsData.items.map((item) => [item.station_id, item])))
-            })
-            .catch(() => {
-              if (!cancelled) setStatsError(true)
-            })
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setError(true)
-            setLoading(false)
-          }
-        })
+        }
+      }
     }, 250)
     return () => {
       cancelled = true

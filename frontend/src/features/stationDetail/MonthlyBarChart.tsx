@@ -30,12 +30,32 @@ const MONTH_NAMES = [
   'Dec',
 ]
 
+/// The trend of a year-over-year delta: up, down or flat.
+function trendFromDelta(deltaPercent: number): Trend {
+  if (deltaPercent > 0) return 'up'
+  if (deltaPercent < 0) return 'down'
+  return 'flat'
+}
+
+/// The text colour class for a trend indicator.
+function trendTextClass(trend: Trend | null): string {
+  if (trend === 'up') return 'text-emerald-600'
+  if (trend === 'down') return 'text-rose-600'
+  return 'text-muted-foreground'
+}
+
+/// The year-over-year delta label (`+12.3%`, `-4%`, or `–` when unknown).
+function deltaLabel(deltaPercent: number | null): string {
+  if (deltaPercent === null) return '–'
+  return `${deltaPercent > 0 ? '+' : ''}${formatNumber(deltaPercent)}%`
+}
+
 /// The shadcn interactive bar chart with one series per calendar year: the
 /// header lists every available year as a clickable button (showing that year's
 /// total) and the chart draws the selected year's twelve monthly bars. Follows
 /// the interactive bar-chart pattern and is **not** driven by the timeframe
 /// dropdown.
-export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
+export function MonthlyBarChart({ totals }: Readonly<{ totals: MonthTotal[] }>) {
   // Sorted distinct years that have data.
   const years = useMemo(
     () => [...new Set(totals.map((entry) => entry.year))].sort((a, b) => a - b),
@@ -92,7 +112,7 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
       let trend: Trend | null = null
       if (year !== latestYear && previous !== undefined && previous > 0) {
         deltaPercent = Math.round(((total - previous) / previous) * 1000) / 10
-        trend = deltaPercent > 0 ? 'up' : deltaPercent < 0 ? 'down' : 'flat'
+        trend = trendFromDelta(deltaPercent)
       }
       return { year, total, deltaPercent, trend }
     })
@@ -126,19 +146,7 @@ export function MonthlyBarChart({ totals }: { totals: MonthTotal[] }) {
             </span>
             <span className="flex items-center gap-1 text-xs font-semibold">
               {trend && <TrendIcon trend={trend} />}
-              <span
-                className={
-                  trend === 'up'
-                    ? 'text-emerald-600'
-                    : trend === 'down'
-                      ? 'text-rose-600'
-                      : 'text-muted-foreground'
-                }
-              >
-                {deltaPercent === null
-                  ? '–'
-                  : `${deltaPercent > 0 ? '+' : ''}${formatNumber(deltaPercent)}%`}
-              </span>
+              <span className={trendTextClass(trend)}>{deltaLabel(deltaPercent)}</span>
             </span>
           </button>
         ))}

@@ -182,8 +182,9 @@ fi
 echo "Verified data_source_update job with instance_id in /api/v1/jobs"
 
 psql_query() {
+  local query="$1"
   docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
-    psql -U "${DB_USER}" -d "${DB_NAME}" -tAc "$1"
+    psql -U "${DB_USER}" -d "${DB_NAME}" -tAc "${query}"
 }
 
 # jobs must expose the ownership/liveness columns (nullable uuid / TIMESTAMPTZ).

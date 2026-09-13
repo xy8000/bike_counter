@@ -13,11 +13,11 @@ export function DetailMap({
   latitude,
   longitude,
   name,
-}: {
+}: Readonly<{
   latitude: number | null
   longitude: number | null
   name: string
-}) {
+}>) {
   const navigate = useNavigate()
 
   if (latitude === null || longitude === null) {

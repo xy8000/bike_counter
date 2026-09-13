@@ -13,7 +13,7 @@ import { useGlobalSummary } from './useGlobalSummary'
 /// dialogue. While the summary loads, a skeleton of the same height stands in so
 /// the bar never shifts. The right side shares a cell on phones: the compact
 /// search icon sits next to the timestamp trigger.
-export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
+export function TopBar({ onOpenSearch }: Readonly<{ onOpenSearch: () => void }>) {
   const { summary, error } = useGlobalSummary()
   const [summaryOpen, setSummaryOpen] = useState(false)
 

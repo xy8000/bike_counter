@@ -10,11 +10,11 @@ export function SidebarListItem({
   station,
   stats,
   onSelect,
-}: {
+}: Readonly<{
   station: SidebarStation
   stats?: SidebarStationStats
   onSelect: (station: SidebarStation) => void
-}) {
+}>) {
   return (
     <li className="flex flex-wrap items-stretch border-b sm:flex-nowrap">
       <button

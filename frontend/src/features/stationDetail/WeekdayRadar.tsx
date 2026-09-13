@@ -32,7 +32,10 @@ const WEEKDAY_LABELS = [
 /// channel.
 /// Missing weekdays are filled with 0 so the circle is always complete — this is
 /// a fixed 7-slot axis, not zero-filled time buckets.
-export function WeekdayRadar({ series, className }: { series: RadarSeries[]; className?: string }) {
+export function WeekdayRadar({
+  series,
+  className,
+}: Readonly<{ series: RadarSeries[]; className?: string }>) {
   // A per-channel/per-station radar with more than MAX_DATA_STREAMS series is
   // unreadable; show an info note instead of rendering it.
   if (series.length > MAX_DATA_STREAMS) {

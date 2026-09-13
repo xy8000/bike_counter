@@ -8,11 +8,11 @@ export function ChannelPie({
   totals,
   channels,
   className,
-}: {
+}: Readonly<{
   totals: ChannelTotal[]
   channels: ChannelRef[]
   className?: string
-}) {
+}>) {
   const nameOf = (id: string) => channels.find((channel) => channel.id === id)?.name ?? id
   const slices: ShareSlice[] = totals.map((total) => ({
     id: total.channel_id,

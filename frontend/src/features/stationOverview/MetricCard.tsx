@@ -14,7 +14,13 @@ export const METRIC_LABELS: Record<string, string> = {
 /// One overview stat box: label, current total and the trend vs. the previous
 /// period. Shared between the overview panel and the detail page so the small
 /// boxes look identical everywhere (the detail page just adds the YEAR stat).
-export function MetricCard({ metric }: { metric: StationOverviewMetric }) {
+/// The metric delta label (`+12%`, `-4%`, or `–` when unknown).
+function deltaLabel(deltaPercent: number | null): string {
+  if (deltaPercent === null) return '–'
+  return `${deltaPercent > 0 ? '+' : ''}${deltaPercent}%`
+}
+
+export function MetricCard({ metric }: Readonly<{ metric: StationOverviewMetric }>) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border p-3">
       <div className="min-w-0">
@@ -37,11 +43,7 @@ export function MetricCard({ metric }: { metric: StationOverviewMetric }) {
         ) : (
           <div className="flex items-center gap-1">
             <TrendIcon trend={metric.trend} />
-            <span className="text-sm font-semibold">
-              {metric.delta_percent === null
-                ? '–'
-                : `${metric.delta_percent > 0 ? '+' : ''}${metric.delta_percent}%`}
-            </span>
+            <span className="text-sm font-semibold">{deltaLabel(metric.delta_percent)}</span>
           </div>
         )}
         <span className="text-xs text-muted-foreground">vs. {formatNumber(metric.previous)}</span>

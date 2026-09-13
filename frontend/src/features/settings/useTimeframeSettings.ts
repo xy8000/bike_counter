@@ -15,7 +15,7 @@ import type { Timeframe } from '../stationDetail/types'
 const COOKIE_KEY = 'bike-counter.trends.view'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
 
-const VALID_TIMEFRAMES: Timeframe[] = ['day', 'week', 'last_30_days', 'year', 'individual']
+const VALID_TIMEFRAMES = new Set<Timeframe>(['day', 'week', 'last_30_days', 'year', 'individual'])
 
 /// The persisted shape stored in the URL and the cookie. `from`/`to` are the
 /// user-selected dates (`YYYY-MM-DD`) and only apply to the `individual`
@@ -60,7 +60,7 @@ function normalizeResolution(value: string | null | undefined): ResolutionLevel 
 /// param is present (a bare URL).
 function parseUrl(searchParams: URLSearchParams): PersistedTimeframeSettings | null {
   const raw = searchParams.get('timeframe')
-  if (!raw || !VALID_TIMEFRAMES.includes(raw as Timeframe)) return null
+  if (!raw || !VALID_TIMEFRAMES.has(raw as Timeframe)) return null
   const from = searchParams.get('from') ?? undefined
   const to = searchParams.get('to') ?? undefined
   return {
@@ -79,7 +79,7 @@ function readCookie(): PersistedTimeframeSettings | null {
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedTimeframeSettings>
-    if (parsed.timeframe && VALID_TIMEFRAMES.includes(parsed.timeframe)) {
+    if (parsed.timeframe && VALID_TIMEFRAMES.has(parsed.timeframe)) {
       return {
         timeframe: parsed.timeframe,
         from: parsed.from,

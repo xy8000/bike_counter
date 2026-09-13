@@ -8,7 +8,7 @@ WORKDIR /build
 # The `openssl` crate (pulled in transitively by rust-s3) is built with its
 # `vendored` feature, so perl + make compile a static OpenSSL into the fully
 # static musl binary (Alpine's openssl-dev only ships shared libraries).
-RUN apk add --no-cache curl perl make musl-dev pkgconf
+RUN apk add --no-cache curl make musl-dev perl pkgconf
 
 # Cache dependencies by compiling a minimal stub first, so the real build
 # only recompiles the crate itself.

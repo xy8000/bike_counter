@@ -140,7 +140,7 @@ export function computeKeyFacts(period: KeyFactsInput): KeyFact[] {
 /// The key-facts row for the "Detailed statistics" section, styled like the
 /// overview's `MetricCard` boxes (bordered box: label, large value, unit or
 /// detail line) and laid out in the same four-column grid.
-export function KeyFacts({ facts }: { facts: KeyFact[] }) {
+export function KeyFacts({ facts }: Readonly<{ facts: KeyFact[] }>) {
   if (facts.length === 0) return null
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

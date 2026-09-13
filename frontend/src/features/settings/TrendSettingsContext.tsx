@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 /// localStorage key for the Bike-Trends "exclude new stations" setting.
 const STORAGE_KEY = 'bike-counter.trends.exclude_new_stations'
@@ -24,7 +24,7 @@ function readStored(): boolean {
 /// App-wide Bike-Trends settings, persisted in localStorage so the choice
 /// survives reloads and is shared by the header (global summary), the summary
 /// page and the station detail page.
-export function TrendSettingsProvider({ children }: { children: ReactNode }) {
+export function TrendSettingsProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [excludeNewStations, setExcludeNewStations] = useState<boolean>(readStored)
 
   useEffect(() => {
@@ -35,11 +35,9 @@ export function TrendSettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [excludeNewStations])
 
-  return (
-    <TrendSettingsContext.Provider value={{ excludeNewStations, setExcludeNewStations }}>
-      {children}
-    </TrendSettingsContext.Provider>
-  )
+  const value = useMemo(() => ({ excludeNewStations, setExcludeNewStations }), [excludeNewStations])
+
+  return <TrendSettingsContext.Provider value={value}>{children}</TrendSettingsContext.Provider>
 }
 
 export function useTrendSettings(): TrendSettingsValue {

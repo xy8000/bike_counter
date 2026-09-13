@@ -34,10 +34,10 @@ function boundsOf(stations: DataSourceMapStation[]): Bounds | null {
 export function DataSourceMap({
   stations,
   name,
-}: {
+}: Readonly<{
   stations: DataSourceMapStation[]
   name: string
-}) {
+}>) {
   const bounds = boundsOf(stations)
 
   if (bounds === null) {

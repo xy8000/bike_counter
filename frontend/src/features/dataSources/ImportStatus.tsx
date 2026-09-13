@@ -14,7 +14,7 @@ export function formatSeconds(total: number): string {
 }
 
 /// The elapsed time of a RUNNING import, ticking every second.
-export function RunningDuration({ startedAt }: { startedAt: string }) {
+export function RunningDuration({ startedAt }: Readonly<{ startedAt: string }>) {
   const start = Date.parse(startedAt)
   const tick = () => Math.floor((Date.now() - start) / 1000)
   const [elapsed, setElapsed] = useState(tick)
@@ -28,7 +28,7 @@ export function RunningDuration({ startedAt }: { startedAt: string }) {
 
 /// The import status with a distinguishing icon, used in the list and the
 /// detail. A RUNNING import additionally shows how long it has been running.
-export function ImportStatus({ import: run }: { import: DataSourceImport | null }) {
+export function ImportStatus({ import: run }: Readonly<{ import: DataSourceImport | null }>) {
   if (run === null) {
     return <Badge variant="outline">Never imported</Badge>
   }
@@ -56,7 +56,7 @@ export function ImportStatus({ import: run }: { import: DataSourceImport | null 
 
 /// The three feature badges, showing both what the source offers and what it
 /// lacks (so a missing capability is visible instead of just absent).
-export function FeatureBadges({ detail }: { detail: DataSourceDetail }) {
+export function FeatureBadges({ detail }: Readonly<{ detail: DataSourceDetail }>) {
   const badges: { label: string; available: boolean }[] = [
     { label: 'Historical data', available: detail.has_historical },
     { label: 'Real-time data', available: detail.has_real_time },

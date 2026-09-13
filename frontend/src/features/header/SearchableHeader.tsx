@@ -12,11 +12,11 @@ export function SearchableHeader({
   onSelect,
   onFind,
   onDetail,
-}: {
+}: Readonly<{
   onSelect: (station: StationSummary) => void
   onFind: (station: StationSummary) => void
   onDetail: (station: StationSummary) => void
-}) {
+}>) {
   const [searchOpen, setSearchOpen] = useState(false)
   const close = () => setSearchOpen(false)
 

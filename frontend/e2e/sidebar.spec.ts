@@ -57,11 +57,11 @@ test('the sidebar renders only the stations visible in the current viewport', as
         const current = (await readSidebarCounts(page)).visible
         if (current >= baseline.visible) {
           await page.keyboard.press('+')
-          await page.waitForTimeout(400)
         }
-        return (await readSidebarCounts(page)).visible
+        return current
       },
-      { timeout: 20000 },
+      // The growing intervals space the zoom key presses while the map settles.
+      { timeout: 20000, intervals: [400, 800, 1600] },
     )
     .toBeLessThan(baseline.visible)
 

@@ -203,14 +203,16 @@ test('back to map after an in-app detail navigation restores the previous view',
   // fixed timeout before capturing the final bounds.
   await mapMarkers(page).first().click()
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
+  let previousUrl = ''
   await expect
     .poll(
       async () => {
-        const before = page.url()
-        await page.waitForTimeout(250)
-        return page.url() === before
+        const currentUrl = page.url()
+        const stable = currentUrl === previousUrl
+        previousUrl = currentUrl
+        return stable
       },
-      { timeout: 10_000 },
+      { timeout: 10_000, intervals: [250, 250, 500] },
     )
     .toBe(true)
   const expectedMapUrl = page.url()

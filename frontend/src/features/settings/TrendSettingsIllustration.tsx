@@ -17,7 +17,9 @@ const NEW_STATION = [0, 0, 28, 30, 46, 40, 32, 26]
 /// the setting changes:
 /// - off: all stations, with a new station's bikes stacked on top (jumps);
 /// - on:  established only, the same base data without that station (even growth).
-export function TrendSettingsIllustration({ excludeNewStations }: { excludeNewStations: boolean }) {
+export function TrendSettingsIllustration({
+  excludeNewStations,
+}: Readonly<{ excludeNewStations: boolean }>) {
   const includeNewStation = !excludeNewStations
 
   return (

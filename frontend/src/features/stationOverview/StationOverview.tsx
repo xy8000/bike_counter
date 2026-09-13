@@ -8,7 +8,41 @@ import { formatNumber, formatTimestamp } from '../../lib/format'
 import { MetricCard } from './MetricCard'
 import { OverviewPanelSkeleton } from './Skeletons'
 import { TotalBikesCard } from './TotalBikesCard'
+import type { StationOverviewStats } from './types'
 import { useStationOverview } from './useStationOverview'
+
+/// The overview stats block: the total-bikes card + one metric card per metric,
+/// with an error line or the loading skeleton when the stats sub-resource has
+/// not landed yet. Extracted so the shell render stays aflat conditional.
+function OverviewStatsBlock({
+  stats,
+  statsError,
+}: Readonly<{ stats: StationOverviewStats | null; statsError: boolean }>) {
+  if (stats) {
+    return (
+      <>
+        <TotalBikesCard total={stats.total_bikes} />
+        <ul className="flex flex-col gap-2">
+          {stats.metrics.map((metric) => (
+            <li key={metric.key}>
+              <MetricCard metric={metric} />
+            </li>
+          ))}
+        </ul>
+      </>
+    )
+  }
+  if (statsError) {
+    return (
+      <p className="text-sm font-semibold text-destructive">Could not load the overview stats.</p>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-4" aria-busy="true">
+      <OverviewPanelSkeleton />
+    </div>
+  )
+}
 
 /// The counting-station overview content shown inside the generic left panel
 /// ([`LeftPanel`]) when a map marker is selected; clicking the map void or the
@@ -18,10 +52,10 @@ import { useStationOverview } from './useStationOverview'
 export function StationOverview({
   stationId,
   onClose,
-}: {
+}: Readonly<{
   stationId: string
   onClose: () => void
-}) {
+}>) {
   const { page, stats, error, statsError } = useStationOverview(stationId)
 
   return (
@@ -111,26 +145,7 @@ export function StationOverview({
                 Updated {formatTimestamp(page.last_update)}
               </span>
             </div>
-            {stats ? (
-              <>
-                <TotalBikesCard total={stats.total_bikes} />
-                <ul className="flex flex-col gap-2">
-                  {stats.metrics.map((metric) => (
-                    <li key={metric.key}>
-                      <MetricCard metric={metric} />
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : statsError ? (
-              <p className="text-sm font-semibold text-destructive">
-                Could not load the overview stats.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-4" aria-busy="true">
-                <OverviewPanelSkeleton />
-              </div>
-            )}
+            <OverviewStatsBlock stats={stats} statsError={statsError} />
           </div>
         )}
       </ScrollArea>
