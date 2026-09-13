@@ -370,6 +370,11 @@ migration, so startup never blocks.
 - `measurement_bounds()` reads `MIN(first)`/`MAX(last)` from the bounds table once
   it is populated (falling back to the raw `MIN`/`MAX` while empty), so the job's
   own range discovery is cheap after the first run.
+- The weekday radar (`sum_weekdays` / `sum_weekdays_by_channel`) reads
+  `measurement_daily` too: its callers only use it for daily-or-coarser windows, so
+  `EXTRACT(ISODOW FROM local_date)` is exact and the whole-window raw scan behind
+  the summary's year/weekly nerd stats (measured ~0.9 M shared buffers / ~190 MB
+  read for one city-year) disappears.
 
 #### 4. Cold-start correctness
 
