@@ -37,7 +37,7 @@ export function formatFullDateTime(time: number): string {
 
 /// Escape HTML so untrusted backend strings can be embedded safely.
 export function escapeHtml(value: string): string {
-  const ampersand = String.fromCharCode(38)
+  const ampersand = String.fromCodePoint(38)
   return value.replace(/[&<>"']/g, (char) => {
     const replacements: Record<string, string> = {
       '&': ampersand + 'amp;',

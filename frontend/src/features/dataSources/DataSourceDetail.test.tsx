@@ -116,7 +116,7 @@ describe('DataSourceDetail', () => {
 
     // Image + name + provider.
     expect(await screen.findByRole('heading', { name: 'Münster' })).toBeInTheDocument()
-    expect(screen.getByAltText('Münster image')).toHaveAttribute('src', '/logos/ms.png')
+    expect(screen.getByAltText('Münster')).toHaveAttribute('src', '/logos/ms.png')
     expect(screen.getByText('radvis')).toBeInTheDocument()
     expect(screen.getByText(/^Updated /)).toBeInTheDocument()
 

@@ -123,7 +123,8 @@ export function TimeSeriesBarChart({
             <ChartTooltipContent
               labelFormatter={(_, payload) => {
                 const first = payload[0]
-                const time = typeof first?.payload?.time === 'number' ? first.payload.time : NaN
+                const time =
+                  typeof first?.payload?.time === 'number' ? first.payload.time : Number.NaN
                 return labelFor(Number.isFinite(time) ? time : Date.now())
               }}
             />

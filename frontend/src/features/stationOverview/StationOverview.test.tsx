@@ -130,7 +130,7 @@ describe('StationOverview', () => {
     )
     expect(screen.getByText('A zoo by the river.')).toBeInTheDocument()
     expect(screen.getByText('2 channels')).toBeInTheDocument()
-    expect(screen.getByAltText('Zoo Station image')).toHaveAttribute('src', '/img/zoo.png')
+    expect(screen.getByAltText('Zoo Station')).toHaveAttribute('src', '/img/zoo.png')
     expect(screen.getByText(/^Updated /)).toBeInTheDocument()
 
     expect(await screen.findByText('Total bikes (all time)')).toBeInTheDocument()

@@ -103,7 +103,7 @@ export function StationOverview({
           <div className="flex flex-col gap-4 p-4">
             <img
               src={page.image_url}
-              alt={`${page.name} image`}
+              alt={page.name}
               className="h-40 w-full rounded-md border object-cover"
             />
             <div className="flex items-center justify-end">

@@ -168,7 +168,7 @@ function DetailContent({ detail }: { detail: DataSourceDetailType }) {
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <img
           src={dataSourceImageUrl(detail.image_url)}
-          alt={`${detail.name} image`}
+          alt={detail.name}
           className="h-64 w-full rounded-lg border object-contain p-2 md:h-80"
         />
         <DataSourceMap stations={detail.stations} name={detail.name} />

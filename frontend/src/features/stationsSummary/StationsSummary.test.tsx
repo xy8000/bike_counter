@@ -242,7 +242,7 @@ describe('StationsSummary', () => {
 
     // Shell metadata.
     expect(await screen.findByRole('heading', { name: 'Station summary' })).toBeInTheDocument()
-    expect(screen.getByAltText('Station summary image')).toHaveAttribute('src', '/img/summary.png')
+    expect(screen.getByAltText('Station summary')).toHaveAttribute('src', '/img/summary.png')
     expect(screen.getByText('2 stations')).toBeInTheDocument()
     // The channel-count badge belongs to the overview card, so wait for it.
     expect(await screen.findByText('5 channels')).toBeInTheDocument()
