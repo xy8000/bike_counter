@@ -1,11 +1,12 @@
 import type { Bounds } from '../../lib/geo'
 import { bboxQuery } from '../../lib/geo'
+import { assertSafeBffUrl } from '../../lib/apiUrl'
 import type { SidebarShell, SidebarStats, StationMapList, StationSearch } from './types'
 
 type RawLink = { href: string; templated?: boolean }
 
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
+  const response = await fetch(assertSafeBffUrl(url))
   if (!response.ok) throw new Error(`${url} responded with ${response.status}`)
   return response.json() as Promise<T>
 }

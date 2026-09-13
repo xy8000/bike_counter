@@ -10,8 +10,8 @@ name: Release
 #            xy8000/bike-counter-frontend:0.0.3 + :latest
 #
 # Signing is keyless (no stored keys): the GitHub Actions OIDC identity signs
-# each image digest via Sigstore Fulcio/Rekor, which is why the `id-token:
-# write` permission below is required. Consumers verify with:
+# each image digest via Sigstore Fulcio/Rekor, which is why `id-token: write` is
+# granted on the `build-and-push` job. Consumers verify with:
 #   cosign verify \
 #     --certificate-identity-regexp 'https://github.com/xy8000/bike_counter/.github/workflows/release.yml@refs/tags/v[0-9.]+' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -29,14 +29,16 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-  id-token: write
-
+# No workflow-level permissions: each job declares only the scopes it needs.
 jobs:
   build-and-push:
     name: Build, push and sign images
     runs-on: ubuntu-latest
+    permissions:
+      # Read the checked-out repo, and mint the OIDC token cosign uses for
+      # keyless (Fulcio/Rekor) signing.
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -102,6 +104,9 @@ jobs:
     name: Create GitHub Release
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      # Create and read the GitHub Release.
+      contents: write
     steps:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64

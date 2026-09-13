@@ -15,7 +15,7 @@ RUN apk add --no-cache curl perl make musl-dev pkgconf
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src \
     && echo 'fn main() {}' > src/main.rs \
-    && cargo build --release \
+    && cargo build --release --locked \
     && rm -rf src
 
 # Build the real application.
@@ -27,17 +27,26 @@ COPY migrations ./migrations
 # The built-in station image is embedded into the binary at compile time.
 COPY assets ./assets
 RUN find src migrations assets -type f -exec touch {} + \
-    && cargo build --release
+    && cargo build --release --locked
 
 # ---------- Runtime stage ----------
 FROM alpine@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
-# `curl` is required by the HEALTHCHECK below.
-RUN apk add --no-cache ca-certificates curl
+# `curl` is required by the HEALTHCHECK below. The dedicated `app` account
+# (uid/gid 1000) matches the Docker Compose bind mounts: `./tiles` is host-owned
+# by the developer's uid 1000, so the basemap can be written without running the
+# container as root.
+RUN apk add --no-cache ca-certificates curl \
+    && addgroup -g 1000 app \
+    && adduser -u 1000 -G app -D -s /sbin/nologin app
 
 WORKDIR /app
 COPY --from=builder /build/target/release/bike_counter /usr/local/bin/bike_counter
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# The app reads the bind-mounted config.toml and listens on 8080 (>1024); it
+# only writes to the /data bind mount, so it never needs root.
+USER app
 
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
