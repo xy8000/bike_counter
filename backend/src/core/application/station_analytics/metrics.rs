@@ -94,6 +94,26 @@ pub(super) fn metric_windows(
     let mut previous = [0i64; 4];
     let mut is_new = [false; 4];
 
+    // Bike-Trends: fetch every station's channel bounds in one query up front
+    // (instead of one earliest query per station), so the exclude-new-stations
+    // path is a single indexed lookup over the bounds aggregate rather than a raw
+    // walk of each channel's history.
+    let earliest_by_channel: HashMap<uuid::Uuid, DateTime<Utc>> = if exclude_new_stations {
+        let mut all_channel_ids: Vec<ChannelId> = Vec::new();
+        for station in stations {
+            if let Some(channels) = channels_by_station.get(&station.id.0) {
+                all_channel_ids.extend(channels.iter().map(|channel| ChannelId(channel.id.0)));
+            }
+        }
+        repository
+            .channel_bounds(&all_channel_ids)?
+            .into_iter()
+            .map(|bound| (bound.channel_id, bound.first))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
     for station in stations {
         let tz: Tz = station.timezone.parse()?;
         let channel_ids: Vec<ChannelId> = channels_by_station
@@ -118,16 +138,16 @@ pub(super) fn metric_windows(
         let year_previous_to = year_from - Duration::microseconds(1);
 
         // The earliest-ever measurement of the station's channels (the MIN over
-        // all of them). Under the Bike-Trends setting a station is "new" for a
-        // metric when this earliest is not before that metric's previous-window
-        // start — it had no data at all before the comparison period. Data loss
-        // or outages inside the window never exclude it. Skipped entirely unless
-        // the setting is on, keeping the default path free of extra queries.
+        // all of them), read from the batch fetched above. Under the Bike-Trends
+        // setting a station is "new" for a metric when this earliest is not before
+        // that metric's previous-window start — it had no data at all before the
+        // comparison period. Data loss or outages inside the window never exclude
+        // it. Skipped entirely unless the setting is on, keeping the default path
+        // free of extra queries.
         let earliest = if exclude_new_stations {
-            repository
-                .earliest_by_channel(&channel_ids)?
-                .into_iter()
-                .map(|channel_first| channel_first.timestamp)
+            channel_ids
+                .iter()
+                .filter_map(|channel_id| earliest_by_channel.get(&channel_id.0).copied())
                 .min()
         } else {
             None

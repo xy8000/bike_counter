@@ -220,15 +220,10 @@ impl StationAnalyticsService {
         // each station's channels), then keep a station only when it was not
         // introduced at or after the previous year's start.
         let mut earliest_by_station: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
-        for row in self
-            .measurement_repository
-            .earliest_by_channel(&channel_ids)?
-        {
+        for row in self.measurement_repository.channel_bounds(&channel_ids)? {
             if let Some(&station_id) = station_of_channel.get(&row.channel_id) {
-                let entry = earliest_by_station
-                    .entry(station_id)
-                    .or_insert(row.timestamp);
-                *entry = (*entry).min(row.timestamp);
+                let entry = earliest_by_station.entry(station_id).or_insert(row.first);
+                *entry = (*entry).min(row.first);
             }
         }
 
@@ -430,15 +425,13 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                 .iter()
                 .map(|channel| ChannelId(channel.id.0))
                 .collect();
-            for channel_first in self
+            for bound in self
                 .measurement_repository
-                .earliest_by_channel(&all_channel_ids)?
+                .channel_bounds(&all_channel_ids)?
             {
-                if let Some(&station_id) = station_of_channel.get(&channel_first.channel_id) {
-                    let entry = earliest_by_station
-                        .entry(station_id)
-                        .or_insert(channel_first.timestamp);
-                    *entry = (*entry).min(channel_first.timestamp);
+                if let Some(&station_id) = station_of_channel.get(&bound.channel_id) {
+                    let entry = earliest_by_station.entry(station_id).or_insert(bound.first);
+                    *entry = (*entry).min(bound.first);
                 }
             }
         }

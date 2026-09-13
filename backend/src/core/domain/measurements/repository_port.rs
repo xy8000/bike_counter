@@ -141,6 +141,16 @@ pub struct ChannelFirst {
     pub timestamp: DateTime<Utc>,
 }
 
+/// The earliest and latest measurement timestamp of one channel, read from the
+/// pre-aggregated bounds table so the "new station" predicate never scans the raw
+/// history. Only channels that have at least one measurement are returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelBounds {
+    pub channel_id: Uuid,
+    pub first: DateTime<Utc>,
+    pub last: DateTime<Utc>,
+}
+
 pub trait MeasurementRepository {
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
     /// Inserts a batch idempotently and returns the number of rows actually
@@ -348,6 +358,50 @@ pub trait MeasurementRepository {
         Ok(Vec::new())
     }
 
+    /// The earliest and latest measurement timestamp per channel, read from the
+    /// pre-aggregated bounds table. The analytics call this instead of
+    /// [`earliest_by_channel`](Self::earliest_by_channel) (and the import
+    /// staleness check instead of [`latest_by_channel`](Self::latest_by_channel)),
+    /// so the exclude-new-stations path is a single indexed lookup per channel
+    /// rather than a raw walk of the channel's whole history.
+    ///
+    /// Defaults to merging [`earliest_by_channel`](Self::earliest_by_channel) and
+    /// [`latest_by_channel`](Self::latest_by_channel), so rollup-unaware doubles
+    /// keep working unchanged.
+    fn channel_bounds(
+        &self,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelBounds>, DomainError> {
+        let firsts: std::collections::HashMap<Uuid, DateTime<Utc>> = self
+            .earliest_by_channel(channel_ids)?
+            .into_iter()
+            .map(|row| (row.channel_id, row.timestamp))
+            .collect();
+        let lasts: std::collections::HashMap<Uuid, DateTime<Utc>> = self
+            .latest_by_channel(channel_ids)?
+            .into_iter()
+            .map(|row| (row.channel_id, row.timestamp))
+            .collect();
+        let mut ids: Vec<Uuid> = firsts.keys().chain(lasts.keys()).copied().collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let mut bounds = Vec::with_capacity(ids.len());
+        for id in ids {
+            // A double that only overrides one of the two sides still yields
+            // usable bounds: the missing edge mirrors the present one.
+            let first = firsts.get(&id).or_else(|| lasts.get(&id)).copied();
+            let last = lasts.get(&id).or_else(|| firsts.get(&id)).copied();
+            if let (Some(first), Some(last)) = (first, last) {
+                bounds.push(ChannelBounds {
+                    channel_id: id,
+                    first,
+                    last,
+                });
+            }
+        }
+        Ok(bounds)
+    }
+
     /// Sums `value` over `[from, to]` from the daily rollup, for windows that are
     /// whole local days in `timezone` (the overview metrics and `bikes_last_day`).
     /// The rollup is keyed by each channel's own station-local date, so
@@ -385,6 +439,20 @@ pub trait MeasurementRepository {
     ) -> Result<Vec<ChannelTotal>, DomainError> {
         let _ = timezone;
         self.sum_by_channel(from, to, channel_ids, resolution_seconds)
+    }
+
+    /// Whether the one-time rollup backfill has already completed. Until it has,
+    /// the analytics must read the raw table (the pre-rollup behaviour) so a fresh
+    /// deploy serves correct numbers instead of zeros while the rollups are still
+    /// being built. Defaults to `true` so rollup-unaware doubles read raw.
+    fn rollups_ready(&self) -> Result<bool, DomainError> {
+        Ok(true)
+    }
+
+    /// Records that the one-time rollup backfill completed, switching the
+    /// analytics reads over to the rollups. Defaults to a no-op.
+    fn mark_rollups_ready(&self) -> Result<(), DomainError> {
+        Ok(())
     }
 
     /// The earliest and latest measurement timestamp across the whole history,

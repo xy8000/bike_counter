@@ -70,6 +70,24 @@ impl MeasurementRollupService {
             return;
         }
 
+        // Until the one-time backfill has completed, always run the full
+        // backfill: the analytics read the raw table in the meantime, so a
+        // partially built rollup must never be treated as ready. This also covers
+        // the upgrade path where an older `measurement_rollup` job already
+        // succeeded but the readiness state did not exist yet.
+        match self.measurement_repository.rollups_ready() {
+            Ok(false) => {
+                println!("Measurement rollups are not backfilled yet; running the full backfill");
+                self.execute_full(now);
+                return;
+            }
+            Ok(true) => {}
+            Err(error) => {
+                eprintln!("Failed to read the rollup readiness state: {error:?}");
+                return;
+            }
+        }
+
         match self
             .job_repository
             .find_last_finished_by_type(MEASUREMENT_ROLLUP_JOB_TYPE)
@@ -151,7 +169,14 @@ impl MeasurementRollupService {
         // One minute of slack on each side so timestamps exactly at the bounds
         // are included by the half-open `[from, to)` refresh.
         let slack = chrono::Duration::minutes(1);
-        self.execute(bounds.0 - slack, bounds.1 + slack, now);
+        if self.execute(bounds.0 - slack, bounds.1 + slack, now) {
+            // The rollups (and the bounds aggregate) now cover the whole history,
+            // so the analytics may read them. A failed or cancelled backfill leaves
+            // the flag false and retries on the next tick.
+            if let Err(error) = self.measurement_repository.mark_rollups_ready() {
+                eprintln!("Failed to mark the rollups as backfilled: {error:?}");
+            }
+        }
     }
 
     fn execute_recent(&self, now: DateTime<Utc>) {
@@ -159,8 +184,9 @@ impl MeasurementRollupService {
         self.execute(from, now, now);
     }
 
-    /// Runs one refresh as a tracked job owned by this instance.
-    fn execute(&self, from: DateTime<Utc>, to: DateTime<Utc>, now: DateTime<Utc>) {
+    /// Runs one refresh as a tracked job owned by this instance. Returns whether
+    /// it completed successfully (so a full backfill can flip the readiness flag).
+    fn execute(&self, from: DateTime<Utc>, to: DateTime<Utc>, now: DateTime<Utc>) -> bool {
         let interval = self
             .configuration
             .measurement_rollup_max_heartbeat_interval();
@@ -173,11 +199,11 @@ impl MeasurementRollupService {
             Ok(true) => {}
             Ok(false) => {
                 println!("Measurement rollup is already active elsewhere; skipping");
-                return;
+                return false;
             }
             Err(error) => {
                 eprintln!("Failed to acquire the measurement rollup lock: {error:?}");
-                return;
+                return false;
             }
         }
 
@@ -195,7 +221,7 @@ impl MeasurementRollupService {
                 .job_repository
                 .release(MEASUREMENT_ROLLUP_JOB_TYPE, instance_id);
             eprintln!("Failed to record measurement rollup job {job_name} ({job_id}): {error:?}");
-            return;
+            return false;
         }
         println!("Measurement rollup job {job_name} ({job_id}) started");
 
@@ -241,13 +267,14 @@ impl MeasurementRollupService {
             let _ = self
                 .job_repository
                 .release(MEASUREMENT_ROLLUP_JOB_TYPE, self.instance_id);
-            return;
+            return false;
         }
         if cancelled {
             self.finalize_cancelled(job_id, &job_name);
-            return;
+            return false;
         }
         self.finalize_after_update(job_id, &job_name);
+        true
     }
 
     /// Heartbeats the job and returns whether a cancellation is already in
@@ -315,6 +342,7 @@ impl ScheduledJobPort for MeasurementRollupService {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     use chrono::{DateTime, Duration, Utc};
@@ -377,6 +405,8 @@ mod tests {
         refreshes: Mutex<Vec<(DateTime<Utc>, DateTime<Utc>)>>,
         fail: bool,
         fail_bounds: bool,
+        fail_ready: bool,
+        ready: AtomicBool,
     }
 
     impl MockMeasurementRepository {
@@ -386,6 +416,21 @@ mod tests {
                 refreshes: Mutex::new(Vec::new()),
                 fail,
                 fail_bounds: false,
+                fail_ready: false,
+                ready: AtomicBool::new(true),
+            }
+        }
+
+        /// A repository whose rollups have not been backfilled yet, so the
+        /// readiness gate forces a full backfill.
+        fn not_ready(bounds: Option<(DateTime<Utc>, DateTime<Utc>)>, fail: bool) -> Self {
+            Self {
+                bounds,
+                refreshes: Mutex::new(Vec::new()),
+                fail,
+                fail_bounds: false,
+                fail_ready: false,
+                ready: AtomicBool::new(false),
             }
         }
 
@@ -396,6 +441,20 @@ mod tests {
                 refreshes: Mutex::new(Vec::new()),
                 fail: false,
                 fail_bounds: true,
+                fail_ready: false,
+                ready: AtomicBool::new(true),
+            }
+        }
+
+        /// A repository whose readiness probe fails.
+        fn failing_ready(bounds: Option<(DateTime<Utc>, DateTime<Utc>)>) -> Self {
+            Self {
+                bounds,
+                refreshes: Mutex::new(Vec::new()),
+                fail: false,
+                fail_bounds: false,
+                fail_ready: true,
+                ready: AtomicBool::new(false),
             }
         }
 
@@ -543,6 +602,18 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn rollups_ready(&self) -> Result<bool, DomainError> {
+            if self.fail_ready {
+                return Err(DomainError::Database("ready failed".to_string()));
+            }
+            Ok(self.ready.load(Ordering::Relaxed))
+        }
+
+        fn mark_rollups_ready(&self) -> Result<(), DomainError> {
+            self.ready.store(true, Ordering::Relaxed);
+            Ok(())
         }
     }
 
@@ -787,6 +858,72 @@ mod tests {
         measurements: Arc<MockMeasurementRepository>,
     ) -> MeasurementRollupService {
         MeasurementRollupService::new(repo, measurements, configuration(), INSTANCE)
+    }
+
+    #[test]
+    fn does_not_run_when_the_readiness_lookup_fails() {
+        let from = Utc::now() - Duration::days(30);
+        let to = Utc::now() - Duration::days(1);
+        let repo = Arc::new(MemoryJobRepository::new(vec![]));
+        let measurements = Arc::new(MockMeasurementRepository::failing_ready(Some((from, to))));
+
+        service(repo.clone(), measurements.clone()).run_if_due();
+
+        assert!(
+            measurements.refreshes().is_empty(),
+            "a readiness probe failure must not trigger work"
+        );
+        assert!(repo.all().is_empty(), "no job is recorded");
+    }
+
+    #[test]
+    fn a_failed_backfill_does_not_mark_the_rollups_ready() {
+        let from = Utc::now() - Duration::days(3);
+        let to = Utc::now() - Duration::days(1);
+        let repo = Arc::new(MemoryJobRepository::new(vec![]));
+        let measurements = Arc::new(MockMeasurementRepository::not_ready(Some((from, to)), true));
+
+        service(repo.clone(), measurements.clone()).run_if_due();
+
+        assert!(
+            !measurements.refreshes().is_empty(),
+            "the backfill was attempted"
+        );
+        assert!(
+            !measurements.rollups_ready().unwrap(),
+            "a failed backfill must leave the readiness gate closed"
+        );
+    }
+
+    #[test]
+    fn runs_the_full_backfill_until_the_rollups_are_ready() {
+        let from = Utc::now() - Duration::days(30);
+        let to = Utc::now() - Duration::days(1);
+        let repo = Arc::new(MemoryJobRepository::new(vec![]));
+        let measurements = Arc::new(MockMeasurementRepository::not_ready(
+            Some((from, to)),
+            false,
+        ));
+
+        assert!(
+            !measurements.rollups_ready().unwrap(),
+            "the fixture starts un-backfilled"
+        );
+
+        service(repo.clone(), measurements.clone()).run_if_due();
+
+        let slack = Duration::minutes(1);
+        let refreshes = measurements.refreshes();
+        assert_eq!(
+            refreshes.first().unwrap().0,
+            from - slack,
+            "an un-backfilled rollup always runs the full history"
+        );
+        assert_eq!(refreshes.last().unwrap().1, to + slack);
+        assert!(
+            measurements.rollups_ready().unwrap(),
+            "a completed backfill flips the readiness flag"
+        );
     }
 
     #[test]

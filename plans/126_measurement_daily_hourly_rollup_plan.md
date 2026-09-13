@@ -264,3 +264,185 @@ existing red/green flow:
 - [x] `make coverage` green (backend core ≥ 95 %, overall ≥ 80 % — measured 95.00 % / 85.82 %)
 - [x] `make test-playwright` green (74 passed; the seeded fixture lacks V23/V24, so they are applied at e2e startup)
 - [x] [`README.md`](../README.md) updated where the architecture/README mentions the read model
+
+## Extension — per-channel bounds aggregate for the new-station filter (V25)
+
+Status: implemented
+
+### Problem
+
+Turning on *Bike-Trends → Exclude new stations* re-introduces the very raw scans
+the rollups removed. The predicate is
+[`introduced_after`](../backend/src/core/application/station_analytics/resolution.rs:67),
+so every consumer must know each channel's **earliest-ever** measurement. That is
+answered by
+[`earliest_by_channel`](../backend/src/adapter/driven/postgres/measurement_repository.rs:883):
+
+```sql
+SELECT DISTINCT ON (channel_id) channel_id, timestamp
+FROM measurements
+WHERE channel_id = ANY($1::uuid[])
+ORDER BY channel_id, timestamp ASC
+```
+
+To return the first row per channel, Postgres must walk **every** row of each
+requested channel (one station is up to ~2 x 250k rows in the dev data; a summary
+is every channel in the system) and discard all but the first. No index can skip
+the rest of a channel's history — Postgres has no loose index scan — so this is a
+large index walk whose cost dwarfs the rollup reads it guards.
+
+It is called from five places, several of them per station:
+
+- [`metrics.rs:127`](../backend/src/core/application/station_analytics/metrics.rs:127)
+  inside the per-station loop of `metric_windows` so a multi-station summary
+  overview does N+1 earliest queries.
+- [`graphs.rs:450`](../backend/src/core/application/station_analytics/graphs.rs:450)
+  per station graph (`period_data`).
+- [`graphs.rs:786`](../backend/src/core/application/station_analytics/graphs.rs:786)
+  per channel graph.
+- [`service.rs:225`](../backend/src/core/application/station_analytics/service.rs:225)
+  once, batched, for the established-year filter.
+- [`service.rs:435`](../backend/src/core/application/station_analytics/service.rs:435)
+  once, batched, for the header/summary `bikes_last_day`.
+
+With the setting off none of them run, which is why the IO difference is so large.
+
+### Decision
+
+Add a **per-channel bounds aggregate**, `measurement_channel_bounds`, holding
+each channel's first and last measurement timestamp, and maintain it from the
+existing `measurement_rollup` job alongside the hourly/daily rollups. The
+new-station predicate then reads one tiny indexed row per channel instead of
+scanning the raw history.
+
+### Design
+
+#### 1. Schema (migration `V25__add_measurement_channel_bounds.sql`, DDL only)
+
+```sql
+CREATE TABLE measurement_channel_bounds (
+    channel_id      UUID        PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+    first_timestamp TIMESTAMPTZ NOT NULL,
+    last_timestamp  TIMESTAMPTZ NOT NULL
+);
+
+-- Single-row rollup readiness flag (id pinned to 1).
+CREATE TABLE measurement_rollup_state (
+    id         SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    backfilled BOOLEAN  NOT NULL DEFAULT FALSE
+);
+```
+
+The PK is the channel id, so each lookup is a single index seek. `backfilled`
+tells the read path whether the one-time rollup backfill has finished; it starts
+`FALSE`. DDL only, like `V24`: the backfill runs in the job, never in the
+migration, so startup never blocks.
+
+#### 2. Port
+
+- New value object `ChannelBounds { channel_id, first, last }` and
+  `channel_bounds(channel_ids) -> Vec<ChannelBounds>` on
+  [`MeasurementRepository`](../backend/src/core/domain/measurements/repository_port.rs),
+  with a default impl that merges `earliest_by_channel` + `latest_by_channel`, so
+  existing in-memory doubles keep compiling (and stay correct) without an
+  override.
+- [`refresh_rollups`](../backend/src/adapter/driven/postgres/measurement_repository.rs:993)
+  becomes responsible for the bounds too: inside the same advisory-locked
+  transaction it upserts `MIN(timestamp)`/`MAX(timestamp)` per channel over the
+  widened raw range — **without** the interior-local-day filter the bucket
+  aggregation uses, so the global extremes are never clipped — merging with
+  `ON CONFLICT ... DO UPDATE SET first = LEAST(...), last = GREATEST(...)`.
+
+#### 3. Read-path switch
+
+- Every `earliest_by_channel` consumer switches to `channel_bounds`:
+  [`metrics.rs:127`](../backend/src/core/application/station_analytics/metrics.rs:127),
+  [`graphs.rs:450`](../backend/src/core/application/station_analytics/graphs.rs:450),
+  [`graphs.rs:786`](../backend/src/core/application/station_analytics/graphs.rs:786),
+  [`service.rs:225`](../backend/src/core/application/station_analytics/service.rs:225)
+  and
+  [`service.rs:435`](../backend/src/core/application/station_analytics/service.rs:435).
+- The `metric_windows` N+1 is removed too: fetch the bounds for **all** the
+  included stations' channels once before the loop and reuse the map.
+- `latest_by_channel` (the post-import staleness check in
+  [`data_import_service.rs:553`](../backend/src/core/application/data_import_service.rs:553))
+  reads the same table, removing a second per-import raw scan.
+- `measurement_bounds()` reads `MIN(first)`/`MAX(last)` from the bounds table once
+  it is populated (falling back to the raw `MIN`/`MAX` while empty), so the job's
+  own range discovery is cheap after the first run.
+
+#### 4. Cold-start correctness
+
+While the bounds table is still being backfilled a channel may have no row.
+`channel_bounds` falls back to `earliest_by_channel`/`latest_by_channel` for any
+requested channel that is missing, so the new-station filter is never wrong
+during the first backfill; it stops paying the raw cost only once the row exists.
+
+The same concern applies to the rollup reads themselves. `rollups_ready()` reads
+`measurement_rollup_state.backfilled` (cached in an `AtomicBool` once true), and
+every rollup-backed read (`sum_daily`, `sum_daily_by_channel`, `sum_hours`,
+`sum_hours_by_channel`, `sum_by_month`, and the daily branch of
+`sum_buckets`/`sum_buckets_by_channel`) falls back to the raw table until it is
+set. `MeasurementRollupService::run_if_due` runs the full backfill while the flag
+is false and calls `mark_rollups_ready()` only when that backfill completes, so a
+fresh deploy (or a restart mid-backfill) serves **correct** numbers — the
+pre-rollup raw behaviour — instead of zeros.
+
+```mermaid
+flowchart TD
+    A[Import saves raw measurements] --> B[refresh_rollups from-to in one tx]
+    B --> C[measurement_hourly]
+    B --> D[measurement_daily]
+    B --> E[measurement_channel_bounds MIN first MAX last]
+    E --> F[exclude new stations filter]
+    F --> G[analytics reads]
+```
+
+### Testing strategy (TDD)
+
+Write the tests first, as for the base plan:
+
+1. Port contract: failing tests for `channel_bounds` (batch lookup, a missing
+   channel falls back to raw) against an in-memory double, then implement.
+2. Postgres repository: the bounds upsert during `refresh_rollups` (`MIN`/`MAX`
+   per channel, `LEAST`/`GREATEST` merge on re-run, extremes at the range edges
+   are not clipped) and `channel_bounds` returning the stored rows.
+3. Core routing: `metric_windows` / graph / `global_summary` tests assert the
+   exclude path reads `channel_bounds` and no longer `earliest_by_channel`,
+   written before the code is switched.
+
+### Coverage constraints
+
+Same as the base plan: core ≥ 95 %, overall ≥ 80 %, no production code without its
+test in the same change, and no `#[allow]` to dodge the threshold.
+
+### Related fix — stale zero overview after a cold start
+
+While diagnosing this, the station overview briefly showed `0` for every metric.
+The read path now answers coarse windows **only** from the rollups, so during the
+one-time backfill (and for the first moments after a fresh deploy) it returns
+zeros until the job has built them; the `Windowed` BFF policy then caches that
+zero body for an hour (`max-age=3600, must-revalidate`), so the browser keeps
+showing it after the rollups are ready.
+
+- [x] Guard chosen: fall back to the raw window sum while
+      `measurement_rollup_state.backfilled` is false (the readiness gate above),
+      so the zero body is never produced and the `Windowed` cache cannot hold it.
+
+### Out of scope
+
+- Multi-resolution `resolution_coverage` / `has_measurements_in_windows` rewrites
+  (not on the exclude-new-stations path).
+
+### Definition of done
+
+- [x] Tests written first for the bounds port contract, the refresh bounds upsert and the core routing switch
+- [x] `V25__add_measurement_channel_bounds.sql` added (DDL only, incl. the readiness state row)
+- [x] `channel_bounds` port method + default impl (mirrors the missing edge for doubles that override only one side)
+- [x] Postgres bounds upsert in `refresh_rollups` and the `channel_bounds` reader (raw fallback for uncovered channels) implemented and made green
+- [x] All `earliest_by_channel` consumers (and the `metric_windows` N+1) switched to `channel_bounds`
+- [x] Post-import `latest_by_channel` staleness reads the bounds table
+- [x] Readiness gate: rollup reads fall back to raw until the backfill completes; covered by a repository test and a service test
+- [x] `make check` / `make test` / `make coverage` green (core ≥ 95 %, overall ≥ 80 %, 760 tests)
+- [x] `make test-playwright` green (74 passed)
+- [x] Committed on `feat/measurement-daily-hourly-rollup`
