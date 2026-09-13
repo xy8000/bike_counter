@@ -139,6 +139,79 @@ impl PostgresMeasurementRepository {
             .collect())
     }
 
+    /// The weekday radar over the raw table, used until the rollup backfill has
+    /// completed.
+    fn sum_weekdays_raw(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<WeekdayTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT EXTRACT(ISODOW FROM (timestamp AT TIME ZONE $2))::int AS weekday, \
+                        COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+                 GROUP BY weekday \
+                 ORDER BY weekday",
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| WeekdayTotal {
+                weekday: row.get::<_, i32>(0) as u8,
+                total: row.get(1),
+            })
+            .collect())
+    }
+
+    /// Per-channel weekday radar over the raw table (rollup cold-start path).
+    fn sum_weekdays_by_channel_raw(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelWeekdayTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, \
+                        EXTRACT(ISODOW FROM (timestamp AT TIME ZONE $2))::int AS weekday, \
+                        COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+                 GROUP BY channel_id, weekday \
+                 ORDER BY channel_id, weekday",
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ChannelWeekdayTotal {
+                channel_id: row.get(0),
+                weekday: row.get::<_, i32>(1) as u8,
+                total: row.get(2),
+            })
+            .collect())
+    }
+
     /// The monthly bar chart over the raw table (rollup cold-start path).
     fn sum_months_raw(
         &self,
@@ -709,6 +782,13 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         channel_ids: &[value_objects::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<WeekdayTotal>, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum_weekdays_raw(from, to, timezone, channel_ids, resolution_seconds);
+        }
+        // The daily rollup is keyed by the channel's station-local date, so
+        // `EXTRACT(ISODOW FROM local_date)` is exactly the local weekday and the
+        // sum over the whole local days in range needs only 365 rows per channel
+        // per year (the caller only uses this for daily-or-coarser windows).
         let mut client = self
             .pool
             .get()
@@ -716,10 +796,12 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
-                "SELECT EXTRACT(ISODOW FROM (timestamp AT TIME ZONE $2))::int AS weekday, \
-                       COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                "SELECT EXTRACT(ISODOW FROM local_date)::int AS weekday, \
+                       COALESCE(SUM(total), 0)::bigint AS total \
+                 FROM measurement_daily \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND local_date >= ($3::timestamptz AT TIME ZONE $2)::date \
+                   AND local_date <= ($4::timestamptz AT TIME ZONE $2)::date \
                    AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY weekday \
                  ORDER BY weekday",
@@ -744,6 +826,18 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         channel_ids: &[value_objects::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelWeekdayTotal>, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum_weekdays_by_channel_raw(
+                from,
+                to,
+                timezone,
+                channel_ids,
+                resolution_seconds,
+            );
+        }
+        // See `sum_weekdays`: the per-channel weekday radar also reads the daily
+        // rollup (used for the wide-bucket summary/detail nerd stats, i.e. a whole
+        // year of weekly bars without scanning the year's raw measurements).
         let mut client = self
             .pool
             .get()
@@ -752,10 +846,12 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let rows = client
             .query(
                 "SELECT channel_id, \
-                       EXTRACT(ISODOW FROM (timestamp AT TIME ZONE $2))::int AS weekday, \
-                       COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                       EXTRACT(ISODOW FROM local_date)::int AS weekday, \
+                       COALESCE(SUM(total), 0)::bigint AS total \
+                 FROM measurement_daily \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND local_date >= ($3::timestamptz AT TIME ZONE $2)::date \
+                   AND local_date <= ($4::timestamptz AT TIME ZONE $2)::date \
                    AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY channel_id, weekday \
                  ORDER BY channel_id, weekday",
@@ -3000,6 +3096,20 @@ mod tests {
             .sum_daily_by_channel(from, to, "UTC", &ids, None)
             .unwrap();
         assert_eq!(daily_channels[0].total, 30);
+        let weekdays_cold = repository
+            .sum_weekdays(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(weekdays_cold.iter().map(|day| day.total).sum::<i64>(), 30);
+        let weekday_channels_cold = repository
+            .sum_weekdays_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(
+            weekday_channels_cold
+                .iter()
+                .map(|day| day.total)
+                .sum::<i64>(),
+            30
+        );
 
         // After the backfill the same reads are answered by the rollups.
         repository.refresh_rollups(from, to).unwrap();
@@ -3023,6 +3133,21 @@ mod tests {
             .sum_buckets_by_channel(from, to, BucketGranularity::Week, from, "UTC", &ids, None)
             .unwrap();
         assert_eq!(bucket_channels[0].total, 30);
+
+        // The weekday radar reads the rollup once ready and must agree with the
+        // raw values captured before the backfill.
+        assert_eq!(
+            repository
+                .sum_weekdays(from, to, "UTC", &ids, None)
+                .unwrap(),
+            weekdays_cold
+        );
+        assert_eq!(
+            repository
+                .sum_weekdays_by_channel(from, to, "UTC", &ids, None)
+                .unwrap(),
+            weekday_channels_cold
+        );
     }
 
     fn measurement(id: u128, value: i64) -> Measurement {

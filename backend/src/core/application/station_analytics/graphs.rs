@@ -540,10 +540,10 @@ pub(super) fn period_data(
 
     // Weekday radar: with daily-or-finer buckets (the fixed timeframes) folding
     // the bucket series yields the same totals as a per-row sum. With wider
-    // custom-range buckets (week/month/quarter) the weekday radar is computed
-    // over the raw measurements via `sum_weekdays_by_channel`, restricted to
-    // established groups. A custom range has no previous period, so the
-    // previous weekday radar stays empty.
+    // custom-range buckets (week/month/quarter) the weekday radar is computed by
+    // `sum_weekdays_by_channel`, which reads the daily rollup (the window is whole
+    // local days), restricted to established groups. A custom range has no
+    // previous period, so the previous weekday radar stays empty.
     let wide_buckets = !is_daily_or_finer(current.granularity);
     let mut current_weekday_by_group: HashMap<uuid::Uuid, Vec<WeekdayTotal>> = HashMap::new();
     if wide_buckets {
