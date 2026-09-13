@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchGlobalSummary } from './api'
 import type { GlobalSummary } from './types'
@@ -7,10 +8,6 @@ const SUMMARY: GlobalSummary = {
   channel_count: 24,
   bikes_last_day_total: 1000,
   last_update: '2026-01-02T12:00:00Z',
-}
-
-function ok(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status })
 }
 
 afterEach(() => {

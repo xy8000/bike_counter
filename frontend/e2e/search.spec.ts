@@ -1,9 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { SEARCH_PLACEHOLDER, SEARCH_TRIGGER_TEXT, waitForStations } from './helpers'
+import { SEARCH_PLACEHOLDER, SEARCH_TRIGGER_TEXT, openMap } from './helpers'
 
 test('searching a station and clicking Find on map opens its overview', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   await page.getByRole('button', { name: SEARCH_TRIGGER_TEXT }).click()
 
@@ -28,8 +27,7 @@ test('searching a station and clicking Find on map opens its overview', async ({
 })
 
 test('search lists stations alphabetically by name', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   await page.getByRole('button', { name: SEARCH_TRIGGER_TEXT }).click()
   const dialog = page.getByRole('dialog')

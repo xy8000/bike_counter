@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mapMarkers, sidebar, waitForStations } from './helpers'
+import { mapMarkers, sidebar, openMap } from './helpers'
 
 const SUMMARIZE_BUTTON = 'Summarize visible stations'
 
@@ -60,8 +60,7 @@ test.describe('station summary', () => {
   test('the sidebar opens the shareable station-summary page at the current view', async ({
     page,
   }) => {
-    await page.goto('/', { waitUntil: 'domcontentloaded' })
-    await waitForStations(page)
+    await openMap(page)
 
     // The pinned sidebar footer holds the summarize action (the list above stays
     // scrollable), enabled as soon as there are visible stations.

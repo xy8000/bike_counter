@@ -74,6 +74,65 @@ export async function waitForStations(page: Page): Promise<void> {
   await expect(sidebarBadge(page)).toBeVisible()
 }
 
+/// Opens the map view (default `/`, pass `url` for a city/bounds deep link) and
+/// waits until the station import has rendered. Nearly every spec starts with
+/// this pair, so it lives here once (SonarCloud flagged the repeated `goto` +
+/// `waitForStations` block as duplicated code).
+export async function openMap(page: Page, url = '/'): Promise<void> {
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await waitForStations(page)
+}
+
+/// The first station marker together with its name. The marker `alt` is the
+/// station name (the same value the overview/summary banners use), which the
+/// specs reuse for the popup/overview assertions.
+export async function firstMarker(page: Page): Promise<{ marker: Locator; stationName: string }> {
+  const marker = mapMarkers(page).first()
+  const stationName = (await marker.getAttribute('alt')) ?? ''
+  expect(stationName).not.toBe('')
+  return { marker, stationName }
+}
+
+/// The resolved theme of `selector`: the relative luminance of its background
+/// colour (via a 1×1 canvas) plus whether `prefers-color-scheme: dark` is active.
+/// The canvas step makes the check independent of how the browser serialises the
+/// theme colour (rgb() vs raw token), so it works across engines.
+export async function readTheme(
+  page: Page,
+  selector = 'body',
+): Promise<{ luminance: number; prefersDark: boolean }> {
+  return page.evaluate((sel) => {
+    const color = getComputedStyle(document.querySelector(sel)!).backgroundColor
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = color
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+    return {
+      luminance: 0.2126 * r + 0.7152 * g + 0.0722 * b,
+      prefersDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+    }
+  }, selector)
+}
+
+/// Asserts the page (or `selector`) renders with the expected colour scheme and
+/// the matching luminance band (dark < 64, light > 200).
+export async function expectTheme(
+  page: Page,
+  scheme: 'dark' | 'light',
+  selector = 'body',
+): Promise<void> {
+  const theme = await readTheme(page, selector)
+  expect(theme.prefersDark).toBe(scheme === 'dark')
+  if (scheme === 'dark') {
+    expect(theme.luminance).toBeLessThan(64)
+  } else {
+    expect(theme.luminance).toBeGreaterThan(200)
+  }
+}
+
 /// A bounding box per city covering every seeded counting station (see
 /// e2e-seed.sql in this folder). Used by the multi-city specs to fly the map to
 /// each city. The BFF returns stations name-ordered and the seed guarantees the

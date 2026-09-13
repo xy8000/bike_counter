@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Bounds } from '../../lib/geo'
@@ -36,10 +37,6 @@ const STATS_ITEMS: SidebarStationStats[] = [
   { station_id: '1', channel_count: 2, bikes_last_day: 100 },
   { station_id: '2', channel_count: 1, bikes_last_day: 5 },
 ]
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 /// The raw wire shape the BFF returns (its `_links.stats` is a `LinkDto`, which
 /// `fetchSidebarShell` unwraps to a plain `href` string).

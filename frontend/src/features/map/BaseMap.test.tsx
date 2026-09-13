@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -5,10 +6,6 @@ import type { Bounds } from '../../lib/geo'
 import { BaseMap } from './BaseMap'
 
 const BOUNDS: Bounds = { min_lat: 51, min_lng: 7, max_lat: 52, max_lng: 8 }
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 /// The committed style: a vector source whose URL carries the runtime
 /// placeholder plus a non-vector source that must be left untouched.

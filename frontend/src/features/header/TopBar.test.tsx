@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
@@ -10,10 +11,6 @@ const SUMMARY: GlobalSummary = {
   channel_count: 8,
   bikes_last_day_total: 120,
   last_update: '2026-01-02T12:00:00Z',
-}
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
 }
 
 function renderTopBar(fetchImpl: () => Promise<Response> | Response) {

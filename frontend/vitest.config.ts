@@ -27,12 +27,19 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov'],
       reportsDirectory: 'coverage',
-      // Cover the whole application source. Test files and the mount entry
-      // point (main.tsx: it only calls createRoot().render and is exercised by
-      // Playwright; there is no component logic to assert on) are excluded, as
-      // is the ambient type declaration.
+      // Cover the whole application source. Test files, the shared test
+      // helpers (src/test-utils: fixtures with no application logic) and the
+      // mount entry point (main.tsx: it only calls createRoot().render and is
+      // exercised by Playwright; there is no component logic to assert on) are
+      // excluded, as is the ambient type declaration.
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/main.tsx', 'src/vite-env.d.ts', 'src/**/types.ts'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/test-utils/**',
+        'src/main.tsx',
+        'src/vite-env.d.ts',
+        'src/**/types.ts',
+      ],
       // The unit suite alone (no Playwright) must keep whole-src line coverage
       // at or above 80 % — mirroring the backend `make coverage` gate.
       thresholds: {

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mapMarkers, waitForStations } from './helpers'
+import { mapMarkers, openMap } from './helpers'
 
 const SETTINGS_BUTTON = 'Calculation settings'
 const SETTING_LABEL = /Exclude new stations from trends/
@@ -7,8 +7,7 @@ const SETTING_LABEL = /Exclude new stations from trends/
 /// Opens the shared station-detail page for the first positioned station and
 /// returns its id.
 async function openDetailPage(page: Page): Promise<string> {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
   await mapMarkers(page).first().click()
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
   const stationId = new URL(page.url()).searchParams.get('station')

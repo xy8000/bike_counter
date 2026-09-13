@@ -1,14 +1,14 @@
 import type { Bounds } from '../../lib/geo'
 import { bboxQuery } from '../../lib/geo'
 import { assertSafeBffUrl } from '../../lib/apiUrl'
+import { getJson as getJsonResource, type RawLink } from '../../lib/bff'
 import type { SidebarShell, SidebarStats, StationMapList, StationSearch } from './types'
 
-type RawLink = { href: string; templated?: boolean }
-
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(assertSafeBffUrl(url))
-  if (!response.ok) throw new Error(`${url} responded with ${response.status}`)
-  return response.json() as Promise<T>
+/// The stations API is the one place a request URL can come straight from a
+/// server-provided HATEOAS link (`_links.stats.href`), so every URL is run
+/// through the same-origin BFF guard before the shared fetch helper.
+function getJson<T>(url: string): Promise<T> {
+  return getJsonResource<T>(assertSafeBffUrl(url))
 }
 
 /// Fetch the map markers for the given bounds.

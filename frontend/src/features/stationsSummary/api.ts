@@ -1,5 +1,6 @@
 import type { Bounds } from '../../lib/geo'
 import { bboxQuery } from '../../lib/geo'
+import { getJson, unwrapLinks, type RawLink } from '../../lib/bff'
 import type {
   MonthlyTotals,
   StationsSummaryLinks,
@@ -7,24 +8,6 @@ import type {
   StationsSummaryPage,
   SummaryPeriodGraphs,
 } from './types'
-
-type RawLink = { href: string; templated?: boolean }
-
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`${url} responded with ${response.status}`)
-  return response.json() as Promise<T>
-}
-
-/// The BFF serializes each `_links` value as a `LinkDto` (`{ href, templated }`);
-/// the frontend only needs the `href` string to fetch the card.
-function unwrapLinks<T extends object>(links: Record<string, RawLink>): T {
-  const out: Record<string, string> = {}
-  for (const [key, value] of Object.entries(links)) {
-    out[key] = value.href
-  }
-  return out as unknown as T
-}
 
 /// Fetch the summary page shell for the stations inside `bounds` (bounds-only:
 /// the shell does not depend on the disabled/exclude set).

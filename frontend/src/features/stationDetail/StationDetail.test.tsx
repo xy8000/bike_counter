@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,10 +27,6 @@ const GLOBAL_SUMMARY = {
   channel_count: 8,
   bikes_last_day_total: 120,
   last_update: null,
-}
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
 }
 
 function rawShell() {

@@ -1,13 +1,10 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TrendSettingsProvider } from '../settings/TrendSettingsContext'
 import { DataSourcesList, dataSourceImageUrl } from './DataSourcesList'
 import type { DataSourceSummary } from './types'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const GLOBAL_SUMMARY = {
   station_count: 4,

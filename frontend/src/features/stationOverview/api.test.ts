@@ -1,12 +1,9 @@
+import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchStationOverview, fetchStationOverviewStats } from './api'
 
 const SHELL_URL = '/api/bff/station-overview/zoo'
 const STATS_URL = '/api/bff/station-overview/zoo/stats'
-
-function ok(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status })
-}
 
 afterEach(() => {
   vi.unstubAllGlobals()

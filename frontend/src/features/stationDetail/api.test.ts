@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchGraphs,
@@ -6,10 +7,6 @@ import {
   fetchStationDetailPage,
   withTrendParam,
 } from './api'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 function stubFetch(response: Response | (() => Response)) {
   const fetchMock = vi.fn(() =>

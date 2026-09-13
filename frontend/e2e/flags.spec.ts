@@ -6,11 +6,11 @@ import {
   stationBoundsUrl,
   stationMarker,
   waitForStations,
+  openMap,
 } from './helpers'
 
 test('clicking a map marker marks it as selected on the map', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   const marker = mapMarkers(page).first()
   const stationName = (await marker.getAttribute('alt')) ?? ''
@@ -31,8 +31,7 @@ test('clicking a map marker marks it as selected on the map', async ({ page }) =
 })
 
 test('a map void click clears the selected flag again', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   const marker = mapMarkers(page).first()
   const stationName = (await marker.getAttribute('alt')) ?? ''
@@ -52,8 +51,7 @@ test('a map void click clears the selected flag again', async ({ page }) => {
 })
 
 test('search + Find on map marks the found station as selected', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   await page.getByRole('button', { name: SEARCH_TRIGGER_TEXT }).click()
   const input = page.getByPlaceholder(SEARCH_PLACEHOLDER)

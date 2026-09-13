@@ -1,34 +1,12 @@
+import { ok } from '@/test-utils/http'
+import { SUMMARY_BOUNDS, rawSummaryPage } from '@/test-utils/stationsSummary'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Bounds } from '../../lib/geo'
 import {
   fetchStationsSummaryPage,
   fetchSummaryGraphs,
   fetchSummaryMonthly,
   fetchSummaryOverview,
 } from './api'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
-
-const BOUNDS: Bounds = { min_lat: 51, min_lng: 7, max_lat: 52, max_lng: 8 }
-
-function rawPage() {
-  return {
-    image_url: '/img/summary.png',
-    stations: [],
-    last_update: null,
-    _links: {
-      self: { href: '/api/summary/self', templated: false },
-      overview: { href: '/api/overview/summary', templated: false },
-      graphs_day: { href: '/api/graphs/summary/day', templated: false },
-      graphs_week: { href: '/api/graphs/summary/week', templated: false },
-      graphs_last_30_days: { href: '/api/graphs/summary/last_30_days', templated: false },
-      graphs_year: { href: '/api/graphs/summary/year', templated: false },
-      monthly: { href: '/api/monthly/summary', templated: false },
-    },
-  }
-}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -37,10 +15,10 @@ afterEach(() => {
 describe('stationsSummary api', () => {
   describe('fetchStationsSummaryPage', () => {
     it('builds the bounds-only query and unwraps the _links hrefs', async () => {
-      const fetchMock = vi.fn().mockResolvedValue(ok(rawPage()))
+      const fetchMock = vi.fn().mockResolvedValue(ok(rawSummaryPage()))
       vi.stubGlobal('fetch', fetchMock)
 
-      const page = await fetchStationsSummaryPage(BOUNDS)
+      const page = await fetchStationsSummaryPage(SUMMARY_BOUNDS)
 
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/bff/stations/summary?min_lat=51&min_lng=7&max_lat=52&max_lng=8',
@@ -56,7 +34,7 @@ describe('stationsSummary api', () => {
     it('rejects when the shell responds with a non-ok status', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
 
-      await expect(fetchStationsSummaryPage(BOUNDS)).rejects.toThrow(
+      await expect(fetchStationsSummaryPage(SUMMARY_BOUNDS)).rejects.toThrow(
         '/api/bff/stations/summary?min_lat=51&min_lng=7&max_lat=52&max_lng=8 responded with 500',
       )
     })

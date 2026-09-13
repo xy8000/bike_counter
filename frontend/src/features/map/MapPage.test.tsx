@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -43,10 +44,6 @@ const SIDEBAR_STATS: SidebarStationStats[] = [
   { station_id: 's1', channel_count: 2, bikes_last_day: 30 },
   { station_id: 's2', channel_count: 1, bikes_last_day: 5 },
 ]
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 function shellPayload(): SidebarShell {
   return {

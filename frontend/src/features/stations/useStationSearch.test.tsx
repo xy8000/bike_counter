@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useStationSearch } from './useStationSearch'
@@ -40,8 +41,13 @@ function searchPayload(actions: Record<string, { enabled: boolean }>) {
   return { items: STATIONS, actions }
 }
 
-function okResponse(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
+/// Stubs the search fetch with `actions`, renders the hook and waits until it has
+/// loaded. The "filter" tests all start this way, so the setup lives here once.
+async function renderLoadedSearch(actions: Record<string, { enabled: boolean }> = {}) {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok(searchPayload(actions))))
+  const { result } = renderHook(() => useStationSearch())
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  return result
 }
 
 afterEach(() => {
@@ -52,7 +58,7 @@ describe('useStationSearch', () => {
   it('loads every station and the action map, sorted by name', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(okResponse(searchPayload({ find_on_map: { enabled: true } }))),
+      vi.fn().mockResolvedValue(ok(searchPayload({ find_on_map: { enabled: true } }))),
     )
 
     const { result } = renderHook(() => useStationSearch())
@@ -71,10 +77,7 @@ describe('useStationSearch', () => {
   })
 
   it('keeps the full alphabetical list when the query is empty or whitespace-only', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(searchPayload({}))))
-
-    const { result } = renderHook(() => useStationSearch())
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    const result = await renderLoadedSearch()
 
     act(() => result.current.setQuery('   '))
     expect(result.current.results).toHaveLength(STATIONS.length)
@@ -82,62 +85,38 @@ describe('useStationSearch', () => {
   })
 
   it('filters by name case-insensitively', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(searchPayload({}))))
-
-    const { result } = renderHook(() => useStationSearch())
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    const result = await renderLoadedSearch()
 
     act(() => result.current.setQuery('zOO'))
     expect(result.current.results.map((station) => station.name)).toEqual(['Zoo Station'])
   })
 
   it('filters by description case-insensitively', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(searchPayload({}))))
-
-    const { result } = renderHook(() => useStationSearch())
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    const result = await renderLoadedSearch()
 
     act(() => result.current.setQuery('TRANSPORT'))
     expect(result.current.results.map((station) => station.name)).toEqual(['Alpha Platz'])
   })
 
   it('returns an empty result list when the query matches nothing', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(searchPayload({}))))
-
-    const { result } = renderHook(() => useStationSearch())
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    const result = await renderLoadedSearch()
 
     act(() => result.current.setQuery('does-not-exist'))
     expect(result.current.results).toEqual([])
   })
 
   it('derives the action flags from the backend action map', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn()
-        .mockResolvedValue(
-          okResponse(
-            searchPayload({ find_on_map: { enabled: true }, open_detail: { enabled: true } }),
-          ),
-        ),
-    )
-
-    const { result } = renderHook(() => useStationSearch())
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    const result = await renderLoadedSearch({
+      find_on_map: { enabled: true },
+      open_detail: { enabled: true },
+    })
 
     expect(result.current.findOnMapEnabled).toBe(true)
     expect(result.current.openDetailEnabled).toBe(true)
   })
 
   it('defaults the action flags to disabled when absent or disabled', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(okResponse(searchPayload({ open_detail: { enabled: false } }))),
-    )
-
-    const { result } = renderHook(() => useStationSearch())
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    const result = await renderLoadedSearch({ open_detail: { enabled: false } })
 
     expect(result.current.findOnMapEnabled).toBe(false)
     expect(result.current.openDetailEnabled).toBe(false)

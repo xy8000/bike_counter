@@ -1,13 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Database } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { useParams } from 'react-router-dom'
+import { AlertTriangle, Database } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StationPage } from '../../components/StationPage'
 import { formatNumber, formatTimestamp } from '../../lib/format'
-import { serializeBounds, stationBounds } from '../../lib/geo'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
-import { SearchableHeader } from '../header/SearchableHeader'
-import type { StationSummary } from '../stations/types'
 import { fetchDataSourceDetail } from './api'
 import { DataSourceMap } from './DataSourceMap'
 import { dataSourceImageUrl } from './DataSourcesList'
@@ -53,7 +50,6 @@ function StatCardSkeleton() {
 /// "not available" ones) and the Data-Overview as separate stat cards.
 export function DataSourceDetail() {
   const { dataSourceId } = useParams()
-  const navigate = useNavigate()
   const [detail, setDetail] = useState<DataSourceDetailType | null>(null)
   const [error, setError] = useState(false)
 
@@ -74,79 +70,50 @@ export function DataSourceDetail() {
     }
   }, [dataSourceId])
 
-  const openDetail = (station: StationSummary) => {
-    navigate(`/stations/${station.id}`)
-  }
-
-  const findOnMap = (station: StationSummary) => {
-    if (station.latitude !== null && station.longitude !== null) {
-      const params = serializeBounds(stationBounds(station.latitude, station.longitude))
-      params.set('station', station.id)
-      navigate(`/?${params.toString()}`)
-    } else {
-      navigate(`/?station=${station.id}`)
-    }
-  }
-
   return (
-    <div className="flex h-screen flex-col">
-      <SearchableHeader onSelect={openDetail} onFind={findOnMap} onDetail={openDetail} />
-
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-4 py-4 sm:py-6">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <Button asChild variant="outline" size="sm">
-              <Link to="/data-sources">
-                <ArrowLeft /> Back to data sources
-              </Link>
-            </Button>
-            {error && (
-              <span className="text-sm font-semibold text-destructive">
-                Could not load the data source.
-              </span>
-            )}
+    <StationPage
+      backTo="/data-sources"
+      backLabel="Back to data sources"
+      errorMessage={error ? 'Could not load the data source.' : undefined}
+    >
+      {!error && detail === null && (
+        <div aria-busy="true" className="flex flex-col gap-6">
+          {/* Row 1: large image + map of the provided stations. */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Skeleton className="h-64 w-full rounded-lg md:h-80" />
+            <Skeleton className="h-64 w-full rounded-lg md:h-80" />
           </div>
 
-          {!error && detail === null && (
-            <div aria-busy="true" className="flex flex-col gap-6">
-              {/* Row 1: large image + map of the provided stations. */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Skeleton className="h-64 w-full rounded-lg md:h-80" />
-                <Skeleton className="h-64 w-full rounded-lg md:h-80" />
-              </div>
-
-              {/* Row 2: name + feature badges. */}
-              <div className="flex flex-col gap-2">
-                <Skeleton className="h-8 w-64" />
-                <Skeleton className="h-4 w-40" />
-                <Skeleton className="h-4 w-56" />
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <Skeleton className="h-6 w-36 rounded-full" />
-                  <Skeleton className="h-6 w-44 rounded-full" />
-                  <Skeleton className="h-6 w-56 rounded-full" />
-                </div>
-              </div>
-
-              {/* Data-Overview: the same 2/4 stat-card grid as the loaded view. */}
-              <div>
-                <Skeleton className="mb-3 h-5 w-44" />
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {Array.from({ length: 9 }, (_, index) => (
-                    <StatCardSkeleton key={index} />
-                  ))}
-                </div>
-              </div>
+          {/* Row 2: name + feature badges. */}
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-4 w-56" />
+            <div className="mt-1 flex flex-wrap gap-2">
+              <Skeleton className="h-6 w-36 rounded-full" />
+              <Skeleton className="h-6 w-44 rounded-full" />
+              <Skeleton className="h-6 w-56 rounded-full" />
             </div>
-          )}
+          </div>
 
-          {!error && detail && (
-            <ErrorBoundary>
-              <DetailContent detail={detail} />
-            </ErrorBoundary>
-          )}
+          {/* Data-Overview: the same 2/4 stat-card grid as the loaded view. */}
+          <div>
+            <Skeleton className="mb-3 h-5 w-44" />
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {Array.from({ length: 9 }, (_, index) => (
+                <StatCardSkeleton key={index} />
+              ))}
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
+      )}
+
+      {!error && detail && (
+        <ErrorBoundary>
+          <DetailContent detail={detail} />
+        </ErrorBoundary>
+      )}
+    </StationPage>
   )
 }
 

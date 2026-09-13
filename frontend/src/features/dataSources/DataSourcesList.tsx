@@ -1,13 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronRight, Database, Info } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Link } from 'react-router-dom'
+import { ChevronRight, Database, Info } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StationPage } from '../../components/StationPage'
 import { formatNumber, formatTimestamp } from '../../lib/format'
-import { serializeBounds, stationBounds } from '../../lib/geo'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
-import { SearchableHeader } from '../header/SearchableHeader'
-import type { StationSummary } from '../stations/types'
 import { fetchDataSources } from './api'
 import { ImportStatus } from './ImportStatus'
 import type { DataSourceSummary } from './types'
@@ -170,7 +167,6 @@ function DataSourcesInfo() {
 /// data source so name, import status and counts are easy to scan. Clicking a
 /// row opens the detail page.
 export function DataSourcesList() {
-  const navigate = useNavigate()
   const [dataSources, setDataSources] = useState<DataSourceSummary[] | null>(null)
   const [error, setError] = useState(false)
 
@@ -188,68 +184,39 @@ export function DataSourcesList() {
     }
   }, [])
 
-  const openDetail = (station: StationSummary) => {
-    navigate(`/stations/${station.id}`)
-  }
-
-  const findOnMap = (station: StationSummary) => {
-    if (station.latitude !== null && station.longitude !== null) {
-      const params = serializeBounds(stationBounds(station.latitude, station.longitude))
-      params.set('station', station.id)
-      navigate(`/?${params.toString()}`)
-    } else {
-      navigate(`/?station=${station.id}`)
-    }
-  }
-
   return (
-    <div className="flex h-screen flex-col">
-      <SearchableHeader onSelect={openDetail} onFind={findOnMap} onDetail={openDetail} />
+    <StationPage
+      backTo="/"
+      backLabel="Back to map"
+      errorMessage={error ? 'Could not load the data sources.' : undefined}
+    >
+      <header className="mb-3">
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          <Database aria-hidden="true" /> Data sources
+        </h1>
+      </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-4 py-4 sm:py-6">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <Button asChild variant="outline" size="sm">
-              <Link to="/">
-                <ArrowLeft /> Back to map
-              </Link>
-            </Button>
-            {error && (
-              <span className="text-sm font-semibold text-destructive">
-                Could not load the data sources.
-              </span>
-            )}
-          </div>
+      <DataSourcesInfo />
 
-          <header className="mb-3">
-            <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-              <Database aria-hidden="true" /> Data sources
-            </h1>
-          </header>
+      {!error && dataSources !== null && dataSources.length === 0 && (
+        <p className="text-sm text-muted-foreground">No data sources configured.</p>
+      )}
 
-          <DataSourcesInfo />
+      {!error && dataSources === null && <TableSkeleton />}
 
-          {!error && dataSources !== null && dataSources.length === 0 && (
-            <p className="text-sm text-muted-foreground">No data sources configured.</p>
-          )}
-
-          {!error && dataSources === null && <TableSkeleton />}
-
-          {!error && dataSources !== null && dataSources.length > 0 && (
-            <div className="overflow-hidden rounded-lg border bg-card">
-              <TableHeader />
-              <ul className="divide-y">
-                {dataSources.map((dataSource) => (
-                  <li key={dataSource.id}>
-                    <DataSourceRow dataSource={dataSource} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+      {!error && dataSources !== null && dataSources.length > 0 && (
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <TableHeader />
+          <ul className="divide-y">
+            {dataSources.map((dataSource) => (
+              <li key={dataSource.id}>
+                <DataSourceRow dataSource={dataSource} />
+              </li>
+            ))}
+          </ul>
         </div>
-      </main>
-    </div>
+      )}
+    </StationPage>
   )
 }
 

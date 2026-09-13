@@ -1,12 +1,9 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Bounds } from '../../lib/geo'
 import { SummaryMap } from './SummaryMap'
 import type { SummaryStation } from './types'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const STATIONS: SummaryStation[] = [
   { id: 's1', name: 'A-Stadt', latitude: 51.95, longitude: 7.62, channel_count: 2 },

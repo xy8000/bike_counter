@@ -1,10 +1,9 @@
 import { expect, test } from '@playwright/test'
-import { mapMarkers, SEARCH_TRIGGER_TEXT, waitForStations } from './helpers'
+import { mapMarkers, SEARCH_TRIGGER_TEXT, openMap } from './helpers'
 
 /// Opens the map, picks the first station and returns its id from the URL.
 async function openFirstStation(page: import('@playwright/test').Page) {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
   await mapMarkers(page).first().click()
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
   const stationId = new URL(page.url()).searchParams.get('station')
@@ -194,8 +193,7 @@ test('the back-to-map button re-routes to the map and the browser back event ret
 test('back to map after an in-app detail navigation restores the previous view', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // Open the overview via a marker (this flies to the station and puts the id
   // in the URL). The fly-to duration scales with the flight distance, so wait

@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SearchDialog } from './SearchDialog'
@@ -28,10 +29,6 @@ const STATIONS: StationSummary[] = [
 
 function searchPayload(items: StationSummary[], actions: Record<string, { enabled: boolean }>) {
   return { items, actions }
-}
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
 }
 
 function renderDialog() {
