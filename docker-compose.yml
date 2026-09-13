@@ -117,11 +117,13 @@ services:
     volumes:
       - ./tiles:/usr/share/nginx/html/tiles:ro
     ports:
-      - "8081:80"
+      # The container serves on 8080 (nginx runs unprivileged, see
+      # frontend/Dockerfile); the host port stays 8081.
+      - "8081:8080"
     healthcheck:
       # `localhost` resolves to IPv6 `::1` in the nginx alpine image while nginx
-      # only listens on IPv4 (`listen 80`), so probe 127.0.0.1 explicitly.
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      # only listens on IPv4 (`listen 8080`), so probe 127.0.0.1 explicitly.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 5s

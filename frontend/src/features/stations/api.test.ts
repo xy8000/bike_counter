@@ -81,6 +81,16 @@ describe('fetchSidebarStats', () => {
 
     await expect(fetchSidebarStats(STATS_URL)).rejects.toThrow(`${STATS_URL} responded with 503`)
   })
+
+  it('refuses to fetch a non-BFF (cross-origin) stats URL', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchSidebarStats('https://evil.example/steal')).rejects.toThrow(
+      'Refusing to fetch non-BFF URL: https://evil.example/steal',
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('fetchStationSearch', () => {

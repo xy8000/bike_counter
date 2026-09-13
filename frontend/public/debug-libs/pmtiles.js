@@ -331,7 +331,8 @@ var inflt = function(dat, st, buf, dict) {
       if (sym < 256)
         buf[bt++] = sym;
       else if (sym == 256) {
-        lpos = pos, lm = null;
+        lpos = pos;
+        lm = null;
         break;
       } else {
         var add = sym - 254;
@@ -712,7 +713,7 @@ var v2_default = {
 };
 
 // adapters.ts
-var leafletRasterLayer = (source, options) => {
+const leafletRasterLayer = (source, options) => {
   let loaded = false;
   let mimeType = "";
   const cls = L.GridLayer.extend({
@@ -798,7 +799,7 @@ var v3compat = (v4) => (requestParameters, arg2) => {
   });
   return { cancel: () => abortController.abort() };
 };
-var Protocol = class {
+const Protocol = class {
   /**
    * Initialize the MapLibre PMTiles protocol.
    *
@@ -993,10 +994,10 @@ var tzValues = [
 ];
 function zxyToTileId(z, x, y) {
   if (z > 26) {
-    throw Error("Tile zoom level exceeds max safe number limit (26)");
+    throw new Error("Tile zoom level exceeds max safe number limit (26)");
   }
   if (x > __pow(2, z) - 1 || y > __pow(2, z) - 1) {
-    throw Error("tile x/y outside zoom level bounds");
+    throw new Error("tile x/y outside zoom level bounds");
   }
   const acc = tzValues[z];
   const n = __pow(2, z);
@@ -1024,18 +1025,20 @@ function tileIdToZxy(i) {
     }
     acc += numTiles;
   }
-  throw Error("Tile zoom level exceeds max safe number limit (26)");
+  throw new Error("Tile zoom level exceeds max safe number limit (26)");
 }
-var Compression = /* @__PURE__ */ ((Compression2) => {
+const Compression = /* @__PURE__ */ ((Compression2) => {
   Compression2[Compression2["Unknown"] = 0] = "Unknown";
   Compression2[Compression2["None"] = 1] = "None";
   Compression2[Compression2["Gzip"] = 2] = "Gzip";
   Compression2[Compression2["Brotli"] = 3] = "Brotli";
   Compression2[Compression2["Zstd"] = 4] = "Zstd";
   return Compression2;
-})(Compression || {});
+})({});
 function defaultDecompress(buf, compression) {
   return __async(this, null, function* () {
+    // Keep this a generator: the __async helper drives it via next()/throw().
+    yield;
     if (compression === 1 /* None */ || compression === 0 /* Unknown */) {
       return buf;
     }
@@ -1045,7 +1048,7 @@ function defaultDecompress(buf, compression) {
       }
       const stream = new Response(buf).body;
       if (!stream) {
-        throw Error("Failed to read response stream");
+        throw new Error("Failed to read response stream");
       }
       const result = stream.pipeThrough(
         // biome-ignore lint: needed to detect DecompressionStream in browser+node+cloudflare workers
@@ -1053,10 +1056,10 @@ function defaultDecompress(buf, compression) {
       );
       return new Response(result).arrayBuffer();
     }
-    throw Error("Compression method not supported");
+    throw new Error("Compression method not supported");
   });
 }
-var TileType = /* @__PURE__ */ ((TileType2) => {
+const TileType = /* @__PURE__ */ ((TileType2) => {
   TileType2[TileType2["Unknown"] = 0] = "Unknown";
   TileType2[TileType2["Mvt"] = 1] = "Mvt";
   TileType2[TileType2["Png"] = 2] = "Png";
@@ -1064,7 +1067,7 @@ var TileType = /* @__PURE__ */ ((TileType2) => {
   TileType2[TileType2["Webp"] = 4] = "Webp";
   TileType2[TileType2["Avif"] = 5] = "Avif";
   return TileType2;
-})(TileType || {});
+})({});
 function tileTypeExt(t) {
   if (t === 1 /* Mvt */)
     return ".mvt";
@@ -1103,7 +1106,7 @@ function findTile(entries, tileId) {
   }
   return null;
 }
-var FileSource = class {
+const FileSource = class {
   constructor(file) {
     this.file = file;
   }
@@ -1118,7 +1121,7 @@ var FileSource = class {
     });
   }
 };
-var FetchSource = class {
+const FetchSource = class {
   constructor(url, customHeaders = new Headers()) {
     this.url = url;
     this.customHeaders = customHeaders;
@@ -1170,7 +1173,7 @@ var FetchSource = class {
       if (offset === 0 && resp.status === 416) {
         const contentRange = resp.headers.get("Content-Range");
         if (!contentRange || !contentRange.startsWith("bytes */")) {
-          throw Error("Missing content-length on 416 response");
+          throw new Error("Missing content-length on 416 response");
         }
         const actualLength = +contentRange.substr(8);
         resp = yield fetch(this.url, {
@@ -1191,13 +1194,13 @@ var FetchSource = class {
         );
       }
       if (resp.status >= 300) {
-        throw Error(`Bad response code: ${resp.status}`);
+        throw new Error(`Bad response code: ${resp.status}`);
       }
       const contentLength = resp.headers.get("Content-Length");
       if (resp.status === 200 && (!contentLength || +contentLength > length)) {
         if (controller)
           controller.abort();
-        throw Error(
+        throw new Error(
           "Server returned no content-length header or content-length exceeding request. Check that your storage backend supports HTTP Byte Serving."
         );
       }
@@ -1220,7 +1223,7 @@ function bytesToHeader(bytes, etag) {
   const v = new DataView(bytes);
   const specVersion = v.getUint8(7);
   if (specVersion > 3) {
-    throw Error(
+    throw new Error(
       `Archive is spec version ${specVersion} but this library supports up to spec version 3`
     );
   }
@@ -1295,7 +1298,7 @@ function detectVersion(a) {
   }
   return 3;
 }
-var EtagMismatch = class extends Error {
+const EtagMismatch = class extends Error {
 };
 function getHeaderAndRoot(source, decompress) {
   return __async(this, null, function* () {
@@ -1331,7 +1334,7 @@ function getDirectory(source, decompress, offset, length, header) {
     return directory;
   });
 }
-var ResolvedValueCache = class {
+const ResolvedValueCache = class {
   constructor(maxCacheEntries = 100, prefetch = true, decompress = defaultDecompress) {
     this.cache = /* @__PURE__ */ new Map();
     this.maxCacheEntries = maxCacheEntries;
@@ -1422,11 +1425,13 @@ var ResolvedValueCache = class {
   }
   invalidate(source) {
     return __async(this, null, function* () {
+      // Keep this a generator: the __async helper drives it via next()/throw().
+      yield;
       this.cache.delete(source.getKey());
     });
   }
 };
-var SharedPromiseCache = class {
+const SharedPromiseCache = class {
   constructor(maxCacheEntries = 100, prefetch = true, decompress = defaultDecompress) {
     this.cache = /* @__PURE__ */ new Map();
     this.invalidations = /* @__PURE__ */ new Map();
@@ -1540,7 +1545,7 @@ var SharedPromiseCache = class {
     });
   }
 };
-var PMTiles = class {
+const PMTiles = class {
   constructor(source, cache, decompress) {
     if (typeof source === "string") {
       this.source = new FetchSource(source);
@@ -1608,7 +1613,7 @@ var PMTiles = class {
           return void 0;
         }
       }
-      throw Error("Maximum directory depth exceeded");
+      throw new Error("Maximum directory depth exceeded");
     });
   }
   /**
