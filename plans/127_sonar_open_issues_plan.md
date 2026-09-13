@@ -4,17 +4,17 @@ Status: implemented
 
 ## Problem
 
-The current SonarCloud branch report contains five open findings: one path-traversal warning in the screenshot analyzer and four Dockerfile findings caused by combining image tags with digests.
+The current SonarCloud branch report contains five open findings: one path-traversal warning in an unused screenshot analyzer and four Dockerfile findings caused by combining image tags with digests.
 
 ## Approach
 
-1. Resolve the screenshot path and workspace through the filesystem before checking containment, preventing symlink escapes from the accepted workspace.
+1. Remove the unused screenshot analyzer, eliminating the path-injection surface.
 2. Use digest-only Docker `FROM` references so each image is identified by one immutable reference.
 3. Run focused security and Dockerfile validation, then the repository gates required for the touched files.
 
 ## Definition of done
 
-- [x] Screenshot analyzer rejects traversal and symlink escape paths
+- [x] Unused screenshot analyzer removed
 - [x] Backend Dockerfile uses digest-only image references
 - [x] Frontend Dockerfile uses digest-only image references
 - [x] Focused validation passes
@@ -24,6 +24,7 @@ The current SonarCloud branch report contains five open findings: one path-trave
 ## Validation
 
 - Focused analyzer and Docker reference checks passed.
+- The unused analyzer was removed, eliminating the Sonar path-injection finding.
 - `make check` passed: formatting, Clippy, Prettier, and cargo audit.
 - `make test-rest` passed: 128 tests.
 - `make coverage` passed: backend production coverage 85.69% overall and
