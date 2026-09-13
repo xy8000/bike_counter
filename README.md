@@ -147,6 +147,10 @@ the imported data up to date.
 - **Optional services** — `[asset_storage]` (S3/MinIO bucket holding the
   counting-station images), `[opendata]`/`[opendata_storage]` (bulk-export
   schedule and bucket) and `[maps]` (self-hosted basemap settings).
+- **Scheduled jobs** — the top-level cron/heartbeat keys control the background
+  jobs (`data_source_update_cron`, `asset_cleanup_cron`, `measurement_rollup_cron`,
+  …). `measurement_rollup_cron` maintains the hourly/daily measurement rollups
+  that back the web app's charts and overviews.
 
 ## Open data & API
 
@@ -158,7 +162,12 @@ Machine consumers get two HTTP surfaces plus a bulk export:
   measurement data as per-station and global **daily** and **monthly** files in
   `parquet`, `csv.gz` and `json`. Files are published once per period and never
   rewritten.
-- **BFF API** (`/api/bff`) — the aggregation API used by the web frontend.
+- **BFF API** (`/api/bff`) — the aggregation API used by the web frontend. Its
+  coarse aggregates (overview metrics, monthly totals, the 30-day/year graphs
+  and the hour-of-day radars) are served from pre-aggregated **hourly/daily
+  rollup tables** maintained by the `measurement_rollup` job and refreshed right
+  after each import, instead of scanning the raw measurement history; only the
+  5-minute day graph and sub-hourly custom ranges read the raw measurements.
 
 The complete endpoint reference (parameters, schemas, examples) is served by
 Swagger-UI at <http://localhost:8080/swagger-ui/>.

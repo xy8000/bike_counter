@@ -315,9 +315,16 @@ impl StationAnalyticsService {
                     all_channel_ids.extend_from_slice(channel_ids);
                 }
             }
-            let totals =
-                self.measurement_repository
-                    .sum_by_channel(from, to, &all_channel_ids, None)?;
+            // The previous-local-day window is a complete local day, so the
+            // per-channel totals come from the daily rollup instead of scanning
+            // the raw history.
+            let totals = self.measurement_repository.sum_daily_by_channel(
+                from,
+                to,
+                timezone_stations[0].timezone.0.as_str(),
+                &all_channel_ids,
+                None,
+            )?;
             let total_by_channel: HashMap<uuid::Uuid, i64> = totals
                 .into_iter()
                 .map(|total| (total.channel_id, total.total))

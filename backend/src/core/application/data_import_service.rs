@@ -485,6 +485,20 @@ impl DataImportService {
             self.mark_stale_stations_inactive(runtime, Utc::now())?;
         }
 
+        // Keep the hourly/daily rollups in sync with the rows imported in this
+        // run. A refresh failure is logged, not fatal: the scheduled rollup job
+        // is the self-healing fallback and the raw measurements stay the source
+        // of truth either way.
+        if let (Some(first), Some(last)) = (run_first, run_last) {
+            let slack = chrono::Duration::minutes(1);
+            if let Err(error) = self
+                .measurement_repository
+                .refresh_rollups(first - slack, last + slack)
+            {
+                eprintln!("Failed to refresh measurement rollups after import: {error:?}");
+            }
+        }
+
         Ok(DataSourceUpdate {
             processed_measurements: processed,
             added_measurements: added,

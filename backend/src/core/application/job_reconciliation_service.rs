@@ -18,6 +18,7 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::core::application::asset_cleanup_service::ASSET_CLEANUP_JOB_TYPE;
 use crate::core::application::data_source_update_service::DATA_SOURCE_UPDATE_JOB_TYPE;
+use crate::core::application::measurement_rollup_service::MEASUREMENT_ROLLUP_JOB_TYPE;
 use crate::core::application::tiles_update_service::TILES_UPDATE_JOB_TYPE;
 use crate::core::domain::configuration::configuration::Configuration;
 use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
@@ -62,6 +63,11 @@ impl JobReconciliationService {
             (
                 TILES_UPDATE_JOB_TYPE,
                 self.configuration.maps().update_max_heartbeat_interval(),
+            ),
+            (
+                MEASUREMENT_ROLLUP_JOB_TYPE,
+                self.configuration
+                    .measurement_rollup_max_heartbeat_interval(),
             ),
         ]
     }

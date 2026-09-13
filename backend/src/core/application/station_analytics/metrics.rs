@@ -28,14 +28,17 @@ use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::MeasurementRepository;
 use crate::core::domain::station_analytics::{MetricKey, MetricWindow};
 
-/// Sums a window across every channel in one multi-channel query.
+/// Sums a window across every channel from the daily rollup. The windows this
+/// feeds (the four overview metrics) are all complete local days, so the daily
+/// rollup answers them exactly without scanning the raw history.
 pub(super) fn sum_window(
     repository: &dyn MeasurementRepository,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
+    timezone: &str,
     channel_ids: &[ChannelId],
 ) -> Result<i64, DomainError> {
-    repository.sum(from, to, channel_ids, None)
+    repository.sum_daily(from, to, timezone, channel_ids, None)
 }
 
 /// Timestamp of the most recent successful data-source update.
@@ -153,8 +156,10 @@ pub(super) fn metric_windows(
                     continue;
                 }
             }
-            current[idx] += sum_window(repository, c_from, c_to, &channel_ids)?;
-            previous[idx] += sum_window(repository, p_from, p_to, &channel_ids)?;
+            current[idx] +=
+                sum_window(repository, c_from, c_to, &station.timezone.0, &channel_ids)?;
+            previous[idx] +=
+                sum_window(repository, p_from, p_to, &station.timezone.0, &channel_ids)?;
         }
     }
 

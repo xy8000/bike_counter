@@ -7,7 +7,8 @@ use crate::core::domain::configuration::configuration::value_objects::{
 };
 use crate::core::domain::configuration::configuration::{
     Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
-    DEFAULT_MAPS_UPDATE_CRON, DEFAULT_OPENDATA_EXPORT_CRON,
+    DEFAULT_MAPS_UPDATE_CRON, DEFAULT_MEASUREMENT_ROLLUP_CRON,
+    DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS, DEFAULT_OPENDATA_EXPORT_CRON,
     DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS, DEFAULT_OPENDATA_STORAGE_BUCKET,
     DEFAULT_PROVIDER_LOG_LEVEL,
 };
@@ -26,6 +27,10 @@ struct ConfigurationDto {
     #[serde(default = "default_asset_cleanup_cron")]
     asset_cleanup_cron: String,
     asset_cleanup_max_heartbeat_interval_seconds: i64,
+    #[serde(default = "default_measurement_rollup_cron")]
+    measurement_rollup_cron: String,
+    #[serde(default = "default_measurement_rollup_max_heartbeat_interval")]
+    measurement_rollup_max_heartbeat_interval_seconds: i64,
     asset_storage: AssetStorageDto,
     #[serde(default = "default_maps")]
     maps: MapsDto,
@@ -56,6 +61,14 @@ fn default_data_source_update_cron() -> String {
 
 fn default_asset_cleanup_cron() -> String {
     DEFAULT_ASSET_CLEANUP_CRON.to_string()
+}
+
+fn default_measurement_rollup_cron() -> String {
+    DEFAULT_MEASUREMENT_ROLLUP_CRON.to_string()
+}
+
+fn default_measurement_rollup_max_heartbeat_interval() -> i64 {
+    DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS
 }
 
 fn default_log_level() -> String {
@@ -290,6 +303,12 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             dto.opendata.export_max_heartbeat_interval_seconds,
             opendata_storage,
         )
+        .and_then(|configuration| {
+            configuration.with_measurement_rollup(
+                dto.measurement_rollup_cron,
+                dto.measurement_rollup_max_heartbeat_interval_seconds,
+            )
+        })
         .map(|configuration| configuration.with_scheduled_jobs_enabled(dto.scheduled_jobs_enabled))
     }
 }

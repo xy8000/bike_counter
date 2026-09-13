@@ -4,6 +4,9 @@ use uuid::Uuid;
 use super::measurement::{Measurement, value_objects};
 use crate::core::domain::error::DomainError;
 
+/// The earliest and latest measurement timestamp across the whole history.
+pub type MeasurementBounds = (DateTime<Utc>, DateTime<Utc>);
+
 /// One fixed-width time-bucket of an aggregate sum: the bucket start (UTC) and
 /// the total value across the requested channels.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -343,5 +346,61 @@ pub trait MeasurementRepository {
         _channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<ChannelFirst>, DomainError> {
         Ok(Vec::new())
+    }
+
+    /// Sums `value` over `[from, to]` from the daily rollup, for windows that are
+    /// whole local days in `timezone` (the overview metrics and `bikes_last_day`).
+    /// The rollup is keyed by each channel's own station-local date, so
+    /// `timezone` must match the station(s) being read (the current
+    /// single-timezone summary assumption).
+    ///
+    /// Defaults to the raw [`sum`](Self::sum) so rollup-unaware doubles behave
+    /// identically.
+    #[allow(clippy::too_many_arguments)]
+    fn sum_daily(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<i64, DomainError> {
+        let _ = timezone;
+        self.sum(from, to, channel_ids, resolution_seconds)
+    }
+
+    /// Like [`sum_daily`](Self::sum_daily) but grouped per channel, so each
+    /// returned row carries its `channel_id` (used for the per-station
+    /// `bikes_last_day` totals).
+    ///
+    /// Defaults to the raw [`sum_by_channel`](Self::sum_by_channel).
+    #[allow(clippy::too_many_arguments)]
+    fn sum_daily_by_channel(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelTotal>, DomainError> {
+        let _ = timezone;
+        self.sum_by_channel(from, to, channel_ids, resolution_seconds)
+    }
+
+    /// The earliest and latest measurement timestamp across the whole history,
+    /// used by the rollup job to run a full backfill on its first run. Defaults
+    /// to `None` so rollup-unaware mocks need no change.
+    fn measurement_bounds(&self) -> Result<Option<MeasurementBounds>, DomainError> {
+        Ok(None)
+    }
+
+    /// Rebuilds the hourly/daily rollups for every measurement whose timestamp
+    /// lies in the half-open `[from, to)` range. The adapter deletes the affected
+    /// local buckets and re-inserts them from the raw rows, so the operation is
+    /// idempotent and safe to run incrementally after an import.
+    ///
+    /// Defaults to a no-op so rollup-unaware mocks need no change.
+    fn refresh_rollups(&self, _from: DateTime<Utc>, _to: DateTime<Utc>) -> Result<(), DomainError> {
+        Ok(())
     }
 }
