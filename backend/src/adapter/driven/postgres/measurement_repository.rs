@@ -48,9 +48,7 @@ impl PostgresMeasurementRepository {
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let ready = row.is_some_and(|row| row.get::<_, bool>(0));
-        if ready {
-            self.rollups_ready.store(true, Ordering::Relaxed);
-        }
+        self.rollups_ready.store(ready, Ordering::Relaxed);
         Ok(ready)
     }
 
@@ -1211,13 +1209,14 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 .map(|row| (row.channel_id, row.timestamp))
                 .collect();
             for row in self.latest_by_channel(&missing)? {
-                if let Some(first) = firsts.remove(&row.channel_id) {
-                    bounds.push(ChannelBounds {
-                        channel_id: row.channel_id,
-                        first,
-                        last: row.timestamp,
-                    });
-                }
+                // A channel with a latest timestamp always has an earliest, so the
+                // fallback only matters for a transiently inconsistent read.
+                let first = firsts.remove(&row.channel_id).unwrap_or(row.timestamp);
+                bounds.push(ChannelBounds {
+                    channel_id: row.channel_id,
+                    first,
+                    last: row.timestamp,
+                });
             }
         }
         Ok(bounds)
@@ -2929,6 +2928,101 @@ mod tests {
                 .unwrap(),
             37
         );
+    }
+
+    #[test]
+    fn cold_start_rollup_reads_fall_back_to_the_raw_table() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        // The test station defaults to UTC.
+        let base = Utc.with_ymd_and_hms(2024, 5, 1, 0, 0, 0).single().unwrap();
+        let make = |id: u128, value: i64, at: chrono::DateTime<Utc>| Measurement {
+            id: value_objects::Id(Uuid::from_u128(id)),
+            value: value_objects::Value(value),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(3600),
+            interval_end: None,
+        };
+        let from = base;
+        let to = base + chrono::Duration::days(1);
+        repository
+            .save_batch(vec![
+                make(1, 10, base + chrono::Duration::hours(1)),
+                make(2, 20, base + chrono::Duration::hours(2)),
+            ])
+            .unwrap();
+        let ids = vec![channel_id()];
+
+        assert!(!repository.rollups_ready().unwrap());
+        assert!(
+            repository.channel_bounds(&[]).unwrap().is_empty(),
+            "an empty channel list short-circuits"
+        );
+        // The global bounds fall back to the raw MIN/MAX while the bounds table is
+        // still empty.
+        assert_eq!(
+            repository.measurement_bounds().unwrap(),
+            Some((
+                base + chrono::Duration::hours(1),
+                base + chrono::Duration::hours(2)
+            ))
+        );
+
+        // Every rollup-backed read answers from the raw table while un-backfilled:
+        // the hour radar (both variants), the monthly bar, the calendar bucket
+        // series (both variants) and the per-channel daily sum.
+        let hours = repository.sum_hours(from, to, "UTC", &ids, None).unwrap();
+        assert_eq!(hours.len(), 2);
+        assert_eq!(hours[0].hour, 1);
+        assert_eq!(hours[0].total, 10);
+        let hour_channels = repository
+            .sum_hours_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(hour_channels[0].hour, 1);
+        assert_eq!(hour_channels[0].total, 10);
+        let months = repository.sum_by_month("UTC", &ids, None).unwrap();
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].total, 30);
+        let buckets = repository
+            .sum_buckets(from, to, BucketGranularity::Month, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].total, 30);
+        let bucket_channels = repository
+            .sum_buckets_by_channel(from, to, BucketGranularity::Week, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(bucket_channels.len(), 1);
+        assert_eq!(bucket_channels[0].total, 30);
+        let daily_channels = repository
+            .sum_daily_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(daily_channels[0].total, 30);
+
+        // After the backfill the same reads are answered by the rollups.
+        repository.refresh_rollups(from, to).unwrap();
+        repository.mark_rollups_ready().unwrap();
+        let hours = repository.sum_hours(from, to, "UTC", &ids, None).unwrap();
+        assert_eq!(hours[0].hour, 1);
+        assert_eq!(hours[0].total, 10);
+        let hour_channels = repository
+            .sum_hours_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(hour_channels[0].total, 10);
+        assert_eq!(
+            repository.sum_by_month("UTC", &ids, None).unwrap()[0].total,
+            30
+        );
+        let buckets = repository
+            .sum_buckets(from, to, BucketGranularity::Month, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(buckets[0].total, 30);
+        let bucket_channels = repository
+            .sum_buckets_by_channel(from, to, BucketGranularity::Week, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(bucket_channels[0].total, 30);
     }
 
     fn measurement(id: u128, value: i64) -> Measurement {

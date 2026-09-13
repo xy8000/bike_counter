@@ -443,6 +443,6 @@ showing it after the rollups are ready.
 - [x] All `earliest_by_channel` consumers (and the `metric_windows` N+1) switched to `channel_bounds`
 - [x] Post-import `latest_by_channel` staleness reads the bounds table
 - [x] Readiness gate: rollup reads fall back to raw until the backfill completes; covered by a repository test and a service test
-- [x] `make check` / `make test` / `make coverage` green (core ≥ 95 %, overall ≥ 80 %, 760 tests)
+- [x] `make check` / `make test` / `make coverage` green (767 tests; core 95.90 %, overall 86.25 %; `repository_port.rs` 100 %, analytics ~99 %, rollup service 91.4 %)
 - [x] `make test-playwright` green (74 passed)
 - [x] Committed on `feat/measurement-daily-hourly-rollup`

@@ -623,6 +623,9 @@ mod tests {
         fail_find_active: bool,
         fail_find_last_finished: bool,
         fail_acquire: bool,
+        fail_insert: bool,
+        fail_heartbeat: bool,
+        fail_set_finished: bool,
     }
 
     impl MemoryJobRepository {
@@ -633,6 +636,9 @@ mod tests {
                 fail_find_active: false,
                 fail_find_last_finished: false,
                 fail_acquire: false,
+                fail_insert: false,
+                fail_heartbeat: false,
+                fail_set_finished: false,
             }
         }
 
@@ -648,6 +654,29 @@ mod tests {
                 fail_find_active,
                 fail_find_last_finished,
                 fail_acquire,
+                fail_insert: false,
+                fail_heartbeat: false,
+                fail_set_finished: false,
+            }
+        }
+
+        /// A repository whose lifecycle writes (insert / heartbeat / finish) fail,
+        /// so the service's error branches are exercised.
+        fn with_lifecycle_failures(
+            jobs: Vec<Job>,
+            fail_insert: bool,
+            fail_heartbeat: bool,
+            fail_set_finished: bool,
+        ) -> Self {
+            Self {
+                jobs: Mutex::new(jobs),
+                locks: Mutex::new(HashMap::new()),
+                fail_find_active: false,
+                fail_find_last_finished: false,
+                fail_acquire: false,
+                fail_insert,
+                fail_heartbeat,
+                fail_set_finished,
             }
         }
 
@@ -665,6 +694,9 @@ mod tests {
 
     impl JobRepository for MemoryJobRepository {
         fn insert(&self, job: Job) -> Result<(), DomainError> {
+            if self.fail_insert {
+                return Err(DomainError::Database("insert failed".to_string()));
+            }
             self.jobs.lock().unwrap().push(job);
             Ok(())
         }
@@ -707,6 +739,9 @@ mod tests {
             at: DateTime<Utc>,
             _lock_until: DateTime<Utc>,
         ) -> Result<JobStatus, DomainError> {
+            if self.fail_heartbeat {
+                return Err(DomainError::Database("heartbeat failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
                 job.heartbeat_at = Some(at);
@@ -717,6 +752,9 @@ mod tests {
         }
 
         fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            if self.fail_set_finished {
+                return Err(DomainError::Database("finish failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
                 job.status = JobStatus::Finished;
@@ -893,6 +931,88 @@ mod tests {
             !measurements.rollups_ready().unwrap(),
             "a failed backfill must leave the readiness gate closed"
         );
+    }
+
+    #[test]
+    fn releases_the_lock_when_the_job_cannot_be_recorded() {
+        let from = Utc::now() - Duration::days(2);
+        let to = Utc::now() - Duration::days(1);
+        let repo = Arc::new(MemoryJobRepository::with_lifecycle_failures(
+            vec![],
+            true,
+            false,
+            false,
+        ));
+        let measurements = Arc::new(MockMeasurementRepository::not_ready(
+            Some((from, to)),
+            false,
+        ));
+
+        service(repo.clone(), measurements.clone()).run_if_due();
+
+        assert!(repo.all().is_empty(), "no job row was recorded");
+        assert!(
+            measurements.refreshes().is_empty(),
+            "the refresh never started"
+        );
+        assert!(
+            !measurements.rollups_ready().unwrap(),
+            "an unrecorded run must not flip readiness"
+        );
+    }
+
+    #[test]
+    fn finishes_even_when_a_heartbeat_fails() {
+        let from = Utc::now() - Duration::days(2);
+        let to = Utc::now() - Duration::days(1);
+        let repo = Arc::new(MemoryJobRepository::with_lifecycle_failures(
+            vec![],
+            false,
+            true,
+            false,
+        ));
+        let measurements = Arc::new(MockMeasurementRepository::not_ready(
+            Some((from, to)),
+            false,
+        ));
+
+        service(repo.clone(), measurements.clone()).run_if_due();
+
+        assert!(!measurements.refreshes().is_empty());
+        assert!(measurements.rollups_ready().unwrap());
+        assert!(
+            repo.all()
+                .iter()
+                .any(|job| job.status == JobStatus::Finished),
+            "a failed heartbeat is treated as 'not cancelled'"
+        );
+    }
+
+    #[test]
+    fn still_flips_readiness_when_the_finish_write_fails() {
+        let from = Utc::now() - Duration::days(2);
+        let to = Utc::now() - Duration::days(1);
+        let repo = Arc::new(MemoryJobRepository::with_lifecycle_failures(
+            vec![],
+            false,
+            false,
+            true,
+        ));
+        let measurements = Arc::new(MockMeasurementRepository::not_ready(
+            Some((from, to)),
+            false,
+        ));
+
+        service(repo.clone(), measurements.clone()).run_if_due();
+
+        // The finish write failed so the row stays RUNNING, but the refresh itself
+        // completed and the readiness gate opens.
+        assert!(
+            repo.all()
+                .iter()
+                .any(|job| job.status == JobStatus::Running)
+        );
+        assert!(measurements.rollups_ready().unwrap());
     }
 
     #[test]

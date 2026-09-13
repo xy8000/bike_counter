@@ -474,3 +474,194 @@ pub trait MeasurementRepository {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::domain::counting_stations::counting_station::value_objects::DataSourceId;
+
+    /// A repository that relies entirely on the trait's default methods, as an
+    /// in-memory double written before the rollup/bounds work does. `sum` and
+    /// `sum_by_channel` are the only overrides the defaults delegate to, so they
+    /// return a recognizable sentinel.
+    struct DefaultsOnly;
+
+    impl MeasurementRepository for DefaultsOnly {
+        fn save(&self, _measurement: Measurement) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        fn save_batch(&self, _measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_by_id(&self, _id: value_objects::Id) -> Result<Measurement, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_by_channel_id(
+            &self,
+            _channel_id: value_objects::ChannelId,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_page(
+            &self,
+            _channel_id: Option<value_objects::ChannelId>,
+            _offset: usize,
+            _limit: usize,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<i64, DomainError> {
+            Ok(42)
+        }
+
+        fn sum_buckets(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _granularity: BucketGranularity,
+            _origin: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<TimeBucket>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_buckets_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _granularity: BucketGranularity,
+            _origin: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<ChannelBucket>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_weekdays(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<WeekdayTotal>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_hours(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<HourTotal>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_hours_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<ChannelHourTotal>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<ChannelTotal>, DomainError> {
+            Ok(vec![ChannelTotal {
+                channel_id: channel_ids[0].0,
+                total: 7,
+            }])
+        }
+
+        fn sum_by_month(
+            &self,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<MonthTotal>, DomainError> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn default_methods_keep_rollup_unaware_repositories_working() {
+        let repository = DefaultsOnly;
+        let now = DateTime::from_timestamp(0, 0).unwrap();
+        let ids = vec![value_objects::ChannelId(Uuid::from_u128(1))];
+
+        // Rollup maintenance uses safe no-ops, and an unaware repository counts as
+        // ready so the analytics keep their pre-rollup behaviour.
+        assert!(repository.rollups_ready().unwrap());
+        assert!(repository.mark_rollups_ready().is_ok());
+        assert!(repository.measurement_bounds().unwrap().is_none());
+        assert!(repository.refresh_rollups(now, now).is_ok());
+
+        // Coverage/bounds probes default to empty rather than an error.
+        assert!(repository.channel_bounds(&ids).unwrap().is_empty());
+        assert!(repository.earliest_by_channel(&ids).unwrap().is_empty());
+        assert!(repository.latest_by_channel(&ids).unwrap().is_empty());
+        assert!(
+            repository
+                .resolution_coverage(now, now, &ids)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            repository
+                .resolution_coverage_by_channel(now, now, &ids)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            repository
+                .sum_weekdays_by_channel(now, now, "UTC", &ids, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            repository
+                .has_measurements_in_windows(DataSourceId(Uuid::from_u128(2)), &[(now, now)])
+                .unwrap(),
+            vec![false]
+        );
+
+        // The rollup-backed reads delegate to their raw counterparts.
+        assert_eq!(
+            repository.sum_daily(now, now, "UTC", &ids, None).unwrap(),
+            42
+        );
+        let per_channel = repository
+            .sum_daily_by_channel(now, now, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(per_channel.len(), 1);
+        assert_eq!(per_channel[0].total, 7);
+    }
+}
