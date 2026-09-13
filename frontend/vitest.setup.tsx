@@ -35,9 +35,17 @@ Object.defineProperty(window, 'matchMedia', {
 
 // ResizeObserver: Radix dialog/select/tooltip shims.
 class ResizeObserverMock {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  // jsdom has no ResizeObserver; a constructible no-op is all the Radix
+  // components need, so each method is intentionally empty.
+  observe() {
+    /* no-op */
+  }
+  unobserve() {
+    /* no-op */
+  }
+  disconnect() {
+    /* no-op */
+  }
 }
 window.ResizeObserver = window.ResizeObserver ?? (ResizeObserverMock as never)
 
@@ -136,11 +144,17 @@ vi.mock('@vis.gl/react-maplibre', () => ({
 
 // maplibre-gl: value imports used at module scope in lib/map.tsx plus the
 // class types consumers hold. No real WebGL map is created in unit tests.
+/// No-op stand-in for the `maplibre-gl` `Map` class that `lib/map.tsx` keeps a
+/// reference to at module scope. Defined at module scope (not inline in the
+/// `vi.mock` factory) so the class is stable across the hoisted factory call.
+function FakeMaplibreGlMap() {
+  // Intentionally empty: unit tests never instantiate a real map.
+}
+FakeMaplibreGlMap.prototype.getBounds = () => null
+
 vi.mock('maplibre-gl', () => {
-  const FakeMap = function FakeMap() {}
-  FakeMap.prototype.getBounds = () => null
   return {
-    Map: FakeMap,
+    Map: FakeMaplibreGlMap,
     Marker: class {},
     Popup: class {},
     NavigationControl: class {},

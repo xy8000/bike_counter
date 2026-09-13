@@ -28,6 +28,89 @@ export interface PopupStationInfo {
   channelCount: number | null
 }
 
+/// The marker visual state for a station: inactive always wins (a decommissioned
+/// station must look inactive even when it is the one selected in the URL), then
+/// the selected station, otherwise active.
+function markerState(
+  station: StationMap,
+  selectedStationId?: string | null,
+): 'active' | 'inactive' | 'selected' {
+  if (station.status === 'inactive') return 'inactive'
+  if (station.id === selectedStationId) return 'selected'
+  return 'active'
+}
+
+/// The popup body (icon + name + channel badge + description) with skeleton
+/// placeholders for the not-yet-loaded shell/stats fields. Extracted from
+/// `MapView` so its render function stays within the complexity budget.
+function StationPopupBody({
+  station,
+  info,
+  shellLoading,
+  statsLoading,
+}: Readonly<{
+  station: StationMap
+  info: PopupStationInfo | undefined
+  shellLoading: boolean
+  statsLoading: boolean
+}>) {
+  return (
+    <div
+      className="station-popup flex w-72 max-w-full flex-col gap-1.5"
+      aria-busy={shellLoading || statsLoading || undefined}
+    >
+      <div className="flex items-start gap-2">
+        {info ? (
+          <img
+            src={info.imageUrl}
+            alt=""
+            className="h-8 w-8 shrink-0 rounded border object-cover"
+          />
+        ) : shellLoading ? (
+          <Skeleton className="h-8 w-8 shrink-0 rounded border" />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <Link
+              to={`/stations/${station.id}`}
+              className="min-w-0 break-words font-medium leading-snug text-foreground hover:no-underline"
+            >
+              {station.name}
+            </Link>
+            <Link
+              to={`/stations/${station.id}`}
+              aria-label="Open detail page"
+              title="Open detail page"
+              className="inline-flex shrink-0 items-center text-primary hover:underline"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+          {info && info.channelCount !== null ? (
+            <Badge variant="secondary" className="mt-1">
+              {info.channelCount} channel
+              {info.channelCount === 1 ? '' : 's'}
+            </Badge>
+          ) : statsLoading ? (
+            <Skeleton className="mt-1 h-5 w-28 rounded-md" />
+          ) : shellLoading ? (
+            <Skeleton className="mt-1 h-4 w-2/3" />
+          ) : null}
+        </div>
+      </div>
+      {info ? (
+        info.description && (
+          <p className="break-words text-xs leading-snug text-muted-foreground">
+            {info.description}
+          </p>
+        )
+      ) : shellLoading ? (
+        <Skeleton className="h-3 w-3/4" />
+      ) : null}
+    </div>
+  )
+}
+
 /// The interactive MapLibre map with the visible stations. Stations that would
 /// overlap at the current zoom are grouped into a numbered circle marker
 /// (supercluster): clicking a circle eases the map to the zoom where it splits,
@@ -49,7 +132,7 @@ export function MapView({
   stationDetails,
   error,
   statsError,
-}: {
+}: Readonly<{
   stations: StationMap[] | null
   initialBounds?: Bounds | null
   onBounds: (bounds: Bounds) => void
@@ -60,7 +143,7 @@ export function MapView({
   stationDetails?: Map<string, PopupStationInfo>
   error?: boolean
   statsError?: boolean
-}) {
+}>) {
   // The station whose popup is open (independent of the overview panel, which
   // the parent owns). Cleared on a map void click / station switch.
   const [popupStation, setPopupStation] = useState<StationMap | null>(null)
@@ -70,7 +153,7 @@ export function MapView({
   const shellLoading = popupInfo === undefined && !error
   // The channel-count badge is still loading while the stats sub-resource is
   // pending (the shell entry exists but its count is not known yet).
-  const statsLoading = popupInfo !== undefined && popupInfo.channelCount === null && !statsError
+  const statsLoading = popupInfo?.channelCount === null && !statsError
 
   // The MapLibre instance this view renders into (the parent keeps its own copy
   // for the fly-to on selection). Cluster circles zoom through this instance.
@@ -179,14 +262,7 @@ export function MapView({
               }}
             >
               {stationMarkerImage(station.name, {
-                // Inactive always wins: a decommissioned station must look
-                // inactive even when it is the one selected in the URL.
-                state:
-                  station.status === 'inactive'
-                    ? 'inactive'
-                    : station.id === selectedStationId
-                      ? 'selected'
-                      : 'active',
+                state: markerState(station, selectedStationId),
               })}
             </button>
           </Marker>
@@ -202,69 +278,12 @@ export function MapView({
           // at the width we choose instead of being squeezed (or overflowing).
           maxWidth="18rem"
         >
-          <div
-            className="station-popup flex w-72 max-w-full flex-col gap-1.5"
-            aria-busy={shellLoading || statsLoading || undefined}
-          >
-            {/* Icon (top left), then the heading (name) beside it, with the
-                description on its own line below both. While the shell/stats
-                sub-resources are still loading the not-yet-known fields render
-                as skeletons (same mechanism as the overview), so the popup does
-                not flicker when the data arrives. */}
-            <div className="flex items-start gap-2">
-              {popupInfo ? (
-                <img
-                  src={popupInfo.imageUrl}
-                  alt=""
-                  className="h-8 w-8 shrink-0 rounded border object-cover"
-                />
-              ) : shellLoading ? (
-                <Skeleton className="h-8 w-8 shrink-0 rounded border" />
-              ) : null}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  {/* The station name opens the detail page in the same tab
-                      without looking like a link; the icon button is the
-                      explicit affordance. `min-w-0` + `break-words` keep long
-                      names inside the popup. */}
-                  <Link
-                    to={`/stations/${popupStation.id}`}
-                    className="min-w-0 break-words font-medium leading-snug text-foreground hover:no-underline"
-                  >
-                    {popupStation.name}
-                  </Link>
-                  <Link
-                    to={`/stations/${popupStation.id}`}
-                    aria-label="Open detail page"
-                    title="Open detail page"
-                    className="inline-flex shrink-0 items-center text-primary hover:underline"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </Link>
-                </div>
-                {popupInfo && popupInfo.channelCount !== null ? (
-                  // The channel count rendered like the overview banner badge.
-                  <Badge variant="secondary" className="mt-1">
-                    {popupInfo.channelCount} channel
-                    {popupInfo.channelCount === 1 ? '' : 's'}
-                  </Badge>
-                ) : statsLoading ? (
-                  <Skeleton className="mt-1 h-5 w-28 rounded-md" />
-                ) : shellLoading ? (
-                  <Skeleton className="mt-1 h-4 w-2/3" />
-                ) : null}
-              </div>
-            </div>
-            {popupInfo ? (
-              popupInfo.description && (
-                <p className="break-words text-xs leading-snug text-muted-foreground">
-                  {popupInfo.description}
-                </p>
-              )
-            ) : shellLoading ? (
-              <Skeleton className="h-3 w-3/4" />
-            ) : null}
-          </div>
+          <StationPopupBody
+            station={popupStation}
+            info={popupInfo}
+            shellLoading={shellLoading}
+            statsLoading={statsLoading}
+          />
         </Popup>
       )}
     </BaseMap>

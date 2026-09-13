@@ -56,7 +56,7 @@ export function TimeSeriesBarChart({
   axisRotate = false,
   tooltipFormatter,
   className,
-}: {
+}: Readonly<{
   series: BarSeries[]
   xFormatter: (time: number) => string
   /** True when the view's x-axis labels are long (e.g. `dd.MM., HH:mm` across 30
@@ -64,7 +64,7 @@ export function TimeSeriesBarChart({
   axisRotate?: boolean
   tooltipFormatter?: (time: number) => string
   className?: string
-}) {
+}>) {
   const visibleSeries = series.filter((item) => item.data.length > 0)
   const data = mergeSeries(visibleSeries)
   const config: ChartConfig = Object.fromEntries(

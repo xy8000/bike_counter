@@ -65,27 +65,29 @@ function rangeDays(from: string, to: string): number {
   return Math.floor((endExclusive - start) / 86_400_000)
 }
 
-/// The three resolution options to show for the current selection. An
-/// individual range picks the closest fixed timeframe's set by its span; a
-/// range longer than one year drops the `Day` option.
+/// The options for an `individual` range: the closest fixed timeframe's set by
+/// its span; a range longer than one year drops the `Day` option.
+function individualOptions(from: string | null, to: string | null): ResolutionOption[] {
+  if (from && to) {
+    const days = rangeDays(from, to)
+    if (days <= 2) return FIXED_OPTIONS.day
+    if (days <= 7) return FIXED_OPTIONS.week
+    if (days <= 45) return FIXED_OPTIONS.last_30_days
+    if (days <= 366) return FIXED_OPTIONS.year
+    return MULTI_YEAR_OPTIONS
+  }
+  // No usable range yet (individual without both dates): fall back to the
+  // current default timeframe's set.
+  return FIXED_OPTIONS.week
+}
+
+/// The three resolution options to show for the current selection.
 export function resolutionOptions(
   timeframe: Timeframe,
   from: string | null,
   to: string | null,
 ): ResolutionOption[] {
-  if (timeframe === 'individual') {
-    if (from && to) {
-      const days = rangeDays(from, to)
-      if (days <= 2) return FIXED_OPTIONS.day
-      if (days <= 7) return FIXED_OPTIONS.week
-      if (days <= 45) return FIXED_OPTIONS.last_30_days
-      if (days <= 366) return FIXED_OPTIONS.year
-      return MULTI_YEAR_OPTIONS
-    }
-    // No usable range yet (individual without both dates): fall back to the
-    // current default timeframe's set.
-    return FIXED_OPTIONS.week
-  }
+  if (timeframe === 'individual') return individualOptions(from, to)
   return FIXED_OPTIONS[timeframe]
 }
 

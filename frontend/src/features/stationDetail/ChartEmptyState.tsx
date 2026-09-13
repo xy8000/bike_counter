@@ -6,10 +6,10 @@ import { cn } from '@/lib/utils'
 export function ChartEmptyState({
   message = 'No data for this period.',
   className,
-}: {
+}: Readonly<{
   message?: string
   className?: string
-}) {
+}>) {
   return (
     <div className={cn('flex items-center justify-center', className)}>
       <p className="text-sm text-muted-foreground">{message}</p>

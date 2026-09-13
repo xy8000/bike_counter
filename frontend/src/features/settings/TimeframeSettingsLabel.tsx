@@ -15,7 +15,9 @@ function formatDateInput(value: string): string {
 /// The short summary of the current timeframe settings, printed in the page
 /// header left of the settings button (where the inline dropdown/checkbox used
 /// to sit).
-export function TimeframeSettingsLabel({ settings }: { settings: TimeframeSettingsValue }) {
+export function TimeframeSettingsLabel({
+  settings,
+}: Readonly<{ settings: TimeframeSettingsValue }>) {
   const { timeframe, from, to, compare, isIndividual } = settings
 
   let text: string

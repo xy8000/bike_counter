@@ -10,11 +10,11 @@ export function LeftPanel({
   collapsed,
   onToggle,
   children,
-}: {
+}: Readonly<{
   collapsed: boolean
   onToggle: () => void
   children: ReactNode
-}) {
+}>) {
   return (
     <aside
       className={cn(

@@ -49,7 +49,7 @@ export function mapClusters(page: Page): Locator {
 export async function mapRepresentedStations(page: Page): Promise<number> {
   const markers = await mapMarkers(page).count()
   const counts = await mapClusters(page).evaluateAll((elements) =>
-    elements.map((element) => Number(element.getAttribute('data-count')) || 1),
+    elements.map((element) => Number(element.dataset.count) || 1),
   )
   return markers + counts.reduce((sum, count) => sum + count, 0)
 }

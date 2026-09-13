@@ -8,7 +8,7 @@ import type { SidebarShell, SidebarStation, SidebarStationStats } from '../stati
 import { SidebarListItem } from './SidebarListItem'
 
 /// Skeleton rows shown while the sidebar shell loads (the UI without content).
-function SidebarListSkeleton({ count = 5 }: { count?: number }) {
+function SidebarListSkeleton({ count = 5 }: Readonly<{ count?: number }>) {
   return (
     <ul className="list-none" aria-busy="true">
       {Array.from({ length: count }, (_, index) => (
@@ -38,7 +38,7 @@ export function Sidebar({
   onSelectStation,
   onSummarize,
   onClose,
-}: {
+}: Readonly<{
   shell: SidebarShell | null
   stats: Map<string, SidebarStationStats> | null
   loading: boolean
@@ -49,7 +49,7 @@ export function Sidebar({
   // Phone-only affordance: the full-screen drawer gets its own close button,
   // while tablet/desktop close via the mid-height handle.
   onClose?: () => void
-}) {
+}>) {
   // The visible stations are listed by their previous-local-day bike count
   // (busiest first) rather than by name. The counts live in the separate stats
   // sub-resource, so until they arrive (or when a station has no stats) the

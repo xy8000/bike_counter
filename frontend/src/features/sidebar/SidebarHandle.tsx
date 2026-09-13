@@ -11,11 +11,11 @@ export function SidebarHandle({
   collapsed,
   onToggle,
   className,
-}: {
+}: Readonly<{
   collapsed: boolean
   onToggle: () => void
   className?: string
-}) {
+}>) {
   return (
     <button
       type="button"

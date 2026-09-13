@@ -27,7 +27,7 @@ const COLUMNS =
   'md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.2fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1.4fr)]'
 
 /// One labelled value column inside a list row (mobile stacked layout).
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+function Fact({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
@@ -53,7 +53,7 @@ function TableHeader() {
 
 /// A compact single row of the table. On `md+` it is one of the five aligned
 /// grid columns; on small screens the facts stack under the source name.
-function DataSourceRow({ dataSource }: { dataSource: DataSourceSummary }) {
+function DataSourceRow({ dataSource }: Readonly<{ dataSource: DataSourceSummary }>) {
   return (
     <Link
       to={`/data-sources/${dataSource.id}`}

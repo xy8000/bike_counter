@@ -8,12 +8,12 @@ export function ChartCard({
   subtitle,
   note,
   children,
-}: {
+}: Readonly<{
   title: string
   subtitle?: string
   note?: string
   children: ReactNode
-}) {
+}>) {
   return (
     <Card className="gap-2">
       <CardHeader className="px-4 pb-1 pt-4">

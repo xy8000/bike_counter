@@ -371,17 +371,18 @@ export function customTimeframeConfig(
   const crossesYear = fromDate.getFullYear() !== toDate.getFullYear()
   // Sub-day buckets repeat `HH:mm` every day once a range spans several days;
   // `dd.MM.` day/week buckets become dense and ambiguous once they cross a year.
-  const axis = subDay
-    ? days > 2
-      ? dayTimeAxis
-      : timeAxis('hour')
-    : granularity === 'month'
-      ? monthAxis
-      : granularity === 'quarter'
-        ? quarterAxis
-        : crossesYear
-          ? dayYearAxis
-          : weekAxis
+  let axis: TimeframeConfig['axis']
+  if (subDay) {
+    axis = days > 2 ? dayTimeAxis : timeAxis('hour')
+  } else if (granularity === 'month') {
+    axis = monthAxis
+  } else if (granularity === 'quarter') {
+    axis = quarterAxis
+  } else if (crossesYear) {
+    axis = dayYearAxis
+  } else {
+    axis = weekAxis
+  }
   // Sub-day labels with a day prefix and cross-year `dd.MM.yy` labels are long
   // enough to need a -45° rotation on a dense axis.
   const axisRotate = subDay ? days > 2 : granularity !== 'month' && granularity !== 'quarter'

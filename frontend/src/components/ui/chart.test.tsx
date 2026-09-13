@@ -153,7 +153,7 @@ describe('ChartTooltipContent', () => {
   it('renders the config label and a formatted value for an active single payload', () => {
     const payload = tooltipPayload(entry({ value: 1234 }))
     renderInContainer(baseConfig, <ChartTooltipContent active payload={payload} />)
-    expect(screen.getAllByText('Desktop').length).toBe(2)
+    expect(screen.getAllByText('Desktop')).toHaveLength(2)
     expect(screen.getByText((1234).toLocaleString())).toBeInTheDocument()
     const swatch = document.querySelector('[style*="--color-bg"]')
     expect(swatch).not.toBeNull()
@@ -173,7 +173,7 @@ describe('ChartTooltipContent', () => {
   it('hides the label row when hideLabel is set', () => {
     const payload = tooltipPayload(entry())
     renderInContainer(baseConfig, <ChartTooltipContent active payload={payload} hideLabel />)
-    expect(screen.getAllByText('Desktop').length).toBe(1)
+    expect(screen.getAllByText('Desktop')).toHaveLength(1)
   })
 
   it('applies the labelFormatter to the tooltip label', () => {
@@ -229,7 +229,7 @@ describe('ChartTooltipContent', () => {
     const payload = tooltipPayload(entry())
     renderInContainer(baseConfig, <ChartTooltipContent active payload={payload} hideIndicator />)
     expect(document.querySelector('[style*="--color-bg"]')).toBeNull()
-    expect(screen.getAllByText('Desktop').length).toBe(2)
+    expect(screen.getAllByText('Desktop')).toHaveLength(2)
   })
 
   it('renders the config icon instead of the indicator when one is configured', () => {
@@ -266,7 +266,7 @@ describe('ChartLegendContent', () => {
     expect(screen.getByText('Desktop')).toBeInTheDocument()
     expect(screen.getByText('Mobile')).toBeInTheDocument()
     const swatches = document.querySelectorAll('[class*="shrink-0 rounded-[2px]"]')
-    expect(swatches.length).toBe(2)
+    expect(swatches).toHaveLength(2)
   })
 
   it('applies the top alignment class for verticalAlign top', () => {

@@ -15,10 +15,10 @@ import type { GlobalSummary } from './types'
 export function GlobalSummaryDialog({
   summary,
   onClose,
-}: {
+}: Readonly<{
   summary: GlobalSummary
   onClose: () => void
-}) {
+}>) {
   const facts: Array<{ label: string; value: string }> = [
     { label: 'Counting stations', value: String(summary.station_count) },
     { label: 'Channels', value: formatNumber(summary.channel_count) },
