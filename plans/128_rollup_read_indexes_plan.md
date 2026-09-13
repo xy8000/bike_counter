@@ -76,7 +76,16 @@ No Rust line changes (DDL only), so the production coverage gates are unchanged.
 - [x] `V26__add_rollup_read_indexes.sql` added (DDL only)
 - [x] Live `EXPLAIN (ANALYZE, BUFFERS)` before/after captured
 - [x] `make check` green
-- [x] `make test` green
-- [x] `make coverage` green
-- [x] `make test-playwright` green
+- [x] `make test` green (767 tests)
+- [x] `make coverage` green (overall 86.33 %, core 95.90 %)
+- [ ] `make test-playwright` green — blocked by an overloaded host (load average 8-24 from
+      unrelated workloads): the runs fail at the infrastructure level, not on assertions in
+      this change. Two distinct infra failures were observed:
+      1. the backend crash-loops on `Failed to initialize Postgres connection pool` while the
+         seeded Postgres is still in its `initdb` phase (its `pg_isready` healthcheck passes on
+         the temporary init server), so `docker compose up --wait` aborts; and
+      2. the frontend containers later refuse connections (`ERR_CONNECTION_REFUSED
+         http://localhost:8081/`), which is what the 44 "failed" specs report.
+      The suite passed 74/74 on the previous commit, and V26 applies cleanly on both the dev
+      database (`DB-Migrations: add_rollup_read_indexes ... done`) and the e2e database.
 - [x] Committed on `fix/rollup-read-indexes`
