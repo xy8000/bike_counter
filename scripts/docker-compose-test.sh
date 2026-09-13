@@ -39,7 +39,7 @@ PASS=0
 cleanup() {
   echo "--- Tearing down the Docker Compose stack"
   docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
-  if [ "${HAD_CONFIG}" -eq 1 ]; then
+  if [[ "${HAD_CONFIG}" -eq 1 ]]; then
     mv "${CONFIG_BACKUP}" "${CONFIG_FILE}"
     echo "--- Restored original ${CONFIG_FILE}"
   else
@@ -47,7 +47,7 @@ cleanup() {
     echo "--- Removed temporary ${CONFIG_FILE}"
   fi
   rm -f "${CONFIG_BACKUP}"
-  if [ "${PASS}" -eq 1 ]; then
+  if [[ "${PASS}" -eq 1 ]]; then
     echo "docker-compose-test: OK"
   else
     echo "docker-compose-test: FAILED"
@@ -56,7 +56,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Back up an existing config.toml so it can be restored afterwards.
-if [ -f "${CONFIG_FILE}" ]; then
+if [[ -f "${CONFIG_FILE}" ]]; then
   cp "${CONFIG_FILE}" "${CONFIG_BACKUP}"
   HAD_CONFIG=1
 fi
@@ -114,7 +114,7 @@ for _ in $(seq 1 240); do
   fi
   sleep 2
 done
-if [ "${READY}" -ne 1 ]; then
+if [[ "${READY}" -ne 1 ]]; then
   echo "ERROR: app did not become ready at ${APP_URL}/health/ready" >&2
   docker compose -f "${COMPOSE_FILE}" logs backend 2>/dev/null | tail -n 40 || true
   exit 1
@@ -126,7 +126,7 @@ assert_status() {
   local uri="$2"
   local code
   code="$(curl --silent --output /dev/null --write-out '%{http_code}' "${APP_URL}${uri}")"
-  if [ "${code}" != "${expected}" ]; then
+  if [[ "${code}" != "${expected}" ]]; then
     echo "ERROR: GET ${uri} -> ${code} (expected ${expected})" >&2
     exit 1
   fi
@@ -190,14 +190,14 @@ psql_query() {
 INSTANCE_TYPE="$(
   psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='jobs' AND column_name='instance_id'"
 )"
-if [ "${INSTANCE_TYPE}" != "uuid" ]; then
+if [[ "${INSTANCE_TYPE}" != "uuid" ]]; then
   echo "ERROR: jobs.instance_id is missing or not uuid (got '${INSTANCE_TYPE}')" >&2
   exit 1
 fi
 HEARTBEAT_TYPE="$(
   psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='jobs' AND column_name='heartbeat_at'"
 )"
-if [ "${HEARTBEAT_TYPE}" != "timestamp with time zone" ]; then
+if [[ "${HEARTBEAT_TYPE}" != "timestamp with time zone" ]]; then
   echo "ERROR: jobs.heartbeat_at is missing or not TIMESTAMPTZ (got '${HEARTBEAT_TYPE}')" >&2
   exit 1
 fi
@@ -205,7 +205,7 @@ fi
 JOB_LOCKS_TABLE="$(
   psql_query "SELECT to_regclass('job_locks')"
 )"
-if [ "${JOB_LOCKS_TABLE}" != "job_locks" ]; then
+if [[ "${JOB_LOCKS_TABLE}" != "job_locks" ]]; then
   echo "ERROR: the job_locks table is missing (got '${JOB_LOCKS_TABLE}')" >&2
   exit 1
 fi
@@ -215,7 +215,7 @@ echo "Verified jobs.instance_id/heartbeat_at and the job_locks table"
 IMPORTED_UNTIL_TYPE="$(
   psql_query "SELECT data_type FROM information_schema.columns WHERE table_name='data_sources' AND column_name='imported_until'"
 )"
-if [ "${IMPORTED_UNTIL_TYPE}" != "timestamp with time zone" ]; then
+if [[ "${IMPORTED_UNTIL_TYPE}" != "timestamp with time zone" ]]; then
   echo "ERROR: data_sources.imported_until is missing or not TIMESTAMPTZ (got '${IMPORTED_UNTIL_TYPE}')" >&2
   exit 1
 fi

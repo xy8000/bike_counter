@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Build stage ----------
-FROM rust:1-alpine AS builder
+FROM rust@sha256:a5163321b170835916201861dbe70a7f92e8cc822531ee3830dbc0a113b1ad54 AS builder
 WORKDIR /build
 
 # curl is used by utoipa-swagger-ui to download its UI assets at build time.
@@ -30,7 +30,7 @@ RUN find src migrations assets -type f -exec touch {} + \
     && cargo build --release
 
 # ---------- Runtime stage ----------
-FROM alpine:3.24
+FROM alpine@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
 # `curl` is required by the HEALTHCHECK below.
 RUN apk add --no-cache ca-certificates curl
 

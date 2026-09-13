@@ -21,7 +21,7 @@
 # Usage: ./scripts/lcov-production-only.sh <input.lcov> > lcov.production.info
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
+if [[ "$#" -ne 1 ]]; then
     echo "usage: $0 <input.lcov>" >&2
     exit 1
 fi
