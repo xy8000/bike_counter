@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchMapStations, fetchSidebarShell, fetchSidebarStats, fetchStationSearch } from './api'
 import type { Bounds } from '../../lib/geo'
@@ -7,17 +8,13 @@ const MARKERS_URL = '/api/bff/stations?min_lat=51&min_lng=7&max_lat=52&max_lng=8
 const SHELL_URL = '/api/bff/stations/sidebar?min_lat=51&min_lng=7&max_lat=52&max_lng=8'
 const STATS_URL = '/api/bff/stations/sidebar/stats?min_lat=51&min_lng=7&max_lat=52&max_lng=8'
 
-function okResponse(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status })
-}
-
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
 describe('fetchMapStations', () => {
   it('fetches the marker list for the given bounds and returns the items', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(okResponse({ items: [{ id: 'a' }, { id: 'b' }] }))
+    const fetchMock = vi.fn().mockResolvedValue(ok({ items: [{ id: 'a' }, { id: 'b' }] }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchMapStations(BOUNDS)).resolves.toEqual([{ id: 'a' }, { id: 'b' }])
@@ -26,7 +23,7 @@ describe('fetchMapStations', () => {
   })
 
   it('rejects when the response is not ok', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse({}, 500)))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 500)))
 
     await expect(fetchMapStations(BOUNDS)).rejects.toThrow(`${MARKERS_URL} responded with 500`)
   })
@@ -43,7 +40,7 @@ describe('fetchSidebarShell', () => {
   }
 
   it('fetches the shell and unwraps the stats link to its href string', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(okResponse(shellPayload))
+    const fetchMock = vi.fn().mockResolvedValue(ok(shellPayload))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchSidebarShell(BOUNDS)).resolves.toEqual({
@@ -57,7 +54,7 @@ describe('fetchSidebarShell', () => {
   })
 
   it('rejects when the response is not ok', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse({}, 404)))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 404)))
 
     await expect(fetchSidebarShell(BOUNDS)).rejects.toThrow(`${SHELL_URL} responded with 404`)
   })
@@ -68,7 +65,7 @@ describe('fetchSidebarStats', () => {
     const statsPayload = {
       items: [{ station_id: '1', channel_count: 2, bikes_last_day: 42 }],
     }
-    const fetchMock = vi.fn().mockResolvedValue(okResponse(statsPayload))
+    const fetchMock = vi.fn().mockResolvedValue(ok(statsPayload))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchSidebarStats(STATS_URL)).resolves.toEqual(statsPayload)
@@ -77,7 +74,7 @@ describe('fetchSidebarStats', () => {
   })
 
   it('rejects when the response is not ok', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse({}, 503)))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 503)))
 
     await expect(fetchSidebarStats(STATS_URL)).rejects.toThrow(`${STATS_URL} responded with 503`)
   })
@@ -99,7 +96,7 @@ describe('fetchStationSearch', () => {
       items: [{ id: '1', name: 'Alpha' }],
       actions: { find_on_map: { enabled: true } },
     }
-    const fetchMock = vi.fn().mockResolvedValue(okResponse(searchPayload))
+    const fetchMock = vi.fn().mockResolvedValue(ok(searchPayload))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchStationSearch()).resolves.toEqual(searchPayload)
@@ -108,7 +105,7 @@ describe('fetchStationSearch', () => {
   })
 
   it('rejects when the response is not ok', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse({}, 500)))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 500)))
 
     await expect(fetchStationSearch()).rejects.toThrow(
       '/api/bff/stations/search responded with 500',

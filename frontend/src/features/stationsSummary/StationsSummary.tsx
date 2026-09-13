@@ -1,57 +1,37 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, SlidersHorizontal } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { StationPage } from '../../components/StationPage'
 import { formatNumber, formatTimestamp } from '../../lib/format'
-import { parseBoundsQuery, parseDisabled, serializeBounds, stationBounds } from '../../lib/geo'
+import { parseBoundsQuery, parseDisabled, serializeBounds } from '../../lib/geo'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
-import { SearchableHeader } from '../header/SearchableHeader'
-import type { StationSummary } from '../stations/types'
-import { MetricCard } from '../stationOverview/MetricCard'
-import { TotalBikesCard } from '../stationOverview/TotalBikesCard'
-import { ChartCard } from '../stationDetail/ChartCard'
-import { HourRadar, type HourRadarSeries } from '../stationDetail/HourRadar'
-import { KeyFacts, computeKeyFacts } from '../stationDetail/KeyFacts'
-import { MonthlyBarChart } from '../stationDetail/MonthlyBarChart'
+import type { HourRadarSeries } from '../stationDetail/HourRadar'
 import { SharePie, type ShareSlice } from '../stationDetail/SharePie'
-import { TimeSeriesBarChart, type BarSeries } from '../stationDetail/TimeSeriesBarChart'
-import type { FixedTimeframe, Timeframe } from '../stationDetail/types'
-import { resolutionGranularity, withResolutionParam } from '../stationDetail/resolution'
+import type { BarSeries } from '../stationDetail/TimeSeriesBarChart'
+import { resolutionGranularity } from '../stationDetail/resolution'
+import { alignSeries, timeframeSeries, type TimeframeConfig } from '../stationDetail/timeframes'
+import type { RadarSeries } from '../stationDetail/WeekdayRadar'
 import {
-  TIMEFRAMES,
-  alignSeries,
-  customTimeframeConfig,
-  fixedTimeframeConfig,
-  timeframeSeries,
-  type GranularityKey,
-  type TimeframeConfig,
-} from '../stationDetail/timeframes'
-import { WeekdayRadar, type RadarSeries } from '../stationDetail/WeekdayRadar'
+  graphsLink,
+  monthlyBody,
+  overviewBody,
+  perSeriesStatsBody,
+  statisticsBody,
+  timeframeConfig,
+} from '../stationDetail/sections'
 import { useTrendSettings } from '../settings/TrendSettingsContext'
 import { SettingsDialog } from '../settings/SettingsDialog'
 import { TimeframeSettingsLabel } from '../settings/TimeframeSettingsLabel'
-import { useTimeframeSettings, withCustomRange } from '../settings/useTimeframeSettings'
+import { useTimeframeSettings } from '../settings/useTimeframeSettings'
 import { SummaryMap } from './SummaryMap'
-import { GRAPH_LINK_KEYS } from './types'
-import type {
-  MonthlyTotals,
-  StationsSummaryOverview,
-  StationsSummaryPage,
-  SummaryPeriodGraphs,
-  SummaryStation,
-} from './types'
+import type { StationsSummaryPage, SummaryPeriodGraphs, SummaryStation } from './types'
 import { useStationsSummaryGraphs } from './useStationsSummaryGraphs'
 import { useStationsSummaryMonthly } from './useStationsSummaryMonthly'
 import { useStationsSummaryOverview } from './useStationsSummaryOverview'
 import { useStationsSummaryPage } from './useStationsSummaryPage'
-import {
-  ChartsSkeleton,
-  KeyFactsSkeleton,
-  MonthlyBarSkeleton,
-  OverviewSkeleton,
-  PageShellSkeleton,
-} from '../stationDetail/Skeletons'
+import { PageShellSkeleton } from '../stationDetail/Skeletons'
 
 /// Per-station series for one timeframe: one series per station (stacked into
 /// the current-period bar), plus the previous period per station when the
@@ -82,34 +62,6 @@ function stationSeries(
         data: station.previous,
       })
     }
-  }
-  return series
-}
-
-/// Aggregate weekday radar for one timeframe: the current period's "Bikes" plus,
-/// when the compare checkbox is on, the previous period's "Bikes".
-function aggregateWeekdayRadar(
-  period: SummaryPeriodGraphs,
-  cfg: TimeframeConfig,
-  compare: boolean,
-): RadarSeries[] {
-  const series: RadarSeries[] = [{ key: 'current', label: 'Bikes', data: period.weekday_radar }]
-  if (compare && period.weekday_radar_previous.length > 0) {
-    series.push({ key: 'previous', label: cfg.previousLabel, data: period.weekday_radar_previous })
-  }
-  return series
-}
-
-/// Aggregate hour-of-day radar for one timeframe: the current period's "Bikes"
-/// plus, when the compare checkbox is on, the previous period's "Bikes".
-function aggregateHourRadar(
-  period: SummaryPeriodGraphs,
-  cfg: TimeframeConfig,
-  compare: boolean,
-): HourRadarSeries[] {
-  const series: HourRadarSeries[] = [{ key: 'current', label: 'Bikes', data: period.hourly }]
-  if (compare && period.hourly_previous.length > 0) {
-    series.push({ key: 'previous', label: cfg.previousLabel, data: period.hourly_previous })
   }
   return series
 }
@@ -189,7 +141,6 @@ function stationSlices(period: SummaryPeriodGraphs, stations: SummaryStation[]):
 /// not the shell.
 export function StationsSummary() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
   // `parseBoundsQuery` builds a fresh object each call; memoize on the bound
   // values (not the whole search params) so toggling the `disabled`/`station`
   // params never re-fetches the shell.
@@ -228,230 +179,38 @@ export function StationsSummary() {
     )
   }
 
-  const openDetail = (station: StationSummary) => {
-    navigate(`/stations/${station.id}`)
-  }
-
-  // "Find on map" from the summary page: go back to the map and fly to the
-  // station by seeding a small bbox around it.
-  const findOnMap = (station: StationSummary) => {
-    if (station.latitude !== null && station.longitude !== null) {
-      const params = serializeBounds(stationBounds(station.latitude, station.longitude))
-      params.set('station', station.id)
-      navigate(`/?${params.toString()}`)
-    } else {
-      navigate(`/?station=${station.id}`)
-    }
-  }
-
   return (
-    <div className="flex h-screen flex-col">
-      <SearchableHeader onSelect={openDetail} onFind={findOnMap} onDetail={openDetail} />
+    <StationPage
+      // Restore the exact map view by rebuilding /?<bounds> from the bounds
+      // already in this /summary URL (fallback / when absent).
+      backTo={bounds ? `/?${serializeBounds(bounds).toString()}` : '/'}
+      backLabel="Back to map"
+      errorMessage={error ? 'Could not load the station summary.' : undefined}
+    >
+      {!bounds && (
+        <p className="text-sm text-muted-foreground">
+          No map view selected. Go back to the map and summarize the visible stations.
+        </p>
+      )}
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-4 py-4 sm:py-6">
-          <div className="mb-6 flex items-center justify-between gap-4">
-            <Button asChild variant="outline" size="sm">
-              {/* Restore the exact map view by rebuilding /?<bounds> from the
-                  bounds already in this /summary URL (fallback / when absent). */}
-              <Link to={bounds ? `/?${serializeBounds(bounds).toString()}` : '/'}>
-                <ArrowLeft /> Back to map
-              </Link>
-            </Button>
-            {error && (
-              <span className="text-sm font-semibold text-destructive">
-                Could not load the station summary.
-              </span>
-            )}
-          </div>
-
-          {!bounds && (
-            <p className="text-sm text-muted-foreground">
-              No map view selected. Go back to the map and summarize the visible stations.
-            </p>
-          )}
-
-          {bounds && !error && loading && (
-            <div aria-busy="true">
-              <PageShellSkeleton />
-            </div>
-          )}
-
-          {bounds && !error && !loading && page && (
-            <ErrorBoundary>
-              <SummaryContent
-                page={page}
-                disabled={new Set(disabled)}
-                onToggle={toggleStation}
-                bounds={bounds}
-              />
-            </ErrorBoundary>
-          )}
+      {bounds && !error && loading && (
+        <div aria-busy="true">
+          <PageShellSkeleton />
         </div>
-      </main>
-    </div>
+      )}
+
+      {bounds && !error && !loading && page && (
+        <ErrorBoundary>
+          <SummaryContent
+            page={page}
+            disabled={new Set(disabled)}
+            onToggle={toggleStation}
+            bounds={bounds}
+          />
+        </ErrorBoundary>
+      )}
+    </StationPage>
   )
-}
-
-/// The timeframe presentation config for the current selection: the fixed
-/// timeframes use their static config; an individual range derives its own, or
-/// falls back to the week preset until both dates are set.
-function timeframeConfig(
-  isIndividual: boolean,
-  timeframe: Timeframe,
-  from: string | null,
-  to: string | null,
-  granularity: GranularityKey,
-): TimeframeConfig {
-  if (!isIndividual) return fixedTimeframeConfig(timeframe as FixedTimeframe, granularity)
-  if (from && to) return customTimeframeConfig(granularity, from, to)
-  return TIMEFRAMES.week
-}
-
-/// The summary card HATEOAS link for the current selection, with the resolution
-/// token appended.
-function summaryGraphLink(
-  page: StationsSummaryPage,
-  isIndividual: boolean,
-  timeframe: Timeframe,
-  from: string | null,
-  to: string | null,
-  granularity: GranularityKey,
-): string {
-  let base: string
-  if (!isIndividual) {
-    base = page._links[GRAPH_LINK_KEYS[timeframe as FixedTimeframe]]
-  } else if (from && to) {
-    base = withCustomRange(page._links.graphs_day, from, to)
-  } else {
-    base = page._links.graphs_week
-  }
-  return withResolutionParam(base, granularity)
-}
-
-/// The overview stats card body: aggregated total + metrics, an error line or
-/// the loading skeleton.
-function overviewBody(overview: StationsSummaryOverview | null, overviewError: boolean): ReactNode {
-  if (overview) {
-    return (
-      <>
-        <div className="mb-3">
-          <TotalBikesCard total={overview.total_bikes} />
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {overview.metrics.map((metric) => (
-            <MetricCard key={metric.key} metric={metric} />
-          ))}
-        </div>
-      </>
-    )
-  }
-  if (overviewError) {
-    return <p className="text-sm font-semibold text-destructive">Could not load the overview.</p>
-  }
-  return <OverviewSkeleton />
-}
-
-/// The main charts body for the selected timeframe (key facts + bar chart + the
-/// two radars), an error line or the loading skeleton.
-function statisticsBody(
-  period: SummaryPeriodGraphs | null,
-  graphsError: boolean,
-  cfg: TimeframeConfig,
-  mainSeries: BarSeries[],
-  comparePrevious: boolean,
-): ReactNode {
-  if (!period) {
-    if (graphsError) {
-      return (
-        <p className="text-sm font-semibold text-destructive">Could not load the statistics.</p>
-      )
-    }
-    return (
-      <div className="flex flex-col gap-4">
-        <KeyFactsSkeleton />
-        <ChartsSkeleton />
-      </div>
-    )
-  }
-  return (
-    <div className="grid grid-cols-1 gap-4">
-      <KeyFacts facts={computeKeyFacts(period)} />
-      <ChartCard title={cfg.title} subtitle={cfg.subtitle}>
-        <TimeSeriesBarChart
-          series={mainSeries}
-          xFormatter={cfg.axis}
-          axisRotate={cfg.axisRotate}
-          tooltipFormatter={cfg.tooltip}
-          className="aspect-[20/15.3] sm:aspect-[20/7.65]"
-        />
-      </ChartCard>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <ChartCard title="Weekdays" subtitle={cfg.radarSubtitle}>
-          <WeekdayRadar series={aggregateWeekdayRadar(period, cfg, comparePrevious)} />
-        </ChartCard>
-        <ChartCard title="Hours" subtitle={cfg.radarSubtitle}>
-          <HourRadar series={aggregateHourRadar(period, cfg, comparePrevious)} />
-        </ChartCard>
-      </div>
-    </div>
-  )
-}
-
-/// The per-station stats body, an error line or the loading skeleton.
-function perStationStatsBody(
-  period: SummaryPeriodGraphs | null,
-  graphsError: boolean,
-  cfg: TimeframeConfig,
-  perStationSeries: BarSeries[],
-  stations: SummaryStation[],
-  comparePrevious: boolean,
-): ReactNode {
-  if (!period) {
-    if (graphsError) {
-      return (
-        <p className="text-sm font-semibold text-destructive">Could not load the detailed stats.</p>
-      )
-    }
-    return <ChartsSkeleton />
-  }
-  return (
-    <div className="grid grid-cols-1 gap-4">
-      <ChartCard title={cfg.perChannelTitle} subtitle={cfg.subtitle}>
-        <TimeSeriesBarChart
-          series={perStationSeries}
-          xFormatter={cfg.axis}
-          axisRotate={cfg.axisRotate}
-          tooltipFormatter={cfg.tooltip}
-          className="aspect-[21/18] sm:aspect-[21/9]"
-        />
-      </ChartCard>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <ChartCard title="Weekdays by station" subtitle={cfg.radarSubtitle}>
-          <WeekdayRadar series={stationRadar(period, stations, cfg, comparePrevious)} />
-        </ChartCard>
-        <ChartCard title="Hours by station" subtitle={cfg.radarSubtitle}>
-          <HourRadar series={stationHourRadar(period, stations, cfg, comparePrevious)} />
-        </ChartCard>
-      </div>
-      {/* The share pie spans the full width so the donut + legend do not waste
-          the second column of the two-radar row above. */}
-      <ChartCard title="Share by station" subtitle={cfg.pieSubtitle}>
-        <SharePie slices={stationSlices(period, stations)} />
-      </ChartCard>
-    </div>
-  )
-}
-
-/// The monthly totals body, an error line or the loading skeleton.
-function monthlyBody(monthly: MonthlyTotals | null, monthlyError: boolean): ReactNode {
-  if (monthly) return <MonthlyBarChart totals={monthly.monthly_totals} />
-  if (monthlyError) {
-    return (
-      <p className="text-sm font-semibold text-destructive">Could not load the monthly totals.</p>
-    )
-  }
-  return <MonthlyBarSkeleton />
 }
 
 function SummaryContent({
@@ -493,7 +252,7 @@ function SummaryContent({
   // disabled for a custom range.
   const granularity = resolutionGranularity(resolution, timeframe, from, to)
   const cfg = timeframeConfig(isIndividual, timeframe, from, to, granularity)
-  const graphLink = summaryGraphLink(page, isIndividual, timeframe, from, to, granularity)
+  const graphLink = graphsLink(page._links, isIndividual, timeframe, from, to, granularity)
   const comparePrevious = compare && !isIndividual
 
   const { overview, error: overviewError } = useStationsSummaryOverview(
@@ -599,7 +358,16 @@ function SummaryContent({
       <section className="mt-8">
         <h2 className="mb-1 text-lg font-semibold">Detailed stats</h2>
         <p className="mb-3 text-sm text-muted-foreground">The same graphs, drawn per station.</p>
-        {perStationStatsBody(period, graphsError, cfg, perStationSeries, stations, comparePrevious)}
+        {perSeriesStatsBody(period !== null, graphsError, {
+          cfg,
+          series: perStationSeries,
+          weekdaysTitle: 'Weekdays by station',
+          weekdays: period ? stationRadar(period, stations, cfg, comparePrevious) : [],
+          hoursTitle: 'Hours by station',
+          hours: period ? stationHourRadar(period, stations, cfg, comparePrevious) : [],
+          shareTitle: 'Share by station',
+          share: period ? <SharePie slices={stationSlices(period, stations)} /> : null,
+        })}
       </section>
 
       {/* Monthly bar chart card: all available months, standalone (not driven by

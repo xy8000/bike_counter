@@ -1,9 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { mapMarkers, sidebarBadge, waitForStations } from './helpers'
+import { mapMarkers, sidebarBadge, openMap } from './helpers'
 
 test('the map view URL carries the visible bbox and the open overview', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // Once the map reports its bounds the four bbox params are in the URL, in a
   // finite, ordered form (min < max), so a shared link restores the view.
@@ -37,8 +36,7 @@ test('the map view URL carries the visible bbox and the open overview', async ({
 test('a shared detail URL keeps the station id in the path and renders the detail page', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // Grab a real station id from the URL after opening an overview.
   await mapMarkers(page).first().click()

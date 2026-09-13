@@ -1,10 +1,7 @@
+import { ok } from '@/test-utils/http'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useStationsSummaryGraphs } from './useStationsSummaryGraphs'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const GRAPHS = {
   current: [{ start: '2024-01-01T12:00:00.000Z', total: 5 }],

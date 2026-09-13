@@ -1,11 +1,8 @@
+import { ok } from '@/test-utils/http'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useStationGraphs } from './useStationGraphs'
 import type { PeriodGraphs } from './types'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const GRAPHS: PeriodGraphs = {
   current: [],

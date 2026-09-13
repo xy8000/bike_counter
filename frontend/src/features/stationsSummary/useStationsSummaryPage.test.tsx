@@ -1,31 +1,9 @@
+import { ok } from '@/test-utils/http'
+import { OTHER_SUMMARY_BOUNDS, SUMMARY_BOUNDS, rawSummaryPage } from '@/test-utils/stationsSummary'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Bounds } from '../../lib/geo'
 import { useStationsSummaryPage } from './useStationsSummaryPage'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
-
-const BOUNDS: Bounds = { min_lat: 51, min_lng: 7, max_lat: 52, max_lng: 8 }
-const OTHER_BOUNDS: Bounds = { min_lat: 52, min_lng: 8, max_lat: 53, max_lng: 9 }
-
-function rawPage() {
-  return {
-    image_url: '/img/summary.png',
-    stations: [],
-    last_update: null,
-    _links: {
-      self: { href: '/api/summary/self', templated: false },
-      overview: { href: '/api/overview/summary', templated: false },
-      graphs_day: { href: '/api/graphs/summary/day', templated: false },
-      graphs_week: { href: '/api/graphs/summary/week', templated: false },
-      graphs_last_30_days: { href: '/api/graphs/summary/last_30_days', templated: false },
-      graphs_year: { href: '/api/graphs/summary/year', templated: false },
-      monthly: { href: '/api/monthly/summary', templated: false },
-    },
-  }
-}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -33,10 +11,10 @@ afterEach(() => {
 
 describe('useStationsSummaryPage', () => {
   it('loads and unwraps the summary shell for the given bounds', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(ok(rawPage()))
+    const fetchMock = vi.fn().mockResolvedValue(ok(rawSummaryPage()))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useStationsSummaryPage(BOUNDS))
+    const { result } = renderHook(() => useStationsSummaryPage(SUMMARY_BOUNDS))
 
     expect(result.current.loading).toBe(true)
     expect(result.current.page).toBeNull()
@@ -53,7 +31,7 @@ describe('useStationsSummaryPage', () => {
   it('reports the error when the shell request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
 
-    const { result } = renderHook(() => useStationsSummaryPage(BOUNDS))
+    const { result } = renderHook(() => useStationsSummaryPage(SUMMARY_BOUNDS))
 
     await waitFor(() => expect(result.current.error).toBe(true))
     expect(result.current.loading).toBe(false)
@@ -61,7 +39,7 @@ describe('useStationsSummaryPage', () => {
   })
 
   it('does not fetch when the bounds are null', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(ok(rawPage()))
+    const fetchMock = vi.fn().mockResolvedValue(ok(rawSummaryPage()))
     vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() => useStationsSummaryPage(null))
@@ -74,17 +52,17 @@ describe('useStationsSummaryPage', () => {
   it('refetches when the bounds change', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(ok(rawPage()))
-      .mockResolvedValueOnce(ok(rawPage()))
+      .mockResolvedValueOnce(ok(rawSummaryPage()))
+      .mockResolvedValueOnce(ok(rawSummaryPage()))
     vi.stubGlobal('fetch', fetchMock)
 
     const { result, rerender } = renderHook(
       ({ bounds }: { bounds: Bounds | null }) => useStationsSummaryPage(bounds),
-      { initialProps: { bounds: BOUNDS } },
+      { initialProps: { bounds: SUMMARY_BOUNDS } },
     )
     await waitFor(() => expect(result.current.loading).toBe(false))
 
-    rerender({ bounds: OTHER_BOUNDS })
+    rerender({ bounds: OTHER_SUMMARY_BOUNDS })
     expect(result.current.page).toBeNull()
     expect(result.current.loading).toBe(true)
 

@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,10 +30,6 @@ const DEFAULT_STATIONS: SummaryStation[] = [
   { id: 's1', name: 'A-Stadt', latitude: 51.95, longitude: 7.62, channel_count: 2 },
   { id: 's2', name: 'B-Stadt', latitude: 51.97, longitude: 7.64, channel_count: 3 },
 ]
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 function stationsForCount(count: number): SummaryStation[] {
   const extra = Array.from(

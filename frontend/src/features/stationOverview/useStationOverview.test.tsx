@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useStationOverview } from './useStationOverview'
@@ -15,10 +16,6 @@ const STATS: StationOverviewStats = {
       is_new: false,
     },
   ],
-}
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
 }
 
 function rawShell(id: string, statsHref: string) {

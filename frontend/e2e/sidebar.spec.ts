@@ -7,12 +7,11 @@ import {
   sidebar,
   sidebarBadge,
   sidebarStationItems,
-  waitForStations,
+  openMap,
 } from './helpers'
 
 test('the sidebar renders only the stations visible in the current viewport', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   const baseline = await readSidebarCounts(page)
   const baselineItems = await sidebarStationItems(page).count()
@@ -87,8 +86,7 @@ test('the sidebar renders only the stations visible in the current viewport', as
 test('a collapsed panel re-opens onto the overview when a station is selected', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // Collapse the station list first.
   await page.getByRole('button', { name: 'Hide station list' }).click()
@@ -106,8 +104,7 @@ test('a collapsed panel re-opens onto the overview when a station is selected', 
 })
 
 test('the mid-height pull/push handle slides the sidebar in and out', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // Expanded: the "push" handle is on the panel's right edge, mid-height.
   const push = page.getByRole('button', { name: 'Hide station list' })
@@ -133,8 +130,7 @@ test('the sidebar lists stations by last-day count, busiest first', async ({ pag
   // has six channels with data, so it is by far the busiest and must top the
   // list even though its name sorts after Bismarckallee / Bohlweg / Coesfelder
   // Kreuz alphabetically.
-  await page.goto(cityUrl('Münster'), { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page, cityUrl('Münster'))
 
   const rows = sidebarStationItems(page)
   // The stats sub-resource arrives after the shell; wait until a real count

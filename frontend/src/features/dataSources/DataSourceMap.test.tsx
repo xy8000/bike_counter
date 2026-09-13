@@ -1,11 +1,8 @@
+import { ok } from '@/test-utils/http'
 import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DataSourceMap } from './DataSourceMap'
 import type { DataSourceMapStation } from './types'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const STATIONS: DataSourceMapStation[] = [
   { id: 'st1', name: 'A-Station', latitude: 51.96, longitude: 7.63, status: 'active' },

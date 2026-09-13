@@ -1,10 +1,5 @@
+import { getJson } from '../../lib/bff'
 import type { DataSourceDetail, DataSourceSummary } from './types'
-
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`${url} responded with ${response.status}`)
-  return response.json() as Promise<T>
-}
 
 /// The data-sources overview (one section per configured data source).
 export async function fetchDataSources(): Promise<DataSourceSummary[]> {

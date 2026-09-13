@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
@@ -10,10 +11,6 @@ const SUMMARY: GlobalSummary = {
   channel_count: 6,
   bikes_last_day_total: 90,
   last_update: null,
-}
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
 }
 
 // Exposes the provider's setter so a test can flip the Bike-Trends flag and

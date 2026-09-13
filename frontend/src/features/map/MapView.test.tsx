@@ -1,13 +1,10 @@
+import { ok } from '@/test-utils/http'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { StationMap } from '../stations/types'
 import { MapView, type PopupStationInfo } from './MapView'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const station = (overrides: Partial<StationMap> & { id: string; name: string }): StationMap => ({
   latitude: 51.9,

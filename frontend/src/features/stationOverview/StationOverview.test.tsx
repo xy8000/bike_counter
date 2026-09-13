@@ -1,3 +1,4 @@
+import { ok } from '@/test-utils/http'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
@@ -43,10 +44,6 @@ const STATS: StationOverviewStats = {
       is_new: true,
     },
   ],
-}
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
 }
 
 function rawShell() {

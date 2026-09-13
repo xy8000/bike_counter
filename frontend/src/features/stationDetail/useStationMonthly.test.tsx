@@ -1,10 +1,7 @@
+import { ok } from '@/test-utils/http'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useStationMonthly, type MonthlyTotals } from './useStationMonthly'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const MONTHLY: MonthlyTotals = {
   monthly_totals: [

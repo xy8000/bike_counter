@@ -1,12 +1,5 @@
+import { getJson, type RawLink } from '../../lib/bff'
 import type { StationOverviewPage, StationOverviewStats } from './types'
-
-type RawLink = { href: string; templated?: boolean }
-
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`${url} responded with ${response.status}`)
-  return response.json() as Promise<T>
-}
 
 /// Fetch the overview shell (identity + HATEOAS stats link) for one counting
 /// station. The BFF serializes `_links.stats` as a `LinkDto` (`{ href,

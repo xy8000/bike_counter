@@ -1,10 +1,7 @@
+import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchDataSourceDetail, fetchDataSources } from './api'
 import type { DataSourceDetail, DataSourceSummary } from './types'
-
-function ok(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200 })
-}
 
 const SUMMARY: DataSourceSummary = {
   id: 'ms',

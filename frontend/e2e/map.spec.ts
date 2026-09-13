@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { cityUrl, mapClusters, mapMarkers, sidebarBadge, waitForStations } from './helpers'
+import { cityUrl, firstMarker, mapClusters, mapMarkers, openMap, sidebarBadge } from './helpers'
 
 test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({ page }) => {
   // MapLibre reads vector tiles directly out of the static archive via HTTP
@@ -17,17 +17,13 @@ test('the map loads the self-hosted PMTiles basemap archive as a static file', a
 test('clicking a map marker opens a popup with the station name and detail link', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // The expanded sidebar overlays the left edge; collapse it so every marker is
   // clickable. This does not change the map bounds (the map is full width).
   await page.getByRole('button', { name: 'Hide station list' }).click()
 
-  const marker = mapMarkers(page).first()
-  const stationName = (await marker.getAttribute('alt')) ?? ''
-  expect(stationName).not.toBe('')
-
+  const { marker, stationName } = await firstMarker(page)
   await marker.click()
 
   const popup = page.locator('.station-popup')
@@ -57,13 +53,9 @@ test('clicking a map marker opens a popup with the station name and detail link'
 test('clicking a map marker opens the overview panel and a map void click closes it', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
-  const marker = mapMarkers(page).first()
-  const stationName = (await marker.getAttribute('alt')) ?? ''
-  expect(stationName).not.toBe('')
-
+  const { marker, stationName } = await firstMarker(page)
   await marker.click()
 
   // The overview panel replaces the sidebar: it shows the image, the all-time
@@ -98,10 +90,10 @@ test('clicking a map marker opens the overview panel and a map void click closes
 })
 
 test('the sidebar collapse also works while the overview is open', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
-  await mapMarkers(page).first().click()
+  const { marker } = await firstMarker(page)
+  await marker.click()
   const panel = page.getByRole('complementary')
   await expect(panel.getByText('Total bikes (all time)')).toBeVisible()
 
@@ -117,13 +109,9 @@ test('the sidebar collapse also works while the overview is open', async ({ page
 })
 
 test('the overview detail link navigates in the same tab', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
-  const marker = mapMarkers(page).first()
-  const stationName = (await marker.getAttribute('alt')) ?? ''
-  expect(stationName).not.toBe('')
-
+  const { marker, stationName } = await firstMarker(page)
   await marker.click()
 
   // The overview panel's detail affordance (icon button + name heading) both
@@ -146,11 +134,9 @@ test('the overview detail link navigates in the same tab', async ({ page }) => {
 test('the overview footer "Open detailed view" button opens the detail page in the same tab', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
-  const marker = mapMarkers(page).first()
-  expect((await marker.getAttribute('alt')) ?? '').not.toBe('')
+  const { marker } = await firstMarker(page)
   await marker.click()
 
   // The pinned footer button is a full-width detail affordance next to the
@@ -170,8 +156,7 @@ test('the overview footer "Open detailed view" button opens the detail page in t
 test('the overview banner shows the name, description and channel count', async ({ page }) => {
   // A Hamburg station whose seed row carries a description (the Münster rows
   // have none), so every banner field is assertable.
-  await page.goto(cityUrl('Hamburg'), { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page, cityUrl('Hamburg'))
 
   const marker = page.getByAltText('MQ10.1+10.2')
   await expect(marker).toBeVisible()
@@ -186,8 +171,7 @@ test('the overview banner shows the name, description and channel count', async 
 test('overlapping stations group into a numbered circle that un-groups when clicked', async ({
   page,
 }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await waitForStations(page)
+  await openMap(page)
 
   // The expanded sidebar overlays the left edge; collapse it so the circle is
   // clickable. This does not change the map bounds (the map is full width).
