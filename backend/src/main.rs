@@ -406,6 +406,17 @@ fn main() {
                 job_reconciliation_service,
                 StdDuration::from_secs(30),
             ));
+        } else {
+            // The analytics read model is served from the rollup tables, which
+            // only the `measurement_rollup` job populates. Even in offline setups
+            // (the Playwright e2e seeds a fixture and disables all scheduled
+            // jobs), run the rollup backfill once in the background so the
+            // graphs/overviews have data; it never reaches out to providers.
+            tokio::spawn(async move {
+                let _ =
+                    tokio::task::spawn_blocking(move || measurement_rollup_service.run_if_due())
+                        .await;
+            });
         }
         rest_adapter.run(addr).await
     }) {

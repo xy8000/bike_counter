@@ -96,29 +96,27 @@ aggregate many stations already use a single shared timezone today, so the
 per-channel local-date keying stays consistent with the existing behavior; a truly
 multi-timezone summary is out of scope.
 
-One-time backfill (a single scan of raw measurements):
+The migration is **DDL only** — it must not backfill, because a full scan of the
+production history (tens of millions of rows) inside a startup migration keeps
+the backend in `Starting DB-Migrations` far longer than the healthcheck allows.
+The one-time backfill runs in the background in the `measurement_rollup` job
+(which reads the measurement bounds and refreshes the whole range on its first
+run), so startup never blocks.
 
-```sql
-INSERT INTO measurement_hourly (channel_id, resolution_seconds, local_date, local_hour, total)
-SELECT m.channel_id,
-       m.resolution_seconds,
-       (m.timestamp AT TIME ZONE s.timezone)::date AS local_date,
-       EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone))::smallint AS local_hour,
-       SUM(m.value)::bigint AS total
-FROM measurements m
-JOIN channels c           ON c.id = m.channel_id
-JOIN counting_stations s  ON s.id = c.counting_station_id
-GROUP BY m.channel_id, m.resolution_seconds,
-         (m.timestamp AT TIME ZONE s.timezone)::date,
-         EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone))
-ON CONFLICT (channel_id, resolution_seconds, local_date, local_hour) DO NOTHING;
+`refresh_rollups` widens the requested range by 40 h on both ends so every
+station-local calendar day overlapping it is fully covered (a day is at most
+24 h; UTC offsets span -12 h…+14 h). It deletes the strictly-interior local days
+from the rollup tables and rebuilds them from the raw rows, so a mid-day range
+boundary can never leave a partially re-aggregated day behind. The delete only
+scans the (small) rollup tables plus the channel/station metadata, and the daily
+rollup is rebuilt from the freshly written hourly rows, so the raw measurements
+are scanned once per refresh.
 
-INSERT INTO measurement_daily (channel_id, resolution_seconds, local_date, total)
-SELECT channel_id, resolution_seconds, local_date, SUM(total)::bigint
-FROM measurement_hourly
-GROUP BY channel_id, resolution_seconds, local_date
-ON CONFLICT (channel_id, resolution_seconds, local_date) DO NOTHING;
-```
+Every refresh takes a transaction-scoped `pg_advisory_xact_lock` first. The
+scheduled backfill and the post-import hook run concurrently by design, and
+without the lock two refreshes can deadlock or re-insert the same bucket between
+one transaction's delete and the other's insert (observed in a real deployment).
+The lock is released on commit/rollback.
 
 ### 2. Repository port and Postgres implementation
 
@@ -138,19 +136,25 @@ in-memory test doubles keep compiling:
 - `sum_hours` / `sum_hours_by_channel` re-implemented over `measurement_hourly`
   grouped by `local_hour` for daily-or-coarser windows (replaces the full-year
   raw scan behind the year graph's hour radar).
-- `upsert_rollups(from, to)` — the maintenance write: in one transaction, delete
-  the hourly/daily rows whose `local_date` overlaps the dirty window, re-insert
-  the hourly rows from raw, and re-insert the daily rows aggregated from hourly.
+- `refresh_rollups(from, to)` — the maintenance write: within one
+  advisory-locked transaction, delete the strictly-interior local days of the
+  widened range from both rollup tables, re-insert the hourly rows from raw, and
+  rebuild the daily rows from the freshly written hourly ones.
 
 ### 3. Background job (`MeasurementRollupService`)
 
 A new core service following the existing scheduled-job pattern:
 
 - Job type `measurement_rollup`, ShedLock-style acquire/release, heartbeat and
-  cancellation matching [`DataSourceUpdateService`](../backend/src/core/application/data_source_update_service.rs).
-- `run_if_due`: if the rollup tables are empty (first run), run the full backfill;
-  otherwise refresh the last `N` days (configurable) so a restart or a missed
-  import is self-healing.
+  cancellation matching [`DataSourceUpdateService`](../backend/src/core/application/data_source_update_service.rs);
+  the max heartbeat interval defaults to 300 s so a crashed rollup job is
+  reclaimed quickly (the heartbeat loop beats independently of the refresh
+  chunks).
+- `run_if_due`: if the rollup job has never succeeded, run the full backfill;
+  otherwise refresh the last `N` days (3) so a restart or a missed import is
+  self-healing. The full backfill walks the history in 7-day chunks (each its own
+  advisory-locked transaction), so it commits visible progress, keeps every
+  transaction small, and stays cancellable between chunks.
 - A `refresh(from, to)` method that the import flow calls directly after each
   successful source import, so the rollup is fresh as soon as data lands without
   waiting for the cron tick. Historical backfills by a provider are covered because
@@ -199,7 +203,7 @@ flowchart TD
 ### 5. Wiring and configuration
 
 - `measurement_rollup_cron` (default `0 */15 * * * *`) and
-  `measurement_rollup_max_heartbeat_interval_seconds` (default 3600) added to
+  `measurement_rollup_max_heartbeat_interval_seconds` (default 300) added to
   [`Configuration`](../backend/src/core/domain/configuration/configuration.rs) with
   a `with_measurement_rollup` builder, validated like the other cron keys, read by
   [`ConfigurationTomlAdapter`](../backend/src/adapter/driven/configuration_toml_adapter.rs)
@@ -248,7 +252,7 @@ existing red/green flow:
 ## Definition of done
 
 - [x] Failing tests written first for the rollup port contract, rollup service behavior, and analytics routing
-- [x] `V24__add_measurement_rollups.sql` added with tables, indexes and backfill
+- [x] `V24__add_measurement_rollups.sql` added with the tables and indexes (DDL only; the backfill runs in the rollup job)
 - [x] Rollup read methods added to the repository port with default impls, satisfying the port-contract tests
 - [x] Postgres rollup read/write implementation added and made green by the repository tests
 - [x] `MeasurementRollupService` implemented and made green by its behavior tests

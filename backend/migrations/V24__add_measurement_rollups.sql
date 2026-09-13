@@ -6,6 +6,12 @@
 -- `local_date` / `local_hour` are computed in the channel's own station timezone
 -- (each channel belongs to exactly one counting station with one timezone), which
 -- matches the analytics' DST-aware local-day/local-hour semantics.
+--
+-- This migration is DDL only: it creates the (empty) rollup tables and indexes.
+-- The one-time backfill of the existing history runs in the background in the
+-- `measurement_rollup` job (which reads the measurement bounds and refreshes the
+-- whole range on its first run) instead of blocking startup with a full scan of
+-- the measurement history.
 
 CREATE TABLE measurement_hourly (
     channel_id         UUID     NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -30,29 +36,3 @@ CREATE INDEX measurement_hourly_date_resolution_idx
     ON measurement_hourly (local_date, resolution_seconds);
 CREATE INDEX measurement_daily_date_resolution_idx
     ON measurement_daily (local_date, resolution_seconds);
-
--- One-time backfill of the existing history. The scan is unavoidable for the
--- first run (comparable to the measurement index builds already done at startup).
-INSERT INTO measurement_hourly (channel_id, resolution_seconds, local_date, local_hour, total)
-SELECT m.channel_id,
-       m.resolution_seconds,
-       (m.timestamp AT TIME ZONE s.timezone)::date AS local_date,
-       EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone))::smallint AS local_hour,
-       SUM(m.value)::bigint AS total
-FROM measurements m
-JOIN channels c          ON c.id = m.channel_id
-JOIN counting_stations s ON s.id = c.counting_station_id
-GROUP BY m.channel_id, m.resolution_seconds,
-         (m.timestamp AT TIME ZONE s.timezone)::date,
-         EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone));
-
-INSERT INTO measurement_daily (channel_id, resolution_seconds, local_date, total)
-SELECT m.channel_id,
-       m.resolution_seconds,
-       (m.timestamp AT TIME ZONE s.timezone)::date AS local_date,
-       SUM(m.value)::bigint AS total
-FROM measurements m
-JOIN channels c          ON c.id = m.channel_id
-JOIN counting_stations s ON s.id = c.counting_station_id
-GROUP BY m.channel_id, m.resolution_seconds,
-         (m.timestamp AT TIME ZONE s.timezone)::date;

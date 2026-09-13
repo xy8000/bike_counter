@@ -30,7 +30,10 @@ pub const DEFAULT_OPENDATA_STORAGE_BUCKET: &str = "bike-counter-opendata";
 /// pre-aggregations stay fresh after imports.
 pub const DEFAULT_MEASUREMENT_ROLLUP_CRON: &str = "0 */15 * * * *";
 /// Default max heartbeat interval for the measurement rollup job in seconds.
-pub const DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 3600;
+/// Kept short (like the other jobs) so a crashed rollup job is reclaimed
+/// quickly; the heartbeat loop beats every few seconds independently of the
+/// refresh chunks the job runs.
+pub const DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 300;
 
 #[derive(Debug, Clone)]
 pub struct Configuration {

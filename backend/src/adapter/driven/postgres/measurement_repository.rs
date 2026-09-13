@@ -106,6 +106,18 @@ fn buckets_sql(granularity: BucketGranularity, with_channel: bool) -> String {
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
+/// Transaction-scoped advisory-lock key serializing every rollup refresh. The
+/// scheduled backfill and the post-import refresh run concurrently by design, so
+/// without this they can deadlock or re-insert the same bucket between one
+/// transaction's delete and insert.
+const ROLLUP_REFRESH_LOCK_KEY: i64 = 0x726f_6c6c_7570;
+
+/// Margin (hours) added to both ends of a rollup refresh range so every
+/// station-local calendar day that overlaps the range is fully covered. 38 h
+/// bounds a local day (up to 24 h) plus the widest UTC offset (14 h); 40 h keeps
+/// a small safety buffer.
+const ROLLUP_REFRESH_MARGIN_HOURS: i64 = 40;
+
 /// Which backing table a bucket query reads from.
 enum BucketSource {
     /// The daily rollup (calendar granularities and fixed daily buckets).
@@ -991,72 +1003,84 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .transaction()
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
-        // Delete the hourly/daily buckets overlapping the refreshed range before
-        // re-inserting them, so an overlapping re-run never double counts.
+        // Serialize with any other rollup refresh (the scheduled backfill vs. the
+        // post-import hook, or another instance): a concurrent refresh could
+        // otherwise deadlock or re-insert a bucket between this transaction's
+        // delete and insert. The xact-scoped lock is released on commit/rollback.
         transaction
             .execute(
-                "DELETE FROM measurement_hourly h \
-                 USING ( \
-                     SELECT DISTINCT m.channel_id, m.resolution_seconds, \
-                            (m.timestamp AT TIME ZONE s.timezone)::date AS local_date \
-                     FROM measurements m \
-                     JOIN channels c ON c.id = m.channel_id \
-                     JOIN counting_stations s ON s.id = c.counting_station_id \
-                     WHERE m.timestamp >= $1 AND m.timestamp < $2 \
-                 ) dirty \
-                 WHERE h.channel_id = dirty.channel_id \
-                   AND h.resolution_seconds = dirty.resolution_seconds \
-                   AND h.local_date = dirty.local_date",
-                &[&from, &to],
-            )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        transaction
-            .execute(
-                "DELETE FROM measurement_daily md \
-                 USING ( \
-                     SELECT DISTINCT m.channel_id, m.resolution_seconds, \
-                            (m.timestamp AT TIME ZONE s.timezone)::date AS local_date \
-                     FROM measurements m \
-                     JOIN channels c ON c.id = m.channel_id \
-                     JOIN counting_stations s ON s.id = c.counting_station_id \
-                     WHERE m.timestamp >= $1 AND m.timestamp < $2 \
-                 ) dirty \
-                 WHERE md.channel_id = dirty.channel_id \
-                   AND md.resolution_seconds = dirty.resolution_seconds \
-                   AND md.local_date = dirty.local_date",
-                &[&from, &to],
+                "SELECT pg_advisory_xact_lock($1)",
+                &[&ROLLUP_REFRESH_LOCK_KEY],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
+        // Expand the requested range so every station-local calendar day that
+        // overlaps `[from, to)` is covered regardless of the station timezone
+        // (UTC offsets range from -12 to +14 hours). The whole refresh then
+        // rebuilds complete local days, so a mid-day range boundary can never
+        // leave a partially re-aggregated day behind.
+        let margin = chrono::Duration::hours(ROLLUP_REFRESH_MARGIN_HOURS);
+        let expanded_from = from - margin;
+        let expanded_to = to + margin;
+
+        // Delete the buckets of every local day strictly inside the expanded
+        // range from both rollup tables. Only the rollup tables and the (small)
+        // channel/station metadata are scanned, never the raw measurement
+        // history. The strict inequalities exclude the two partial boundary days,
+        // which are left untouched (their full days are outside the range).
+        for table in ["measurement_hourly", "measurement_daily"] {
+            let query = format!(
+                "DELETE FROM {table} r \
+                 USING channels c \
+                 JOIN counting_stations s ON s.id = c.counting_station_id \
+                 WHERE r.channel_id = c.id \
+                   AND r.local_date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
+                   AND r.local_date < ($2::timestamptz AT TIME ZONE s.timezone)::date"
+            );
+            transaction
+                .execute(&query, &[&expanded_from, &expanded_to])
+                .map_err(|error| DomainError::Database(error.to_string()))?;
+        }
+
+        // Re-aggregate the hourly buckets for the strictly-interior local days
+        // from the raw rows (one scan of the raw measurements).
         transaction
             .execute(
                 "INSERT INTO measurement_hourly \
                      (channel_id, resolution_seconds, local_date, local_hour, total) \
-                 SELECT m.channel_id, m.resolution_seconds, \
-                        (m.timestamp AT TIME ZONE s.timezone)::date AS local_date, \
-                        EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone))::smallint AS local_hour, \
-                        SUM(m.value)::bigint AS total \
-                 FROM measurements m \
-                 JOIN channels c ON c.id = m.channel_id \
-                 JOIN counting_stations s ON s.id = c.counting_station_id \
-                 WHERE m.timestamp >= $1 AND m.timestamp < $2 \
-                 GROUP BY m.channel_id, m.resolution_seconds, local_date, local_hour",
-                &[&from, &to],
+                 SELECT channel_id, resolution_seconds, local_date, local_hour, \
+                        SUM(value)::bigint AS total \
+                 FROM ( \
+                     SELECT m.channel_id, m.resolution_seconds, m.value, \
+                            (m.timestamp AT TIME ZONE s.timezone)::date AS local_date, \
+                            EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone))::smallint AS local_hour \
+                     FROM measurements m \
+                     JOIN channels c ON c.id = m.channel_id \
+                     JOIN counting_stations s ON s.id = c.counting_station_id \
+                     WHERE m.timestamp >= $1 AND m.timestamp < $2 \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
+                 ) raw \
+                 GROUP BY channel_id, resolution_seconds, local_date, local_hour",
+                &[&expanded_from, &expanded_to],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
+
+        // Rebuild the daily buckets from the freshly written hourly buckets, so
+        // the raw measurements are scanned only once per refresh.
         transaction
             .execute(
                 "INSERT INTO measurement_daily \
                      (channel_id, resolution_seconds, local_date, total) \
-                 SELECT m.channel_id, m.resolution_seconds, \
-                        (m.timestamp AT TIME ZONE s.timezone)::date AS local_date, \
-                        SUM(m.value)::bigint AS total \
-                 FROM measurements m \
-                 JOIN channels c ON c.id = m.channel_id \
+                 SELECT h.channel_id, h.resolution_seconds, h.local_date, \
+                        SUM(h.total)::bigint AS total \
+                 FROM measurement_hourly h \
+                 JOIN channels c ON c.id = h.channel_id \
                  JOIN counting_stations s ON s.id = c.counting_station_id \
-                 WHERE m.timestamp >= $1 AND m.timestamp < $2 \
-                 GROUP BY m.channel_id, m.resolution_seconds, local_date",
-                &[&from, &to],
+                 WHERE h.local_date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
+                   AND h.local_date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
+                 GROUP BY h.channel_id, h.resolution_seconds, h.local_date",
+                &[&expanded_from, &expanded_to],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
@@ -2502,6 +2526,18 @@ mod tests {
         // Re-running the refresh over the same range is idempotent.
         repository
             .refresh_rollups(t1, t3 + chrono::Duration::seconds(1))
+            .unwrap();
+        assert_eq!(
+            repository
+                .sum_daily(from, to, "Europe/Berlin", &channel_ids, None)
+                .unwrap(),
+            35
+        );
+
+        // A mid-day refresh range must rebuild the whole containing local day
+        // (not just the in-range slice), so the day never gets undercounted.
+        repository
+            .refresh_rollups(t1, t2 + chrono::Duration::seconds(1))
             .unwrap();
         assert_eq!(
             repository

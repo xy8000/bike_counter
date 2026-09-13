@@ -33,6 +33,11 @@ pub const MEASUREMENT_ROLLUP_JOB_NAME: &str = "measurement rollup";
 /// fallback for restarts and missed runs.
 const ROLLUP_REFRESH_DAYS: i64 = 3;
 
+/// The time span of one refresh transaction. The first-run backfill walks the
+/// whole history in chunks of this size so each transaction stays small and the
+/// job commits visible progress instead of doing one huge scan.
+const ROLLUP_REFRESH_CHUNK_DAYS: i64 = 7;
+
 pub struct MeasurementRollupService {
     job_repository: Arc<dyn JobRepository + Send + Sync>,
     measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
@@ -202,34 +207,47 @@ impl MeasurementRollupService {
             interval,
         );
 
-        if self.is_cancelled_or_requested(job_id) {
-            heartbeat.stop();
+        // Refresh in bounded chunks (each committing its own transaction) so a
+        // long first-run backfill makes visible progress, keeps every
+        // transaction small, and stays cancellable between chunks.
+        let chunk = chrono::Duration::days(ROLLUP_REFRESH_CHUNK_DAYS);
+        let mut cursor = from;
+        let mut cancelled = self.is_cancelled_or_requested(job_id);
+        let mut failure: Option<DomainError> = None;
+        while !cancelled && cursor < to {
+            let next = std::cmp::min(cursor + chunk, to);
+            match self.measurement_repository.refresh_rollups(cursor, next) {
+                Ok(()) => cursor = next,
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+            cancelled = self.is_cancelled_or_requested(job_id);
+        }
+        heartbeat.stop();
+
+        if let Some(error) = failure {
+            let message = format!("{error:?}");
+            if let Err(set_failed_error) =
+                self.job_repository.set_failed(job_id, Utc::now(), &message)
+            {
+                eprintln!(
+                    "Failed to mark measurement rollup job {job_name} ({job_id}) as failed: {set_failed_error:?}"
+                );
+            } else {
+                eprintln!("Measurement rollup job {job_name} ({job_id}) failed: {error:?}");
+            }
+            let _ = self
+                .job_repository
+                .release(MEASUREMENT_ROLLUP_JOB_TYPE, self.instance_id);
+            return;
+        }
+        if cancelled {
             self.finalize_cancelled(job_id, &job_name);
             return;
         }
-
-        match self.measurement_repository.refresh_rollups(from, to) {
-            Ok(()) => {
-                heartbeat.stop();
-                self.finalize_after_update(job_id, &job_name);
-            }
-            Err(error) => {
-                heartbeat.stop();
-                let message = format!("{error:?}");
-                if let Err(set_failed_error) =
-                    self.job_repository.set_failed(job_id, Utc::now(), &message)
-                {
-                    eprintln!(
-                        "Failed to mark measurement rollup job {job_name} ({job_id}) as failed: {set_failed_error:?}"
-                    );
-                } else {
-                    eprintln!("Measurement rollup job {job_name} ({job_id}) failed: {error:?}");
-                }
-                let _ = self
-                    .job_repository
-                    .release(MEASUREMENT_ROLLUP_JOB_TYPE, self.instance_id);
-            }
-        }
+        self.finalize_after_update(job_id, &job_name);
     }
 
     /// Heartbeats the job and returns whether a cancellation is already in
@@ -772,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn first_run_backfills_the_whole_history() {
+    fn first_run_backfills_the_whole_history_in_chunks() {
         let from = Utc::now() - Duration::days(400);
         let to = Utc::now() - Duration::days(1);
         let repo = Arc::new(MemoryJobRepository::new(vec![]));
@@ -781,7 +799,14 @@ mod tests {
         service(repo.clone(), measurements.clone()).run_if_due();
 
         let slack = Duration::minutes(1);
-        assert_eq!(measurements.refreshes(), vec![(from - slack, to + slack)]);
+        let refreshes = measurements.refreshes();
+        assert!(refreshes.len() > 1, "the full backfill runs in chunks");
+        assert_eq!(refreshes.first().unwrap().0, from - slack);
+        assert_eq!(refreshes.last().unwrap().1, to + slack);
+        for pair in refreshes.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "chunks must be contiguous");
+            assert!(pair[1].1 - pair[1].0 <= Duration::days(ROLLUP_REFRESH_CHUNK_DAYS));
+        }
         assert!(
             repo.all()
                 .iter()

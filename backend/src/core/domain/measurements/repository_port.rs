@@ -394,10 +394,12 @@ pub trait MeasurementRepository {
         Ok(None)
     }
 
-    /// Rebuilds the hourly/daily rollups for every measurement whose timestamp
-    /// lies in the half-open `[from, to)` range. The adapter deletes the affected
-    /// local buckets and re-inserts them from the raw rows, so the operation is
-    /// idempotent and safe to run incrementally after an import.
+    /// Rebuilds the hourly/daily rollups for every whole station-local calendar
+    /// day that overlaps the half-open `[from, to)` range. The adapter deletes the
+    /// affected local buckets and re-inserts them from the raw rows, so the
+    /// operation is idempotent and safe to run incrementally after an import; the
+    /// range is widened internally so a mid-day boundary never leaves a partially
+    /// re-aggregated day behind.
     ///
     /// Defaults to a no-op so rollup-unaware mocks need no change.
     fn refresh_rollups(&self, _from: DateTime<Utc>, _to: DateTime<Utc>) -> Result<(), DomainError> {
