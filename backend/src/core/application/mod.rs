@@ -9,6 +9,7 @@ pub mod data_source_update_service;
 pub mod job_heartbeat;
 pub mod job_reconciliation_service;
 pub mod job_service;
+pub mod measurement_rollup_service;
 pub mod measurement_service;
 pub mod opendata_export_service;
 pub mod opendata_service;

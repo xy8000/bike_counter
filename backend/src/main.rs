@@ -32,6 +32,7 @@ use crate::core::application::data_source_service::DataSourceService;
 use crate::core::application::data_source_update_service::DataSourceUpdateService;
 use crate::core::application::job_reconciliation_service::JobReconciliationService;
 use crate::core::application::job_service::JobService;
+use crate::core::application::measurement_rollup_service::MeasurementRollupService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::opendata_export_service::OpenDataExportService;
 use crate::core::application::opendata_service::OpenDataService;
@@ -282,6 +283,15 @@ fn main() {
         instance_id,
     ));
 
+    // Scheduled maintenance of the hourly/daily measurement rollups backing the
+    // station analytics read model (see MeasurementRollupService).
+    let measurement_rollup_service = Arc::new(MeasurementRollupService::new(
+        job_repo.clone(),
+        measurement_repo.clone(),
+        configuration.clone(),
+        instance_id,
+    ));
+
     // OpenData: a dedicated MinIO bucket holds the immutable measurement files
     // (separate from the image bucket so the asset-cleanup job never touches
     // them). The registry is the append-only state; the daily export job
@@ -386,12 +396,27 @@ fn main() {
                 opendata_export_service,
                 configuration.opendata_export_cron().to_string(),
             ));
+            tokio::spawn(job_scheduler::run_scheduler(
+                measurement_rollup_service,
+                configuration.measurement_rollup_cron().to_string(),
+            ));
             // The job watcher reconciles stale/cancelled jobs on a fixed short
             // interval independent of the (possibly sparse) cron schedules.
             tokio::spawn(job_scheduler::run_job_watcher(
                 job_reconciliation_service,
                 StdDuration::from_secs(30),
             ));
+        } else {
+            // The analytics read model is served from the rollup tables, which
+            // only the `measurement_rollup` job populates. Even in offline setups
+            // (the Playwright e2e seeds a fixture and disables all scheduled
+            // jobs), run the rollup backfill once in the background so the
+            // graphs/overviews have data; it never reaches out to providers.
+            tokio::spawn(async move {
+                let _ =
+                    tokio::task::spawn_blocking(move || measurement_rollup_service.run_if_due())
+                        .await;
+            });
         }
         rest_adapter.run(addr).await
     }) {

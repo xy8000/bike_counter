@@ -1,23 +1,177 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use postgres::types::ToSql;
 use uuid::Uuid;
 
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelFirst, ChannelHourTotal,
-    ChannelLatest, ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal,
-    ResolutionCoverage, TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelBounds, ChannelBucket, ChannelCoverage, ChannelFirst,
+    ChannelHourTotal, ChannelLatest, ChannelTotal, ChannelWeekdayTotal, HourTotal,
+    MeasurementBounds, MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket,
+    WeekdayTotal,
 };
 
 use super::pool::PgPool;
 
 pub struct PostgresMeasurementRepository {
     pool: PgPool,
+    /// Cached view of `measurement_rollup_state.backfilled`. Once the one-time
+    /// backfill completes the flag only ever flips false -> true, so caching it
+    /// lets every steady-state read skip the readiness query.
+    rollups_ready: AtomicBool,
 }
 
 impl PostgresMeasurementRepository {
     pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+        Self {
+            pool: pool.clone(),
+            rollups_ready: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the one-time rollup backfill has completed, consulting the cached
+    /// flag first and otherwise the state row. A missing state row is treated as
+    /// "not ready", so an older database keeps the raw path.
+    fn is_rollups_ready(&self) -> Result<bool, DomainError> {
+        if self.rollups_ready.load(Ordering::Relaxed) {
+            return Ok(true);
+        }
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT backfilled FROM measurement_rollup_state WHERE id = 1",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let ready = row.is_some_and(|row| row.get::<_, bool>(0));
+        self.rollups_ready.store(ready, Ordering::Relaxed);
+        Ok(ready)
+    }
+
+    /// The source a bucket query should read: the rollup only once the backfill
+    /// has completed, otherwise the raw table (so a fresh deploy serves correct
+    /// numbers instead of zeros while the rollups are still being built).
+    fn effective_bucket_source(
+        &self,
+        granularity: BucketGranularity,
+    ) -> Result<BucketSource, DomainError> {
+        if self.is_rollups_ready()? {
+            Ok(bucket_source(granularity))
+        } else {
+            Ok(BucketSource::Raw)
+        }
+    }
+
+    /// The hour-of-day radar over the raw table, used until the rollup backfill
+    /// has completed.
+    fn sum_hours_raw(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<HourTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT EXTRACT(HOUR FROM (timestamp AT TIME ZONE $2))::int AS hour, \
+                        COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+                 GROUP BY hour \
+                 ORDER BY hour",
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| HourTotal {
+                hour: row.get::<_, i32>(0) as u8,
+                total: row.get(1),
+            })
+            .collect())
+    }
+
+    /// Per-channel hour-of-day radar over the raw table (rollup cold-start path).
+    fn sum_hours_by_channel_raw(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelHourTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, \
+                        EXTRACT(HOUR FROM (timestamp AT TIME ZONE $2))::int AS hour, \
+                        COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                   AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+                 GROUP BY channel_id, hour \
+                 ORDER BY channel_id, hour",
+                &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ChannelHourTotal {
+                channel_id: row.get(0),
+                hour: row.get::<_, i32>(1) as u8,
+                total: row.get(2),
+            })
+            .collect())
+    }
+
+    /// The monthly bar chart over the raw table (rollup cold-start path).
+    fn sum_months_raw(
+        &self,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<MonthTotal>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT EXTRACT(YEAR FROM (timestamp AT TIME ZONE $2))::int AS year, \
+                        EXTRACT(MONTH FROM (timestamp AT TIME ZONE $2))::int AS month, \
+                        COALESCE(SUM(value), 0)::bigint AS total \
+                 FROM measurements \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND ($3::bigint IS NULL OR resolution_seconds = $3::bigint) \
+                 GROUP BY year, month \
+                 ORDER BY year, month",
+                &[&channel_uuids, &timezone, &resolution_seconds],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| MonthTotal {
+                year: row.get(0),
+                month: row.get::<_, i32>(1) as u8,
+                total: row.get(2),
+            })
+            .collect())
     }
 }
 
@@ -102,6 +256,86 @@ fn buckets_sql(granularity: BucketGranularity, with_channel: bool) -> String {
             )
         }
     }
+}
+
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+/// Transaction-scoped advisory-lock key serializing every rollup refresh. The
+/// scheduled backfill and the post-import refresh run concurrently by design, so
+/// without this they can deadlock or re-insert the same bucket between one
+/// transaction's delete and insert.
+const ROLLUP_REFRESH_LOCK_KEY: i64 = 0x726f_6c6c_7570;
+
+/// Margin (hours) added to both ends of a rollup refresh range so every
+/// station-local calendar day that overlaps the range is fully covered. 38 h
+/// bounds a local day (up to 24 h) plus the widest UTC offset (14 h); 40 h keeps
+/// a small safety buffer.
+const ROLLUP_REFRESH_MARGIN_HOURS: i64 = 40;
+
+/// Which backing table a bucket query reads from.
+enum BucketSource {
+    /// The daily rollup (calendar granularities and fixed daily buckets).
+    Daily,
+    /// The raw measurements table (sub-daily fixed buckets).
+    Raw,
+}
+
+/// Selects the backing table for a bucket query. Calendar granularities
+/// (`day`/`week`/`month`/`quarter`) and fixed buckets at least one day wide are
+/// served by the daily rollup; narrower fixed buckets (5/15/30 minutes, hourly)
+/// stay on the raw measurements.
+fn bucket_source(granularity: BucketGranularity) -> BucketSource {
+    match granularity {
+        BucketGranularity::Fixed { seconds } if seconds >= SECONDS_PER_DAY => BucketSource::Daily,
+        BucketGranularity::Day
+        | BucketGranularity::Week
+        | BucketGranularity::Month
+        | BucketGranularity::Quarter => BucketSource::Daily,
+        BucketGranularity::Fixed { .. } => BucketSource::Raw,
+    }
+}
+
+/// Builds the daily-rollup bucket SQL. `local_date` is already the channel's
+/// station-local calendar date, so the bucket start is reconstructed with
+/// `date_trunc` on the date (matching the raw query's `date_trunc` on the local
+/// timestamp) and converted back to `timestamptz` in the request timezone.
+/// Parameter order: `$1` channel ids, `$2` timezone, `$3` from, `$4` to,
+/// `$5` optional resolution.
+fn daily_buckets_sql(granularity: BucketGranularity, with_channel: bool) -> String {
+    let bucket = match granularity {
+        BucketGranularity::Fixed { .. } | BucketGranularity::Day => {
+            "(local_date::timestamp AT TIME ZONE $2)::timestamptz"
+        }
+        BucketGranularity::Week => {
+            "(date_trunc('week', local_date::timestamp) AT TIME ZONE $2)::timestamptz"
+        }
+        BucketGranularity::Month => {
+            "(date_trunc('month', local_date::timestamp) AT TIME ZONE $2)::timestamptz"
+        }
+        BucketGranularity::Quarter => {
+            "(date_trunc('quarter', local_date::timestamp) AT TIME ZONE $2)::timestamptz"
+        }
+    };
+    let select = if with_channel {
+        format!("SELECT channel_id, {bucket} AS bucket, COALESCE(SUM(total), 0)::bigint AS total")
+    } else {
+        format!("SELECT {bucket} AS bucket, COALESCE(SUM(total), 0)::bigint AS total")
+    };
+    let group_by = if with_channel {
+        "channel_id, bucket"
+    } else {
+        "bucket"
+    };
+    format!(
+        "{select} \
+         FROM measurement_daily \
+         WHERE channel_id = ANY($1::uuid[]) \
+           AND local_date >= ($3::timestamptz AT TIME ZONE $2)::date \
+           AND local_date <= ($4::timestamptz AT TIME ZONE $2)::date \
+           AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
+         GROUP BY {group_by} \
+         ORDER BY {group_by}"
+    )
 }
 
 impl MeasurementRepository for PostgresMeasurementRepository {
@@ -344,38 +578,58 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
-        let query = buckets_sql(granularity, false);
-        // The server infers `$2` as `double precision` from
-        // `make_interval(secs => ...)`, so send an f64 (not i64) to match the
-        // binary wire type. The owned values (`from`/`to`/`origin`/
-        // `resolution_seconds`/`seconds_f64`) live here, so their references
-        // stay valid through the query call.
-        let seconds_f64: Option<f64> = match granularity {
-            BucketGranularity::Fixed { seconds } => Some(seconds as f64),
-            _ => None,
+        let buckets: Vec<TimeBucket> = match self.effective_bucket_source(granularity)? {
+            BucketSource::Daily => {
+                let query = daily_buckets_sql(granularity, false);
+                client
+                    .query(
+                        &query,
+                        &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+                    )
+                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .into_iter()
+                    .map(|row| TimeBucket {
+                        start: row.get(0),
+                        total: row.get(1),
+                    })
+                    .collect()
+            }
+            BucketSource::Raw => {
+                let query = buckets_sql(granularity, false);
+                // Fixed buckets need the interval seconds (`$2`) and the origin
+                // (`$4`); calendar buckets group with `date_trunc` and take the
+                // timezone as `$2` instead. This branch also serves the rollup
+                // cold-start path, where calendar granularities read raw. The
+                // server infers the seconds parameter as `double precision` from
+                // `make_interval(secs => ...)`, so send an f64 (not i64) to match
+                // the binary wire type.
+                let seconds_f64: Option<f64> = match granularity {
+                    BucketGranularity::Fixed { seconds } => Some(seconds as f64),
+                    _ => None,
+                };
+                let params: Vec<&(dyn ToSql + Sync)> = match &seconds_f64 {
+                    Some(seconds) => vec![
+                        &channel_uuids,
+                        seconds,
+                        &timezone,
+                        &origin,
+                        &from,
+                        &to,
+                        &resolution_seconds,
+                    ],
+                    None => vec![&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+                };
+                client
+                    .query(&query, &params)
+                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .into_iter()
+                    .map(|row| TimeBucket {
+                        start: row.get(0),
+                        total: row.get(1),
+                    })
+                    .collect()
+            }
         };
-        let params: Vec<&(dyn ToSql + Sync)> = match granularity {
-            BucketGranularity::Fixed { .. } => vec![
-                &channel_uuids,
-                seconds_f64.as_ref().unwrap(),
-                &timezone,
-                &origin,
-                &from,
-                &to,
-                &resolution_seconds,
-            ],
-            _ => vec![&channel_uuids, &timezone, &from, &to, &resolution_seconds],
-        };
-        let rows = client
-            .query(&query, &params)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        let mut buckets = Vec::with_capacity(rows.len());
-        for row in rows {
-            buckets.push(TimeBucket {
-                start: row.get(0),
-                total: row.get(1),
-            });
-        }
         Ok(buckets)
     }
 
@@ -394,34 +648,56 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .get()
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
-        let query = buckets_sql(granularity, true);
-        let seconds_f64: Option<f64> = match granularity {
-            BucketGranularity::Fixed { seconds } => Some(seconds as f64),
-            _ => None,
+        let buckets: Vec<ChannelBucket> = match self.effective_bucket_source(granularity)? {
+            BucketSource::Daily => {
+                let query = daily_buckets_sql(granularity, true);
+                client
+                    .query(
+                        &query,
+                        &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+                    )
+                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .into_iter()
+                    .map(|row| ChannelBucket {
+                        channel_id: row.get(0),
+                        start: row.get(1),
+                        total: row.get(2),
+                    })
+                    .collect()
+            }
+            BucketSource::Raw => {
+                let query = buckets_sql(granularity, true);
+                // See the ungrouped variant: fixed buckets bind seconds/origin,
+                // calendar buckets bind the timezone, and this branch also serves
+                // the rollup cold-start path for calendar granularities.
+                let seconds_f64: Option<f64> = match granularity {
+                    BucketGranularity::Fixed { seconds } => Some(seconds as f64),
+                    _ => None,
+                };
+                let params: Vec<&(dyn ToSql + Sync)> = match &seconds_f64 {
+                    Some(seconds) => vec![
+                        &channel_uuids,
+                        seconds,
+                        &timezone,
+                        &origin,
+                        &from,
+                        &to,
+                        &resolution_seconds,
+                    ],
+                    None => vec![&channel_uuids, &timezone, &from, &to, &resolution_seconds],
+                };
+                client
+                    .query(&query, &params)
+                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .into_iter()
+                    .map(|row| ChannelBucket {
+                        channel_id: row.get(0),
+                        start: row.get(1),
+                        total: row.get(2),
+                    })
+                    .collect()
+            }
         };
-        let params: Vec<&(dyn ToSql + Sync)> = match granularity {
-            BucketGranularity::Fixed { .. } => vec![
-                &channel_uuids,
-                seconds_f64.as_ref().unwrap(),
-                &timezone,
-                &origin,
-                &from,
-                &to,
-                &resolution_seconds,
-            ],
-            _ => vec![&channel_uuids, &timezone, &from, &to, &resolution_seconds],
-        };
-        let rows = client
-            .query(&query, &params)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
-        let mut buckets = Vec::with_capacity(rows.len());
-        for row in rows {
-            buckets.push(ChannelBucket {
-                channel_id: row.get(0),
-                start: row.get(1),
-                total: row.get(2),
-            });
-        }
         Ok(buckets)
     }
 
@@ -505,6 +781,9 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         channel_ids: &[value_objects::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<HourTotal>, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum_hours_raw(from, to, timezone, channel_ids, resolution_seconds);
+        }
         let mut client = self
             .pool
             .get()
@@ -512,10 +791,12 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
-                "SELECT EXTRACT(HOUR FROM (timestamp AT TIME ZONE $2))::int AS hour, \
-                       COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                "SELECT local_hour::int AS hour, \
+                       COALESCE(SUM(total), 0)::bigint AS total \
+                 FROM measurement_hourly \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND local_date >= ($3::timestamptz AT TIME ZONE $2)::date \
+                   AND local_date <= ($4::timestamptz AT TIME ZONE $2)::date \
                    AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY hour \
                  ORDER BY hour",
@@ -540,6 +821,15 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         channel_ids: &[value_objects::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<ChannelHourTotal>, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum_hours_by_channel_raw(
+                from,
+                to,
+                timezone,
+                channel_ids,
+                resolution_seconds,
+            );
+        }
         let mut client = self
             .pool
             .get()
@@ -548,10 +838,12 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let rows = client
             .query(
                 "SELECT channel_id, \
-                       EXTRACT(HOUR FROM (timestamp AT TIME ZONE $2))::int AS hour, \
-                       COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $3 AND timestamp <= $4 \
+                       local_hour::int AS hour, \
+                       COALESCE(SUM(total), 0)::bigint AS total \
+                 FROM measurement_hourly \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND local_date >= ($3::timestamptz AT TIME ZONE $2)::date \
+                   AND local_date <= ($4::timestamptz AT TIME ZONE $2)::date \
                    AND ($5::bigint IS NULL OR resolution_seconds = $5::bigint) \
                  GROUP BY channel_id, hour \
                  ORDER BY channel_id, hour",
@@ -608,6 +900,9 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         channel_ids: &[value_objects::ChannelId],
         resolution_seconds: Option<i64>,
     ) -> Result<Vec<MonthTotal>, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum_months_raw(timezone, channel_ids, resolution_seconds);
+        }
         let mut client = self
             .pool
             .get()
@@ -615,15 +910,15 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
-                "SELECT EXTRACT(YEAR FROM (timestamp AT TIME ZONE $1))::int AS year, \
-                       EXTRACT(MONTH FROM (timestamp AT TIME ZONE $1))::int AS month, \
-                       COALESCE(SUM(value), 0)::bigint AS total \
-                 FROM measurements \
-                 WHERE channel_id = ANY($2::uuid[]) \
-                   AND ($3::bigint IS NULL OR resolution_seconds = $3::bigint) \
+                "SELECT EXTRACT(YEAR FROM local_date)::int AS year, \
+                       EXTRACT(MONTH FROM local_date)::int AS month, \
+                       COALESCE(SUM(total), 0)::bigint AS total \
+                 FROM measurement_daily \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND ($2::bigint IS NULL OR resolution_seconds = $2::bigint) \
                  GROUP BY year, month \
                  ORDER BY year, month",
-                &[&timezone, &channel_uuids, &resolution_seconds],
+                &[&channel_uuids, &resolution_seconds],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let mut months = Vec::with_capacity(rows.len());
@@ -796,6 +1091,295 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             });
         }
         Ok(earliest)
+    }
+
+    fn sum_daily(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<i64, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum(from, to, channel_ids, resolution_seconds);
+        }
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let row = client
+            .query_one(
+                "SELECT COALESCE(SUM(total), 0)::bigint \
+                 FROM measurement_daily \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND local_date >= ($4::timestamptz AT TIME ZONE $2)::date \
+                   AND local_date <= ($5::timestamptz AT TIME ZONE $2)::date \
+                   AND ($3::bigint IS NULL OR resolution_seconds = $3::bigint)",
+                &[&channel_uuids, &timezone, &resolution_seconds, &from, &to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        Ok(row.get::<_, i64>(0))
+    }
+
+    fn sum_daily_by_channel(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelTotal>, DomainError> {
+        if !self.is_rollups_ready()? {
+            return self.sum_by_channel(from, to, channel_ids, resolution_seconds);
+        }
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, COALESCE(SUM(total), 0)::bigint AS total \
+                 FROM measurement_daily \
+                 WHERE channel_id = ANY($1::uuid[]) \
+                   AND local_date >= ($4::timestamptz AT TIME ZONE $2)::date \
+                   AND local_date <= ($5::timestamptz AT TIME ZONE $2)::date \
+                   AND ($3::bigint IS NULL OR resolution_seconds = $3::bigint) \
+                 GROUP BY channel_id \
+                 ORDER BY channel_id",
+                &[&channel_uuids, &timezone, &resolution_seconds, &from, &to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut totals = Vec::with_capacity(rows.len());
+        for row in rows {
+            totals.push(ChannelTotal {
+                channel_id: row.get(0),
+                total: row.get(1),
+            });
+        }
+        Ok(totals)
+    }
+
+    fn channel_bounds(
+        &self,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelBounds>, DomainError> {
+        if channel_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
+        let rows = client
+            .query(
+                "SELECT channel_id, first_timestamp, last_timestamp \
+                 FROM measurement_channel_bounds \
+                 WHERE channel_id = ANY($1::uuid[])",
+                &[&channel_uuids],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut bounds: Vec<ChannelBounds> = rows
+            .into_iter()
+            .map(|row| ChannelBounds {
+                channel_id: row.get(0),
+                first: row.get(1),
+                last: row.get(2),
+            })
+            .collect();
+        // Cold start: a channel the backfill has not reached yet has no row. Fall
+        // back to the raw earliest/latest for just those channels, so the
+        // new-station filter and the import staleness check stay correct while the
+        // bounds are still being built. A channel that already has a row keeps the
+        // exact stored bounds.
+        let covered: std::collections::HashSet<Uuid> =
+            bounds.iter().map(|bound| bound.channel_id).collect();
+        let missing: Vec<value_objects::ChannelId> = channel_ids
+            .iter()
+            .filter(|id| !covered.contains(&id.0))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            let mut firsts: std::collections::HashMap<Uuid, chrono::DateTime<chrono::Utc>> = self
+                .earliest_by_channel(&missing)?
+                .into_iter()
+                .map(|row| (row.channel_id, row.timestamp))
+                .collect();
+            for row in self.latest_by_channel(&missing)? {
+                // A channel with a latest timestamp always has an earliest, so the
+                // fallback only matters for a transiently inconsistent read.
+                let first = firsts.remove(&row.channel_id).unwrap_or(row.timestamp);
+                bounds.push(ChannelBounds {
+                    channel_id: row.channel_id,
+                    first,
+                    last: row.timestamp,
+                });
+            }
+        }
+        Ok(bounds)
+    }
+
+    fn rollups_ready(&self) -> Result<bool, DomainError> {
+        self.is_rollups_ready()
+    }
+
+    fn mark_rollups_ready(&self) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        client
+            .execute(
+                "UPDATE measurement_rollup_state SET backfilled = TRUE WHERE id = 1",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        self.rollups_ready.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn measurement_bounds(&self) -> Result<Option<MeasurementBounds>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        // Prefer the per-channel bounds aggregate once it is populated, so the
+        // job's own range discovery is cheap after the first backfill. An empty
+        // table falls through to the one-off raw MIN/MAX scan.
+        let cached = client
+            .query_one(
+                "SELECT MIN(first_timestamp), MAX(last_timestamp) FROM measurement_channel_bounds",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let cached_first: Option<chrono::DateTime<chrono::Utc>> = cached.get(0);
+        let cached_last: Option<chrono::DateTime<chrono::Utc>> = cached.get(1);
+        if let Some(bounds) = cached_first.zip(cached_last) {
+            return Ok(Some(bounds));
+        }
+        let row = client
+            .query_one(
+                "SELECT MIN(timestamp), MAX(timestamp) FROM measurements",
+                &[],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let first: Option<chrono::DateTime<chrono::Utc>> = row.get(0);
+        let last: Option<chrono::DateTime<chrono::Utc>> = row.get(1);
+        Ok(first.zip(last))
+    }
+
+    fn refresh_rollups(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+        let mut transaction = client
+            .transaction()
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+
+        // Serialize with any other rollup refresh (the scheduled backfill vs. the
+        // post-import hook, or another instance) so their upserts cannot deadlock
+        // on row locks. The xact-scoped lock is released on commit/rollback.
+        transaction
+            .execute(
+                "SELECT pg_advisory_xact_lock($1)",
+                &[&ROLLUP_REFRESH_LOCK_KEY],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+
+        // Expand the requested range so every station-local calendar day that
+        // overlaps `[from, to)` is covered regardless of the station timezone
+        // (UTC offsets range from -12 to +14 hours). The whole refresh then
+        // rebuilds complete local days, so a mid-day range boundary can never
+        // leave a partially re-aggregated day behind.
+        let margin = chrono::Duration::hours(ROLLUP_REFRESH_MARGIN_HOURS);
+        let expanded_from = from - margin;
+        let expanded_to = to + margin;
+
+        // Upsert the hourly buckets for every strictly-interior local day from the
+        // raw rows. `ON CONFLICT DO UPDATE` overwrites an existing bucket with the
+        // complete recomputed day total, so no delete (and no scan of the rollup
+        // tables) is needed, and a partially covered boundary day stays untouched
+        // because it is filtered out. The raw scan is bounded by the timestamp
+        // index.
+        transaction
+            .execute(
+                "INSERT INTO measurement_hourly \
+                     (channel_id, resolution_seconds, local_date, local_hour, total) \
+                 SELECT channel_id, resolution_seconds, local_date, local_hour, \
+                        SUM(value)::bigint AS total \
+                 FROM ( \
+                     SELECT m.channel_id, m.resolution_seconds, m.value, \
+                            (m.timestamp AT TIME ZONE s.timezone)::date AS local_date, \
+                            EXTRACT(HOUR FROM (m.timestamp AT TIME ZONE s.timezone))::smallint AS local_hour \
+                     FROM measurements m \
+                     JOIN channels c ON c.id = m.channel_id \
+                     JOIN counting_stations s ON s.id = c.counting_station_id \
+                     WHERE m.timestamp >= $1 AND m.timestamp < $2 \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
+                 ) raw \
+                 GROUP BY channel_id, resolution_seconds, local_date, local_hour \
+                 ON CONFLICT (channel_id, resolution_seconds, local_date, local_hour) \
+                 DO UPDATE SET total = EXCLUDED.total",
+                &[&expanded_from, &expanded_to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+
+        // Upsert the daily buckets from the raw rows with the same filter.
+        transaction
+            .execute(
+                "INSERT INTO measurement_daily \
+                     (channel_id, resolution_seconds, local_date, total) \
+                 SELECT channel_id, resolution_seconds, local_date, \
+                        SUM(value)::bigint AS total \
+                 FROM ( \
+                     SELECT m.channel_id, m.resolution_seconds, m.value, \
+                            (m.timestamp AT TIME ZONE s.timezone)::date AS local_date \
+                     FROM measurements m \
+                     JOIN channels c ON c.id = m.channel_id \
+                     JOIN counting_stations s ON s.id = c.counting_station_id \
+                     WHERE m.timestamp >= $1 AND m.timestamp < $2 \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
+                 ) raw \
+                 GROUP BY channel_id, resolution_seconds, local_date \
+                 ON CONFLICT (channel_id, resolution_seconds, local_date) \
+                 DO UPDATE SET total = EXCLUDED.total",
+                &[&expanded_from, &expanded_to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+
+        // Maintain the per-channel bounds aggregate behind the new-station filter.
+        // This covers the whole expanded range (no interior-local-day filter), so
+        // the global extremes are never clipped; `LEAST`/`GREATEST` merge a chunk
+        // into the stored bounds, so the union over a full backfill is exact and an
+        // incremental refresh only ever widens them.
+        transaction
+            .execute(
+                "INSERT INTO measurement_channel_bounds \
+                     (channel_id, first_timestamp, last_timestamp) \
+                 SELECT channel_id, MIN(timestamp), MAX(timestamp) \
+                 FROM measurements \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                 GROUP BY channel_id \
+                 ON CONFLICT (channel_id) DO UPDATE \
+                 SET first_timestamp = LEAST(measurement_channel_bounds.first_timestamp, EXCLUDED.first_timestamp), \
+                     last_timestamp = GREATEST(measurement_channel_bounds.last_timestamp, EXCLUDED.last_timestamp)",
+                &[&expanded_from, &expanded_to],
+            )
+            .map_err(|error| DomainError::Database(error.to_string()))?;
+
+        transaction
+            .commit()
+            .map_err(|error| DomainError::Database(error.to_string()))
     }
 }
 
@@ -1246,8 +1830,15 @@ mod tests {
             .unwrap();
         setup_client
             .execute(
-                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
-                &[&station_id, &"Test station", &"Test station description", &data_source_id],
+                "INSERT INTO counting_stations (id, name, description, data_source_id, timezone) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                    &"Europe/Berlin",
+                ],
             )
             .unwrap();
         setup_client
@@ -1298,6 +1889,11 @@ mod tests {
             },
         ];
         repository.save_batch(measurements).unwrap();
+        // The hour-of-day radars read from the hourly rollup, so refresh the
+        // rollups for the inserted range first.
+        repository
+            .refresh_rollups(at(2024, 1, 10, 12, 0, 0), at(2024, 1, 10, 12, 6, 0))
+            .unwrap();
 
         let from = at(2024, 1, 10, 11, 0, 0);
         let to = at(2024, 1, 10, 13, 0, 0);
@@ -1431,8 +2027,15 @@ mod tests {
             .unwrap();
         setup_client
             .execute(
-                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
-                &[&station_id, &"Test station", &"Test station description", &data_source_id],
+                "INSERT INTO counting_stations (id, name, description, data_source_id, timezone) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                    &"Europe/Berlin",
+                ],
             )
             .unwrap();
         setup_client
@@ -1462,6 +2065,10 @@ mod tests {
         save(10, at(2024, 1, 10, 12, 0, 0));
         save(20, at(2024, 2, 10, 12, 0, 0));
         save(30, at(2024, 3, 10, 12, 0, 0));
+        // Calendar month buckets read from the daily rollup.
+        repository
+            .refresh_rollups(at(2024, 1, 10, 0, 0, 0), at(2024, 3, 11, 0, 0, 0))
+            .unwrap();
 
         let from = at(2024, 1, 1, 0, 0, 0);
         let to = at(2024, 4, 1, 0, 0, 0);
@@ -1555,8 +2162,15 @@ mod tests {
             .unwrap();
         setup_client
             .execute(
-                "INSERT INTO counting_stations (id, name, description, data_source_id) VALUES ($1, $2, $3, $4)",
-                &[&station_id, &"Test station", &"Test station description", &data_source_id],
+                "INSERT INTO counting_stations (id, name, description, data_source_id, timezone) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[
+                    &station_id,
+                    &"Test station",
+                    &"Test station description",
+                    &data_source_id,
+                    &"Europe/Berlin",
+                ],
             )
             .unwrap();
         setup_client
@@ -1614,6 +2228,10 @@ mod tests {
             },
         ];
         repository.save_batch(measurements).unwrap();
+        // Monthly totals read from the daily rollup.
+        repository
+            .refresh_rollups(at(2023, 6, 15, 0, 0, 0), at(2024, 1, 11, 0, 0, 0))
+            .unwrap();
 
         let months = repository
             .sum_by_month(
@@ -2008,6 +2626,403 @@ mod tests {
             repository.find_by_channel_id(channel_id()).unwrap().len(),
             2
         );
+    }
+
+    #[test]
+    fn rollups_aggregate_daily_and_hourly_totals() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let postgres = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .start()
+            .unwrap();
+        let database_url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            postgres.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            database_url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresMeasurementRepository::new(&pool);
+
+        let station_id = Uuid::from_u128(500);
+        let data_source_id = Uuid::from_u128(510);
+        let setup_channel_id = Uuid::from_u128(520);
+        let mut setup_client = PostgresConfig::from_str(configuration.database_url()).unwrap();
+        setup_client
+            .user(configuration.user())
+            .password(configuration.password())
+            .dbname(configuration.database_name());
+        let mut setup_client = setup_client.connect(NoTls).unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)",
+                &[&data_source_id, &"Test data source", &"test_provider"],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO counting_stations (id, name, description, data_source_id, timezone) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[
+                    &station_id,
+                    &"Berlin station",
+                    &"Station in Europe/Berlin",
+                    &data_source_id,
+                    &"Europe/Berlin",
+                ],
+            )
+            .unwrap();
+        setup_client
+            .execute(
+                "INSERT INTO channels (id, counting_station_id, name, description) \
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &setup_channel_id,
+                    &station_id,
+                    &"Berlin channel",
+                    &"Berlin channel description",
+                ],
+            )
+            .unwrap();
+
+        // 00:30 UTC = 01:30 Berlin, 01:30 UTC = 02:30 Berlin, and
+        // 22:30 UTC = 23:30 Berlin on the next day (CET, UTC+1).
+        let t1 = Utc
+            .with_ymd_and_hms(2024, 1, 10, 0, 30, 0)
+            .single()
+            .unwrap();
+        let t2 = Utc
+            .with_ymd_and_hms(2024, 1, 10, 1, 30, 0)
+            .single()
+            .unwrap();
+        let t3 = Utc
+            .with_ymd_and_hms(2024, 1, 11, 22, 30, 0)
+            .single()
+            .unwrap();
+
+        let make = |id: u128, value: i64, at: chrono::DateTime<Utc>| Measurement {
+            id: value_objects::Id(Uuid::from_u128(id)),
+            value: value_objects::Value(value),
+            channel_id: value_objects::ChannelId(setup_channel_id),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(3600),
+            interval_end: None,
+        };
+        repository
+            .save_batch(vec![make(1, 10, t1), make(2, 20, t2), make(3, 5, t3)])
+            .unwrap();
+
+        let channel_ids = vec![value_objects::ChannelId(setup_channel_id)];
+        // Berlin local day 2024-01-10 starts at 2024-01-09 23:00 UTC.
+        let from = Utc.with_ymd_and_hms(2024, 1, 9, 23, 0, 0).single().unwrap();
+        let to = Utc
+            .with_ymd_and_hms(2024, 1, 11, 23, 0, 0)
+            .single()
+            .unwrap();
+
+        repository
+            .refresh_rollups(t1, t3 + chrono::Duration::seconds(1))
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .sum_daily(from, to, "Europe/Berlin", &channel_ids, None)
+                .unwrap(),
+            35
+        );
+        let by_channel = repository
+            .sum_daily_by_channel(from, to, "Europe/Berlin", &channel_ids, None)
+            .unwrap();
+        assert_eq!(by_channel.len(), 1);
+        assert_eq!(by_channel[0].channel_id, setup_channel_id);
+        assert_eq!(by_channel[0].total, 35);
+
+        let months = repository
+            .sum_by_month("Europe/Berlin", &channel_ids, None)
+            .unwrap();
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].year, 2024);
+        assert_eq!(months[0].month, 1);
+        assert_eq!(months[0].total, 35);
+
+        let hours = repository
+            .sum_hours(from, to, "Europe/Berlin", &channel_ids, None)
+            .unwrap();
+        assert_eq!(hours.len(), 3);
+        assert_eq!(hours[0].hour, 1);
+        assert_eq!(hours[0].total, 10);
+        assert_eq!(hours[1].hour, 2);
+        assert_eq!(hours[1].total, 20);
+        assert_eq!(hours[2].hour, 23);
+        assert_eq!(hours[2].total, 5);
+
+        let hour_channels = repository
+            .sum_hours_by_channel(from, to, "Europe/Berlin", &channel_ids, None)
+            .unwrap();
+        assert_eq!(hour_channels.len(), 3);
+        assert_eq!(hour_channels[0].channel_id, setup_channel_id);
+        assert_eq!(hour_channels[0].hour, 1);
+        assert_eq!(hour_channels[0].total, 10);
+
+        let buckets = repository
+            .sum_buckets(
+                from,
+                to,
+                BucketGranularity::Day,
+                from,
+                "Europe/Berlin",
+                &channel_ids,
+                None,
+            )
+            .unwrap();
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(
+            buckets[0].start,
+            Utc.with_ymd_and_hms(2024, 1, 9, 23, 0, 0).single().unwrap()
+        );
+        assert_eq!(buckets[0].total, 30);
+        assert_eq!(
+            buckets[1].start,
+            Utc.with_ymd_and_hms(2024, 1, 10, 23, 0, 0)
+                .single()
+                .unwrap()
+        );
+        assert_eq!(buckets[1].total, 5);
+
+        let bucket_channels = repository
+            .sum_buckets_by_channel(
+                from,
+                to,
+                BucketGranularity::Day,
+                from,
+                "Europe/Berlin",
+                &channel_ids,
+                None,
+            )
+            .unwrap();
+        assert_eq!(bucket_channels.len(), 2);
+        assert_eq!(bucket_channels[0].channel_id, setup_channel_id);
+        assert_eq!(bucket_channels[0].total, 30);
+
+        assert_eq!(repository.measurement_bounds().unwrap(), Some((t1, t3)));
+
+        // Re-running the refresh over the same range is idempotent.
+        repository
+            .refresh_rollups(t1, t3 + chrono::Duration::seconds(1))
+            .unwrap();
+        assert_eq!(
+            repository
+                .sum_daily(from, to, "Europe/Berlin", &channel_ids, None)
+                .unwrap(),
+            35
+        );
+
+        // A mid-day refresh range must rebuild the whole containing local day
+        // (not just the in-range slice), so the day never gets undercounted.
+        repository
+            .refresh_rollups(t1, t2 + chrono::Duration::seconds(1))
+            .unwrap();
+        assert_eq!(
+            repository
+                .sum_daily(from, to, "Europe/Berlin", &channel_ids, None)
+                .unwrap(),
+            35
+        );
+    }
+
+    #[test]
+    fn channel_bounds_and_the_readiness_flag_gate_the_rollup_reads() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        let base = Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).single().unwrap();
+        let ids = vec![channel_id()];
+        let make = |id: u128, value: i64, at: chrono::DateTime<Utc>| Measurement {
+            id: value_objects::Id(Uuid::from_u128(id)),
+            value: value_objects::Value(value),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(3600),
+            interval_end: None,
+        };
+        let first = base + chrono::Duration::minutes(30);
+        let last = base + chrono::Duration::hours(3);
+        repository
+            .save_batch(vec![make(1, 10, first), make(2, 20, last)])
+            .unwrap();
+
+        let day_from = base;
+        let day_to = base + chrono::Duration::days(1);
+
+        // A fresh migration seeds `backfilled = false`, so the analytics read the
+        // raw table: a not-yet-built rollup never shows up as zero.
+        assert!(!repository.rollups_ready().unwrap());
+        assert_eq!(
+            repository
+                .sum_daily(day_from, day_to, "UTC", &ids, None)
+                .unwrap(),
+            30
+        );
+
+        // Before the first refresh there is no bounds row, so the reader falls
+        // back to the raw earliest/latest for that channel.
+        let cold = repository.channel_bounds(&ids).unwrap();
+        assert_eq!(cold.len(), 1);
+        assert_eq!(cold[0].channel_id, channel_id().0);
+        assert_eq!(cold[0].first, first);
+        assert_eq!(cold[0].last, last);
+
+        // A refresh populates the rollups, the bounds aggregate and the cached
+        // global bounds.
+        repository
+            .refresh_rollups(first, last + chrono::Duration::seconds(1))
+            .unwrap();
+        let stored = repository.channel_bounds(&ids).unwrap();
+        assert_eq!(stored[0].first, first);
+        assert_eq!(stored[0].last, last);
+        assert_eq!(
+            repository.measurement_bounds().unwrap(),
+            Some((first, last))
+        );
+
+        // The bounds only widen: an earlier measurement merged in by a later
+        // refresh pulls `first` back without moving `last`. It uses a different
+        // resolution because the overlap guard is per (channel, resolution), so a
+        // second 3600 s interval this close would (correctly) be rejected.
+        let earlier = base + chrono::Duration::minutes(1);
+        repository
+            .save_batch(vec![Measurement {
+                id: value_objects::Id(Uuid::from_u128(3)),
+                value: value_objects::Value(7),
+                channel_id: channel_id(),
+                timestamp: value_objects::Timestamp(earlier),
+                resolution_seconds: value_objects::ResolutionSeconds(60),
+                interval_end: None,
+            }])
+            .unwrap();
+        repository
+            .refresh_rollups(earlier, earlier + chrono::Duration::seconds(1))
+            .unwrap();
+        let widened = repository.channel_bounds(&ids).unwrap();
+        assert_eq!(widened[0].first, earlier);
+        assert_eq!(widened[0].last, last);
+
+        // Completing the backfill switches the reads over to the rollup; the value
+        // is unchanged because the rollup is exact.
+        repository.mark_rollups_ready().unwrap();
+        assert!(repository.rollups_ready().unwrap());
+        assert_eq!(
+            repository
+                .sum_daily(day_from, day_to, "UTC", &ids, None)
+                .unwrap(),
+            37
+        );
+    }
+
+    #[test]
+    fn cold_start_rollup_reads_fall_back_to_the_raw_table() {
+        let TestRepo {
+            repository,
+            _container,
+        } = test_repository();
+        // The test station defaults to UTC.
+        let base = Utc.with_ymd_and_hms(2024, 5, 1, 0, 0, 0).single().unwrap();
+        let make = |id: u128, value: i64, at: chrono::DateTime<Utc>| Measurement {
+            id: value_objects::Id(Uuid::from_u128(id)),
+            value: value_objects::Value(value),
+            channel_id: channel_id(),
+            timestamp: value_objects::Timestamp(at),
+            resolution_seconds: value_objects::ResolutionSeconds(3600),
+            interval_end: None,
+        };
+        let from = base;
+        let to = base + chrono::Duration::days(1);
+        repository
+            .save_batch(vec![
+                make(1, 10, base + chrono::Duration::hours(1)),
+                make(2, 20, base + chrono::Duration::hours(2)),
+            ])
+            .unwrap();
+        let ids = vec![channel_id()];
+
+        assert!(!repository.rollups_ready().unwrap());
+        assert!(
+            repository.channel_bounds(&[]).unwrap().is_empty(),
+            "an empty channel list short-circuits"
+        );
+        // The global bounds fall back to the raw MIN/MAX while the bounds table is
+        // still empty.
+        assert_eq!(
+            repository.measurement_bounds().unwrap(),
+            Some((
+                base + chrono::Duration::hours(1),
+                base + chrono::Duration::hours(2)
+            ))
+        );
+
+        // Every rollup-backed read answers from the raw table while un-backfilled:
+        // the hour radar (both variants), the monthly bar, the calendar bucket
+        // series (both variants) and the per-channel daily sum.
+        let hours = repository.sum_hours(from, to, "UTC", &ids, None).unwrap();
+        assert_eq!(hours.len(), 2);
+        assert_eq!(hours[0].hour, 1);
+        assert_eq!(hours[0].total, 10);
+        let hour_channels = repository
+            .sum_hours_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(hour_channels[0].hour, 1);
+        assert_eq!(hour_channels[0].total, 10);
+        let months = repository.sum_by_month("UTC", &ids, None).unwrap();
+        assert_eq!(months.len(), 1);
+        assert_eq!(months[0].total, 30);
+        let buckets = repository
+            .sum_buckets(from, to, BucketGranularity::Month, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].total, 30);
+        let bucket_channels = repository
+            .sum_buckets_by_channel(from, to, BucketGranularity::Week, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(bucket_channels.len(), 1);
+        assert_eq!(bucket_channels[0].total, 30);
+        let daily_channels = repository
+            .sum_daily_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(daily_channels[0].total, 30);
+
+        // After the backfill the same reads are answered by the rollups.
+        repository.refresh_rollups(from, to).unwrap();
+        repository.mark_rollups_ready().unwrap();
+        let hours = repository.sum_hours(from, to, "UTC", &ids, None).unwrap();
+        assert_eq!(hours[0].hour, 1);
+        assert_eq!(hours[0].total, 10);
+        let hour_channels = repository
+            .sum_hours_by_channel(from, to, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(hour_channels[0].total, 10);
+        assert_eq!(
+            repository.sum_by_month("UTC", &ids, None).unwrap()[0].total,
+            30
+        );
+        let buckets = repository
+            .sum_buckets(from, to, BucketGranularity::Month, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(buckets[0].total, 30);
+        let bucket_channels = repository
+            .sum_buckets_by_channel(from, to, BucketGranularity::Week, from, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(bucket_channels[0].total, 30);
     }
 
     fn measurement(id: u128, value: i64) -> Measurement {

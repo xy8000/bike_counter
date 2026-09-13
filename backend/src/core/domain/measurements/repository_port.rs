@@ -4,6 +4,9 @@ use uuid::Uuid;
 use super::measurement::{Measurement, value_objects};
 use crate::core::domain::error::DomainError;
 
+/// The earliest and latest measurement timestamp across the whole history.
+pub type MeasurementBounds = (DateTime<Utc>, DateTime<Utc>);
+
 /// One fixed-width time-bucket of an aggregate sum: the bucket start (UTC) and
 /// the total value across the requested channels.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +139,16 @@ pub struct ChannelLatest {
 pub struct ChannelFirst {
     pub channel_id: Uuid,
     pub timestamp: DateTime<Utc>,
+}
+
+/// The earliest and latest measurement timestamp of one channel, read from the
+/// pre-aggregated bounds table so the "new station" predicate never scans the raw
+/// history. Only channels that have at least one measurement are returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelBounds {
+    pub channel_id: Uuid,
+    pub first: DateTime<Utc>,
+    pub last: DateTime<Utc>,
 }
 
 pub trait MeasurementRepository {
@@ -343,5 +356,312 @@ pub trait MeasurementRepository {
         _channel_ids: &[value_objects::ChannelId],
     ) -> Result<Vec<ChannelFirst>, DomainError> {
         Ok(Vec::new())
+    }
+
+    /// The earliest and latest measurement timestamp per channel, read from the
+    /// pre-aggregated bounds table. The analytics call this instead of
+    /// [`earliest_by_channel`](Self::earliest_by_channel) (and the import
+    /// staleness check instead of [`latest_by_channel`](Self::latest_by_channel)),
+    /// so the exclude-new-stations path is a single indexed lookup per channel
+    /// rather than a raw walk of the channel's whole history.
+    ///
+    /// Defaults to merging [`earliest_by_channel`](Self::earliest_by_channel) and
+    /// [`latest_by_channel`](Self::latest_by_channel), so rollup-unaware doubles
+    /// keep working unchanged.
+    fn channel_bounds(
+        &self,
+        channel_ids: &[value_objects::ChannelId],
+    ) -> Result<Vec<ChannelBounds>, DomainError> {
+        let firsts: std::collections::HashMap<Uuid, DateTime<Utc>> = self
+            .earliest_by_channel(channel_ids)?
+            .into_iter()
+            .map(|row| (row.channel_id, row.timestamp))
+            .collect();
+        let lasts: std::collections::HashMap<Uuid, DateTime<Utc>> = self
+            .latest_by_channel(channel_ids)?
+            .into_iter()
+            .map(|row| (row.channel_id, row.timestamp))
+            .collect();
+        let mut ids: Vec<Uuid> = firsts.keys().chain(lasts.keys()).copied().collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let mut bounds = Vec::with_capacity(ids.len());
+        for id in ids {
+            // A double that only overrides one of the two sides still yields
+            // usable bounds: the missing edge mirrors the present one.
+            let first = firsts.get(&id).or_else(|| lasts.get(&id)).copied();
+            let last = lasts.get(&id).or_else(|| firsts.get(&id)).copied();
+            if let (Some(first), Some(last)) = (first, last) {
+                bounds.push(ChannelBounds {
+                    channel_id: id,
+                    first,
+                    last,
+                });
+            }
+        }
+        Ok(bounds)
+    }
+
+    /// Sums `value` over `[from, to]` from the daily rollup, for windows that are
+    /// whole local days in `timezone` (the overview metrics and `bikes_last_day`).
+    /// The rollup is keyed by each channel's own station-local date, so
+    /// `timezone` must match the station(s) being read (the current
+    /// single-timezone summary assumption).
+    ///
+    /// Defaults to the raw [`sum`](Self::sum) so rollup-unaware doubles behave
+    /// identically.
+    #[allow(clippy::too_many_arguments)]
+    fn sum_daily(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<i64, DomainError> {
+        let _ = timezone;
+        self.sum(from, to, channel_ids, resolution_seconds)
+    }
+
+    /// Like [`sum_daily`](Self::sum_daily) but grouped per channel, so each
+    /// returned row carries its `channel_id` (used for the per-station
+    /// `bikes_last_day` totals).
+    ///
+    /// Defaults to the raw [`sum_by_channel`](Self::sum_by_channel).
+    #[allow(clippy::too_many_arguments)]
+    fn sum_daily_by_channel(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        timezone: &str,
+        channel_ids: &[value_objects::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelTotal>, DomainError> {
+        let _ = timezone;
+        self.sum_by_channel(from, to, channel_ids, resolution_seconds)
+    }
+
+    /// Whether the one-time rollup backfill has already completed. Until it has,
+    /// the analytics must read the raw table (the pre-rollup behaviour) so a fresh
+    /// deploy serves correct numbers instead of zeros while the rollups are still
+    /// being built. Defaults to `true` so rollup-unaware doubles read raw.
+    fn rollups_ready(&self) -> Result<bool, DomainError> {
+        Ok(true)
+    }
+
+    /// Records that the one-time rollup backfill completed, switching the
+    /// analytics reads over to the rollups. Defaults to a no-op.
+    fn mark_rollups_ready(&self) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    /// The earliest and latest measurement timestamp across the whole history,
+    /// used by the rollup job to run a full backfill on its first run. Defaults
+    /// to `None` so rollup-unaware mocks need no change.
+    fn measurement_bounds(&self) -> Result<Option<MeasurementBounds>, DomainError> {
+        Ok(None)
+    }
+
+    /// Rebuilds the hourly/daily rollups for every whole station-local calendar
+    /// day that overlaps the half-open `[from, to)` range. The adapter recomputes
+    /// the affected local buckets from the raw rows and upserts them, so the
+    /// operation is idempotent and safe to run incrementally after an import; the
+    /// range is widened internally so a mid-day boundary never leaves a partially
+    /// re-aggregated day behind.
+    ///
+    /// Defaults to a no-op so rollup-unaware mocks need no change.
+    fn refresh_rollups(&self, _from: DateTime<Utc>, _to: DateTime<Utc>) -> Result<(), DomainError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::domain::counting_stations::counting_station::value_objects::DataSourceId;
+
+    /// A repository that relies entirely on the trait's default methods, as an
+    /// in-memory double written before the rollup/bounds work does. `sum` and
+    /// `sum_by_channel` are the only overrides the defaults delegate to, so they
+    /// return a recognizable sentinel.
+    struct DefaultsOnly;
+
+    impl MeasurementRepository for DefaultsOnly {
+        fn save(&self, _measurement: Measurement) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        fn save_batch(&self, _measurements: Vec<Measurement>) -> Result<u64, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_by_id(&self, _id: value_objects::Id) -> Result<Measurement, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_by_channel_id(
+            &self,
+            _channel_id: value_objects::ChannelId,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            unimplemented!()
+        }
+
+        fn find_page(
+            &self,
+            _channel_id: Option<value_objects::ChannelId>,
+            _offset: usize,
+            _limit: usize,
+        ) -> Result<Vec<Measurement>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<i64, DomainError> {
+            Ok(42)
+        }
+
+        fn sum_buckets(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _granularity: BucketGranularity,
+            _origin: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<TimeBucket>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_buckets_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _granularity: BucketGranularity,
+            _origin: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<ChannelBucket>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_weekdays(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<WeekdayTotal>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_hours(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<HourTotal>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_hours_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<ChannelHourTotal>, DomainError> {
+            unimplemented!()
+        }
+
+        fn sum_by_channel(
+            &self,
+            _from: DateTime<Utc>,
+            _to: DateTime<Utc>,
+            channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<ChannelTotal>, DomainError> {
+            Ok(vec![ChannelTotal {
+                channel_id: channel_ids[0].0,
+                total: 7,
+            }])
+        }
+
+        fn sum_by_month(
+            &self,
+            _timezone: &str,
+            _channel_ids: &[value_objects::ChannelId],
+            _resolution_seconds: Option<i64>,
+        ) -> Result<Vec<MonthTotal>, DomainError> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn default_methods_keep_rollup_unaware_repositories_working() {
+        let repository = DefaultsOnly;
+        let now = DateTime::from_timestamp(0, 0).unwrap();
+        let ids = vec![value_objects::ChannelId(Uuid::from_u128(1))];
+
+        // Rollup maintenance uses safe no-ops, and an unaware repository counts as
+        // ready so the analytics keep their pre-rollup behaviour.
+        assert!(repository.rollups_ready().unwrap());
+        assert!(repository.mark_rollups_ready().is_ok());
+        assert!(repository.measurement_bounds().unwrap().is_none());
+        assert!(repository.refresh_rollups(now, now).is_ok());
+
+        // Coverage/bounds probes default to empty rather than an error.
+        assert!(repository.channel_bounds(&ids).unwrap().is_empty());
+        assert!(repository.earliest_by_channel(&ids).unwrap().is_empty());
+        assert!(repository.latest_by_channel(&ids).unwrap().is_empty());
+        assert!(
+            repository
+                .resolution_coverage(now, now, &ids)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            repository
+                .resolution_coverage_by_channel(now, now, &ids)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            repository
+                .sum_weekdays_by_channel(now, now, "UTC", &ids, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            repository
+                .has_measurements_in_windows(DataSourceId(Uuid::from_u128(2)), &[(now, now)])
+                .unwrap(),
+            vec![false]
+        );
+
+        // The rollup-backed reads delegate to their raw counterparts.
+        assert_eq!(
+            repository.sum_daily(now, now, "UTC", &ids, None).unwrap(),
+            42
+        );
+        let per_channel = repository
+            .sum_daily_by_channel(now, now, "UTC", &ids, None)
+            .unwrap();
+        assert_eq!(per_channel.len(), 1);
+        assert_eq!(per_channel[0].total, 7);
     }
 }

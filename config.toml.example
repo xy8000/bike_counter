@@ -25,6 +25,15 @@ asset_cleanup_cron="0 0 4 * * *"
 # default); same semantics and guidance as the data-source update interval.
 asset_cleanup_max_heartbeat_interval_seconds=300
 
+# Measurement rollup job: maintains the hourly/daily pre-aggregation tables that
+# back the station-analytics graphs and overviews. The import flow refreshes the
+# affected buckets immediately after each source import; this cron is the
+# self-healing fallback (default: every 15 minutes).
+measurement_rollup_cron="0 */15 * * * *"
+# Max heartbeat interval for the rollup job in seconds (default: 300); bounds the
+# crash-recovery latency of a long first-run backfill.
+measurement_rollup_max_heartbeat_interval_seconds=300
+
 # OpenData export job: publishes the immutable daily/monthly measurement files
 # (parquet / csv.gz / json) under /api/v1/opendata.
 [opendata]

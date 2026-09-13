@@ -26,6 +26,14 @@ pub const DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 600;
 /// same MinIO server, kept separate from the station-image bucket so the asset
 /// cleanup job never sees opendata objects).
 pub const DEFAULT_OPENDATA_STORAGE_BUCKET: &str = "bike-counter-opendata";
+/// Default measurement rollup frequency: every 15 minutes, so the hourly/daily
+/// pre-aggregations stay fresh after imports.
+pub const DEFAULT_MEASUREMENT_ROLLUP_CRON: &str = "0 */15 * * * *";
+/// Default max heartbeat interval for the measurement rollup job in seconds.
+/// Kept short (like the other jobs) so a crashed rollup job is reclaimed
+/// quickly; the heartbeat loop beats every few seconds independently of the
+/// refresh chunks the job runs.
+pub const DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 300;
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
@@ -47,6 +55,10 @@ pub struct Configuration {
     opendata_export_cron: String,
     /// Required max interval between heartbeats for the opendata export job.
     opendata_export_max_heartbeat_interval_seconds: i64,
+    /// CRON expression defining when the measurement rollup job re-triggers.
+    measurement_rollup_cron: String,
+    /// Required max interval between heartbeats for the measurement rollup job.
+    measurement_rollup_max_heartbeat_interval_seconds: i64,
     /// S3-compatible object storage holding the immutable opendata files
     /// (dedicated bucket on the same MinIO server as the image assets).
     opendata_storage: value_objects::OpenDataStorageConfiguration,
@@ -115,6 +127,9 @@ impl Configuration {
             opendata_export_max_heartbeat_interval_seconds:
                 DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS,
             opendata_storage: Self::default_opendata_storage(),
+            measurement_rollup_cron: DEFAULT_MEASUREMENT_ROLLUP_CRON.to_string(),
+            measurement_rollup_max_heartbeat_interval_seconds:
+                DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS,
             scheduled_jobs_enabled: true,
         })
     }
@@ -226,6 +241,47 @@ impl Configuration {
         self.opendata_export_max_heartbeat_interval_seconds =
             opendata_export_max_heartbeat_interval_seconds;
         self.opendata_storage = opendata_storage;
+        Ok(self)
+    }
+
+    /// CRON expression defining when the measurement rollup job re-triggers.
+    pub fn measurement_rollup_cron(&self) -> &str {
+        &self.measurement_rollup_cron
+    }
+
+    /// Required max interval between heartbeats for the measurement rollup job.
+    pub fn measurement_rollup_max_heartbeat_interval_seconds(&self) -> i64 {
+        self.measurement_rollup_max_heartbeat_interval_seconds
+    }
+
+    /// The configured measurement rollup max heartbeat interval as a
+    /// `chrono::Duration` for the domain.
+    pub fn measurement_rollup_max_heartbeat_interval(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.measurement_rollup_max_heartbeat_interval_seconds)
+    }
+
+    /// Overrides the measurement rollup settings. Consumes and returns `self`
+    /// so it can be chained onto [`Configuration::new`]. Validates the CRON
+    /// expression and the heartbeat interval like the other jobs' configuration.
+    pub fn with_measurement_rollup(
+        mut self,
+        measurement_rollup_cron: String,
+        measurement_rollup_max_heartbeat_interval_seconds: i64,
+    ) -> Result<Self, ConfigError> {
+        cron::Schedule::from_str(&measurement_rollup_cron).map_err(|error| {
+            ConfigError::InvalidFormat(format!(
+                "invalid measurement_rollup_cron '{measurement_rollup_cron}': {error}"
+            ))
+        })?;
+        if measurement_rollup_max_heartbeat_interval_seconds <= 0 {
+            return Err(ConfigError::InvalidFormat(
+                "measurement_rollup_max_heartbeat_interval_seconds must be a positive integer"
+                    .to_string(),
+            ));
+        }
+        self.measurement_rollup_cron = measurement_rollup_cron;
+        self.measurement_rollup_max_heartbeat_interval_seconds =
+            measurement_rollup_max_heartbeat_interval_seconds;
         Ok(self)
     }
 
@@ -601,6 +657,7 @@ mod tests {
     use super::DEFAULT_ASSET_CLEANUP_CRON;
     use super::DEFAULT_DATA_SOURCE_UPDATE_CRON;
     use super::DEFAULT_MAPS_UPDATE_CRON;
+    use super::DEFAULT_MEASUREMENT_ROLLUP_CRON;
     use super::DEFAULT_OPENDATA_EXPORT_CRON;
     use super::DEFAULT_OPENDATA_STORAGE_BUCKET;
     use super::value_objects::{
@@ -1162,6 +1219,70 @@ mod tests {
                     interval,
                     opendata_storage_config(),
                 ),
+                Err(ConfigError::InvalidFormat(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn with_measurement_rollup_overrides_the_settings() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        let configured = base
+            .with_measurement_rollup(DEFAULT_MEASUREMENT_ROLLUP_CRON.to_string(), 1200)
+            .unwrap();
+        assert_eq!(
+            configured.measurement_rollup_cron(),
+            DEFAULT_MEASUREMENT_ROLLUP_CRON
+        );
+        assert_eq!(
+            configured.measurement_rollup_max_heartbeat_interval_seconds(),
+            1200
+        );
+        assert_eq!(
+            configured.measurement_rollup_max_heartbeat_interval(),
+            chrono::Duration::seconds(1200)
+        );
+    }
+
+    #[test]
+    fn with_measurement_rollup_rejects_invalid_cron() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        assert!(matches!(
+            base.with_measurement_rollup("not a cron".to_string(), 3600),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn with_measurement_rollup_rejects_non_positive_heartbeat_interval() {
+        for interval in [0, -1] {
+            let base = configuration(
+                database_config(),
+                vec![],
+                DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+                3600,
+                DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+                3600,
+            )
+            .unwrap();
+            assert!(matches!(
+                base.with_measurement_rollup(DEFAULT_MEASUREMENT_ROLLUP_CRON.to_string(), interval),
                 Err(ConfigError::InvalidFormat(_))
             ));
         }

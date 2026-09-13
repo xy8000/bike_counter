@@ -447,10 +447,10 @@ pub(super) fn period_data(
             .as_ref()
             .map_or(current.from, |previous| previous.from);
         let mut earliest_by_group: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
-        for row in repository.earliest_by_channel(channel_ids)? {
+        for row in repository.channel_bounds(channel_ids)? {
             if let Some(&group) = group_of_channel.get(&row.channel_id) {
-                let entry = earliest_by_group.entry(group).or_insert(row.timestamp);
-                *entry = (*entry).min(row.timestamp);
+                let entry = earliest_by_group.entry(group).or_insert(row.first);
+                *entry = (*entry).min(row.first);
             }
         }
         earliest_by_group
@@ -784,9 +784,9 @@ pub(super) fn period_graphs_per_channel(
             .as_ref()
             .map_or(current.from, |previous| previous.from);
         match repository
-            .earliest_by_channel(channel_ids)?
+            .channel_bounds(channel_ids)?
             .into_iter()
-            .map(|channel_first| channel_first.timestamp)
+            .map(|bound| bound.first)
             .min()
         {
             // Introduced inside the window, or no data at all -> new.
