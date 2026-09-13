@@ -1004,9 +1004,8 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
         // Serialize with any other rollup refresh (the scheduled backfill vs. the
-        // post-import hook, or another instance): a concurrent refresh could
-        // otherwise deadlock or re-insert a bucket between this transaction's
-        // delete and insert. The xact-scoped lock is released on commit/rollback.
+        // post-import hook, or another instance) so their upserts cannot deadlock
+        // on row locks. The xact-scoped lock is released on commit/rollback.
         transaction
             .execute(
                 "SELECT pg_advisory_xact_lock($1)",
@@ -1023,27 +1022,12 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let expanded_from = from - margin;
         let expanded_to = to + margin;
 
-        // Delete the buckets of every local day strictly inside the expanded
-        // range from both rollup tables. Only the rollup tables and the (small)
-        // channel/station metadata are scanned, never the raw measurement
-        // history. The strict inequalities exclude the two partial boundary days,
-        // which are left untouched (their full days are outside the range).
-        for table in ["measurement_hourly", "measurement_daily"] {
-            let query = format!(
-                "DELETE FROM {table} r \
-                 USING channels c \
-                 JOIN counting_stations s ON s.id = c.counting_station_id \
-                 WHERE r.channel_id = c.id \
-                   AND r.local_date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
-                   AND r.local_date < ($2::timestamptz AT TIME ZONE s.timezone)::date"
-            );
-            transaction
-                .execute(&query, &[&expanded_from, &expanded_to])
-                .map_err(|error| DomainError::Database(error.to_string()))?;
-        }
-
-        // Re-aggregate the hourly buckets for the strictly-interior local days
-        // from the raw rows (one scan of the raw measurements).
+        // Upsert the hourly buckets for every strictly-interior local day from the
+        // raw rows. `ON CONFLICT DO UPDATE` overwrites an existing bucket with the
+        // complete recomputed day total, so no delete (and no scan of the rollup
+        // tables) is needed, and a partially covered boundary day stays untouched
+        // because it is filtered out. The raw scan is bounded by the timestamp
+        // index.
         transaction
             .execute(
                 "INSERT INTO measurement_hourly \
@@ -1061,25 +1045,33 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                        AND (m.timestamp AT TIME ZONE s.timezone)::date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
                        AND (m.timestamp AT TIME ZONE s.timezone)::date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
                  ) raw \
-                 GROUP BY channel_id, resolution_seconds, local_date, local_hour",
+                 GROUP BY channel_id, resolution_seconds, local_date, local_hour \
+                 ON CONFLICT (channel_id, resolution_seconds, local_date, local_hour) \
+                 DO UPDATE SET total = EXCLUDED.total",
                 &[&expanded_from, &expanded_to],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;
 
-        // Rebuild the daily buckets from the freshly written hourly buckets, so
-        // the raw measurements are scanned only once per refresh.
+        // Upsert the daily buckets from the raw rows with the same filter.
         transaction
             .execute(
                 "INSERT INTO measurement_daily \
                      (channel_id, resolution_seconds, local_date, total) \
-                 SELECT h.channel_id, h.resolution_seconds, h.local_date, \
-                        SUM(h.total)::bigint AS total \
-                 FROM measurement_hourly h \
-                 JOIN channels c ON c.id = h.channel_id \
-                 JOIN counting_stations s ON s.id = c.counting_station_id \
-                 WHERE h.local_date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
-                   AND h.local_date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
-                 GROUP BY h.channel_id, h.resolution_seconds, h.local_date",
+                 SELECT channel_id, resolution_seconds, local_date, \
+                        SUM(value)::bigint AS total \
+                 FROM ( \
+                     SELECT m.channel_id, m.resolution_seconds, m.value, \
+                            (m.timestamp AT TIME ZONE s.timezone)::date AS local_date \
+                     FROM measurements m \
+                     JOIN channels c ON c.id = m.channel_id \
+                     JOIN counting_stations s ON s.id = c.counting_station_id \
+                     WHERE m.timestamp >= $1 AND m.timestamp < $2 \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date > ($1::timestamptz AT TIME ZONE s.timezone)::date \
+                       AND (m.timestamp AT TIME ZONE s.timezone)::date < ($2::timestamptz AT TIME ZONE s.timezone)::date \
+                 ) raw \
+                 GROUP BY channel_id, resolution_seconds, local_date \
+                 ON CONFLICT (channel_id, resolution_seconds, local_date) \
+                 DO UPDATE SET total = EXCLUDED.total",
                 &[&expanded_from, &expanded_to],
             )
             .map_err(|error| DomainError::Database(error.to_string()))?;

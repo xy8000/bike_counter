@@ -395,8 +395,8 @@ pub trait MeasurementRepository {
     }
 
     /// Rebuilds the hourly/daily rollups for every whole station-local calendar
-    /// day that overlaps the half-open `[from, to)` range. The adapter deletes the
-    /// affected local buckets and re-inserts them from the raw rows, so the
+    /// day that overlaps the half-open `[from, to)` range. The adapter recomputes
+    /// the affected local buckets from the raw rows and upserts them, so the
     /// operation is idempotent and safe to run incrementally after an import; the
     /// range is widened internally so a mid-day boundary never leaves a partially
     /// re-aggregated day behind.

@@ -105,12 +105,12 @@ run), so startup never blocks.
 
 `refresh_rollups` widens the requested range by 40 h on both ends so every
 station-local calendar day overlapping it is fully covered (a day is at most
-24 h; UTC offsets span -12 h…+14 h). It deletes the strictly-interior local days
-from the rollup tables and rebuilds them from the raw rows, so a mid-day range
-boundary can never leave a partially re-aggregated day behind. The delete only
-scans the (small) rollup tables plus the channel/station metadata, and the daily
-rollup is rebuilt from the freshly written hourly rows, so the raw measurements
-are scanned once per refresh.
+24 h; UTC offsets span -12 h…+14 h). It recomputes the strictly-interior local
+days from the raw rows and **upserts** them (`ON CONFLICT DO UPDATE`), so a
+mid-day range boundary can never leave a partially re-aggregated day behind and
+no delete (nor a scan of the rollup tables) is needed. Both the hourly and the
+daily rollup are recomputed directly from raw with the same filter; the raw scan
+is bounded by the timestamp index.
 
 Every refresh takes a transaction-scoped `pg_advisory_xact_lock` first. The
 scheduled backfill and the post-import hook run concurrently by design, and
@@ -137,9 +137,9 @@ in-memory test doubles keep compiling:
   grouped by `local_hour` for daily-or-coarser windows (replaces the full-year
   raw scan behind the year graph's hour radar).
 - `refresh_rollups(from, to)` — the maintenance write: within one
-  advisory-locked transaction, delete the strictly-interior local days of the
-  widened range from both rollup tables, re-insert the hourly rows from raw, and
-  rebuild the daily rows from the freshly written hourly ones.
+  advisory-locked transaction, upsert the hourly and daily buckets of the
+  strictly-interior local days of the widened range, both recomputed from the
+  raw rows.
 
 ### 3. Background job (`MeasurementRollupService`)
 
