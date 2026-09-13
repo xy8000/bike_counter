@@ -357,7 +357,7 @@ function SummaryContent({
 
   const period = graphs
   const firstBucket = period?.current[0] ?? period?.previous[0]
-  const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : NaN
+  const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : Number.NaN
 
   const mainSeries = period
     ? alignSeries(timeframeSeries(period, cfg, comparePrevious), anchor, cfg.periodStart)
@@ -372,7 +372,7 @@ function SummaryContent({
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <img
           src={page.image_url}
-          alt="Station summary image"
+          alt="Station summary"
           className="h-64 w-full rounded-lg border object-cover md:h-80"
         />
         <SummaryMap stations={stations} disabled={disabled} onToggle={onToggle} bounds={bounds} />

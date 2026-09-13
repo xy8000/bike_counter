@@ -64,7 +64,7 @@ function DataSourceRow({ dataSource }: { dataSource: DataSourceSummary }) {
         <div className="flex min-w-0 items-center gap-3">
           <img
             src={dataSourceImageUrl(dataSource.image_url)}
-            alt={`${dataSource.name} image`}
+            alt={dataSource.name}
             className="h-9 w-9 shrink-0 rounded-md border object-contain p-0.5"
           />
           <div className="min-w-0">
@@ -88,7 +88,7 @@ function DataSourceRow({ dataSource }: { dataSource: DataSourceSummary }) {
         <div className="flex items-center gap-3">
           <img
             src={dataSourceImageUrl(dataSource.image_url)}
-            alt={`${dataSource.name} image`}
+            alt={dataSource.name}
             className="h-10 w-10 shrink-0 rounded-md border object-contain p-0.5"
           />
           <div className="min-w-0 flex-1">

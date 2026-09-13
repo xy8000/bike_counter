@@ -61,12 +61,10 @@ export function TrendSettingsIllustration({ excludeNewStations }: { excludeNewSt
       {includeNewStation ? (
         <div className="mt-2 flex items-center justify-center gap-3 text-[10px] text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm bg-primary/45" />
-            existing stations
+            <span className="h-2 w-2 rounded-sm bg-primary/45" /> existing stations
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm bg-primary" />
-            new station
+            <span className="h-2 w-2 rounded-sm bg-primary" /> new station
           </span>
         </div>
       ) : (

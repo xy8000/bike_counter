@@ -139,9 +139,9 @@ describe('DataSourcesList', () => {
     expect(screen.getAllByText('6').length).toBeGreaterThan(0)
 
     // A real logo is served for Münster; Bonn falls back to the bundled svg.
-    const muesterImages = screen.getAllByAltText('Münster image')
+    const muesterImages = screen.getAllByAltText('Münster')
     expect(muesterImages[0]).toHaveAttribute('src', '/logos/ms.png')
-    const bonnImages = screen.getAllByAltText('Bonn image')
+    const bonnImages = screen.getAllByAltText('Bonn')
     expect(bonnImages[0]).toHaveAttribute('src', dataSourceImageUrl(''))
   })
 

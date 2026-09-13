@@ -292,7 +292,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
   // the current one has no data yet), derived in the station's local day/week/
   // year grid so the current and previous periods can be overlaid.
   const firstBucket = period?.current[0] ?? period?.previous[0]
-  const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : NaN
+  const anchor = firstBucket ? cfg.periodStart(new Date(firstBucket.start).getTime()) : Number.NaN
 
   const mainSeries = period
     ? alignSeries(timeframeSeries(period, cfg, comparePrevious), anchor, cfg.periodStart)
@@ -307,7 +307,7 @@ function DetailContent({ page }: { page: StationDetailPage }) {
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <img
           src={page.image_url}
-          alt={`${page.name} image`}
+          alt={page.name}
           className="h-64 w-full rounded-lg border object-cover md:h-80"
         />
         <DetailMap latitude={page.latitude} longitude={page.longitude} name={page.name} />

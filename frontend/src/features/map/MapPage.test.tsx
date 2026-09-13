@@ -223,7 +223,7 @@ describe('MapPage', () => {
     // debounced shell fetch lands.
     expect(await screen.findByText('Visible counting stations', {}, WAIT)).toBeInTheDocument()
     expect(await screen.findByText('2 / 5', {}, WAIT)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Station Alpha/ })).toBeInTheDocument()
+    expect(screen.getByText('Station Alpha')).toBeInTheDocument()
 
     // The map reports its viewport and the marker flags render.
     expect(await screen.findByAltText('Station Alpha', {}, WAIT)).toBeInTheDocument()
@@ -258,8 +258,8 @@ describe('MapPage', () => {
     makeServer()
     renderMapPage('/')
 
-    const item = await screen.findByRole('button', { name: /Station Alpha/ }, { timeout: 3000 })
-    fireEvent.click(item)
+    const item = await screen.findByText('Station Alpha', {}, { timeout: 3000 })
+    fireEvent.click(item.closest('button') as HTMLElement)
 
     // The sidebar is replaced by the overview panel.
     expect(await screen.findByRole('link', { name: 'Station Alpha' }, WAIT)).toBeInTheDocument()
@@ -287,7 +287,7 @@ describe('MapPage', () => {
     makeServer()
     renderMapPage('/')
 
-    await screen.findByRole('button', { name: /Station Alpha/ }, { timeout: 3000 })
+    await screen.findByRole('button', { name: 'Open Station Alpha' }, { timeout: 3000 })
     const summarize = screen.getByRole('button', { name: /Summarize visible stations/ })
     expect(summarize).toBeEnabled()
 

@@ -224,11 +224,13 @@ describe('StationDetail', () => {
     expect(await screen.findByRole('heading', { name: 'Zoo Station' })).toBeInTheDocument()
     expect(screen.getByText('A zoo by the river.')).toBeInTheDocument()
     expect(screen.getByText('2 channels')).toBeInTheDocument()
-    expect(screen.getByAltText('Zoo Station image')).toHaveAttribute('src', '/img/zoo.png')
+    expect(screen.getAllByAltText('Zoo Station')[0]).toHaveAttribute('src', '/img/zoo.png')
     expect(screen.getByText(/^Updated /)).toBeInTheDocument()
 
     // Map preview marker (mounts once the basemap style sub-request resolves).
-    expect(await screen.findByAltText('Zoo Station')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('img.station-marker[alt="Zoo Station"]')).toBeInTheDocument()
+    })
 
     // Overview card.
     expect(await screen.findByText('Total bikes (all time)')).toBeInTheDocument()

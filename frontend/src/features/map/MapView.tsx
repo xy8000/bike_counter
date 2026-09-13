@@ -168,8 +168,10 @@ export function MapView({
         const station = stationFromPoint(feature)
         return (
           <Marker key={key} longitude={station.longitude} latitude={station.latitude}>
-            <div
-              className="cursor-pointer"
+            <button
+              type="button"
+              aria-label={`Open ${station.name}`}
+              className="cursor-pointer border-0 bg-transparent p-0"
               onClick={(event) => {
                 event.stopPropagation()
                 setPopupStation(station)
@@ -186,7 +188,7 @@ export function MapView({
                       ? 'selected'
                       : 'active',
               })}
-            </div>
+            </button>
           </Marker>
         )
       })}

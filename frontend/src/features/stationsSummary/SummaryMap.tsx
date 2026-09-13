@@ -28,15 +28,17 @@ export function SummaryMap({
             <Marker key={station.id} longitude={station.longitude} latitude={station.latitude}>
               {/* The marker DOM element is a child of the map container, so its
                   click bubbles up to the map's onClick; stop it here. */}
-              <div
-                className="cursor-pointer"
+              <button
+                type="button"
+                aria-label={`Toggle ${station.name}`}
+                className="cursor-pointer border-0 bg-transparent p-0"
                 onClick={(event) => {
                   event.stopPropagation()
                   onToggle(station.id)
                 }}
               >
                 {stationMarkerImage(station.name, { disabled: isDisabled })}
-              </div>
+              </button>
             </Marker>
           )
         })}

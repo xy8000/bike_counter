@@ -67,8 +67,8 @@ cleanup() {
   fi
   # Grouped removal of the remaining temporary files (reviewed manually).
   rm -f "${CONFIG_BACKUP}"
-  [ -n "${BUILD_LOG}" ] && rm -f "${BUILD_LOG}"
-  if [ "${PASS}" -eq 1 ]; then
+  [[ -n "${BUILD_LOG}" ]] && rm -f "${BUILD_LOG}"
+  if [[ "${PASS}" -eq 1 ]]; then
     echo "e2e-playwright: OK"
   else
     echo "e2e-playwright: FAILED"
@@ -222,7 +222,7 @@ for city in "${!CITY_BBOX[@]}"; do
       break
     fi
   done
-  if [ "${IMPORTED}" -ne 1 ]; then
+  if [[ "${IMPORTED}" -ne 1 ]]; then
     echo "ERROR: no seeded counting stations for ${city} (${FRONTEND_URL}/api/bff/stations?${CITY_BBOX[$city]})" >&2
     docker compose -f "${COMPOSE_FILE}" logs backend 2>/dev/null | tail -n 40 || true
     exit 1
@@ -231,7 +231,7 @@ for city in "${!CITY_BBOX[@]}"; do
 done
 
 echo "--- Ensuring the frontend dependencies and the Playwright Chromium browser are installed"
-if [ ! -x "${PROJECT_ROOT}/frontend/node_modules/.bin/playwright" ]; then
+if [[ ! -x "${PROJECT_ROOT}/frontend/node_modules/.bin/playwright" ]]; then
   echo "  npm ci (installing frontend dependencies)"
   if ! npm ci --prefix "${PROJECT_ROOT}/frontend" >/dev/null 2>&1; then
     echo "ERROR: npm ci failed (frontend dependencies)" >&2
