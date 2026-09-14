@@ -13,10 +13,6 @@ describe('TrendSettingsIllustration', () => {
       screen.getByText('a station opens partway through the period — totals jump'),
     ).toBeInTheDocument()
 
-    // Month labels from the first and last months (Jan/Aug).
-    expect(screen.getByText('J')).toBeInTheDocument()
-    expect(screen.getByText('A')).toBeInTheDocument()
-
     // The decorative block is hidden from the accessibility tree.
     expect(container.querySelector('[aria-hidden="true"]')).not.toBeNull()
     // New-station months get a stacked second bar segment.

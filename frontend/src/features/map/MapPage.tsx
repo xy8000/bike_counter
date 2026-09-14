@@ -114,7 +114,7 @@ export default function MapPage() {
   const selectStation = ({ id, latitude, longitude }: StationLocation) => {
     const map = mapRef.current
     if (map && latitude !== null && longitude !== null) {
-      map.flyTo({ center: [longitude, latitude], zoom: 15 })
+      map.flyTo({ center: [longitude, latitude], zoom: 16 })
     }
     setSelectedStationId(id)
   }
