@@ -1,8 +1,5 @@
 import { cn } from '@/lib/utils'
 
-/// Month labels under the chart (Jan–Aug).
-const MONTHS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A']
-
 /// The growth from the stations that were already open before the period
 /// (percent of the tallest bar). The single chart switches between this and the
 /// "all stations" version below.
@@ -55,10 +52,6 @@ export function TrendSettingsIllustration({
             </div>
           )
         })}
-      </div>
-      <div className="mt-1 flex justify-between text-[8px] leading-none text-muted-foreground">
-        <span>{MONTHS[0]}</span>
-        <span>{MONTHS[MONTHS.length - 1]}</span>
       </div>
       {includeNewStation ? (
         <div className="mt-2 flex items-center justify-center gap-3 text-[10px] text-muted-foreground">
