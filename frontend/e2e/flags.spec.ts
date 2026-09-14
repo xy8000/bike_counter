@@ -39,6 +39,24 @@ test('a map void click clears the selected flag again', async ({ page }) => {
   await marker.click()
   await expect(stationMarker(page, stationName)).toHaveClass(/station-marker--selected/)
 
+  // Selecting the marker flies to the station. The flight duration scales with
+  // the distance, and a click on the map while the camera is still animating
+  // can be consumed as a pan/zoom gesture instead of a void click — so wait for
+  // the moveend-driven bounds write to settle before clicking the void (same
+  // pattern as detail.spec.ts's fly-to wait).
+  let previousUrl = ''
+  await expect
+    .poll(
+      async () => {
+        const currentUrl = page.url()
+        const stable = currentUrl === previousUrl
+        previousUrl = currentUrl
+        return stable
+      },
+      { timeout: 10_000, intervals: [250, 250, 500] },
+    )
+    .toBe(true)
+
   // Click the map void (far right edge, away from any marker).
   const map = page.locator('.maplibregl-map')
   const box = await map.boundingBox()

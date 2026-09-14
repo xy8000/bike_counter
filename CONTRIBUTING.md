@@ -34,7 +34,9 @@ Prerequisites:
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, edition
   2024)
 - [Node.js](https://nodejs.org) 24 LTS (for the React frontend; pinned in
-  [`frontend/.nvmrc`](frontend/.nvmrc) — Vite 7 needs at least Node 20.19/22.12)
+  [`frontend/.nvmrc`](frontend/.nvmrc) — Vitest 5 needs at least Node 22.12,
+  which is the floor recorded in the
+  [`frontend/package.json`](frontend/package.json) `engines` field)
 - [Docker](https://www.docker.com) with the Compose v2 plugin (required by the
   gate targets and the PostgreSQL test container)
 - A reachable PostgreSQL instance — for a local run, start one with the
