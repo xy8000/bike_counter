@@ -6,42 +6,42 @@ license = "Apache-2.0"
 
 [dependencies]
 arrow = "59.3.0"
-axum = "0.8"
-bytes = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
-cron = "0.17"
-csv = "1.4"
-flate2 = "1.1"
-futures = "0.3"
-include_dir = "0.7"
+axum = "0.8.9"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+chrono-tz = "0.10.4"
+cron = "0.17.0"
+csv = "1.4.0"
+flate2 = "1.1.10"
+futures = "0.3.34"
+include_dir = "0.7.4"
 # `openssl` is pulled in transitively by rust-s3 (native-tls). The `vendored`
 # feature compiles a static OpenSSL from source, which is required for the
 # fully-static musl Docker build (Alpine's openssl-dev ships only shared libs).
-openssl = { version = "0.10", features = ["vendored"] }
+openssl = { version = "0.10.81", features = ["vendored"] }
 parquet = { version = "59.3.0", features = ["arrow"] }
-postgres = { version = "0.19", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
-r2d2 = "0.8"
-r2d2_postgres = "0.18"
-refinery = { version = "0.9", features = ["postgres"] }
-rust-s3 = { version = "0.37", features = ["with-tokio"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.11"
-tar = "0.4"
-tokio = { version = "1.0", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io"] }
-toml = "1.1.5"
-ureq = "3.4.1"
-utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
-uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
-zip = "8.6"
+postgres = { version = "0.19.14", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
+r2d2 = "0.8.10"
+r2d2_postgres = "0.18.2"
+refinery = { version = "0.9.2", features = ["postgres"] }
+rust-s3 = { version = "0.37.2", features = ["with-tokio"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tar = "0.4.46"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-util = { version = "0.7.19", features = ["io"] }
+toml = "1.1.6"
+ureq = "3.4.2"
+utoipa = { version = "5.5.0", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
+uuid = { version = "1.26.1", features = ["v4", "v5", "serde"] }
+zip = "8.6.0"
 
 [dev-dependencies]
-http-body-util = "0.1"
+http-body-util = "0.1.5"
 # `testcontainers-modules` 0.15 (latest) pins `testcontainers ^0.27`, so the
 # latest stable combination is kept at 0.27.
 testcontainers = { version = "0.27.3", features = ["blocking"] }
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
-tower = { version = "0.5", features = ["util"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+tower = { version = "0.5.3", features = ["util"] }
