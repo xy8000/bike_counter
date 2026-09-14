@@ -81,7 +81,7 @@ services.
 Instead of building from source, the released images on Docker Hub can be
 pulled directly — the `backend` and `frontend` services in
 [`docker-compose.yml`](docker-compose.yml) pin the published image names
-(`xy8000/bike-counter-backend:0.0.3`, `xy8000/bike-counter-frontend:0.0.3`)
+(`xy8000/bike-counter-backend:0.0.4`, `xy8000/bike-counter-frontend:0.0.4`)
 alongside their `build:` blocks, so `docker compose pull` fetches the release
 and `docker compose up` (without `--build`) runs it:
 
@@ -100,7 +100,7 @@ The first start downloads and builds the self-hosted map basemap in the
 background (it needs internet access and can take a while); the backend reports
 healthy immediately and the map shows a "Downloading map…" loading state until
 the basemap is ready. `make down` stops the stack and keeps the database. New
-releases ship as GitHub releases with matching Docker Hub tags (`0.0.3`,
+releases ship as GitHub releases with matching Docker Hub tags (`0.0.4`,
 `latest`).
 
 ## Services
