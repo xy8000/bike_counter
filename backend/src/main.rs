@@ -100,12 +100,22 @@ mod core;
 /// overrides the default `info` filter (e.g. `RUST_LOG=debug`).
 fn init_tracing() {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(tracing_env_filter())
         .with_timer(tracing_subscriber::fmt::time::UtcTime::rfc_3339())
         .init();
+}
+
+/// The log filter used by [`init_tracing`]: `RUST_LOG` when set and parseable,
+/// otherwise the `info` default.
+fn tracing_env_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
+/// Whether the CLI was invoked with the standalone `tiles` subcommand
+/// (`bike_counter tiles`), which builds the basemap out-of-band and exits.
+fn is_tiles_subcommand(args: &[String]) -> bool {
+    args.get(1).map(String::as_str) == Some("tiles")
 }
 
 fn main() {
@@ -139,7 +149,7 @@ fn main() {
     // Standalone basemap build: `bike_counter tiles` runs only the tiles init
     // step (used by `make tiles` / `make tiles-update`) and exits. It needs no
     // database, only the `[maps]` configuration.
-    if std::env::args().nth(1).as_deref() == Some("tiles") {
+    if is_tiles_subcommand(&std::env::args().collect::<Vec<_>>()) {
         if let Err(error) = tiles_init.ensure_available() {
             tracing::error!("Failed to build tiles: {error}");
             std::process::exit(1);
@@ -423,6 +433,11 @@ fn main() {
                 StdDuration::from_secs(30),
             ));
         } else {
+            tracing::warn!(
+                "scheduled_jobs_enabled = false: the data-source update, asset cleanup, \
+                 tiles update and opendata export jobs will NOT be scheduled; only the \
+                 one-off measurement rollup backfill runs"
+            );
             // The analytics read model is served from the rollup tables, which
             // only the `measurement_rollup` job populates. Even in offline setups
             // (the Playwright e2e seeds a fixture and disables all scheduled
@@ -460,6 +475,29 @@ mod tests {
     fn content_type_for_unknown_or_missing_extension() {
         assert_eq!(content_type_for("md"), None);
         assert_eq!(content_type_for(""), None);
+    }
+
+    #[test]
+    fn detects_the_tiles_subcommand() {
+        let args = |items: &[&str]| {
+            items
+                .iter()
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert!(is_tiles_subcommand(&args(&["bike_counter", "tiles"])));
+        assert!(!is_tiles_subcommand(&args(&["bike_counter"])));
+        assert!(!is_tiles_subcommand(&args(&["bike_counter", "serve"])));
+    }
+
+    #[test]
+    fn tracing_env_filter_builds_from_the_environment() {
+        // Exercises the RUST_LOG-override / `info`-fallback construction used by
+        // `init_tracing` without installing a global subscriber (that is
+        // `main`'s job and can only happen once per process).
+        let filter = tracing_env_filter();
+        let _ = filter.max_level_hint();
     }
 
     #[test]

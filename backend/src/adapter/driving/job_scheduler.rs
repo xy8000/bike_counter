@@ -58,3 +58,42 @@ pub async fn run_job_watcher(service: Arc<JobReconciliationService>, interval: S
         tokio::time::sleep(interval).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// A scheduled job that only counts how often the scheduler invoked it.
+    struct CountingJob {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ScheduledJobPort for CountingJob {
+        fn run_if_due(&self) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn run_scheduler_invokes_the_job_once_at_startup() {
+        // Regression guard for "an overdue data-source update never starts": the
+        // scheduler must run the job immediately at startup, before any cron
+        // tick. An invalid expression then stops the loop deterministically.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job: Arc<dyn ScheduledJobPort> = Arc::new(CountingJob {
+            calls: calls.clone(),
+        });
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(run_scheduler(job, "not a cron".to_string()));
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the scheduler must call run_if_due once at startup"
+        );
+    }
+}
