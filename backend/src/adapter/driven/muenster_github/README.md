@@ -38,6 +38,7 @@ Read from the data source's provider vars in
 | `max_measurement_batch_size` | no | `500` | page size |
 | `max_measurement_timeframe_hours` | no | `168` (7 days) | import time window per provider call |
 | `cache_duration` | no | `300` | seconds an extracted/downloaded archive stays fresh |
+| `max_archive_age` | no | `3600` | max age (s) before the cached archive is force-refreshed regardless of upstream headers |
 | `request_timeout_seconds` | no | `30` | end-to-end HTTP request timeout (seconds) |
 
 Example block in [`config.toml.example`](../../../../../config.toml.example:25).
@@ -68,7 +69,13 @@ Example block in [`config.toml.example`](../../../../../config.toml.example:25).
    - **Tier 2** — ZIP fresh but folder missing → re-extract from the ZIP.
    - **Tier 3** — (re-)download + extract.
    - **Tier 4** — best-effort upstream-change detection: if the upstream
-     `ETag`/`Last-Modified` are unchanged, reuse the stale ZIP and re-extract.
+     `ETag`/`Last-Modified` are unchanged, reuse the ZIP and re-extract.
+
+   Tiers 1, 2 and 4 are **additionally gated by `max_archive_age`**: once the
+   cached ZIP is older than that bound the adapter skips straight to Tier 3, so a
+   stale upstream branch archive (e.g. a lagging GitHub `codeload` cache) can
+   never be reused indefinitely. Each decision is logged via `tracing`
+   (`DEBUG` for tier/header details, `INFO` for an actual download).
 2. **Zip-slip safety.** Every entry name goes through
    [`sanitize_zip_path`](archive.rs:23), which rejects anything that would escape
    the extraction directory. Extraction goes to a fresh obscured temp dir.

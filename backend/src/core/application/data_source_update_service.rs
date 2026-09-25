@@ -112,7 +112,7 @@ impl DataSourceUpdateService {
                     .map(|job| job.id.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                println!(
+                tracing::info!(
                     "Data source update job is still active ({count} running/requesting: {ids}); \
                      skipping"
                 );
@@ -120,7 +120,7 @@ impl DataSourceUpdateService {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("Failed to check for an active data-source update job: {error:?}");
+                tracing::error!("Failed to check for an active data-source update job: {error:?}");
                 return;
             }
         }
@@ -132,12 +132,12 @@ impl DataSourceUpdateService {
             .find_last_finished_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
         {
             Ok(None) => {
-                println!("Data source update job has never succeeded; running");
+                tracing::info!("Data source update job has never succeeded; running");
                 self.execute(now);
             }
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
-                    println!(
+                    tracing::info!(
                         "Data source update job is overdue (last run {} at {}); running",
                         last.id,
                         last.finished_at
@@ -148,7 +148,9 @@ impl DataSourceUpdateService {
                 }
             }
             Err(error) => {
-                eprintln!("Failed to check the last finished data-source update job: {error:?}");
+                tracing::error!(
+                    "Failed to check the last finished data-source update job: {error:?}"
+                );
             }
         }
     }
@@ -187,13 +189,13 @@ impl DataSourceUpdateService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!(
+                tracing::info!(
                     "Data source update is already active elsewhere (job_locks held); skipping"
                 );
                 return;
             }
             Err(error) => {
-                eprintln!("Failed to acquire the data source update lock: {error:?}");
+                tracing::error!("Failed to acquire the data source update lock: {error:?}");
                 return;
             }
         }
@@ -212,10 +214,12 @@ impl DataSourceUpdateService {
             let _ = self
                 .job_repository
                 .release(DATA_SOURCE_UPDATE_JOB_TYPE, instance_id);
-            eprintln!("Failed to record data-source update job {job_name} ({job_id}): {error:?}");
+            tracing::error!(
+                "Failed to record data-source update job {job_name} ({job_id}): {error:?}"
+            );
             return;
         }
-        println!("Data source update job {job_name} ({job_id}) started");
+        tracing::info!("Data source update job {job_name} ({job_id}) started");
 
         // 3. A dedicated heartbeat loop keeps the job fresh on a fixed tick,
         //    independent of import-batch boundaries (a slow provider or a large
@@ -246,19 +250,21 @@ impl DataSourceUpdateService {
         match (outcome, status) {
             (_, Some(JobStatus::CancellationRequested)) | (_, Some(JobStatus::Cancelled)) => {
                 match self.job_repository.mark_cancelled(job_id, Utc::now()) {
-                    Ok(()) => println!("Data source update job {job_name} ({job_id}) cancelled"),
-                    Err(error) => eprintln!(
+                    Ok(()) => {
+                        tracing::info!("Data source update job {job_name} ({job_id}) cancelled")
+                    }
+                    Err(error) => tracing::error!(
                         "Could not finalize data-source update job {job_name} ({job_id}) as cancelled: {error:?}"
                     ),
                 }
             }
             (Ok(()), _) => {
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to finish data-source update job {job_name} ({job_id}): {error:?}"
                     );
                 } else {
-                    println!("Data source update job {job_name} ({job_id}) finished");
+                    tracing::info!("Data source update job {job_name} ({job_id}) finished");
                 }
             }
             (Err(error), _) => {
@@ -266,11 +272,13 @@ impl DataSourceUpdateService {
                 if let Err(set_failed_error) =
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
                 {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to mark data-source update job {job_name} ({job_id}) as failed: {set_failed_error:?}"
                     );
                 } else {
-                    eprintln!("Data source update job {job_name} ({job_id}) failed: {error:?}");
+                    tracing::error!(
+                        "Data source update job {job_name} ({job_id}) failed: {error:?}"
+                    );
                 }
             }
         }
@@ -292,8 +300,10 @@ impl DataSourceUpdateService {
     /// success): the aggregate job is finalized as CANCELLED and the next
     /// scheduled run resumes from the checkpoint.
     ///
-    /// All sources are started even when one fails; the returned error (which
-    /// fails the aggregate job) summarizes every failing source.
+    /// All sources are started even when one fails. A **provider/data-source**
+    /// failure is logged and does **not** fail the aggregate job (the failing
+    /// source's own import run is recorded `FAILED`); only database /
+    /// infrastructure errors fail it, summarizing every such source.
     fn run_updates(&self, job_id: Uuid) -> Result<(), DomainError> {
         // This method is invoked from a blocking context (the scheduler wraps
         // `run_if_due` in `spawn_blocking`), so spawning plain OS threads is safe
@@ -303,33 +313,46 @@ impl DataSourceUpdateService {
             let handles: Vec<_> = self
                 .runtimes
                 .iter()
-                .map(|runtime| scope.spawn(move || self.update_one_source(job_id, runtime)))
+                .map(|runtime| {
+                    let data_source = runtime.data_source_id;
+                    scope.spawn(move || (data_source, self.update_one_source(job_id, runtime)))
+                })
                 .collect();
 
-            let mut failures = Vec::new();
+            let mut failures: Vec<(DataSourceId, DomainError)> = Vec::new();
             for handle in handles {
                 match handle.join() {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => failures.push(error),
-                    Err(_) => failures.push(DomainError::Provider(
-                        "data-source import thread panicked".to_string(),
+                    Ok((_id, Ok(()))) => {}
+                    Ok((id, Err(error))) => failures.push((id, error)),
+                    Err(_) => failures.push((
+                        DataSourceId(Uuid::nil()),
+                        DomainError::Provider("data-source import thread panicked".to_string()),
                     )),
                 }
             }
             failures
         });
 
-        if failures.is_empty() {
+        // A per-source provider failure (an upstream that migrated away, is
+        // temporarily unreachable, or serves bad data) must not drag down the
+        // whole update job. Log it and finish: the failing source's own import
+        // run is already recorded FAILED, so it stays visible on the data-source
+        // detail page. Database / infrastructure errors still fail the job.
+        let mut fatal = Vec::new();
+        for (id, error) in failures {
+            if matches!(error, DomainError::Provider(_)) {
+                tracing::error!("data source {id:?} update failed (provider): {error:?}");
+            } else {
+                fatal.push(format!("{id:?}: {error:?}"));
+            }
+        }
+        if fatal.is_empty() {
             Ok(())
         } else {
-            let summary = failures
-                .iter()
-                .map(|error| format!("{error:?}"))
-                .collect::<Vec<_>>()
-                .join("; ");
             Err(DomainError::Provider(format!(
-                "data source update failed ({} source(s)): {summary}",
-                failures.len()
+                "data source update failed ({} source(s)): {}",
+                fatal.len(),
+                fatal.join("; ")
             )))
         }
     }
@@ -362,7 +385,7 @@ impl DataSourceUpdateService {
             Some(job_id),
             started_at,
         )) {
-            eprintln!("Failed to record import run {run_id}: {error:?}");
+            tracing::error!("Failed to record import run {run_id}: {error:?}");
         }
 
         let result = self.data_import_service.update_data_source_with_progress(
@@ -427,10 +450,12 @@ impl DataSourceUpdateService {
                     &status_key(data_source_id),
                     json!(DataSourceImportPhase::Finished.as_str()),
                 ) {
-                    eprintln!("Failed to record FINISHED status for {data_source_id:?}: {error:?}");
+                    tracing::error!(
+                        "Failed to record FINISHED status for {data_source_id:?}: {error:?}"
+                    );
                 }
                 if let Err(error) = self.import_run_repository.finish(run_id, Utc::now()) {
-                    eprintln!("Failed to finish import run {run_id}: {error:?}");
+                    tracing::error!("Failed to finish import run {run_id}: {error:?}");
                 }
                 Ok(())
             }
@@ -445,12 +470,12 @@ impl DataSourceUpdateService {
                     &status_key(data_source_id),
                     json!(DataSourceImportPhase::Finished.as_str()),
                 ) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to record FINISHED status for {data_source_id:?}: {status_error:?}"
                     );
                 }
                 if let Err(run_error) = self.import_run_repository.finish(run_id, Utc::now()) {
-                    eprintln!("Failed to finish import run {run_id}: {run_error:?}");
+                    tracing::error!("Failed to finish import run {run_id}: {run_error:?}");
                 }
                 Ok(())
             }
@@ -459,14 +484,14 @@ impl DataSourceUpdateService {
                     self.import_run_repository
                         .fail(run_id, Utc::now(), &format!("{error:?}"))
                 {
-                    eprintln!("Failed to fail import run {run_id}: {run_error:?}");
+                    tracing::error!("Failed to fail import run {run_id}: {run_error:?}");
                 }
                 if let Err(status_error) = self.job_repository.update_metadata(
                     job_id,
                     &status_key(data_source_id),
                     json!(DataSourceImportPhase::Failed.as_str()),
                 ) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to record FAILED status for {data_source_id:?}: {status_error:?}"
                     );
                 }
@@ -1294,6 +1319,40 @@ mod tests {
         }
     }
 
+    /// A provider whose station read always fails with a provider-level error
+    /// (as an upstream that has fully migrated does).
+    struct FailingProvider;
+
+    impl DataProvider for FailingProvider {
+        fn check_health(&self) -> HealthStatus {
+            HealthStatus::Down("migrated".to_string())
+        }
+
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
+            Err(ProviderError::Unreachable("no usable counter".to_string()))
+        }
+
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn get_measurements_source(
+            &self,
+            _from: Option<DateTime<Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            Ok(SourceMeasurementBatch {
+                measurements: vec![],
+                next_from: None,
+                more: false,
+            })
+        }
+
+        fn max_measurement_batch_size(&self) -> usize {
+            100
+        }
+    }
+
     fn runtime(provider: Arc<dyn DataProvider>) -> DataSourceRuntime {
         DataSourceRuntime {
             configuration: data_source_config(),
@@ -1608,6 +1667,33 @@ mod tests {
         service.finalize(job.id, &job.name, outcome);
         let stored = job_repo.find_by_id(job.id).unwrap().unwrap();
         assert_eq!(stored.status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn provider_failure_does_not_fail_the_aggregate_job() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let provider: Arc<dyn DataProvider> = Arc::new(FailingProvider);
+        let service = service_with(job_repo.clone(), data_source_repo, vec![runtime(provider)]);
+
+        service.run_if_due();
+
+        // A provider-level source failure is logged but must not fail the whole
+        // update job; the source's own status is recorded FAILED so it stays
+        // visible on the data-source detail page.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].status,
+            JobStatus::Finished,
+            "a single provider failure must not fail the aggregate job"
+        );
+        let source_id = DataSourceId(DataSource::id_from_name("Münster"));
+        assert_eq!(
+            jobs[0].metadata.get(&status_key(source_id)),
+            Some(&serde_json::json!("FAILED")),
+            "the failing source records its per-source FAILED status"
+        );
     }
 
     #[test]
@@ -2132,20 +2218,24 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(
             jobs[0].status,
-            JobStatus::Failed,
-            "any failing source still fails the aggregate job"
+            JobStatus::Finished,
+            "a per-source provider failure must not fail the aggregate job"
         );
-        assert!(jobs[0].failure_message.is_some());
+        assert!(
+            jobs[0].failure_message.is_none(),
+            "a finished aggregate job carries no failure message"
+        );
         let muenster = DataSourceId(DataSource::id_from_name("Münster"));
         let bonn = DataSourceId(DataSource::id_from_name("Bonn"));
         assert_eq!(
             jobs[0].metadata.get(&status_key(muenster)),
             Some(&serde_json::json!("FINISHED")),
-            "the successful source still finishes while the other fails"
+            "the successful source finishes"
         );
         assert_eq!(
             jobs[0].metadata.get(&status_key(bonn)),
-            Some(&serde_json::json!("FAILED"))
+            Some(&serde_json::json!("FAILED")),
+            "the failing source records its own FAILED status"
         );
     }
 }

@@ -83,7 +83,9 @@ impl JobReconciliationService {
                 .reconcile_stale_active(job_type, heartbeat_before, now)
             {
                 Ok(()) => {}
-                Err(error) => eprintln!("Failed to reconcile stale {job_type} jobs: {error:?}"),
+                Err(error) => {
+                    tracing::error!("Failed to reconcile stale {job_type} jobs: {error:?}")
+                }
             }
         }
         // Finalize per-source import runs orphaned by a force-cancelled or
@@ -95,9 +97,9 @@ impl JobReconciliationService {
         {
             Ok(0) => {}
             Ok(finalized) => {
-                println!("Finalized {finalized} orphaned data-source import run(s)");
+                tracing::info!("Finalized {finalized} orphaned data-source import run(s)");
             }
-            Err(error) => eprintln!("Failed to finalize orphaned import runs: {error:?}"),
+            Err(error) => tracing::error!("Failed to finalize orphaned import runs: {error:?}"),
         }
     }
 }

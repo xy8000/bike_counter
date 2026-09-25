@@ -34,6 +34,20 @@ Follow the layout of the existing numbered plans in [`plans/`](plans): a single
 Do not reference `ToDo.md` or `plans/README.md` (those files do not exist any
 more).
 
+## Logging
+
+The backend logs through the [`tracing`](https://docs.rs/tracing) stack — **not**
+`println!`/`eprintln!`. [`main.rs`](backend/src/main.rs) installs a
+`tracing-subscriber` `fmt` subscriber with an RFC 3339 **UTC** timer and an
+`EnvFilter` defaulting to `info` (override with `RUST_LOG`, e.g.
+`RUST_LOG=debug`), so every log line carries a timestamp and a level.
+
+- Use `tracing::info!` / `warn!` / `error!` / `debug!` for all backend logging
+  (fully qualified is fine, no `use` needed) — never `println!`/`eprintln!`.
+- `INFO` for lifecycle events, `WARN`/`ERROR` for problems, `DEBUG` for verbose
+  diagnostics that must stay quiet by default.
+- Do **not** add a second logging framework; `tracing` is the one logging stack.
+
 ## Required gates (run before finishing any change)
 
 | Command | Purpose |

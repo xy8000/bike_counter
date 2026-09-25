@@ -46,21 +46,21 @@ pub fn create_pool(configuration: &DatabaseConfiguration) -> Result<PgPool, Doma
             .connect(NoTls)
             .map_err(|error| DomainError::Database(error.to_string()))?;
         // Concise startup logging: which migrations ran this boot (or none).
-        // Plain println! matches the rest of main.rs; no logging framework.
-        println!("Starting DB-Migrations");
+        // Plain tracing::info! matches the rest of main.rs; no logging framework.
+        tracing::info!("Starting DB-Migrations");
         let runner = migrations::runner();
         let report = runner
             .run(&mut client)
             .map_err(|error| DomainError::Database(error.to_string()))?;
         let applied = report.applied_migrations();
         if applied.is_empty() {
-            println!("DB-Migrations: not necessary");
+            tracing::info!("DB-Migrations: not necessary");
         } else {
             let names: Vec<String> = applied
                 .iter()
                 .map(|migration| migration.name().to_string())
                 .collect();
-            println!("DB-Migrations: {} ... done", names.join(", "));
+            tracing::info!("DB-Migrations: {} ... done", names.join(", "));
         }
     }
 

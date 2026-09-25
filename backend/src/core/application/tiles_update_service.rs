@@ -82,7 +82,7 @@ impl TilesUpdateService {
                     .map(|job| job.id.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                println!(
+                tracing::info!(
                     "Tiles update job is still active ({count} running/requesting: {ids}); \
                      skipping"
                 );
@@ -90,7 +90,7 @@ impl TilesUpdateService {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("Failed to check for an active tiles update job: {error:?}");
+                tracing::error!("Failed to check for an active tiles update job: {error:?}");
                 return;
             }
         }
@@ -99,7 +99,7 @@ impl TilesUpdateService {
         // blocks on it). If the archive is missing — first boot or a wiped tiles
         // directory — run the build now, regardless of the job history.
         if !self.tiles_provisioning.is_available() {
-            println!("Basemap (map.pmtiles) is missing — building it in the background");
+            tracing::info!("Basemap (map.pmtiles) is missing — building it in the background");
             self.execute(now);
             return;
         }
@@ -109,12 +109,12 @@ impl TilesUpdateService {
             .find_last_finished_by_type(TILES_UPDATE_JOB_TYPE)
         {
             Ok(None) => {
-                println!("Tiles update job has never succeeded; running");
+                tracing::info!("Tiles update job has never succeeded; running");
                 self.execute(now);
             }
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
-                    println!(
+                    tracing::info!(
                         "Tiles update job is overdue (last run {} at {}); running",
                         last.id,
                         last.finished_at
@@ -125,7 +125,7 @@ impl TilesUpdateService {
                 }
             }
             Err(error) => {
-                eprintln!("Failed to check the last finished tiles update job: {error:?}");
+                tracing::error!("Failed to check the last finished tiles update job: {error:?}");
             }
         }
     }
@@ -159,11 +159,13 @@ impl TilesUpdateService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("Tiles update is already active elsewhere (job_locks held); skipping");
+                tracing::info!(
+                    "Tiles update is already active elsewhere (job_locks held); skipping"
+                );
                 return;
             }
             Err(error) => {
-                eprintln!("Failed to acquire the tiles update lock: {error:?}");
+                tracing::error!("Failed to acquire the tiles update lock: {error:?}");
                 return;
             }
         }
@@ -182,10 +184,10 @@ impl TilesUpdateService {
             let _ = self
                 .job_repository
                 .release(TILES_UPDATE_JOB_TYPE, instance_id);
-            eprintln!("Failed to record tiles update job {job_name} ({job_id}): {error:?}");
+            tracing::error!("Failed to record tiles update job {job_name} ({job_id}): {error:?}");
             return;
         }
-        println!("Tiles update job {job_name} ({job_id}) started");
+        tracing::info!("Tiles update job {job_name} ({job_id}) started");
 
         // 3. A dedicated heartbeat loop keeps the job fresh on a fixed tick for
         //    the whole (potentially long, atomic) build, independent of the
@@ -217,11 +219,11 @@ impl TilesUpdateService {
                 if let Err(set_failed_error) =
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
                 {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to mark tiles update job {job_name} ({job_id}) as failed: {set_failed_error:?}"
                     );
                 } else {
-                    eprintln!("Tiles update job {job_name} ({job_id}) failed: {error:?}");
+                    tracing::error!("Tiles update job {job_name} ({job_id}) failed: {error:?}");
                 }
                 let _ = self
                     .job_repository
@@ -245,7 +247,7 @@ impl TilesUpdateService {
             Ok(JobStatus::CancellationRequested) | Ok(JobStatus::Cancelled) => true,
             Ok(_) => false,
             Err(error) => {
-                eprintln!("Failed to heartbeat tiles update job {job_id}: {error:?}");
+                tracing::error!("Failed to heartbeat tiles update job {job_id}: {error:?}");
                 false
             }
         }
@@ -261,9 +263,9 @@ impl TilesUpdateService {
             return;
         }
         if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
-            eprintln!("Failed to finish tiles update job {job_name} ({job_id}): {error:?}");
+            tracing::error!("Failed to finish tiles update job {job_name} ({job_id}): {error:?}");
         } else {
-            println!("Tiles update job {job_name} ({job_id}) finished");
+            tracing::info!("Tiles update job {job_name} ({job_id}) finished");
         }
         let _ = self
             .job_repository
@@ -273,10 +275,10 @@ impl TilesUpdateService {
     /// Marks the job CANCELLED and releases the type's lock.
     fn finalize_cancelled(&self, job_id: Uuid, job_name: &str) {
         match self.job_repository.mark_cancelled(job_id, Utc::now()) {
-            Ok(()) => println!("Tiles update job {job_name} ({job_id}) cancelled"),
+            Ok(()) => tracing::info!("Tiles update job {job_name} ({job_id}) cancelled"),
             Err(error) => {
                 // Already terminal (e.g. force-cancelled elsewhere): fine.
-                eprintln!(
+                tracing::error!(
                     "Could not finalize tiles update job {job_name} ({job_id}) as cancelled: {error:?}"
                 );
             }

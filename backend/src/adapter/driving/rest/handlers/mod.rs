@@ -82,7 +82,7 @@ pub(crate) fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorRes
         // Never leak the raw database/provider error to the client; log it
         // server-side and return a generic message.
         DomainError::Database(err) => {
-            eprintln!("Internal database error: {err}");
+            tracing::error!("Internal database error: {err}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponseDto {
@@ -91,7 +91,7 @@ pub(crate) fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorRes
             )
         }
         DomainError::Provider(err) => {
-            eprintln!("Internal provider error: {err}");
+            tracing::error!("Internal provider error: {err}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponseDto {
@@ -109,7 +109,7 @@ pub(crate) fn map_domain_error(error: DomainError) -> (StatusCode, Json<ErrorRes
         // never reach the REST boundary. Log it defensively and return a generic
         // error rather than leaking internals.
         DomainError::Cancelled => {
-            eprintln!("Internal cancellation signal leaked to the REST boundary");
+            tracing::error!("Internal cancellation signal leaked to the REST boundary");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponseDto {

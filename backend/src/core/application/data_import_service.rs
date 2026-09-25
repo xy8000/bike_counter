@@ -470,6 +470,14 @@ impl DataImportService {
             }
             on_batch(processed, added, batch.next_from)?;
 
+            tracing::debug!(
+                "data source {:?} batch: processed={processed} added={added} \
+                 next_from={:?} more={}",
+                runtime.data_source_id,
+                batch.next_from,
+                batch.more
+            );
+
             if !batch.more {
                 break;
             }
@@ -495,9 +503,15 @@ impl DataImportService {
                 .measurement_repository
                 .refresh_rollups(first - slack, last + slack)
             {
-                eprintln!("Failed to refresh measurement rollups after import: {error:?}");
+                tracing::error!("Failed to refresh measurement rollups after import: {error:?}");
             }
         }
+
+        tracing::info!(
+            "data source {:?} import finished: processed={processed} added={added} \
+             watermark={watermark:?} completed={completed}",
+            runtime.data_source_id
+        );
 
         Ok(DataSourceUpdate {
             processed_measurements: processed,
