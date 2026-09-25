@@ -410,6 +410,17 @@ mod tests {
     struct MemoryJobRepository {
         jobs: Mutex<Vec<Job>>,
         locks: Mutex<HashMap<String, (Uuid, DateTime<Utc>)>>,
+        fail_find_active: bool,
+        fail_find_last_finished: bool,
+        fail_acquire: bool,
+        fail_insert: bool,
+        fail_heartbeat: bool,
+        fail_set_finished: bool,
+        fail_set_failed: bool,
+        fail_mark_cancelled: bool,
+        /// Marks every newly inserted job cancellation-requested, simulating a
+        /// request that lands while `execute` is between insert and build.
+        cancel_on_insert: bool,
     }
 
     impl MemoryJobRepository {
@@ -417,7 +428,52 @@ mod tests {
             Self {
                 jobs: Mutex::new(jobs),
                 locks: Mutex::new(HashMap::new()),
+                fail_find_active: false,
+                fail_find_last_finished: false,
+                fail_acquire: false,
+                fail_insert: false,
+                fail_heartbeat: false,
+                fail_set_finished: false,
+                fail_set_failed: false,
+                fail_mark_cancelled: false,
+                cancel_on_insert: false,
             }
+        }
+
+        fn set_fail_find_active(&mut self, fail: bool) {
+            self.fail_find_active = fail;
+        }
+
+        fn set_fail_find_last_finished(&mut self, fail: bool) {
+            self.fail_find_last_finished = fail;
+        }
+
+        fn set_fail_acquire(&mut self, fail: bool) {
+            self.fail_acquire = fail;
+        }
+
+        fn set_fail_insert(&mut self, fail: bool) {
+            self.fail_insert = fail;
+        }
+
+        fn set_fail_heartbeat(&mut self, fail: bool) {
+            self.fail_heartbeat = fail;
+        }
+
+        fn set_fail_set_finished(&mut self, fail: bool) {
+            self.fail_set_finished = fail;
+        }
+
+        fn set_fail_set_failed(&mut self, fail: bool) {
+            self.fail_set_failed = fail;
+        }
+
+        fn set_fail_mark_cancelled(&mut self, fail: bool) {
+            self.fail_mark_cancelled = fail;
+        }
+
+        fn set_cancel_on_insert(&mut self, cancel: bool) {
+            self.cancel_on_insert = cancel;
         }
 
         fn all(&self) -> Vec<Job> {
@@ -433,7 +489,13 @@ mod tests {
     }
 
     impl JobRepository for MemoryJobRepository {
-        fn insert(&self, job: Job) -> Result<(), DomainError> {
+        fn insert(&self, mut job: Job) -> Result<(), DomainError> {
+            if self.fail_insert {
+                return Err(DomainError::Database("insert failed".to_string()));
+            }
+            if self.cancel_on_insert {
+                job.status = JobStatus::CancellationRequested;
+            }
             self.jobs.lock().unwrap().push(job);
             Ok(())
         }
@@ -444,6 +506,9 @@ mod tests {
             instance_id: Uuid,
             lock_until: DateTime<Utc>,
         ) -> Result<bool, DomainError> {
+            if self.fail_acquire {
+                return Err(DomainError::Database("acquire failed".to_string()));
+            }
             let mut locks = self.locks.lock().unwrap();
             match locks.get(job_type) {
                 Some((_, until)) if *until >= Utc::now() => Ok(false),
@@ -473,6 +538,9 @@ mod tests {
             at: DateTime<Utc>,
             _lock_until: DateTime<Utc>,
         ) -> Result<JobStatus, DomainError> {
+            if self.fail_heartbeat {
+                return Err(DomainError::Database("heartbeat failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
                 job.heartbeat_at = Some(at);
@@ -483,6 +551,9 @@ mod tests {
         }
 
         fn set_finished(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            if self.fail_set_finished {
+                return Err(DomainError::Database("set_finished failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
                 job.status = JobStatus::Finished;
@@ -497,6 +568,9 @@ mod tests {
             finished_at: DateTime<Utc>,
             message: &str,
         ) -> Result<(), DomainError> {
+            if self.fail_set_failed {
+                return Err(DomainError::Database("set_failed failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
                 job.status = JobStatus::Failed;
@@ -512,6 +586,9 @@ mod tests {
         }
 
         fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            if self.fail_mark_cancelled {
+                return Err(DomainError::Database("mark_cancelled failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
                 && matches!(
@@ -553,6 +630,9 @@ mod tests {
         }
 
         fn find_active_by_type(&self, job_type: &str) -> Result<Vec<Job>, DomainError> {
+            if self.fail_find_active {
+                return Err(DomainError::Database("find active failed".to_string()));
+            }
             Ok(self
                 .jobs
                 .lock()
@@ -570,6 +650,9 @@ mod tests {
         }
 
         fn find_last_finished_by_type(&self, job_type: &str) -> Result<Option<Job>, DomainError> {
+            if self.fail_find_last_finished {
+                return Err(DomainError::Database("find last failed".to_string()));
+            }
             Ok(self
                 .jobs
                 .lock()
@@ -735,5 +818,181 @@ mod tests {
         service(repo.clone(), provisioning.clone()).run_if_due();
 
         assert_eq!(provisioning.update_count(), 0);
+    }
+
+    #[test]
+    fn runs_when_a_finished_job_has_no_timestamps() {
+        // A FINISHED job without timestamps is treated as overdue.
+        let mut job = finished_job(Utc::now());
+        job.finished_at = None;
+        job.started_at = None;
+        let repo = Arc::new(MemoryJobRepository::new(vec![job]));
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 1);
+    }
+
+    #[test]
+    fn logs_and_returns_when_the_active_check_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_find_active(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 0);
+        assert!(repo.all().is_empty());
+    }
+
+    #[test]
+    fn logs_when_the_last_finished_check_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_find_last_finished(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 0);
+    }
+
+    #[test]
+    fn does_not_claim_when_acquire_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_acquire(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 0);
+        assert!(repo.all().is_empty());
+    }
+
+    #[test]
+    fn logs_when_recording_the_job_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_insert(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        // The insert failure is logged; nothing is recorded and no build runs.
+        assert_eq!(provisioning.update_count(), 0);
+        assert!(repo.all().is_empty());
+    }
+
+    #[test]
+    fn cancels_before_the_build_when_a_request_lands_early() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_cancel_on_insert(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        // The pre-build cancellation check stops before provisioning.
+        assert_eq!(provisioning.update_count(), 0);
+        let jobs = repo.all();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn logs_when_finalizing_the_pre_build_cancellation_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_cancel_on_insert(true);
+        repo.set_fail_mark_cancelled(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 0);
+        let jobs = repo.all();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::CancellationRequested);
+    }
+
+    #[test]
+    fn heartbeat_error_does_not_block_the_build() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_heartbeat(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        // The heartbeat error is logged and treated as "not cancelled".
+        assert_eq!(provisioning.update_count(), 1);
+        let jobs = repo.all();
+        assert!(jobs.iter().any(|job| job.status == JobStatus::Finished));
+    }
+
+    #[test]
+    fn logs_when_finishing_the_job_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_set_finished(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        // The build succeeded but the FINISHED marking failed: the job stays
+        // RUNNING (the error was only logged).
+        assert_eq!(provisioning.update_count(), 1);
+        let jobs = repo.all();
+        assert_eq!(jobs[0].status, JobStatus::Running);
+    }
+
+    #[test]
+    fn logs_when_marking_the_job_failed_after_a_provisioning_failure_fails() {
+        let mut repo = MemoryJobRepository::new(vec![]);
+        repo.set_fail_set_failed(true);
+        let repo = Arc::new(repo);
+        let provisioning = Arc::new(MockTilesProvisioning::new(true));
+
+        service(repo.clone(), provisioning.clone()).run_if_due();
+
+        assert_eq!(provisioning.update_count(), 1);
+        let jobs = repo.all();
+        assert_eq!(jobs[0].status, JobStatus::Running);
+    }
+
+    #[test]
+    fn scheduled_job_port_delegates_run_if_due() {
+        let repo = Arc::new(MemoryJobRepository::new(vec![]));
+        let provisioning = Arc::new(MockTilesProvisioning::new(false));
+        let svc = service(repo.clone(), provisioning.clone());
+
+        let port: &dyn ScheduledJobPort = &svc;
+        port.run_if_due();
+
+        assert_eq!(provisioning.update_count(), 1);
+    }
+
+    #[test]
+    fn logs_overdue_run_details_when_logging_is_enabled() {
+        // Enabling a per-thread subscriber forces the otherwise-lazy tracing
+        // argument expressions to be evaluated (and thus executed).
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let now = Utc::now();
+            let repo = Arc::new(MemoryJobRepository::new(vec![finished_job(
+                now - Duration::days(200),
+            )]));
+            let provisioning = Arc::new(MockTilesProvisioning::new(false));
+
+            service(repo.clone(), provisioning.clone()).run_if_due();
+
+            assert_eq!(provisioning.update_count(), 1);
+        });
     }
 }

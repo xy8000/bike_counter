@@ -585,6 +585,12 @@ mod tests {
     }
 
     fn configuration() -> Configuration {
+        configuration_with_cron(DEFAULT_DATA_SOURCE_UPDATE_CRON)
+    }
+
+    /// A configuration with an explicit data-source update cron, so tests can
+    /// mirror a reported deployment's schedule.
+    fn configuration_with_cron(cron: &str) -> Configuration {
         Configuration::new(
             DatabaseConfiguration::new(
                 "postgres://localhost:5432".to_string(),
@@ -594,7 +600,7 @@ mod tests {
             )
             .unwrap(),
             Vec::new(),
-            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            cron.to_string(),
             3600,
             asset_storage(),
             DEFAULT_ASSET_CLEANUP_CRON.to_string(),
@@ -659,6 +665,9 @@ mod tests {
         fail_find_last_finished: bool,
         fail_set_finished: bool,
         fail_set_failed: bool,
+        fail_heartbeat: bool,
+        fail_mark_cancelled: bool,
+        fail_update_metadata_status: bool,
     }
 
     impl MockJobRepository {
@@ -672,6 +681,9 @@ mod tests {
                 fail_find_last_finished: false,
                 fail_set_finished: false,
                 fail_set_failed: false,
+                fail_heartbeat: false,
+                fail_mark_cancelled: false,
+                fail_update_metadata_status: false,
             }
         }
 
@@ -697,6 +709,21 @@ mod tests {
 
         fn set_fail_set_failed(&mut self, fail: bool) {
             self.fail_set_failed = fail;
+        }
+
+        fn set_fail_heartbeat(&mut self, fail: bool) {
+            self.fail_heartbeat = fail;
+        }
+
+        fn set_fail_mark_cancelled(&mut self, fail: bool) {
+            self.fail_mark_cancelled = fail;
+        }
+
+        /// Fails `update_metadata` for the per-source status keys only (so the
+        /// progress counters still succeed), exercising the best-effort status
+        /// bookkeeping error paths.
+        fn set_fail_update_metadata_status(&mut self, fail: bool) {
+            self.fail_update_metadata_status = fail;
         }
 
         fn jobs(&self) -> Vec<Job> {
@@ -751,6 +778,9 @@ mod tests {
             at: DateTime<Utc>,
             _lock_until: DateTime<Utc>,
         ) -> Result<JobStatus, DomainError> {
+            if self.fail_heartbeat {
+                return Err(DomainError::Database("heartbeat failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id) {
                 job.heartbeat_at = Some(at);
@@ -805,6 +835,9 @@ mod tests {
         }
 
         fn mark_cancelled(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            if self.fail_mark_cancelled {
+                return Err(DomainError::Database("mark_cancelled failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.iter_mut().find(|job| job.id == id)
                 && matches!(
@@ -825,6 +858,12 @@ mod tests {
             key: &str,
             value: serde_json::Value,
         ) -> Result<(), DomainError> {
+            if self.fail_update_metadata_status
+                && key.ends_with("_status")
+                && matches!(value.as_str(), Some("FINISHED") | Some("FAILED"))
+            {
+                return Err(DomainError::Database("update metadata failed".to_string()));
+            }
             let mut jobs = self.jobs.lock().unwrap();
             let job = jobs
                 .iter_mut()
@@ -1485,6 +1524,24 @@ mod tests {
         import_runs: Arc<MemoryImportRunRepository>,
         runtimes: Vec<DataSourceRuntime>,
     ) -> DataSourceUpdateService {
+        service_with_import_runs_and_configuration(
+            job_repo,
+            data_source_repo,
+            import_runs,
+            Arc::new(configuration()),
+            runtimes,
+        )
+    }
+
+    /// A service wired to explicit import-run repository and configuration
+    /// doubles (so a test can inject a specific cron schedule).
+    fn service_with_import_runs_and_configuration(
+        job_repo: Arc<MockJobRepository>,
+        data_source_repo: Arc<MockDataSourceRepository>,
+        import_runs: Arc<MemoryImportRunRepository>,
+        configuration: Arc<Configuration>,
+        runtimes: Vec<DataSourceRuntime>,
+    ) -> DataSourceUpdateService {
         let data_repos = Arc::new(RecordingDataRepositories::new());
         let station_repo: Arc<dyn CountingStationRepository + Send + Sync> = data_repos.clone();
         let channel_repo: Arc<dyn ChannelRepository + Send + Sync> = data_repos.clone();
@@ -1500,7 +1557,7 @@ mod tests {
             data_source_repo,
             import_runs,
             data_import,
-            Arc::new(configuration()),
+            configuration,
             runtimes,
             INSTANCE,
         )
@@ -1588,6 +1645,36 @@ mod tests {
         let jobs = job_repo.jobs();
         assert_eq!(jobs.len(), 2, "seeded finished job + a new overdue run");
         assert_eq!(jobs[0].status, JobStatus::Finished);
+        assert_eq!(jobs[1].status, JobStatus::Finished);
+    }
+
+    #[test]
+    fn starts_an_overdue_update_with_the_reported_hourly_cron() {
+        // Mirrors the reported configuration: an hourly cron ("0 0 * * * *")
+        // with a last successful run ~12 days ago must be started at the next
+        // `run_if_due` (e.g. scheduler startup).
+        let finished = Utc::now() - Duration::days(12);
+        let job_repo = Arc::new(MockJobRepository::new(vec![finished_job_at(
+            DATA_SOURCE_UPDATE_JOB_TYPE,
+            finished,
+        )]));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with_import_runs_and_configuration(
+            job_repo.clone(),
+            data_source_repo,
+            Arc::new(MemoryImportRunRepository::default()),
+            Arc::new(configuration_with_cron("0 0 * * * *")),
+            Vec::new(),
+        );
+
+        service.run_if_due();
+
+        let jobs = job_repo.jobs();
+        assert_eq!(
+            jobs.len(),
+            2,
+            "an overdue run with an hourly cron must start a new job"
+        );
         assert_eq!(jobs[1].status, JobStatus::Finished);
     }
 
@@ -2237,5 +2324,248 @@ mod tests {
             Some(&serde_json::json!("FAILED")),
             "the failing source records its own FAILED status"
         );
+    }
+
+    #[test]
+    fn port_trait_wrappers_delegate_to_run_if_due() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        // The scheduler drives the service through both port traits; each
+        // wrapper must delegate to the inherent `run_if_due`.
+        let scheduled: &dyn ScheduledJobPort = &service;
+        scheduled.run_if_due();
+        let port: &dyn DataSourceUpdateServicePort = &service;
+        port.run_if_due();
+
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1, "the first tick starts exactly one job");
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+    }
+
+    #[test]
+    fn runs_when_finished_job_has_no_timestamps() {
+        // A FINISHED job without timestamps is treated as overdue (defensive).
+        let mut job = running_job(DATA_SOURCE_UPDATE_JOB_TYPE, Utc::now());
+        job.status = JobStatus::Finished;
+        job.finished_at = None;
+        job.started_at = None;
+        let job_repo = Arc::new(MockJobRepository::new(vec![job]));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.run_if_due();
+
+        assert_eq!(job_repo.jobs().len(), 2, "an untimed success is overdue");
+    }
+
+    #[test]
+    fn run_updates_propagates_when_heartbeat_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_heartbeat(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // The heartbeat error aborts the source update -> RUNNING -> FAILED.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Failed);
+    }
+
+    /// A provider that panics as soon as it is asked for its stations, so the
+    /// service's worker thread panics and the join-error branch is exercised.
+    struct PanickingProvider;
+
+    impl DataProvider for PanickingProvider {
+        fn check_health(&self) -> HealthStatus {
+            HealthStatus::Up
+        }
+
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
+            panic!("provider worker panic");
+        }
+
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn get_measurements_source(
+            &self,
+            _from: Option<DateTime<Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            Ok(SourceMeasurementBatch {
+                measurements: vec![],
+                next_from: None,
+                more: false,
+            })
+        }
+
+        fn max_measurement_batch_size(&self) -> usize {
+            100
+        }
+    }
+
+    #[test]
+    fn run_updates_reports_a_panicking_source_as_provider_failure() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let provider: Arc<dyn DataProvider> = Arc::new(PanickingProvider);
+        let service = service_with(job_repo.clone(), data_source_repo, vec![runtime(provider)]);
+
+        service.run_if_due();
+
+        // The panic is caught at the thread join as a provider failure, so the
+        // aggregate job still finishes.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+    }
+
+    #[test]
+    fn finalize_logs_when_mark_cancelled_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_mark_cancelled(true);
+        let job_repo = Arc::new(job_repo);
+        let job = running_job(DATA_SOURCE_UPDATE_JOB_TYPE, Utc::now());
+        job_repo.insert(job.clone()).unwrap();
+        job_repo.request_cancellation(job.id).unwrap();
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+        service.finalize(job.id, &job.name, Ok(()));
+
+        // The finalize error is only logged; the job keeps its requested state.
+        let stored = job_repo.find_by_id(job.id).unwrap().unwrap();
+        assert_eq!(stored.status, JobStatus::CancellationRequested);
+    }
+
+    #[test]
+    fn run_updates_logs_when_finished_status_metadata_update_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_update_metadata_status(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // Recording the per-source FINISHED status is best-effort: the job still
+        // finishes.
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Finished);
+    }
+
+    #[test]
+    fn cancelled_source_logs_when_status_metadata_update_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_update_metadata_status(true);
+        let job_repo = Arc::new(job_repo);
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let job = running_job(DATA_SOURCE_UPDATE_JOB_TYPE, Utc::now());
+        job_repo.insert(job.clone()).unwrap();
+        job_repo.request_cancellation(job.id).unwrap();
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        let outcome = service.run_updates(job.id);
+        assert!(outcome.is_ok(), "a cooperative stop is a partial success");
+    }
+
+    #[test]
+    fn cancelled_source_logs_when_import_run_finish_fails() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        import_runs.set_fail_finish(true);
+        let job = running_job(DATA_SOURCE_UPDATE_JOB_TYPE, Utc::now());
+        job_repo.insert(job.clone()).unwrap();
+        job_repo.request_cancellation(job.id).unwrap();
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with_import_runs(
+            job_repo.clone(),
+            data_source_repo,
+            import_runs,
+            vec![measured_runtime(t0)],
+        );
+
+        let outcome = service.run_updates(job.id);
+        assert!(outcome.is_ok(), "a cooperative stop is a partial success");
+    }
+
+    #[test]
+    fn failed_source_logs_when_status_metadata_update_fails() {
+        let mut job_repo = MockJobRepository::new(Vec::new());
+        job_repo.set_fail_update_metadata_status(true);
+        let job_repo = Arc::new(job_repo);
+        let mut data_source_repo = MockDataSourceRepository::new(vec![data_source()]);
+        data_source_repo.set_fail_update_imported_until(true);
+        let data_source_repo = Arc::new(data_source_repo);
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let service = service_with(
+            job_repo.clone(),
+            data_source_repo,
+            vec![measured_runtime(t0)],
+        );
+
+        service.run_if_due();
+
+        // The source update failed and even the FAILED status record failed:
+        // the job is still FAILED (the bookkeeping error is only logged).
+        let jobs = job_repo.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Failed);
+    }
+
+    #[test]
+    fn logs_overdue_run_details_when_logging_is_enabled() {
+        // Enabling a per-thread subscriber forces the otherwise-lazy tracing
+        // argument expressions to be evaluated (and thus executed).
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let finished = Utc::now() - Duration::days(2);
+            let job_repo = Arc::new(MockJobRepository::new(vec![finished_job_at(
+                DATA_SOURCE_UPDATE_JOB_TYPE,
+                finished,
+            )]));
+            let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+            let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
+
+            service.run_if_due();
+
+            assert_eq!(job_repo.jobs().len(), 2);
+        });
     }
 }

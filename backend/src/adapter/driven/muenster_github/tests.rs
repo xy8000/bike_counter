@@ -987,3 +987,391 @@ fn emits_one_line_lifecycle_messages_on_cache_refresh() {
         *events
     );
 }
+
+#[test]
+fn rejects_invalid_max_archive_age_var() {
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("max_archive_age".to_string(), "not-a-number".to_string());
+    let config = data_source(vars);
+    assert!(matches!(
+        MuensterGithubAdapter::new(&config),
+        Err(ConfigError::InvalidFormat(_))
+    ));
+}
+
+#[test]
+fn health_is_up_when_the_host_accepts_connections() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut vars = HashMap::new();
+    vars.insert(
+        "url".to_string(),
+        format!("http://127.0.0.1:{port}/archive.zip"),
+    );
+    let config = data_source(vars);
+    let adapter = MuensterGithubAdapter::new(&config).unwrap();
+
+    assert!(matches!(adapter.check_health(), HealthStatus::Up));
+}
+
+#[test]
+fn health_is_down_for_an_unparseable_url() {
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "not-a-url".to_string());
+    let config = data_source(vars);
+    let adapter = MuensterGithubAdapter::new(&config).unwrap();
+
+    assert!(matches!(adapter.check_health(), HealthStatus::Down(_)));
+}
+
+/// Fake fetcher that reports a `Last-Modified` header (the default
+/// [`FakeFetcher`] only ever sets an ETag).
+struct LastModifiedFetcher {
+    zip: Vec<u8>,
+    last_modified: String,
+}
+
+impl ArchiveFetcher for LastModifiedFetcher {
+    fn head(&self, _url: &str) -> Option<UpstreamHeaders> {
+        None
+    }
+
+    fn get(&self, _url: &str, target: &std::path::Path) -> Result<UpstreamHeaders, String> {
+        fs::write(target, &self.zip).map_err(|e| e.to_string())?;
+        Ok(UpstreamHeaders {
+            etag: None,
+            last_modified: Some(self.last_modified.clone()),
+        })
+    }
+}
+
+#[test]
+fn stores_the_last_modified_header_on_refresh() {
+    let stale = chrono::Utc::now() - chrono::Duration::hours(2);
+    let state = Arc::new(InMemoryAccess::default());
+    state.store(KEY_DOWNLOADED_AT, &stale.to_rfc3339()).unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(LastModifiedFetcher {
+        zip: build_fixture_zip(),
+        last_modified: "Wed, 01 Jan 2025 00:00:00 GMT".to_string(),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state.clone());
+
+    // A stale cache forces tier 3 (download) whose Last-Modified is persisted.
+    adapter.get_all_counting_stations().unwrap();
+
+    assert_eq!(
+        state.load().unwrap().get(super::adapter::KEY_LAST_MODIFIED),
+        Some(&"Wed, 01 Jan 2025 00:00:00 GMT".to_string())
+    );
+}
+
+#[test]
+fn reuses_a_stale_but_matching_zip_via_upstream_headers() {
+    // Tier 4: the ZIP is older than the cache window but the upstream ETag still
+    // matches, so the cached archive is reused (no download).
+    let stale = chrono::Utc::now() - chrono::Duration::hours(2);
+    let zip_path = std::env::temp_dir().join(format!("archive-{}.zip", Uuid::new_v4()));
+    fs::write(&zip_path, build_fixture_zip()).unwrap();
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_ARCHIVE_FILE, &zip_path.to_string_lossy())
+        .unwrap();
+    state.store(KEY_DOWNLOADED_AT, &stale.to_rfc3339()).unwrap();
+    state.store(KEY_ETAG, "\"same\"").unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    vars.insert("max_archive_age".to_string(), "86400".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: build_fixture_zip(),
+        etag: Some("\"same\"".to_string()),
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher.clone());
+    adapter.attach_persistent_state(state.clone());
+
+    let stations = adapter.get_all_counting_stations().unwrap();
+    assert_eq!(stations.len(), 1);
+    assert_eq!(
+        *fetcher.get_calls.lock().unwrap(),
+        0,
+        "tier 4 must reuse the cached zip without downloading"
+    );
+    assert!(
+        state.load().unwrap().contains_key(KEY_EXTRACTED_DIR),
+        "the reused zip is re-extracted and recorded"
+    );
+
+    fs::remove_file(&zip_path).unwrap();
+}
+
+#[test]
+fn re_refreshes_when_state_loses_the_extract_markers() {
+    // `is_extracted_fresh` must report false when the extract timestamp or the
+    // extract directory is missing from the persisted state.
+    let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+    write_extracted_fixture(&fixture);
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+        .unwrap();
+    state
+        .store(KEY_EXTRACTED_AT, &chrono::Utc::now().to_rfc3339())
+        .unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: build_fixture_zip(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state.clone());
+
+    // First read builds the in-memory index and reports a fresh extract.
+    adapter.get_all_counting_stations().unwrap();
+
+    // Losing the timestamp forces a refresh (missing `extracted_at`).
+    state.delete(KEY_EXTRACTED_AT).unwrap();
+    adapter.get_all_counting_stations().unwrap();
+
+    // Losing the directory likewise forces a refresh (missing `extracted_dir`).
+    state.delete(KEY_EXTRACTED_DIR).unwrap();
+    adapter.get_all_counting_stations().unwrap();
+
+    fs::remove_dir_all(&fixture).unwrap();
+}
+
+#[test]
+fn build_index_fails_when_the_site_index_is_missing() {
+    let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+    // The archive root exists but the site index file does not.
+    fs::create_dir_all(fixture.join(ARCHIVE_ROOT)).unwrap();
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+        .unwrap();
+    state
+        .store(KEY_EXTRACTED_AT, &chrono::Utc::now().to_rfc3339())
+        .unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: Vec::new(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state);
+
+    assert!(matches!(
+        adapter.get_all_counting_stations(),
+        Err(ProviderError::InvalidData(_))
+    ));
+
+    fs::remove_dir_all(&fixture).unwrap();
+}
+
+#[test]
+fn channel_without_a_station_directory_serves_no_measurements() {
+    // The site index lists channels, but the station folder (and thus every CSV)
+    // is absent: the channels are indexed but carry no files.
+    let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+    let root = fixture.join(ARCHIVE_ROOT);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join(SITE_INDEX_FILE), fixture_site_json()).unwrap();
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+        .unwrap();
+    state
+        .store(KEY_EXTRACTED_AT, &chrono::Utc::now().to_rfc3339())
+        .unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: Vec::new(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state);
+
+    // Both channels are listed, but the station folder is missing.
+    assert_eq!(adapter.get_all_channels().unwrap().len(), 2);
+
+    // Each call drains one done channel; the third finds the scanner exhausted.
+    for _ in 0..2 {
+        let page = adapter.get_measurements_source(None, 500).unwrap();
+        assert!(page.measurements.is_empty());
+    }
+    let page = adapter.get_measurements_source(None, 500).unwrap();
+    assert!(page.measurements.is_empty());
+    assert!(!page.more, "an exhausted scanner serves an empty batch");
+
+    fs::remove_dir_all(&fixture).unwrap();
+}
+
+#[test]
+fn serving_without_an_attached_state_cannot_build_an_index() {
+    // No persistent state attached: the state store calls are no-ops, so the
+    // archive can be downloaded/extracted but the extracted directory can never
+    // be recorded, and the index build fails to find it.
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: build_fixture_zip(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+
+    assert!(matches!(
+        adapter.get_all_counting_stations(),
+        Err(ProviderError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn ignores_non_month_csv_files_when_windowing() {
+    let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+    let root = fixture.join(ARCHIVE_ROOT);
+    fs::create_dir_all(root.join("100031297")).unwrap();
+    fs::write(root.join(SITE_INDEX_FILE), fixture_site_json()).unwrap();
+    fs::write(root.join("100031297/2023-01.csv"), fixture_csv()).unwrap();
+    // A stray CSV whose name carries no month is skipped by the windower.
+    fs::write(root.join("100031297/readme.csv"), "not a month\n").unwrap();
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+        .unwrap();
+    state
+        .store(KEY_EXTRACTED_AT, &chrono::Utc::now().to_rfc3339())
+        .unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: Vec::new(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state);
+
+    let rows = read_channel(&adapter, None, 500, "102031297");
+    let values: Vec<i64> = rows.iter().map(|row| row.value).collect();
+    assert_eq!(values, vec![1, 4, 8]);
+
+    fs::remove_dir_all(&fixture).unwrap();
+}
+
+fn build_fixture_zip_with_unsafe_entry() -> Vec<u8> {
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    let options = zip::write::SimpleFileOptions::default();
+    {
+        let mut writer = zip::ZipWriter::new(&mut buffer);
+        writer.start_file("../escape.txt", options).unwrap();
+        writer.write_all(b"nope").unwrap();
+        writer
+            .start_file(format!("{ARCHIVE_ROOT}/{SITE_INDEX_FILE}"), options)
+            .unwrap();
+        writer.write_all(fixture_site_json().as_bytes()).unwrap();
+        writer
+            .start_file(format!("{ARCHIVE_ROOT}/100031297/2023-01.csv"), options)
+            .unwrap();
+        writer.write_all(fixture_csv().as_bytes()).unwrap();
+        writer.finish().unwrap();
+    }
+    buffer.into_inner()
+}
+
+#[test]
+fn extraction_skips_entries_that_escape_the_target_directory() {
+    let stale = chrono::Utc::now() - chrono::Duration::hours(2);
+    let state = Arc::new(InMemoryAccess::default());
+    state.store(KEY_DOWNLOADED_AT, &stale.to_rfc3339()).unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: build_fixture_zip_with_unsafe_entry(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher);
+    adapter.attach_persistent_state(state);
+
+    // The path-traversal entry is skipped; the rest extracts normally.
+    let stations = adapter.get_all_counting_stations().unwrap();
+    assert_eq!(stations.len(), 1);
+}
+
+#[test]
+fn logs_index_and_page_details_when_logging_is_enabled() {
+    let fixture = std::env::temp_dir().join(format!("fixture-{}", Uuid::new_v4()));
+    write_extracted_fixture(&fixture);
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_EXTRACTED_DIR, &fixture.to_string_lossy())
+        .unwrap();
+    state
+        .store(KEY_EXTRACTED_AT, &chrono::Utc::now().to_rfc3339())
+        .unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("cache_duration".to_string(), "3600".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: build_fixture_zip(),
+        etag: None,
+        get_calls: Mutex::new(0),
+    });
+
+    // Enabling a per-thread subscriber forces the otherwise-lazy tracing
+    // argument expressions to be evaluated (and thus executed).
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(std::io::sink)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let adapter = adapter_with(config, fetcher);
+        adapter.attach_persistent_state(state);
+
+        let rows = read_channel(&adapter, None, 2, "102031297");
+        assert_eq!(rows.len(), 3);
+    });
+
+    fs::remove_dir_all(&fixture).unwrap();
+}
