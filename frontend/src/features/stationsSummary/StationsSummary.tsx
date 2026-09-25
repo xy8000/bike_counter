@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { StationPage } from '../../components/StationPage'
 import { formatNumber, formatTimestamp } from '../../lib/format'
 import { parseBoundsQuery, parseDisabled, serializeBounds } from '../../lib/geo'
@@ -22,8 +20,7 @@ import {
   timeframeConfig,
 } from '../stationDetail/sections'
 import { useTrendSettings } from '../settings/TrendSettingsContext'
-import { SettingsDialog } from '../settings/SettingsDialog'
-import { TimeframeSettingsLabel } from '../settings/TimeframeSettingsLabel'
+import { TimeframeSettingsControls } from '../settings/TimeframeSettingsControls'
 import { useTimeframeSettings } from '../settings/useTimeframeSettings'
 import { SummaryMap } from './SummaryMap'
 import type { StationsSummaryPage, SummaryPeriodGraphs, SummaryStation } from './types'
@@ -229,7 +226,6 @@ function SummaryContent({
   // toggling either re-fetches only the dependent cards, never the shell.
   const disabledList = Array.from(disabled)
   const { excludeNewStations, setExcludeNewStations } = useTrendSettings()
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const settings = useTimeframeSettings(searchParams, setSearchParams)
   const { timeframe, from, to, compare, resolution, isIndividual } = settings
@@ -329,25 +325,7 @@ function SummaryContent({
       <section className="mt-8">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Detailed statistics</h2>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <TimeframeSettingsLabel settings={settings} />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setSettingsOpen(true)}
-              title="Calculation settings"
-              aria-label="Calculation settings"
-            >
-              <SlidersHorizontal />
-              Settings
-            </Button>
-            <SettingsDialog
-              open={settingsOpen}
-              onOpenChange={setSettingsOpen}
-              settings={settings}
-            />
-          </div>
+          <TimeframeSettingsControls settings={settings} />
         </div>
 
         {statisticsBody(period, graphsError, cfg, mainSeries, comparePrevious)}

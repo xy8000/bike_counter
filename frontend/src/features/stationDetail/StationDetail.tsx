@@ -1,14 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { StationPage } from '@/components/StationPage'
 import { formatNumber, formatTimestamp } from '../../lib/format'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
 import { useTrendSettings } from '../settings/TrendSettingsContext'
-import { SettingsDialog } from '../settings/SettingsDialog'
-import { TimeframeSettingsLabel } from '../settings/TimeframeSettingsLabel'
+import { TimeframeSettingsControls } from '../settings/TimeframeSettingsControls'
 import { useTimeframeSettings } from '../settings/useTimeframeSettings'
 import type { ChannelRef, PeriodGraphs, StationDetailPage } from './types'
 import { resolutionGranularity } from './resolution'
@@ -164,7 +161,6 @@ export function StationDetail() {
 
 function DetailContent({ page }: Readonly<{ page: StationDetailPage }>) {
   const { channels } = page
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const settings = useTimeframeSettings(searchParams, setSearchParams)
   const { timeframe, from, to, compare, resolution, isIndividual } = settings
@@ -256,25 +252,7 @@ function DetailContent({ page }: Readonly<{ page: StationDetailPage }>) {
       <section className="mt-8">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Detailed statistics</h2>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <TimeframeSettingsLabel settings={settings} />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setSettingsOpen(true)}
-              title="Calculation settings"
-              aria-label="Calculation settings"
-            >
-              <SlidersHorizontal />
-              Settings
-            </Button>
-            <SettingsDialog
-              open={settingsOpen}
-              onOpenChange={setSettingsOpen}
-              settings={settings}
-            />
-          </div>
+          <TimeframeSettingsControls settings={settings} />
         </div>
 
         {/* Bike-Trends: with the setting on, a station opened during the period
