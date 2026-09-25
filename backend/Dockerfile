@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Build stage ----------
-FROM rust@sha256:a5163321b170835916201861dbe70a7f92e8cc822531ee3830dbc0a113b1ad54 AS builder
+FROM rust@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS builder
 WORKDIR /build
 
 # curl is used by utoipa-swagger-ui to download its UI assets at build time.
@@ -30,7 +30,7 @@ RUN find src migrations assets -type f -exec touch {} + \
     && cargo build --release --locked
 
 # ---------- Runtime stage ----------
-FROM alpine@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
+FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # `curl` is required by the HEALTHCHECK below. The dedicated `app` account
 # (uid/gid 1000) matches the Docker Compose bind mounts: `./tiles` is host-owned
 # by the developer's uid 1000, so the basemap can be written without running the

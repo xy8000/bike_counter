@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Build stage ----------
-FROM node@sha256:333f6b3eca25980d5682c26207665b93c9417786b21760b2764d5821d9704c8a AS builder
+FROM node@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS builder
 WORKDIR /build
 
 # Install dependencies from the committed lockfile for reproducible builds.
@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # ---------- Runtime stage ----------
-FROM nginx@sha256:bd43d3d8fdbbe597c36fea489886796466a9ea5b662e8c50897d53e190c88a3d
+FROM nginx@sha256:1ed1b0e1d7652937d6cbdaf4018c7b6fc009a7dd6c3047351e2eddda745de43f
 # Run as the image's unprivileged `nginx` user. The official entrypoint renders
 # the template into /etc/nginx/conf.d and the worker writes its temp files to
 # /var/cache/nginx, so both must be owned by `nginx`. The worker binds the
