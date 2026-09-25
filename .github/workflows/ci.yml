@@ -51,6 +51,8 @@ jobs:
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+        with:
+          tool: cargo-llvm-cov
 
       - name: Check formatting (cargo fmt)
         run: cargo fmt --manifest-path backend/Cargo.toml --check --quiet
