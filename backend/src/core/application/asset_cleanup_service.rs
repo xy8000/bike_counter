@@ -79,7 +79,7 @@ impl AssetCleanupService {
                     .map(|job| job.id.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                println!(
+                tracing::info!(
                     "Asset cleanup job is still active ({count} running/requesting: {ids}); \
                      skipping"
                 );
@@ -87,7 +87,7 @@ impl AssetCleanupService {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("Failed to check for an active asset cleanup job: {error:?}");
+                tracing::error!("Failed to check for an active asset cleanup job: {error:?}");
                 return;
             }
         }
@@ -97,12 +97,12 @@ impl AssetCleanupService {
             .find_last_finished_by_type(ASSET_CLEANUP_JOB_TYPE)
         {
             Ok(None) => {
-                println!("Asset cleanup job has never succeeded; running");
+                tracing::info!("Asset cleanup job has never succeeded; running");
                 self.execute(now);
             }
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
-                    println!(
+                    tracing::info!(
                         "Asset cleanup job is overdue (last run {} at {}); running",
                         last.id,
                         last.finished_at
@@ -113,7 +113,7 @@ impl AssetCleanupService {
                 }
             }
             Err(error) => {
-                eprintln!("Failed to check the last finished asset cleanup job: {error:?}");
+                tracing::error!("Failed to check the last finished asset cleanup job: {error:?}");
             }
         }
     }
@@ -147,11 +147,13 @@ impl AssetCleanupService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("Asset cleanup is already active elsewhere (job_locks held); skipping");
+                tracing::info!(
+                    "Asset cleanup is already active elsewhere (job_locks held); skipping"
+                );
                 return;
             }
             Err(error) => {
-                eprintln!("Failed to acquire the asset cleanup lock: {error:?}");
+                tracing::error!("Failed to acquire the asset cleanup lock: {error:?}");
                 return;
             }
         }
@@ -170,10 +172,10 @@ impl AssetCleanupService {
             let _ = self
                 .job_repository
                 .release(ASSET_CLEANUP_JOB_TYPE, instance_id);
-            eprintln!("Failed to record asset cleanup job {job_name} ({job_id}): {error:?}");
+            tracing::error!("Failed to record asset cleanup job {job_name} ({job_id}): {error:?}");
             return;
         }
-        println!("Asset cleanup job {job_name} ({job_id}) started");
+        tracing::info!("Asset cleanup job {job_name} ({job_id}) started");
 
         // 3. A dedicated heartbeat loop keeps the job fresh on a fixed tick,
         //    independent of how many objects the cleanup has to delete.
@@ -203,19 +205,19 @@ impl AssetCleanupService {
         match (outcome, status) {
             (_, Some(JobStatus::CancellationRequested)) | (_, Some(JobStatus::Cancelled)) => {
                 match self.job_repository.mark_cancelled(job_id, Utc::now()) {
-                    Ok(()) => println!("Asset cleanup job {job_name} ({job_id}) cancelled"),
-                    Err(error) => eprintln!(
+                    Ok(()) => tracing::info!("Asset cleanup job {job_name} ({job_id}) cancelled"),
+                    Err(error) => tracing::error!(
                         "Could not finalize asset cleanup job {job_name} ({job_id}) as cancelled: {error:?}"
                     ),
                 }
             }
             (Ok(()), _) => {
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to finish asset cleanup job {job_name} ({job_id}): {error:?}"
                     );
                 } else {
-                    println!("Asset cleanup job {job_name} ({job_id}) finished");
+                    tracing::info!("Asset cleanup job {job_name} ({job_id}) finished");
                 }
             }
             (Err(error), _) => {
@@ -223,11 +225,11 @@ impl AssetCleanupService {
                 if let Err(set_failed_error) =
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
                 {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to mark asset cleanup job {job_name} ({job_id}) as failed: {set_failed_error:?}"
                     );
                 } else {
-                    eprintln!("Asset cleanup job {job_name} ({job_id}) failed: {error:?}");
+                    tracing::error!("Asset cleanup job {job_name} ({job_id}) failed: {error:?}");
                 }
             }
         }
@@ -270,7 +272,7 @@ impl AssetCleanupService {
             .update_metadata(job_id, DELETED_OBJECTS_KEY, json!(deleted))?;
 
         if deleted > 0 {
-            println!("Asset cleanup deleted {deleted} orphaned object(s)");
+            tracing::info!("Asset cleanup deleted {deleted} orphaned object(s)");
         }
         Ok(())
     }

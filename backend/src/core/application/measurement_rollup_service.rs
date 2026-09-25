@@ -77,13 +77,15 @@ impl MeasurementRollupService {
         // succeeded but the readiness state did not exist yet.
         match self.measurement_repository.rollups_ready() {
             Ok(false) => {
-                println!("Measurement rollups are not backfilled yet; running the full backfill");
+                tracing::info!(
+                    "Measurement rollups are not backfilled yet; running the full backfill"
+                );
                 self.execute_full(now);
                 return;
             }
             Ok(true) => {}
             Err(error) => {
-                eprintln!("Failed to read the rollup readiness state: {error:?}");
+                tracing::error!("Failed to read the rollup readiness state: {error:?}");
                 return;
             }
         }
@@ -93,17 +95,19 @@ impl MeasurementRollupService {
             .find_last_finished_by_type(MEASUREMENT_ROLLUP_JOB_TYPE)
         {
             Ok(None) => {
-                println!("Measurement rollup has never succeeded; running the full backfill");
+                tracing::info!("Measurement rollup has never succeeded; running the full backfill");
                 self.execute_full(now);
             }
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
-                    println!("Measurement rollup is overdue; refreshing the recent window");
+                    tracing::info!("Measurement rollup is overdue; refreshing the recent window");
                     self.execute_recent(now);
                 }
             }
             Err(error) => {
-                eprintln!("Failed to check the last finished measurement rollup job: {error:?}");
+                tracing::error!(
+                    "Failed to check the last finished measurement rollup job: {error:?}"
+                );
             }
         }
     }
@@ -125,12 +129,12 @@ impl MeasurementRollupService {
                     .map(|job| job.id.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                println!("Measurement rollup is still active ({ids}); skipping");
+                tracing::info!("Measurement rollup is still active ({ids}); skipping");
                 true
             }
             Ok(_) => false,
             Err(error) => {
-                eprintln!("Failed to check for an active measurement rollup job: {error:?}");
+                tracing::error!("Failed to check for an active measurement rollup job: {error:?}");
                 true
             }
         }
@@ -158,11 +162,13 @@ impl MeasurementRollupService {
         let bounds = match self.measurement_repository.measurement_bounds() {
             Ok(Some(bounds)) => bounds,
             Ok(None) => {
-                println!("No measurements yet; nothing to roll up");
+                tracing::info!("No measurements yet; nothing to roll up");
                 return;
             }
             Err(error) => {
-                eprintln!("Failed to read measurement bounds for the rollup backfill: {error:?}");
+                tracing::error!(
+                    "Failed to read measurement bounds for the rollup backfill: {error:?}"
+                );
                 return;
             }
         };
@@ -174,7 +180,7 @@ impl MeasurementRollupService {
             // so the analytics may read them. A failed or cancelled backfill leaves
             // the flag false and retries on the next tick.
             if let Err(error) = self.measurement_repository.mark_rollups_ready() {
-                eprintln!("Failed to mark the rollups as backfilled: {error:?}");
+                tracing::error!("Failed to mark the rollups as backfilled: {error:?}");
             }
         }
     }
@@ -198,11 +204,11 @@ impl MeasurementRollupService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("Measurement rollup is already active elsewhere; skipping");
+                tracing::info!("Measurement rollup is already active elsewhere; skipping");
                 return false;
             }
             Err(error) => {
-                eprintln!("Failed to acquire the measurement rollup lock: {error:?}");
+                tracing::error!("Failed to acquire the measurement rollup lock: {error:?}");
                 return false;
             }
         }
@@ -220,10 +226,12 @@ impl MeasurementRollupService {
             let _ = self
                 .job_repository
                 .release(MEASUREMENT_ROLLUP_JOB_TYPE, instance_id);
-            eprintln!("Failed to record measurement rollup job {job_name} ({job_id}): {error:?}");
+            tracing::error!(
+                "Failed to record measurement rollup job {job_name} ({job_id}): {error:?}"
+            );
             return false;
         }
-        println!("Measurement rollup job {job_name} ({job_id}) started");
+        tracing::info!("Measurement rollup job {job_name} ({job_id}) started");
 
         let heartbeat = JobHeartbeat::start(
             self.job_repository.clone(),
@@ -258,11 +266,11 @@ impl MeasurementRollupService {
             if let Err(set_failed_error) =
                 self.job_repository.set_failed(job_id, Utc::now(), &message)
             {
-                eprintln!(
+                tracing::error!(
                     "Failed to mark measurement rollup job {job_name} ({job_id}) as failed: {set_failed_error:?}"
                 );
             } else {
-                eprintln!("Measurement rollup job {job_name} ({job_id}) failed: {error:?}");
+                tracing::error!("Measurement rollup job {job_name} ({job_id}) failed: {error:?}");
             }
             let _ = self
                 .job_repository
@@ -294,7 +302,7 @@ impl MeasurementRollupService {
             Ok(JobStatus::CancellationRequested) | Ok(JobStatus::Cancelled) => true,
             Ok(_) => false,
             Err(error) => {
-                eprintln!("Failed to heartbeat measurement rollup job {job_id}: {error:?}");
+                tracing::error!("Failed to heartbeat measurement rollup job {job_id}: {error:?}");
                 false
             }
         }
@@ -308,9 +316,11 @@ impl MeasurementRollupService {
             return;
         }
         if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
-            eprintln!("Failed to finish measurement rollup job {job_name} ({job_id}): {error:?}");
+            tracing::error!(
+                "Failed to finish measurement rollup job {job_name} ({job_id}): {error:?}"
+            );
         } else {
-            println!("Measurement rollup job {job_name} ({job_id}) finished");
+            tracing::info!("Measurement rollup job {job_name} ({job_id}) finished");
         }
         let _ = self
             .job_repository
@@ -320,9 +330,9 @@ impl MeasurementRollupService {
     /// Marks the job CANCELLED and releases the type's lock.
     fn finalize_cancelled(&self, job_id: Uuid, job_name: &str) {
         match self.job_repository.mark_cancelled(job_id, Utc::now()) {
-            Ok(()) => println!("Measurement rollup job {job_name} ({job_id}) cancelled"),
+            Ok(()) => tracing::info!("Measurement rollup job {job_name} ({job_id}) cancelled"),
             Err(error) => {
-                eprintln!(
+                tracing::error!(
                     "Could not finalize measurement rollup job {job_name} ({job_id}) as cancelled: {error:?}"
                 );
             }

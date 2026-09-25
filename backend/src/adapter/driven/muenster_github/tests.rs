@@ -6,7 +6,9 @@ use std::fs;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use super::adapter::{KEY_ARCHIVE_FILE, KEY_DOWNLOADED_AT, KEY_EXTRACTED_AT, KEY_EXTRACTED_DIR};
+use super::adapter::{
+    KEY_ARCHIVE_FILE, KEY_DOWNLOADED_AT, KEY_ETAG, KEY_EXTRACTED_AT, KEY_EXTRACTED_DIR,
+};
 use super::archive::{ARCHIVE_ROOT, SITE_INDEX_FILE};
 use super::fetcher::{ArchiveFetcher, UpstreamHeaders};
 use super::parsing::{
@@ -109,6 +111,25 @@ fn reads_cache_duration_var() {
     let config = data_source(vars);
     let adapter = MuensterGithubAdapter::new(&config).unwrap();
     assert_eq!(adapter.cache_duration(), 120);
+}
+
+#[test]
+fn defaults_max_archive_age_when_unset() {
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    let config = data_source(vars);
+    let adapter = MuensterGithubAdapter::new(&config).unwrap();
+    assert_eq!(adapter.max_archive_age(), 3600);
+}
+
+#[test]
+fn reads_max_archive_age_var() {
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    vars.insert("max_archive_age".to_string(), "120".to_string());
+    let config = data_source(vars);
+    let adapter = MuensterGithubAdapter::new(&config).unwrap();
+    assert_eq!(adapter.max_archive_age(), 120);
 }
 
 #[test]
@@ -794,6 +815,49 @@ fn downloads_when_the_cache_is_stale() {
         1,
         "stale cache triggers a download"
     );
+}
+
+#[test]
+fn over_age_zip_is_re_downloaded_even_when_the_etag_matches() {
+    // Regression: a stale upstream branch archive (e.g. a lagging GitHub
+    // codeload cache) must never be trusted indefinitely. Even when the upstream
+    // ETag still matches the persisted one, an archive older than
+    // `max_archive_age` is force-refreshed so the stale content self-heals.
+    let old = chrono::Utc::now() - chrono::Duration::hours(3);
+    let zip_path = std::env::temp_dir().join(format!("archive-{}.zip", Uuid::new_v4()));
+    fs::write(&zip_path, build_fixture_zip()).unwrap();
+
+    let state = Arc::new(InMemoryAccess::default());
+    state
+        .store(KEY_ARCHIVE_FILE, &zip_path.to_string_lossy())
+        .unwrap();
+    state.store(KEY_DOWNLOADED_AT, &old.to_rfc3339()).unwrap();
+    // Persist the SAME etag the upstream reports, so Tier 4 would otherwise
+    // reuse the archive.
+    state.store(KEY_ETAG, "\"same\"").unwrap();
+
+    let mut vars = HashMap::new();
+    vars.insert("url".to_string(), "https://github.com".to_string());
+    // A huge cache window, so only the age bound can force the refresh.
+    vars.insert("cache_duration".to_string(), "86400".to_string());
+    vars.insert("max_archive_age".to_string(), "60".to_string());
+    let config = data_source(vars);
+    let fetcher = Arc::new(FakeFetcher {
+        zip: build_fixture_zip(),
+        etag: Some("\"same\"".to_string()),
+        get_calls: Mutex::new(0),
+    });
+    let adapter = adapter_with(config, fetcher.clone());
+    adapter.attach_persistent_state(state);
+
+    adapter.get_all_counting_stations().unwrap();
+    assert_eq!(
+        *fetcher.get_calls.lock().unwrap(),
+        1,
+        "an over-age archive must be re-downloaded even when the etag matches"
+    );
+
+    fs::remove_file(&zip_path).unwrap();
 }
 
 // -- provider messages ----------------------------------------------------

@@ -36,6 +36,10 @@ pub(crate) const DEFAULT_MAX_MEASUREMENT_BATCH_SIZE: usize = 500;
 /// Default import time window per provider call: 7 days, in hours.
 pub(crate) const DEFAULT_MAX_MEASUREMENT_TIMEFRAME_HOURS: u64 = 168;
 pub(crate) const DEFAULT_CACHE_DURATION_SECS: u64 = 300;
+/// Default maximum age of a cached archive before it is force-refreshed, in
+/// seconds (1 hour). Guards against a stale upstream branch archive (e.g. a
+/// lagging `codeload` cache) being trusted indefinitely via the fast-path tiers.
+pub(crate) const DEFAULT_MAX_ARCHIVE_AGE_SECS: u64 = 3600;
 
 /// Persistent-state keys owned by this provider.
 pub(crate) const KEY_DOWNLOADED_AT: &str = "archive_downloaded_at";
@@ -52,6 +56,9 @@ pub struct MuensterGithubAdapter {
     /// call reads regardless of the row-count batch size.
     max_measurement_timeframe: Duration,
     cache_duration: u64,
+    /// Maximum age (seconds) of a cached archive before it is force-refreshed,
+    /// regardless of the upstream headers.
+    max_archive_age: u64,
     fetcher: Arc<dyn ArchiveFetcher>,
     /// Scoped persistent-state handle, attached by `StartupService` after the
     /// data source is persisted (two-phase handover). `None` until attached.
@@ -80,8 +87,8 @@ impl MuensterGithubAdapter {
     ///
     /// Required var: `url`. Optional vars: `max_measurement_batch_size`,
     /// `max_measurement_timeframe_hours` (hours, default `168`), `cache_duration`
-    /// (seconds, default `300`). A missing/invalid value is a configuration
-    /// error (blocks startup).
+    /// (seconds, default `300`), `max_archive_age` (seconds, default `3600`). A
+    /// missing/invalid value is a configuration error (blocks startup).
     pub fn new(config: &DataSourceConfiguration) -> Result<Self, ConfigError> {
         let timeout = crate::adapter::driven::http::parse_request_timeout(
             config.provider().var("request_timeout_seconds"),
@@ -120,6 +127,15 @@ impl MuensterGithubAdapter {
             None => DEFAULT_CACHE_DURATION_SECS,
         };
 
+        let max_archive_age = match config.provider().var("max_archive_age") {
+            Some(raw) => raw.parse::<u64>().map_err(|_| {
+                ConfigError::InvalidFormat(format!(
+                    "{PROVIDER_TYPE}: var 'max_archive_age' is not a valid number"
+                ))
+            })?,
+            None => DEFAULT_MAX_ARCHIVE_AGE_SECS,
+        };
+
         let timeframe_hours = match config.provider().var("max_measurement_timeframe_hours") {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 ConfigError::InvalidFormat(format!(
@@ -134,6 +150,7 @@ impl MuensterGithubAdapter {
             max_measurement_batch_size,
             max_measurement_timeframe: Duration::hours(timeframe_hours as i64),
             cache_duration,
+            max_archive_age,
             fetcher,
             state: Mutex::new(None),
             messages: Mutex::new(None),
@@ -146,6 +163,11 @@ impl MuensterGithubAdapter {
     /// The configured cache window in seconds.
     pub fn cache_duration(&self) -> u64 {
         self.cache_duration
+    }
+
+    /// The configured maximum archive age in seconds (test-only read path).
+    pub fn max_archive_age(&self) -> u64 {
+        self.max_archive_age
     }
 
     /// The configured import time window in hours (test-only read path).
@@ -233,21 +255,41 @@ impl MuensterGithubAdapter {
 
     /// Applies the four-tier cache decision and leaves a usable extracted
     /// directory on disk.
+    ///
+    /// Every reuse tier is additionally gated by [`Self::max_archive_age`]: once
+    /// the cached ZIP is older than that bound it is force-refreshed, so a stale
+    /// upstream branch archive (e.g. a lagging GitHub `codeload` cache) can never
+    /// be trusted indefinitely.
     fn refresh_archive(&self) -> Result<(), ProviderError> {
         let state = self.load_state()?;
         let now = Utc::now();
         let cache = chrono::Duration::seconds(self.cache_duration as i64);
+        let max_age = chrono::Duration::seconds(self.max_archive_age as i64);
 
         let extracted_at = state.get(KEY_EXTRACTED_AT).and_then(|v| parse_rfc3339(v));
         let extracted_dir = state.get(KEY_EXTRACTED_DIR).map(PathBuf::from);
         let downloaded_at = state.get(KEY_DOWNLOADED_AT).and_then(|v| parse_rfc3339(v));
         let zip_path = state.get(KEY_ARCHIVE_FILE).map(PathBuf::from);
 
+        // Force a fresh download once the cached ZIP exceeds its maximum age,
+        // regardless of the (possibly stale) upstream headers. Only a *known*
+        // download time can be over-age; a missing one leaves the tiers to
+        // decide (tier 1 can still reuse a fresh extract).
+        let archive_too_old = downloaded_at.is_some_and(|at| at + max_age < now);
+        tracing::debug!(
+            "münster archive cache: downloaded_at={downloaded_at:?} extracted_at={extracted_at:?} \
+             cache_duration={}s max_archive_age={}s too_old={archive_too_old}",
+            self.cache_duration,
+            self.max_archive_age,
+        );
+
         // Tier 1: extracted folder fresh -> reuse.
-        if let (Some(at), Some(dir)) = (extracted_at, extracted_dir)
+        if !archive_too_old
+            && let (Some(at), Some(dir)) = (extracted_at, extracted_dir)
             && at + cache >= now
             && dir.exists()
         {
+            tracing::debug!("münster archive cache: tier 1 (fresh extract) reused");
             self.emit(
                 ProviderMessageSeverity::Debug,
                 "archive cache fresh: reusing extracted folder",
@@ -256,10 +298,12 @@ impl MuensterGithubAdapter {
         }
 
         // Tier 2: ZIP fresh but folder missing -> re-extract from the ZIP.
-        if let (Some(at), Some(zip)) = (downloaded_at, zip_path.as_ref())
+        if !archive_too_old
+            && let (Some(at), Some(zip)) = (downloaded_at, zip_path.as_ref())
             && at + cache >= now
             && zip.exists()
         {
+            tracing::debug!("münster archive cache: tier 2 (fresh zip) re-extracted");
             let dir = self.extract(zip)?;
             self.store_extracted(&dir, now)?;
             self.emit(
@@ -270,16 +314,26 @@ impl MuensterGithubAdapter {
         }
 
         // Tier 4: best-effort upstream-change detection. If the upstream
-        // headers are unchanged, reuse the stale ZIP and just re-extract.
-        let upstream = self.fetcher.head(&self.url);
-        if let Some(zip) = zip_path.as_ref()
-            && let Some(upstream) = upstream.as_ref()
-        {
+        // headers are unchanged, reuse the ZIP and just re-extract. Skipped once
+        // the archive exceeds its maximum age so a stale branch archive cannot
+        // be reused indefinitely.
+        if !archive_too_old {
+            let upstream = self.fetcher.head(&self.url);
             let persisted = UpstreamHeaders {
                 etag: state.get(KEY_ETAG).cloned(),
                 last_modified: state.get(KEY_LAST_MODIFIED).cloned(),
             };
-            if zip.exists() && upstream.matches(&persisted) {
+            tracing::debug!(
+                "münster archive cache: tier 4 upstream={upstream:?} persisted={persisted:?}"
+            );
+            if let Some(zip) = zip_path.as_ref()
+                && let Some(upstream) = upstream.as_ref()
+                && zip.exists()
+                && upstream.matches(&persisted)
+            {
+                tracing::info!(
+                    "münster archive cache: upstream unchanged, re-extracted cached zip"
+                );
                 let dir = self.extract(zip)?;
                 self.store_extracted(&dir, now)?;
                 self.emit(
@@ -291,6 +345,7 @@ impl MuensterGithubAdapter {
         }
 
         // Tier 3: (re-)download and extract.
+        tracing::info!("münster archive cache: tier 3 (re-)download");
         let (zip, headers) = self.download(now)?;
         let dir = self.extract(&zip)?;
         self.store_refreshed(&zip, &dir, now, &headers)?;
@@ -304,6 +359,12 @@ impl MuensterGithubAdapter {
             .fetcher
             .get(&self.url, &target)
             .map_err(|message| ProviderError::Unreachable(format!("download failed: {message}")))?;
+        tracing::info!(
+            "münster archive downloaded from {} (etag={:?} last_modified={:?})",
+            self.url,
+            headers.etag,
+            headers.last_modified
+        );
         self.store_state(KEY_DOWNLOADED_AT, &now.to_rfc3339())?;
         self.store_state(KEY_ARCHIVE_FILE, &target.to_string_lossy())?;
         self.emit(
@@ -424,6 +485,12 @@ impl MuensterGithubAdapter {
             channel_csvs.insert(channel.external_id.clone(), csvs);
         }
 
+        tracing::debug!(
+            "münster archive index built: {} station(s), {} channel(s), dir={}",
+            stations.len(),
+            channels.len(),
+            extracted_dir.display()
+        );
         Ok(Arc::new(ArchiveIndex {
             stations,
             channels,
@@ -551,7 +618,7 @@ impl MuensterGithubAdapter {
             (last, last)
         };
 
-        let measurements = records
+        let measurements: Vec<SourceMeasurement> = records
             .into_iter()
             .map(|record| SourceMeasurement {
                 channel_external_id: channel_external_id.to_string(),
@@ -559,11 +626,17 @@ impl MuensterGithubAdapter {
             })
             .collect();
 
+        let done = !(batch_size_limit_reached || data_beyond);
+        tracing::debug!(
+            "münster channel {channel_external_id}: window=({window_start}..{window_end}] \
+             rows={} data_beyond={data_beyond} done={done}",
+            measurements.len()
+        );
         Ok(ChannelPage {
             measurements,
             last_real,
             next_from,
-            done: !(batch_size_limit_reached || data_beyond),
+            done,
         })
     }
 }

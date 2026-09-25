@@ -90,10 +90,10 @@ impl TilesInit {
     /// used by the standalone `bike_counter tiles` subcommand (`make tiles`).
     pub fn ensure_available(&self) -> Result<(), String> {
         if self.is_available() {
-            println!("tiles/{MAP_ARCHIVE} already exists — nothing to do");
+            tracing::info!("tiles/{MAP_ARCHIVE} already exists — nothing to do");
             return Ok(());
         }
-        println!("tiles/{MAP_ARCHIVE} is missing — building it (this can take minutes)");
+        tracing::info!("tiles/{MAP_ARCHIVE} is missing — building it (this can take minutes)");
         self.build_to(&self.archive())
     }
 
@@ -110,7 +110,7 @@ impl TilesInit {
         }
         fs::rename(&tmp, self.archive())
             .map_err(|e| format!("failed to swap tiles/{MAP_ARCHIVE} into place: {e}"))?;
-        println!("tiles/{MAP_ARCHIVE} updated");
+        tracing::info!("tiles/{MAP_ARCHIVE} updated");
         Ok(())
     }
 
@@ -152,7 +152,7 @@ impl TilesInit {
             &[bbox_flag.as_str(), "--minzoom=8", "--maxzoom=15"],
         )?;
 
-        println!("Merging into tiles/{MAP_ARCHIVE} ...");
+        tracing::info!("Merging into tiles/{MAP_ARCHIVE} ...");
         self.run(
             &cli,
             &[
@@ -167,7 +167,7 @@ impl TilesInit {
         )?;
 
         self.cleanup_intermediates();
-        println!("tiles/{MAP_ARCHIVE} ready at {}", target.display());
+        tracing::info!("tiles/{MAP_ARCHIVE} ready at {}", target.display());
         Ok(())
     }
 
@@ -188,7 +188,7 @@ impl TilesInit {
 
         let mut attempt = 1u32;
         loop {
-            println!(
+            tracing::info!(
                 "Extracting {} (attempt {attempt}/{EXTRACT_ATTEMPTS}) ...",
                 dest.file_name()
                     .map(|name| name.to_string_lossy())
@@ -197,7 +197,7 @@ impl TilesInit {
             match self.run(cli, &args) {
                 Ok(()) => return Ok(()),
                 Err(error) if attempt < EXTRACT_ATTEMPTS => {
-                    println!(
+                    tracing::info!(
                         "extract failed (attempt {attempt}/{EXTRACT_ATTEMPTS}): {error}; retrying ..."
                     );
                     attempt += 1;
@@ -211,7 +211,7 @@ impl TilesInit {
     /// multi-minute progress is visible in the container logs) and returning an
     /// error when the exit status is non-zero.
     fn run(&self, command: &Path, args: &[&str]) -> Result<(), String> {
-        println!("> {} {}", command.display(), args.join(" "));
+        tracing::info!("> {} {}", command.display(), args.join(" "));
         let status = Command::new(command)
             .args(args)
             .status()
@@ -240,7 +240,7 @@ impl TilesInit {
         );
         let tarball = self.bin_dir.join("pmtiles.tar.gz");
 
-        println!("Downloading pmtiles CLI v{version} ...");
+        tracing::info!("Downloading pmtiles CLI v{version} ...");
         let response = ureq::get(&url)
             .call()
             .map_err(|e| format!("failed to download {url}: {e}"))?;
@@ -251,7 +251,7 @@ impl TilesInit {
             .map_err(|e| format!("failed to write {}: {e}", tarball.display()))?;
         drop(file);
 
-        println!("Extracting pmtiles CLI ...");
+        tracing::info!("Extracting pmtiles CLI ...");
         let tar_gz = fs::File::open(&tarball)
             .map_err(|e| format!("failed to open {}: {e}", tarball.display()))?;
         let decoder = GzDecoder::new(tar_gz);
@@ -262,7 +262,7 @@ impl TilesInit {
         let _ = fs::remove_file(&tarball);
 
         make_executable(&bin);
-        println!("pmtiles CLI ready at {}", bin.display());
+        tracing::info!("pmtiles CLI ready at {}", bin.display());
         Ok(bin)
     }
 }

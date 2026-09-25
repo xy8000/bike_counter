@@ -32,6 +32,8 @@ tar = "0.4.46"
 tokio = { version = "1.53.1", features = ["full"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 toml = "1.1.6"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "time"] }
 ureq = "3.4.2"
 utoipa = { version = "6.0.0", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "10.0.1", features = ["axum"] }
