@@ -87,6 +87,10 @@ url = "https://github.com/od-ms/radverkehr-zaehlstellen/archive/refs/heads/main.
 max_measurement_batch_size = "500"
 # Import time window per provider call, in hours (default 7 days = 168).
 max_measurement_timeframe_hours = "168"
+# Maximum age of the cached archive before it is force-refreshed, in seconds
+# (default 3600). Prevents a stale upstream branch archive (e.g. a lagging
+# GitHub codeload cache) from being reused indefinitely via the fast-path tiers.
+max_archive_age = "3600"
 
 [[data_sources]]
 name = "Bonn"

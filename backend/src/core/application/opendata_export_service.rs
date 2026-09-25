@@ -109,7 +109,7 @@ impl OpenDataExportService {
                     .map(|job| job.id.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                println!(
+                tracing::info!(
                     "OpenData export job is still active ({count} running/requesting: {ids}); \
                      skipping"
                 );
@@ -117,7 +117,7 @@ impl OpenDataExportService {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("Failed to check for an active opendata export job: {error:?}");
+                tracing::error!("Failed to check for an active opendata export job: {error:?}");
                 return;
             }
         }
@@ -127,12 +127,12 @@ impl OpenDataExportService {
             .find_last_finished_by_type(OPENDATA_EXPORT_JOB_TYPE)
         {
             Ok(None) => {
-                println!("OpenData export job has never succeeded; running");
+                tracing::info!("OpenData export job has never succeeded; running");
                 self.execute(now);
             }
             Ok(Some(last)) => {
                 if self.is_overdue(&last, now) {
-                    println!(
+                    tracing::info!(
                         "OpenData export job is overdue (last run {} at {}); running",
                         last.id,
                         last.finished_at
@@ -143,7 +143,7 @@ impl OpenDataExportService {
                 }
             }
             Err(error) => {
-                eprintln!("Failed to check the last finished opendata export job: {error:?}");
+                tracing::error!("Failed to check the last finished opendata export job: {error:?}");
             }
         }
     }
@@ -176,11 +176,13 @@ impl OpenDataExportService {
         {
             Ok(true) => {}
             Ok(false) => {
-                println!("OpenData export is already active elsewhere (job_locks held); skipping");
+                tracing::info!(
+                    "OpenData export is already active elsewhere (job_locks held); skipping"
+                );
                 return;
             }
             Err(error) => {
-                eprintln!("Failed to acquire the opendata export lock: {error:?}");
+                tracing::error!("Failed to acquire the opendata export lock: {error:?}");
                 return;
             }
         }
@@ -199,10 +201,12 @@ impl OpenDataExportService {
             let _ = self
                 .job_repository
                 .release(OPENDATA_EXPORT_JOB_TYPE, instance_id);
-            eprintln!("Failed to record opendata export job {job_name} ({job_id}): {error:?}");
+            tracing::error!(
+                "Failed to record opendata export job {job_name} ({job_id}): {error:?}"
+            );
             return;
         }
-        println!("OpenData export job {job_name} ({job_id}) started");
+        tracing::info!("OpenData export job {job_name} ({job_id}) started");
         // Expose the run on the job-info from the start (best-effort).
         self.record_files_created(job_id, 0);
 
@@ -234,8 +238,8 @@ impl OpenDataExportService {
         match (outcome, status) {
             (_, Some(JobStatus::CancellationRequested)) | (_, Some(JobStatus::Cancelled)) => {
                 match self.job_repository.mark_cancelled(job_id, Utc::now()) {
-                    Ok(()) => println!("OpenData export job {job_name} ({job_id}) cancelled"),
-                    Err(error) => eprintln!(
+                    Ok(()) => tracing::info!("OpenData export job {job_name} ({job_id}) cancelled"),
+                    Err(error) => tracing::error!(
                         "Could not finalize opendata export job {job_name} ({job_id}) as cancelled: {error:?}"
                     ),
                 }
@@ -247,11 +251,11 @@ impl OpenDataExportService {
                     json!(files_added),
                 );
                 if let Err(error) = self.job_repository.set_finished(job_id, Utc::now()) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to finish opendata export job {job_name} ({job_id}): {error:?}"
                     );
                 } else {
-                    println!(
+                    tracing::info!(
                         "OpenData export job {job_name} ({job_id}) finished ({files_added} file(s))"
                     );
                 }
@@ -261,11 +265,11 @@ impl OpenDataExportService {
                 if let Err(set_failed_error) =
                     self.job_repository.set_failed(job_id, Utc::now(), &message)
                 {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to mark opendata export job {job_name} ({job_id}) as failed: {set_failed_error:?}"
                     );
                 } else {
-                    eprintln!("OpenData export job {job_name} ({job_id}) failed: {error:?}");
+                    tracing::error!("OpenData export job {job_name} ({job_id}) failed: {error:?}");
                 }
             }
         }
@@ -320,7 +324,7 @@ impl OpenDataExportService {
             self.job_repository
                 .update_metadata(job_id, FILES_CREATED_KEY, json!(files_added))
         {
-            eprintln!("Failed to record opendata export files-created metadata: {error:?}");
+            tracing::error!("Failed to record opendata export files-created metadata: {error:?}");
         }
     }
 

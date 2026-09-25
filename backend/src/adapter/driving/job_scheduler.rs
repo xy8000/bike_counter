@@ -25,7 +25,7 @@ pub async fn run_scheduler(service: Arc<dyn ScheduledJobPort>, cron_expression: 
     let schedule = match cron::Schedule::from_str(&cron_expression) {
         Ok(schedule) => schedule,
         Err(error) => {
-            eprintln!("Invalid cron expression '{cron_expression}': {error}");
+            tracing::error!("Invalid cron expression '{cron_expression}': {error}");
             return;
         }
     };
@@ -33,7 +33,7 @@ pub async fn run_scheduler(service: Arc<dyn ScheduledJobPort>, cron_expression: 
     loop {
         let now = Utc::now();
         let Some(next) = schedule.after(&now).next() else {
-            eprintln!("Cron schedule produced no future triggers; stopping scheduler");
+            tracing::error!("Cron schedule produced no future triggers; stopping scheduler");
             return;
         };
 

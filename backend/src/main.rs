@@ -95,7 +95,23 @@ fn content_type_for(extension: &str) -> Option<&'static str> {
 mod adapter;
 mod core;
 
+/// Installs the global tracing subscriber so every log line carries an RFC 3339
+/// UTC timestamp and a level. Must run before anything is logged. `RUST_LOG`
+/// overrides the default `info` filter (e.g. `RUST_LOG=debug`).
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_timer(tracing_subscriber::fmt::time::UtcTime::rfc_3339())
+        .init();
+}
+
 fn main() {
+    // Structured logging first, so every subsequent line is timestamped.
+    init_tracing();
+
     // `main` is pure dependency wiring: it constructs adapters and lets the
     // domain decide what happens at startup. No startup logic lives here.
     let configuration_repository =
@@ -125,7 +141,7 @@ fn main() {
     // database, only the `[maps]` configuration.
     if std::env::args().nth(1).as_deref() == Some("tiles") {
         if let Err(error) = tiles_init.ensure_available() {
-            eprintln!("Failed to build tiles: {error}");
+            tracing::error!("Failed to build tiles: {error}");
             std::process::exit(1);
         }
         return;
@@ -133,7 +149,7 @@ fn main() {
 
     // Log a redacted summary. NEVER print the full `DatabaseConfiguration` via
     // Debug, as it contains the plaintext password.
-    println!(
+    tracing::info!(
         "Loaded configuration: database_url={} user={} database_name={}",
         database_configuration.database_url(),
         database_configuration.user(),
@@ -193,7 +209,7 @@ fn main() {
     };
 
     let provider_health_indicators = startup.provider_health_indicators;
-    println!(
+    tracing::info!(
         "Registered {} data source(s)",
         startup.data_source_runtimes.len()
     );
@@ -370,8 +386,8 @@ fn main() {
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!("Starting Bike Counter API server on http://{}", addr);
-    println!("Swagger UI available at http://localhost:8080/swagger-ui/");
+    tracing::info!("Starting Bike Counter API server on http://{}", addr);
+    tracing::info!("Swagger UI available at http://localhost:8080/swagger-ui/");
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     if let Err(err) = runtime.block_on(async {
@@ -420,7 +436,7 @@ fn main() {
         }
         rest_adapter.run(addr).await
     }) {
-        eprintln!("REST API server error: {:?}", err);
+        tracing::error!("REST API server error: {:?}", err);
     }
 }
 

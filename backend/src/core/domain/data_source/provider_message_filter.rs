@@ -84,7 +84,7 @@ impl ProviderMessageSink for FilteringProviderMessageSink {
                 "provider messages truncated after {max} events; further events were dropped",
                 max = self.max_messages
             );
-            println!("{notice}");
+            tracing::info!("{notice}");
             self.inner
                 .provider_event_occurred(ProviderMessageSeverity::Warning, &notice)?;
         }
