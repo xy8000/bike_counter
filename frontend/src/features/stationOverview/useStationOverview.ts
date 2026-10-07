@@ -24,22 +24,24 @@ export function useStationOverview(stationId: string | null) {
     setStats(null)
     setError(false)
     setStatsError(false)
-    fetchStationOverview(stationId)
-      .then((data) => {
+    // The stats sub-resource loads once the shell has provided its link, but its
+    // failure is tracked separately so the two cards fail independently.
+    const load = async () => {
+      try {
+        const data = await fetchStationOverview(stationId)
         if (cancelled) return
         setPage(data)
-        // The stats sub-resource runs in parallel with the shell's rendering.
-        fetchStationOverviewStats(data._links.stats)
-          .then((statsData) => {
-            if (!cancelled) setStats(statsData)
-          })
-          .catch(() => {
-            if (!cancelled) setStatsError(true)
-          })
-      })
-      .catch(() => {
+        try {
+          const statsData = await fetchStationOverviewStats(data._links.stats)
+          if (!cancelled) setStats(statsData)
+        } catch {
+          if (!cancelled) setStatsError(true)
+        }
+      } catch {
         if (!cancelled) setError(true)
-      })
+      }
+    }
+    void load()
     return () => {
       cancelled = true
     }

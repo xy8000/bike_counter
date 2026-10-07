@@ -40,6 +40,69 @@ function markerState(
   return 'active'
 }
 
+/// The popup thumbnail: the station image once the shell has loaded, otherwise a
+/// skeleton while it is still pending.
+function StationPopupIcon({
+  info,
+  loading,
+}: Readonly<{ info: PopupStationInfo | undefined; loading: boolean }>) {
+  if (info) {
+    return (
+      <img src={info.imageUrl} alt="" className="h-8 w-8 shrink-0 rounded border object-cover" />
+    )
+  }
+  if (loading) {
+    return <Skeleton className="h-8 w-8 shrink-0 rounded border" />
+  }
+  return null
+}
+
+/// The channel-count badge once the stats have loaded, otherwise a skeleton while
+/// the stats or the shell is still pending.
+function StationPopupBadge({
+  info,
+  statsLoading,
+  shellLoading,
+}: Readonly<{
+  info: PopupStationInfo | undefined
+  statsLoading: boolean
+  shellLoading: boolean
+}>) {
+  if (info && info.channelCount !== null) {
+    return (
+      <Badge variant="secondary" className="mt-1">
+        {info.channelCount} channel
+        {info.channelCount === 1 ? '' : 's'}
+      </Badge>
+    )
+  }
+  if (statsLoading) {
+    return <Skeleton className="mt-1 h-5 w-28 rounded-md" />
+  }
+  if (shellLoading) {
+    return <Skeleton className="mt-1 h-4 w-2/3" />
+  }
+  return null
+}
+
+/// The station description once the shell has loaded, otherwise a skeleton while
+/// it is still pending.
+function StationPopupDescription({
+  info,
+  shellLoading,
+}: Readonly<{ info: PopupStationInfo | undefined; shellLoading: boolean }>) {
+  if (info) {
+    if (!info.description) return null
+    return (
+      <p className="break-words text-xs leading-snug text-muted-foreground">{info.description}</p>
+    )
+  }
+  if (shellLoading) {
+    return <Skeleton className="h-3 w-3/4" />
+  }
+  return null
+}
+
 /// The popup body (icon + name + channel badge + description) with skeleton
 /// placeholders for the not-yet-loaded shell/stats fields. Extracted from
 /// `MapView` so its render function stays within the complexity budget.
@@ -60,15 +123,7 @@ function StationPopupBody({
       aria-busy={shellLoading || statsLoading || undefined}
     >
       <div className="flex items-start gap-2">
-        {info ? (
-          <img
-            src={info.imageUrl}
-            alt=""
-            className="h-8 w-8 shrink-0 rounded border object-cover"
-          />
-        ) : shellLoading ? (
-          <Skeleton className="h-8 w-8 shrink-0 rounded border" />
-        ) : null}
+        <StationPopupIcon info={info} loading={shellLoading} />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <Link
@@ -86,27 +141,10 @@ function StationPopupBody({
               <ExternalLink className="h-3.5 w-3.5" />
             </Link>
           </div>
-          {info && info.channelCount !== null ? (
-            <Badge variant="secondary" className="mt-1">
-              {info.channelCount} channel
-              {info.channelCount === 1 ? '' : 's'}
-            </Badge>
-          ) : statsLoading ? (
-            <Skeleton className="mt-1 h-5 w-28 rounded-md" />
-          ) : shellLoading ? (
-            <Skeleton className="mt-1 h-4 w-2/3" />
-          ) : null}
+          <StationPopupBadge info={info} statsLoading={statsLoading} shellLoading={shellLoading} />
         </div>
       </div>
-      {info ? (
-        info.description && (
-          <p className="break-words text-xs leading-snug text-muted-foreground">
-            {info.description}
-          </p>
-        )
-      ) : shellLoading ? (
-        <Skeleton className="h-3 w-3/4" />
-      ) : null}
+      <StationPopupDescription info={info} shellLoading={shellLoading} />
     </div>
   )
 }

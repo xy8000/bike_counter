@@ -97,7 +97,7 @@ export async function firstMarker(page: Page): Promise<{ marker: Locator; statio
 /// colour (via a 1×1 canvas) plus whether `prefers-color-scheme: dark` is active.
 /// The canvas step makes the check independent of how the browser serialises the
 /// theme colour (rgb() vs raw token), so it works across engines.
-export async function readTheme(
+export function readTheme(
   page: Page,
   selector = 'body',
 ): Promise<{ luminance: number; prefersDark: boolean }> {

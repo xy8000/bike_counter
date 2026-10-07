@@ -83,13 +83,15 @@ export function createFakeMaplibreMap() {
 /// and fires `onLoad` + `onMoveEnd` after mount so the consumer's viewport
 /// state (bounds/zoom) initialises and the markers/clusters render. The
 /// received props are also stashed on `window.__maplibreProps` for assertions.
-function MaplibreMapMock(props: {
-  children?: ReactNode
-  onLoad?: (event: { target: unknown }) => void
-  onMoveEnd?: (event: { target: unknown }) => void
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any
-}) {
+function MaplibreMapMock(
+  props: Readonly<{
+    children?: ReactNode
+    onLoad?: (event: { target: unknown }) => void
+    onMoveEnd?: (event: { target: unknown }) => void
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [key: string]: any
+  }>,
+) {
   const { children, onLoad, onMoveEnd, ...rest } = props
   useEffect(() => {
     const map = createFakeMaplibreMap()
@@ -104,7 +106,7 @@ function MaplibreMapMock(props: {
   )
 }
 
-function MaplibreMarkerMock(props: { children?: ReactNode; [key: string]: unknown }) {
+function MaplibreMarkerMock(props: Readonly<{ children?: ReactNode; [key: string]: unknown }>) {
   const { children, ...rest } = props
   return (
     <div
@@ -117,7 +119,7 @@ function MaplibreMarkerMock(props: { children?: ReactNode; [key: string]: unknow
   )
 }
 
-function MaplibrePopupMock(props: { children?: ReactNode; [key: string]: unknown }) {
+function MaplibrePopupMock(props: Readonly<{ children?: ReactNode; [key: string]: unknown }>) {
   const { children, ...rest } = props
   return (
     <div
@@ -152,12 +154,27 @@ function FakeMaplibreGlMap() {
 }
 FakeMaplibreGlMap.prototype.getBounds = () => null
 
+/// Constructible no-op stand-in for the `maplibre-gl` marker / popup / control
+/// classes the unit tests never instantiate for real. The minimal instance
+/// surface keeps the mock from being an empty class declaration.
+class FakeMaplibreClass {
+  on() {
+    /* no-op */
+  }
+  off() {
+    /* no-op */
+  }
+  remove() {
+    /* no-op */
+  }
+}
+
 vi.mock('maplibre-gl', () => {
   return {
     Map: FakeMaplibreGlMap,
-    Marker: class {},
-    Popup: class {},
-    NavigationControl: class {},
+    Marker: FakeMaplibreClass,
+    Popup: FakeMaplibreClass,
+    NavigationControl: FakeMaplibreClass,
     addProtocol: vi.fn(),
     setWorkerUrl: vi.fn(),
   }
