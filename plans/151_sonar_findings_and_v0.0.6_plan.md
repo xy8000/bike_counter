@@ -102,9 +102,12 @@ The `v0.0.7` tag was deleted, so the pending release (plan
 
 - `npx prettier --check .` — clean.
 - `npx tsc --noEmit` — clean.
-- `npm run test:unit` — green (the request guard keeps the existing
-  root-relative fixtures valid).
+- `npm run test:unit` — green (88 files / 561 tests; the request guard keeps
+  the existing root-relative fixtures valid).
 - `make check` — green (fmt + clippy + prettier + cargo audit).
+- `make test-rest` — green (128 passed).
+- `make test-playwright` — green (74 passed) against the real Docker Compose
+  stack (the popup/map changes are exercised by `map.spec.ts`).
 
 ## Definition of done
 
@@ -118,4 +121,5 @@ The `v0.0.7` tag was deleted, so the pending release (plan
 - [x] Release re-targeted to `v0.0.6` (version files, compose, README, release.yml, plan 150)
 - [x] `make check` green; `npm run test:unit` green (88 files / 561 tests)
 - [x] `make test-rest` green (128 passed)
+- [x] `make test-playwright` green (74 passed)
 - [x] Branch pushed
