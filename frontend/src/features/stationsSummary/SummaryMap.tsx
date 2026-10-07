@@ -13,12 +13,12 @@ export function SummaryMap({
   disabled,
   onToggle,
   bounds,
-}: {
+}: Readonly<{
   stations: SummaryStation[]
   disabled: Set<string>
   onToggle: (stationId: string) => void
   bounds: Bounds
-}) {
+}>) {
   return (
     <div className="h-64 w-full overflow-hidden rounded-lg border md:h-80" aria-label="Summary map">
       <BaseMap bounds={bounds} scrollZoom={false} navigationControl>
