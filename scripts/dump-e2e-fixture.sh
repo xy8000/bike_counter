@@ -7,7 +7,7 @@
 #     migrations,
 #   * all seven data_sources (deterministic UUIDv5 ids matching the config names),
 #   * every counting station + channel (image links stripped so the builtin
-#     fallback bike icon is used, since the e2e MinIO bucket only holds builtins;
+#     fallback bike icon is used, since the e2e Garage bucket only holds builtins;
 #     the per-source logos are unlinked too so the bundled SVG fallback is used),
 #   * synthesized recent measurements for the alphabetically-first stations of
 #     each city — the BFF returns stations name-ordered, so the first map marker /
@@ -53,7 +53,7 @@ PGDUMP=(docker compose exec -T db pg_dump -U postgres -d bike_counter --no-owner
 
   echo
   echo "-- Assets (metadata only; provider objects are not synced into the e2e"
-  echo "-- MinIO bucket, so the stations are unlinked below). Dumped before the"
+  echo "-- Garage bucket, so the stations are unlinked below). Dumped before the"
   echo "-- counting stations so their image_asset_id FK resolves."
   "${PGDUMP[@]}" --data-only --table=assets
 
@@ -74,7 +74,7 @@ PGDUMP=(docker compose exec -T db pg_dump -U postgres -d bike_counter --no-owner
   echo "SET search_path = public;"
   echo
   echo "-- Unlink provider images so the builtin fallback bike icon is used, and"
-  echo "-- unlink the per-source logo assets (not present in the e2e MinIO bucket)"
+  echo "-- unlink the per-source logo assets (not present in the e2e Garage bucket)"
   echo "-- so the bundled data-source SVG fallback is rendered instead."
   echo "UPDATE counting_stations SET image_asset_id = NULL, image_sha256 = NULL;"
   echo "UPDATE data_sources SET logo_asset_id = NULL, logo_sha256 = NULL;"

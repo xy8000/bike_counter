@@ -16,10 +16,11 @@
 # means no Protomaps download is needed.
 #
 # NOTE: the e2e is fully isolated from development data. It uses the dedicated
-# `postgres_data_e2e`/`minio_data_e2e` volumes (see frontend/e2e/docker-compose.e2e.yml);
-# the `down -v` in this script drops those e2e volumes only, so the development
-# `postgres_data`/`minio_data` volumes are never touched and survive every run.
-# The e2e volume is re-seeded from the fixture on each run.
+# `postgres_data_e2e`/`garage_meta_e2e`/`garage_data_e2e` volumes (see
+# frontend/e2e/docker-compose.e2e.yml); the `down -v` in this script drops those
+# e2e volumes only, so the development
+# `postgres_data`/`garage_meta`/`garage_data` volumes are never touched and
+# survive every run. The e2e volume is re-seeded from the fixture on each run.
 #
 # Requirements: Docker, Docker Compose v2 (`docker compose`), Node.js + npm
 # (frontend dependencies).
@@ -105,11 +106,11 @@ asset_cleanup_cron="0 0 4 * * *"
 asset_cleanup_max_heartbeat_interval_seconds=3600
 
 [asset_storage]
-endpoint = "http://minio:9000"
-access_key = "minioadmin"
-secret_key = "minioadmin"
+endpoint = "http://garage:3900"
+access_key = "garageadmin"
+secret_key = "garageadmin-secret"
 bucket = "bike-counter-images"
-region = "us-east-1"
+region = "garage"
 
 [maps]
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"

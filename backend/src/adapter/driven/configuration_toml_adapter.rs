@@ -37,7 +37,7 @@ struct ConfigurationDto {
     /// Optional opendata export job settings (defaults when omitted).
     #[serde(default = "default_opendata")]
     opendata: OpenDataDto,
-    /// Optional opendata object storage settings (defaults to the MinIO server
+    /// Optional opendata object storage settings (defaults to the Garage server
     /// with a dedicated bucket when omitted).
     #[serde(default = "default_opendata_storage")]
     opendata_storage: OpenDataStorageDto,
@@ -120,14 +120,14 @@ fn default_opendata() -> OpenDataDto {
 }
 
 /// Default `[opendata_storage]` table used when the section is omitted
-/// entirely: the same MinIO server/credentials as the images, dedicated bucket.
+/// entirely: the same Garage server/credentials as the images, dedicated bucket.
 fn default_opendata_storage() -> OpenDataStorageDto {
     OpenDataStorageDto {
-        endpoint: "http://minio:9000".to_string(),
-        access_key: "minioadmin".to_string(),
-        secret_key: "minioadmin".to_string(),
+        endpoint: "http://garage:3900".to_string(),
+        access_key: "garageadmin".to_string(),
+        secret_key: "garageadmin-secret".to_string(),
         bucket: DEFAULT_OPENDATA_STORAGE_BUCKET.to_string(),
-        region: "us-east-1".to_string(),
+        region: "garage".to_string(),
     }
 }
 
@@ -210,15 +210,15 @@ struct OpenDataStorageDto {
 }
 
 fn default_opendata_storage_endpoint() -> String {
-    "http://minio:9000".to_string()
+    "http://garage:3900".to_string()
 }
 
 fn default_opendata_storage_access_key() -> String {
-    "minioadmin".to_string()
+    "garageadmin".to_string()
 }
 
 fn default_opendata_storage_secret_key() -> String {
-    "minioadmin".to_string()
+    "garageadmin-secret".to_string()
 }
 
 fn default_opendata_storage_bucket() -> String {
@@ -226,7 +226,7 @@ fn default_opendata_storage_bucket() -> String {
 }
 
 fn default_opendata_storage_region() -> String {
-    "us-east-1".to_string()
+    "garage".to_string()
 }
 
 pub struct ConfigurationTomlAdapter {
@@ -357,11 +357,11 @@ mod tests {
     fn asset_storage_section() -> &'static str {
         "\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n"
+            region = \"garage\"\n"
     }
 
     fn maps_section() -> &'static str {
@@ -426,15 +426,18 @@ mod tests {
         );
         assert_eq!(
             configuration.asset_storage().endpoint(),
-            "http://minio:9000"
+            "http://garage:3900"
         );
-        assert_eq!(configuration.asset_storage().access_key(), "minioadmin");
-        assert_eq!(configuration.asset_storage().secret_key(), "minioadmin");
+        assert_eq!(configuration.asset_storage().access_key(), "garageadmin");
+        assert_eq!(
+            configuration.asset_storage().secret_key(),
+            "garageadmin-secret"
+        );
         assert_eq!(
             configuration.asset_storage().bucket(),
             "bike-counter-images"
         );
-        assert_eq!(configuration.asset_storage().region(), "us-east-1");
+        assert_eq!(configuration.asset_storage().region(), "garage");
 
         let data_sources = configuration.data_sources();
         assert_eq!(data_sources.len(), 1);
@@ -732,11 +735,11 @@ mod tests {
             database_name = \"database\"\n\
             data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n",
+            region = \"garage\"\n",
         );
 
         let result = ConfigurationTomlAdapter::new(path.display().to_string()).read_configuration();
@@ -795,11 +798,11 @@ mod tests {
             database_name = \"database\"\n\
             data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n\
+            region = \"garage\"\n\
             [maps]\n\
             update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
             update_max_heartbeat_interval_seconds = 1800\n\
@@ -862,11 +865,11 @@ mod tests {
             database_name = \"database\"\n\
             data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n\
+            region = \"garage\"\n\
             [maps]\n\
             update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n",
         );
@@ -892,11 +895,11 @@ mod tests {
             database_name = \"database\"\n\
             data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n\
+            region = \"garage\"\n\
             [maps]\n\
             update_max_heartbeat_interval_seconds = 0\n",
         );
@@ -950,18 +953,18 @@ mod tests {
             database_name = \"database\"\n\
             data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n\
+            region = \"garage\"\n\
             [opendata]\n\
             export_cron = \"0 15 4 * * *\"\n\
             export_max_heartbeat_interval_seconds = 1800\n\
             [opendata_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-opendata\"\n\
             region = \"eu-central-1\"\n",
         );
@@ -993,11 +996,11 @@ mod tests {
             database_name = \"database\"\n\
             data_source_update_max_heartbeat_interval_seconds = 3600\n\
             [asset_storage]\n\
-            endpoint = \"http://minio:9000\"\n\
-            access_key = \"minioadmin\"\n\
-            secret_key = \"minioadmin\"\n\
+            endpoint = \"http://garage:3900\"\n\
+            access_key = \"garageadmin\"\n\
+            secret_key = \"garageadmin-secret\"\n\
             bucket = \"bike-counter-images\"\n\
-            region = \"us-east-1\"\n\
+            region = \"garage\"\n\
             [opendata]\n\
             export_cron = \"not a cron\"\n",
         );

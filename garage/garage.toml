@@ -1,0 +1,37 @@
+# Garage configuration for the development / e2e object storage (S3-compatible).
+#
+# Mounted read-only at /etc/garage.toml (Garage's default config path) into the
+# `garage` service, which runs:
+#
+#   /garage server --single-node --default-access-key
+#
+# `--single-node` auto-creates the single-node cluster layout (it requires
+# `replication_factor = 1` below) and `--default-access-key` creates the S3 key
+# from the GARAGE_DEFAULT_ACCESS_KEY / GARAGE_DEFAULT_SECRET_KEY environment
+# variables, granting it the create-bucket permission. The backend then creates
+# the two buckets (bike-counter-images / bike-counter-opendata) itself over the
+# S3 API — there is no bucket-init container.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+# Single-node development deployment: no replication. Must stay 1 while the
+# service runs with --single-node (Garage refuses to start otherwise).
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+# Advertised address. This is a single-node deployment, so loopback is correct
+# and lets the admin CLI (used by the container healthcheck) reach the node
+# without relying on DNS resolution of the service name.
+rpc_public_addr = "127.0.0.1:3901"
+# Development-only shared secret (64 hex chars = 32 bytes). It is never used
+# outside this compose stack and can be rotated at will.
+rpc_secret = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+
+[s3_api]
+api_bind_addr = "[::]:3900"
+# Must match [asset_storage].region / [opendata_storage].region in config.toml:
+# Garage validates the SigV4 credential scope and the CreateBucket
+# LocationConstraint against this value.
+s3_region = "garage"

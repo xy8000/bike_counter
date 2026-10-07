@@ -11,12 +11,13 @@
 #     HTTP server only binds after migrations + tiles + startup sync, so a healthy
 #     `/health/live` already implies those are done).
 #
-# The e2e run is isolated from the development data: `db` and `minio` use the
-# dedicated `postgres_data_e2e` / `minio_data_e2e` volumes instead of the dev
-# `postgres_data` / `minio_data`, and the dev volumes are removed from the merged
-# config. `../scripts/e2e-playwright.sh` drops the e2e volumes with `down -v`
-# before and after the run, so a fresh seeded database is guaranteed every time —
-# while the development `postgres_data` / `minio_data` volumes are never touched.
+# The e2e run is isolated from the development data: `db` and `garage` use the
+# dedicated `postgres_data_e2e` / `garage_meta_e2e` / `garage_data_e2e` volumes
+# instead of the dev `postgres_data` / `garage_meta` / `garage_data`, and the dev
+# volumes are removed from the merged config. `../scripts/e2e-playwright.sh`
+# drops the e2e volumes with `down -v` before and after the run, so a fresh
+# seeded database is guaranteed every time — while the development
+# `postgres_data` / `garage_meta` / `garage_data` volumes are never touched.
 services:
   db:
     volumes:
@@ -26,9 +27,10 @@ services:
       # own folder, so the seed is referenced from the root.
       - ./frontend/e2e/e2e-seed.sql:/docker-entrypoint-initdb.d/e2e-seed.sql:ro
 
-  minio:
+  garage:
     volumes:
-      - minio_data_e2e:/data
+      - garage_meta_e2e:/var/lib/garage/meta
+      - garage_data_e2e:/var/lib/garage/data
 
   backend:
     healthcheck:
@@ -40,8 +42,10 @@ services:
 
 volumes:
   postgres_data_e2e:
-  minio_data_e2e:
+  garage_meta_e2e:
+  garage_data_e2e:
   # Remove the development volumes from the merged config so `docker compose
   # down -v` can never delete them during an e2e run.
   postgres_data: !reset null
-  minio_data: !reset null
+  garage_meta: !reset null
+  garage_data: !reset null

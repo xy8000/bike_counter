@@ -15,7 +15,7 @@ first. Everything in this file is on top of that.
   - `src/core/application` — use-case services implementing the driving ports.
   - `src/adapter/driving` — inbound adapters (REST/BFF API, job scheduler).
   - `src/adapter/driven` — outbound adapters (Postgres repositories, config
-    reader, MinIO asset storage, the data-provider adapters).
+    reader, S3-compatible (Garage) asset storage, the data-provider adapters).
 - [`frontend/`](frontend) — React (Vite) single-page app served by nginx.
 - [`plans/`](plans) — numbered plan documents (see [`agents.md`](agents.md)).
 - [`scripts/`](scripts) + [`Makefile`](Makefile) — the quiet build/gate tooling.

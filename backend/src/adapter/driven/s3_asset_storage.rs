@@ -1,14 +1,19 @@
-//! MinIO (S3-compatible) driven adapter for the [`AssetStorage`] port.
+//! Garage / S3-compatible driven adapter for the [`AssetStorage`] port.
 //!
 //! Uses `rust-s3` (the lean S3 client) with `Region::Custom` + path-style
-//! addressing. The **blocking** methods (`ensure_bucket`, `put`,
-//! `list_object_keys`, `delete`) run through a dedicated small tokio runtime so
-//! they can be called from the import/startup/cleanup `spawn_blocking` contexts;
-//! `get_stream` is a plain async method used by the BFF to stream to the browser.
+//! addressing, so it works against any S3-compatible server.
+//! The **blocking** methods (`ensure_bucket`, `put`, `list_object_keys`,
+//! `delete`) run through a dedicated small tokio runtime so they can be called
+//! from the import/startup/cleanup `spawn_blocking` contexts; `get_stream` is a
+//! plain async method used by the BFF to stream to the browser.
 //!
-//! rust-s3 exposes no bucket-creation call in the API used here, so the bucket
-//! itself is provisioned once by a `mc` init container in the docker compose
-//! stack; `ensure_bucket` verifies it is reachable (fail-fast at startup).
+//! `rust-s3` exposes no "create bucket if absent" flag, so `ensure_bucket`
+//! issues the S3 `CreateBucket` call directly and treats a `409
+//! BucketAlreadyOwnedByYou` response as success (idempotent across restarts).
+//! The object-storage key must be allowed to create buckets — the bundled
+//! `garage` compose service grants this to its default access key; the
+//! Garage image is `FROM scratch`, so no `mc`-style init container can do it.
+//! A real failure surfaces via the follow-up `ListObjectsV2` verification.
 //!
 //! The BFF derives the response headers (Content-Type, ETag, Content-Length)
 //! from the asset's DB metadata, so this adapter only moves the bytes.
@@ -16,8 +21,10 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::time::Duration;
 
 use futures::{SinkExt, Stream, StreamExt};
+use s3::BucketConfiguration;
 use s3::bucket::Bucket;
 use s3::creds::Credentials;
 use s3::region::Region;
@@ -29,14 +36,27 @@ use crate::core::domain::assets::asset_storage_port::{
 use crate::core::domain::configuration::configuration::value_objects::AssetStorageConfiguration;
 use crate::core::domain::error::DomainError;
 
-pub struct MinioAssetStorage {
+/// How many times `ensure_bucket` retries while the object-storage server may
+/// still be starting up. The compose healthcheck gates the backend, but the S3
+/// API can lag the RPC endpoint slightly, so a short retry absorbs the race.
+const ENSURE_BUCKET_ATTEMPTS: u32 = 30;
+/// Delay between `ensure_bucket` retries.
+const ENSURE_BUCKET_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+pub struct S3AssetStorage {
     bucket: Box<Bucket>,
+    /// Bucket name, kept for the associated `Bucket::create_with_path_style` call.
+    name: String,
+    /// Region (with custom endpoint), reused for bucket creation.
+    region: Region,
+    /// Credentials, reused for bucket creation.
+    credentials: Credentials,
     /// Small runtime used to drive the async rust-s3 calls from blocking
     /// contexts (there is no tokio runtime available inside `spawn_blocking`).
     runtime: tokio::runtime::Runtime,
 }
 
-impl MinioAssetStorage {
+impl S3AssetStorage {
     pub fn new(config: &AssetStorageConfiguration) -> Result<Self, DomainError> {
         let region = Region::Custom {
             region: config.region().to_string(),
@@ -49,29 +69,97 @@ impl MinioAssetStorage {
             None,
             None,
         )
-        .map_err(|error| DomainError::Database(format!("invalid MinIO credentials: {error}")))?;
-        let bucket = Bucket::new(config.bucket(), region, credentials)
-            .map_err(|error| DomainError::Database(format!("invalid MinIO bucket: {error}")))?
+        .map_err(|error| {
+            DomainError::Database(format!("invalid object storage credentials: {error}"))
+        })?;
+        let bucket = Bucket::new(config.bucket(), region.clone(), credentials.clone())
+            .map_err(|error| {
+                DomainError::Database(format!("invalid object storage bucket: {error}"))
+            })?
             .with_path_style();
         let runtime = tokio::runtime::Runtime::new().map_err(|error| {
             DomainError::Database(format!("failed to create storage runtime: {error}"))
         })?;
-        Ok(Self { bucket, runtime })
+        Ok(Self {
+            bucket,
+            name: config.bucket().to_string(),
+            region,
+            credentials,
+            runtime,
+        })
+    }
+
+    /// Creates the bucket (idempotent) and verifies it is usable by listing it.
+    fn create_and_verify_bucket(&self) -> Result<(), DomainError> {
+        let bucket = self.bucket.clone();
+        let name = self.name.clone();
+        let region = self.region.clone();
+        let credentials = self.credentials.clone();
+        self.runtime.block_on(async move {
+            // `CreateBucket` is not idempotent at the protocol level: a second
+            // call returns `409 BucketAlreadyOwnedByYou`. Treat 2xx and 409 as
+            // success; the list below catches every real failure.
+            match Bucket::create_with_path_style(
+                &name,
+                region,
+                credentials,
+                BucketConfiguration::default(),
+            )
+            .await
+            {
+                Ok(response) if (200..300).contains(&response.response_code) => {
+                    tracing::info!("created object storage bucket '{name}'");
+                }
+                Ok(response) if response.response_code == 409 => {
+                    tracing::debug!("object storage bucket '{name}' already exists");
+                }
+                Ok(response) => {
+                    tracing::debug!(
+                        "object storage bucket '{name}' create returned HTTP {}",
+                        response.response_code
+                    );
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        "object storage bucket '{name}' create request failed: {error}"
+                    );
+                }
+            }
+            bucket
+                .list(String::new(), None)
+                .await
+                .map(|_| ())
+                .map_err(|error| {
+                    DomainError::Database(format!("failed to list bucket '{name}': {error}"))
+                })
+        })
     }
 }
 
-impl AssetStorage for MinioAssetStorage {
+impl AssetStorage for S3AssetStorage {
     fn ensure_bucket(&self) -> Result<(), DomainError> {
-        // The bucket is provisioned by the docker `mc` init container. Verify it
-        // is reachable and that listing works (fail-fast with a clear message).
-        let bucket = self.bucket.clone();
-        self.runtime
-            .block_on(async move { bucket.list(String::new(), None).await.map(|_| ()) })
-            .map_err(|error| {
-                DomainError::Database(format!(
-                    "MinIO bucket is not usable (is the 'mc' init container creating it?): {error}"
-                ))
-            })
+        let mut result = Err(DomainError::Database(
+            "object storage bucket could not be created".to_string(),
+        ));
+        for attempt in 1..=ENSURE_BUCKET_ATTEMPTS {
+            match self.create_and_verify_bucket() {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    tracing::debug!(
+                        "object storage bucket not ready yet (attempt {attempt}/{ENSURE_BUCKET_ATTEMPTS}): {error:?}"
+                    );
+                    result = Err(error);
+                    if attempt < ENSURE_BUCKET_ATTEMPTS {
+                        std::thread::sleep(ENSURE_BUCKET_RETRY_DELAY);
+                    }
+                }
+            }
+        }
+        result.map_err(|error| {
+            DomainError::Database(format!(
+                "object storage bucket is not usable (is the Garage service healthy?): {error:?}"
+            ))
+        })
     }
 
     fn put(
@@ -167,15 +255,15 @@ mod tests {
     #[test]
     fn new_builds_an_adapter_for_a_configured_endpoint() {
         let config = AssetStorageConfiguration::new(
-            "http://minio:9000".to_string(),
-            "minioadmin".to_string(),
-            "minioadmin".to_string(),
+            "http://garage:3900".to_string(),
+            "garageadmin".to_string(),
+            "garageadmin-secret".to_string(),
             "bike-counter-images".to_string(),
-            "us-east-1".to_string(),
+            "garage".to_string(),
         )
         .unwrap();
         // Construction is lazy (no network I/O), so it must always succeed for
         // valid configuration.
-        assert!(MinioAssetStorage::new(&config).is_ok());
+        assert!(S3AssetStorage::new(&config).is_ok());
     }
 }

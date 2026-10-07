@@ -1,6 +1,6 @@
 //! Business domain module for binary assets (currently counting-station images).
 //!
-//! Binary content lives in S3-compatible object storage (e.g. MinIO); PostgreSQL
+//! Binary content lives in S3-compatible object storage (e.g. Garage); PostgreSQL
 //! stores only metadata plus the station↔asset link. The domain is deliberately
 //! **station-agnostic**: the `CountingStation` aggregate owns the link
 //! (`image_asset_id`/`image_sha256`), this module knows nothing about stations.

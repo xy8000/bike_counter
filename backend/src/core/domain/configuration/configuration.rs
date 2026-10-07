@@ -23,7 +23,7 @@ pub const DEFAULT_OPENDATA_EXPORT_CRON: &str = "0 30 3 * * *";
 /// Default max heartbeat interval for the opendata export job in seconds.
 pub const DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 600;
 /// Default bucket name for the opendata file storage (dedicated bucket on the
-/// same MinIO server, kept separate from the station-image bucket so the asset
+/// same Garage server, kept separate from the station-image bucket so the asset
 /// cleanup job never sees opendata objects).
 pub const DEFAULT_OPENDATA_STORAGE_BUCKET: &str = "bike-counter-opendata";
 /// Default measurement rollup frequency: every 15 minutes, so the hourly/daily
@@ -60,7 +60,7 @@ pub struct Configuration {
     /// Required max interval between heartbeats for the measurement rollup job.
     measurement_rollup_max_heartbeat_interval_seconds: i64,
     /// S3-compatible object storage holding the immutable opendata files
-    /// (dedicated bucket on the same MinIO server as the image assets).
+    /// (dedicated bucket on the same Garage server as the image assets).
     opendata_storage: value_objects::OpenDataStorageConfiguration,
     /// Whether the scheduled background jobs (data-source update, asset
     /// cleanup, tiles update, opendata export) are started at all. Defaults to
@@ -134,16 +134,16 @@ impl Configuration {
         })
     }
 
-    /// The default opendata storage points at the same MinIO server as the
+    /// The default opendata storage points at the same Garage server as the
     /// image assets but uses its own dedicated bucket. The literal values are
     /// safe, so the fallible constructor is unwrapped here.
     fn default_opendata_storage() -> value_objects::OpenDataStorageConfiguration {
         value_objects::OpenDataStorageConfiguration::new(
-            "http://minio:9000".to_string(),
-            "minioadmin".to_string(),
-            "minioadmin".to_string(),
+            "http://garage:3900".to_string(),
+            "garageadmin".to_string(),
+            "garageadmin-secret".to_string(),
             DEFAULT_OPENDATA_STORAGE_BUCKET.to_string(),
-            "us-east-1".to_string(),
+            "garage".to_string(),
         )
         .expect("the default opendata storage configuration is valid")
     }
@@ -361,7 +361,7 @@ pub mod value_objects {
         }
     }
 
-    /// S3-compatible object storage (e.g. MinIO) holding image binaries.
+    /// S3-compatible object storage (e.g. Garage) holding image binaries.
     #[derive(Debug, Clone)]
     pub struct AssetStorageConfiguration {
         endpoint: String,
@@ -427,7 +427,7 @@ pub mod value_objects {
         }
     }
 
-    /// S3-compatible object storage (e.g. MinIO) holding the immutable opendata
+    /// S3-compatible object storage (e.g. Garage) holding the immutable opendata
     /// files. Same shape as [`AssetStorageConfiguration`]; typically the same
     /// server/credentials with a dedicated bucket.
     #[derive(Debug, Clone)]
@@ -682,11 +682,11 @@ mod tests {
 
     fn asset_storage_config() -> AssetStorageConfiguration {
         AssetStorageConfiguration::new(
-            "http://minio:9000".to_string(),
-            "minioadmin".to_string(),
-            "minioadmin".to_string(),
+            "http://garage:3900".to_string(),
+            "garageadmin".to_string(),
+            "garageadmin-secret".to_string(),
             "bike-counter-images".to_string(),
-            "us-east-1".to_string(),
+            "garage".to_string(),
         )
         .unwrap()
     }
@@ -841,11 +841,11 @@ mod tests {
     #[test]
     fn exposes_asset_storage_values() {
         let config = asset_storage_config();
-        assert_eq!(config.endpoint(), "http://minio:9000");
-        assert_eq!(config.access_key(), "minioadmin");
-        assert_eq!(config.secret_key(), "minioadmin");
+        assert_eq!(config.endpoint(), "http://garage:3900");
+        assert_eq!(config.access_key(), "garageadmin");
+        assert_eq!(config.secret_key(), "garageadmin-secret");
         assert_eq!(config.bucket(), "bike-counter-images");
-        assert_eq!(config.region(), "us-east-1");
+        assert_eq!(config.region(), "garage");
     }
 
     #[test]
@@ -1085,11 +1085,11 @@ mod tests {
 
     fn opendata_storage_config() -> OpenDataStorageConfiguration {
         OpenDataStorageConfiguration::new(
-            "http://minio:9000".to_string(),
-            "minioadmin".to_string(),
-            "minioadmin".to_string(),
+            "http://garage:3900".to_string(),
+            "garageadmin".to_string(),
+            "garageadmin-secret".to_string(),
             DEFAULT_OPENDATA_STORAGE_BUCKET.to_string(),
-            "us-east-1".to_string(),
+            "garage".to_string(),
         )
         .unwrap()
     }
@@ -1156,11 +1156,11 @@ mod tests {
     #[test]
     fn exposes_opendata_storage_values() {
         let storage = opendata_storage_config();
-        assert_eq!(storage.endpoint(), "http://minio:9000");
-        assert_eq!(storage.access_key(), "minioadmin");
-        assert_eq!(storage.secret_key(), "minioadmin");
+        assert_eq!(storage.endpoint(), "http://garage:3900");
+        assert_eq!(storage.access_key(), "garageadmin");
+        assert_eq!(storage.secret_key(), "garageadmin-secret");
         assert_eq!(storage.bucket(), DEFAULT_OPENDATA_STORAGE_BUCKET);
-        assert_eq!(storage.region(), "us-east-1");
+        assert_eq!(storage.region(), "garage");
     }
 
     #[test]
@@ -1194,11 +1194,11 @@ mod tests {
             chrono::Duration::seconds(43200)
         );
         let storage = configured.opendata_storage();
-        assert_eq!(storage.endpoint(), "http://minio:9000");
-        assert_eq!(storage.access_key(), "minioadmin");
-        assert_eq!(storage.secret_key(), "minioadmin");
+        assert_eq!(storage.endpoint(), "http://garage:3900");
+        assert_eq!(storage.access_key(), "garageadmin");
+        assert_eq!(storage.secret_key(), "garageadmin-secret");
         assert_eq!(storage.bucket(), DEFAULT_OPENDATA_STORAGE_BUCKET);
-        assert_eq!(storage.region(), "us-east-1");
+        assert_eq!(storage.region(), "garage");
     }
 
     #[test]

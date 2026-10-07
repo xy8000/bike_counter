@@ -45,7 +45,7 @@ pub struct StationSummaryDto {
     /// timezone).
     #[schema(example = 1256)]
     pub bikes_last_day: i64,
-    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    /// URL of the image content (streamed by the BFF, never Garage directly).
     #[schema(example = "/api/bff/assets/3f04ed9b-9d1f-4c66-a3f4-2b5f3d1f7c2a/content")]
     pub image_url: String,
 }
@@ -131,7 +131,7 @@ pub struct SidebarStationDto {
     pub latitude: Option<f64>,
     #[schema(example = 7.6236)]
     pub longitude: Option<f64>,
-    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    /// URL of the image content (streamed by the BFF, never Garage directly).
     #[schema(example = "/api/bff/assets/3f04ed9b-9d1f-4c66-a3f4-2b5f3d1f7c2a/content")]
     pub image_url: String,
 }
@@ -234,7 +234,7 @@ pub struct StationOverviewDto {
     pub longitude: Option<f64>,
     #[schema(example = 2)]
     pub channel_count: usize,
-    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    /// URL of the image content (streamed by the BFF, never Garage directly).
     #[schema(example = "/api/bff/assets/3f04ed9b-9d1f-4c66-a3f4-2b5f3d1f7c2a/content")]
     pub image_url: String,
     /// Timestamp of the most recent successful data-source update.
@@ -366,7 +366,7 @@ pub struct StationDetailPageDto {
     pub longitude: Option<f64>,
     #[schema(example = 2)]
     pub channel_count: usize,
-    /// URL of the image content (streamed by the BFF, never MinIO directly).
+    /// URL of the image content (streamed by the BFF, never Garage directly).
     #[schema(example = "/api/bff/assets/3f04ed9b-9d1f-4c66-a3f4-2b5f3d1f7c2a/content")]
     pub image_url: String,
     /// Timestamp of the most recent successful data-source update.

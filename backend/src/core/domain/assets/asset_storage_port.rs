@@ -1,5 +1,5 @@
 //! Driven (outbound) port for the asset **binary** store (S3-compatible object
-//! storage, e.g. MinIO). Named in asset-domain terms ("storage", not "object
+//! storage, e.g. Garage). Named in asset-domain terms ("storage", not "object
 //! storage") and split by calling context:
 //!
 //! - The **blocking** methods (`ensure_bucket`, `put`, `list_object_keys`,

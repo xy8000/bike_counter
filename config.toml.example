@@ -43,23 +43,25 @@ export_cron = "0 30 3 * * *"
 # Max heartbeat interval for the export job in seconds (default: 600).
 export_max_heartbeat_interval_seconds = 600
 
-# Dedicated bucket on the same MinIO server holding the immutable opendata files
+# Dedicated bucket on the same Garage server holding the immutable opendata files
 # (kept separate from the station-image bucket).
 [opendata_storage]
-endpoint = "http://minio:9000"
-access_key = "minioadmin"
-secret_key = "minioadmin"
+endpoint = "http://garage:3900"
+access_key = "garageadmin"
+# Garage requires a secret key of at least 16 characters.
+secret_key = "garageadmin-secret"
 bucket = "bike-counter-opendata"
-region = "us-east-1"
+region = "garage"
 
-# S3-compatible object storage (MinIO) holding counting-station image binaries.
+# S3-compatible object storage (Garage) holding counting-station image binaries.
 # PostgreSQL stores only the metadata; the BFF streams the content to browsers.
 [asset_storage]
-endpoint = "http://minio:9000"
-access_key = "minioadmin"
-secret_key = "minioadmin"
+endpoint = "http://garage:3900"
+access_key = "garageadmin"
+# Garage requires a secret key of at least 16 characters.
+secret_key = "garageadmin-secret"
 bucket = "bike-counter-images"
-region = "us-east-1"
+region = "garage"
 
 # Self-hosted vector basemap ("maps") configuration. The basemap is built by the
 # backend at startup (mandatory) and refreshed by a cron-scheduled `tiles_update`

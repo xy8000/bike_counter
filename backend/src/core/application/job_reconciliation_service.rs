@@ -341,7 +341,7 @@ mod tests {
         )
         .unwrap();
         let asset_storage = AssetStorageConfiguration::new(
-            "http://minio:9000".to_string(),
+            "http://garage:3900".to_string(),
             "key".to_string(),
             "secret".to_string(),
             "bucket".to_string(),

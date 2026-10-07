@@ -145,7 +145,7 @@ the imported data up to date.
   The exact `vars` for every provider are documented in the template and in the
   adapter READMEs under
   [`backend/src/adapter/driven/`](backend/src/adapter/driven).
-- **Optional services** — `[asset_storage]` (S3/MinIO bucket holding the
+- **Optional services** — `[asset_storage]` (S3/Garage bucket holding the
   counting-station images), `[opendata]`/`[opendata_storage]` (bulk-export
   schedule and bucket) and `[maps]` (self-hosted basemap settings).
 - **Scheduled jobs** — the top-level cron/heartbeat keys control the background

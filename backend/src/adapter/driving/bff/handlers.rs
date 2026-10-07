@@ -1130,7 +1130,7 @@ pub async fn get_bff_stations_summary_monthly(
 }
 
 /// Streams an asset's binary content from object storage with the correct
-/// headers. The BFF is the only public interface to MinIO: browsers never reach
+/// headers. The BFF is the only public interface to Garage: browsers never reach
 /// the storage directly. `Content-Type`/`Content-Length` come from the asset's
 /// DB metadata, `ETag` from its content hash and `Cache-Control` from its origin
 /// (immutable for built-in assets, short-lived for provider images).
