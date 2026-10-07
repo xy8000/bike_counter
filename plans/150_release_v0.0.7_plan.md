@@ -98,25 +98,24 @@ flowchart TD
     H --> I[GitHub Release v0.0.7]
 ```
 
-## Progress (local prep done, release not yet cut)
+## Progress (release cut, CI verification pending)
 
-The version bump, image tags, docs and this plan file are prepared on the
-working tree; `make check` (fmt + clippy + prettier + cargo audit) and
-`make test-rest` (128 passed) are green. Apart from this plan's version strings
-/ image tags, no application logic changed — the delta consists of the tested
-work already merged to `main` ([plan 149](149_replace_minio_with_garage_plan.md)).
+The version bump, image tags, docs and this plan file were prepared on
+`release/v0.0.7-release-prep`, which was pushed and merged to `main` (`f272cac`)
+via PR. `make check` (fmt + clippy + prettier + cargo audit) and
+`make test-rest` (128 passed) are green. The annotated tag `v0.0.7` was pushed
+(`2bb983a`), which triggers `.github/workflows/release.yml` to build, sign and
+publish the images and create the GitHub Release. Apart from this plan's version
+strings / image tags, no application logic changed — the delta consists of the
+tested work already merged to `main`
+([plan 149](149_replace_minio_with_garage_plan.md)).
 
-Remaining **owner actions** (require GitHub credentials not available in this
-environment):
+Remaining external verification (depends on the CI workflow run):
 
-1. Push the branch and open/merge the PR to `main`:
-   `git push -u origin release/v0.0.7-release-prep`.
-2. From the merged `main`, cut the release:
-   `git tag -a v0.0.7 -m "Bike-Counter 0.0.7"` then `git push origin v0.0.7` —
-   this triggers `.github/workflows/release.yml`.
-3. Verify the workflow is green, the GitHub Release `v0.0.7` exists, and
-   Docker Hub shows `xy8000/bike-counter-backend:0.0.7` / `:latest` and
+1. Confirm `.github/workflows/release.yml` completed green for tag `v0.0.7`.
+2. Confirm Docker Hub shows `xy8000/bike-counter-backend:0.0.7` / `:latest` and
    `xy8000/bike-counter-frontend:0.0.7` / `:latest`.
+3. Confirm the GitHub Release `v0.0.7` exists with release notes.
 
 ## Definition of done
 
@@ -126,7 +125,8 @@ environment):
 - [x] [`release.yml`](../.github/workflows/release.yml) doc-comment examples refreshed to `0.0.7`
 - [x] `make check` green
 - [x] `make test-rest` green (128 passed)
-- [ ] PR merged to `main` — **owner action**
-- [ ] Annotated tag `v0.0.7` pushed and the release workflow completed green — **owner action**
-- [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.7` / `:latest` and `xy8000/bike-counter-frontend:0.0.7` / `:latest` — **owner action**
-- [ ] GitHub Release `v0.0.7` exists with release notes — **owner action**
+- [x] PR merged to `main` (via GitHub PR, `f272cac`)
+- [x] Annotated tag `v0.0.7` pushed (`2bb983a`)
+- [ ] Release workflow completed green for `v0.0.7` — pending CI
+- [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.7` / `:latest` and `xy8000/bike-counter-frontend:0.0.7` / `:latest` — pending CI
+- [ ] GitHub Release `v0.0.7` exists with release notes — pending CI
