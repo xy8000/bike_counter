@@ -35,10 +35,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      minio:
+      garage:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     volumes:
       - ./config.toml:/app/config.toml:ro
       # Host tiles dir, writable so the backend can build the basemap; the
@@ -57,45 +55,43 @@ services:
       start_period: 10s
       retries: 3
 
-  # Private S3-compatible object storage for counting-station images. Reachable
-  # only from within the dedicated internal `asset_network` (i.e. only the
-  # backend); no host port is published. The backend streams image content to
-  # the browser via the BFF, so MinIO is never exposed directly.
-  minio:
-    image: minio/minio:latest
-    container_name: bike_counter_minio
+  # Private S3-compatible object storage (Garage) for counting-station images
+  # and the immutable opendata files. Reachable only from within the dedicated
+  # internal `asset_network` (i.e. only the backend); no host port is published.
+  # The backend streams content to the browser via the BFF, so Garage is never
+  # exposed directly.
+  garage:
+    # Pinned: Garage's config/CLI surface changes between releases. The image is
+    # `FROM scratch` (no shell), so the two buckets are created by the backend
+    # over the S3 API instead of by a `mc`-style init container.
+    image: dxflrs/garage:v2.4.1
+    container_name: bike_counter_garage
     restart: unless-stopped
-    command: server /data
+    # --single-node auto-creates the cluster layout (needs replication_factor =
+    # 1 in garage/garage.toml); --default-access-key creates the S3 key from the
+    # GARAGE_DEFAULT_* variables below with the create-bucket permission, so the
+    # backend can create both buckets itself.
+    command: ["/garage", "server", "--single-node", "--default-access-key"]
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      GARAGE_DEFAULT_ACCESS_KEY: garageadmin
+      GARAGE_DEFAULT_SECRET_KEY: garageadmin-secret
+      # The image defaults to `garage=info`, which logs one info line per admin
+      # API request — and the healthcheck below queries the node every 5s. Keep
+      # warnings/errors only so the container log stays quiet.
+      RUST_LOG: garage=warn
     volumes:
-      - minio_data:/data
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage_meta:/var/lib/garage/meta
+      - garage_data:/var/lib/garage/data
     networks:
       - asset_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # The image ships neither a shell nor curl, so probe with the bundled CLI
+      # (the documented way to query a running node).
+      test: ["CMD", "/garage", "-c", "/etc/garage.toml", "status"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  # One-shot bucket provisioning using the MinIO client (`mc`). The backend
-  # waits for it to finish before starting, so the image bucket always exists.
-  minio-init:
-    image: minio/mc:latest
-    container_name: bike_counter_minio_init
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - asset_network
-    restart: "no"
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/bike-counter-images &&
-      mc mb --ignore-existing local/bike-counter-opendata
-      "
 
   frontend:
     # Published image name (see .github/workflows/release.yml); `build:` stays
@@ -130,17 +126,18 @@ services:
       retries: 3
 
 networks:
-  # Internal network shared only by the backend and MinIO. `internal: true`
+  # Internal network shared only by the backend and Garage. `internal: true`
   # disables external access and, together with explicit network membership,
-  # keeps MinIO unreachable from db/frontend on the default network.
+  # keeps Garage unreachable from db/frontend on the default network.
   asset_network:
     internal: true
   # Internal network shared only by the backend and PostgreSQL. `internal: true`
-  # plus explicit membership keeps the database unreachable from minio/frontend
+  # plus explicit membership keeps the database unreachable from garage/frontend
   # and from the host (no published port).
   db_network:
     internal: true
 
 volumes:
   postgres_data:
-  minio_data:
+  garage_meta:
+  garage_data:

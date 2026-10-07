@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::adapter::driven::configuration_toml_adapter::ConfigurationTomlAdapter;
 use crate::adapter::driven::data_provider_factory::DataProviderFactoryImpl;
-use crate::adapter::driven::minio_asset_storage::MinioAssetStorage;
 use crate::adapter::driven::opendata_file_generator::OpendataFileGenerator;
 use crate::adapter::driven::postgres::{
     PostgresAssetRepository, PostgresChannelRepository, PostgresCountingStationRepository,
@@ -19,6 +18,7 @@ use crate::adapter::driven::postgres::{
     PostgresProviderMessageRepository, create_pool,
 };
 use crate::adapter::driven::provider_handles::ProviderHandles;
+use crate::adapter::driven::s3_asset_storage::S3AssetStorage;
 use crate::adapter::driven::tiles_init::TilesInit;
 use crate::adapter::driving::job_scheduler;
 use crate::adapter::driving::rest::RestApiAdapter;
@@ -52,7 +52,7 @@ use crate::core::domain::data_source::provider_port::ProviderMessageSinkFactory;
 use crate::core::domain::health::{HealthService, ServiceHealthIndicator};
 use crate::core::domain::tiles::provisioning_port::TilesProvisioningPort;
 
-/// The built-in images embedded in the binary (idempotently synced to MinIO at
+/// The built-in images embedded in the binary (idempotently synced to Garage at
 /// startup). Every file in `backend/assets/` becomes a `builtin/{path}` object —
 /// content type inferred from the extension — so the registry can never drift
 /// from the folder: adding or removing a file there is enough, and stale
@@ -231,12 +231,12 @@ fn main() {
     indicators.extend(provider_health_indicators);
     let health_service = Arc::new(HealthService::new(indicators));
 
-    // Assets: S3-compatible object storage (MinIO) + metadata repository +
+    // Assets: S3-compatible object storage (Garage) + metadata repository +
     // service. The bucket is created and the built-in images synced idempotently
     // at startup, before any station import (which may set image links).
     let asset_storage = Arc::new(
-        MinioAssetStorage::new(configuration.asset_storage())
-            .unwrap_or_else(|error| panic!("Failed to initialize MinIO asset storage: {error:?}")),
+        S3AssetStorage::new(configuration.asset_storage())
+            .unwrap_or_else(|error| panic!("Failed to initialize S3 asset storage: {error:?}")),
     );
     let asset_repository = Arc::new(PostgresAssetRepository::new(&pool));
     let asset_service = Arc::new(AssetService::new(
@@ -318,12 +318,12 @@ fn main() {
         instance_id,
     ));
 
-    // OpenData: a dedicated MinIO bucket holds the immutable measurement files
-    // (separate from the image bucket so the asset-cleanup job never touches
-    // them). The registry is the append-only state; the daily export job
-    // publishes missing global + per-station daily/monthly files.
+    // OpenData: a dedicated bucket on the same Garage server holds the immutable
+    // measurement files (separate from the image bucket so the asset-cleanup job
+    // never touches them). The registry is the append-only state; the daily
+    // export job publishes missing global + per-station daily/monthly files.
     // The opendata storage config has the same shape as the asset one; build an
-    // `AssetStorageConfiguration` for the shared MinIO adapter.
+    // `AssetStorageConfiguration` for the shared S3 adapter.
     let opendata_storage_config = {
         let config = configuration.opendata_storage();
         AssetStorageConfiguration::new(
@@ -336,7 +336,7 @@ fn main() {
         .expect("the configured opendata storage is valid")
     };
     let opendata_storage = Arc::new(
-        MinioAssetStorage::new(&opendata_storage_config).unwrap_or_else(|error| {
+        S3AssetStorage::new(&opendata_storage_config).unwrap_or_else(|error| {
             panic!("Failed to initialize OpenData object storage: {error:?}")
         }),
     );

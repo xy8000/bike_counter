@@ -146,10 +146,11 @@ is backed up and restored).
 - **Run**: `make test-playwright` (needs Docker; first run also installs the
   Chromium browser via `npx playwright install chromium`, or run
   `make playwright-install` once). **Note**: the run is isolated from your
-  development data — it uses dedicated `postgres_data_e2e`/`minio_data_e2e`
-  volumes (see [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml)) that are
+  development data — it uses dedicated
+  `postgres_data_e2e`/`garage_meta_e2e`/`garage_data_e2e` volumes (see
+  [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml)) that are
   dropped and re-seeded from the fixture on every run, so the dev
-  `postgres_data`/`minio_data` volumes are never cleared.
+  `postgres_data`/`garage_meta`/`garage_data` volumes are never cleared.
 - **Regenerate the fixture**: [`scripts/dump-e2e-fixture.sh`](scripts/dump-e2e-fixture.sh)
   re-creates [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) from a running stack
   (e.g. after a schema change).

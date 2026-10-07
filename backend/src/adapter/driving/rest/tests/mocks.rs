@@ -934,7 +934,7 @@ impl AssetStorage for MockAssetStorage {
     }
 }
 
-/// An [`AssetStorage`] mock standing in for MinIO in REST tests.
+/// An [`AssetStorage`] mock standing in for Garage in REST tests.
 pub fn sample_asset_storage() -> Arc<dyn AssetStorage> {
     Arc::new(MockAssetStorage)
 }
@@ -1112,7 +1112,7 @@ pub fn sample_opendata_service() -> Arc<dyn OpenDataServicePort> {
 }
 
 /// In-memory object storage keyed by object key (stands in for the opendata
-/// MinIO bucket). `put` stores the bytes; `get_stream` streams them back.
+/// Garage bucket). `put` stores the bytes; `get_stream` streams them back.
 #[derive(Default)]
 pub struct MockObjectStorage {
     objects: Mutex<HashMap<String, Vec<u8>>>,

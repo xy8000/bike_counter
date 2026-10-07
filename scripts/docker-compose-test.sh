@@ -77,11 +77,11 @@ asset_cleanup_cron="0 0 4 * * *"
 asset_cleanup_max_heartbeat_interval_seconds=3600
 
 [asset_storage]
-endpoint = "http://minio:9000"
-access_key = "minioadmin"
-secret_key = "minioadmin"
+endpoint = "http://garage:3900"
+access_key = "garageadmin"
+secret_key = "garageadmin-secret"
 bucket = "bike-counter-images"
-region = "us-east-1"
+region = "garage"
 
 [maps]
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"

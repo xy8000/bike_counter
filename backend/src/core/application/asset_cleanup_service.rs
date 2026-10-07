@@ -1,5 +1,5 @@
 //! Application job runner that deletes **orphaned** objects from the asset
-//! storage bucket: object keys present in MinIO but with no row in the `assets`
+//! storage bucket: object keys present in Garage but with no row in the `assets`
 //! table (left behind when a provider image hash changes, or after a crash
 //! between `put` and `save`).
 //!
@@ -341,11 +341,11 @@ mod tests {
                 DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
                 3600,
                 AssetStorageConfiguration::new(
-                    "http://minio:9000".to_string(),
-                    "minioadmin".to_string(),
-                    "minioadmin".to_string(),
+                    "http://garage:3900".to_string(),
+                    "garageadmin".to_string(),
+                    "garageadmin-secret".to_string(),
                     "bike-counter-images".to_string(),
-                    "us-east-1".to_string(),
+                    "garage".to_string(),
                 )
                 .unwrap(),
                 DEFAULT_ASSET_CLEANUP_CRON.to_string(),

@@ -685,7 +685,7 @@ a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	
 
 
 -- Assets (metadata only; provider objects are not synced into the e2e
--- MinIO bucket, so the stations are unlinked below). Dumped before the
+-- Garage bucket, so the stations are unlinked below). Dumped before the
 -- counting stations so their image_asset_id FK resolves.
 --
 -- PostgreSQL database dump
@@ -2669,7 +2669,7 @@ COPY public.data_source_provider_messages (id, data_source_id, severity, message
 SET search_path = public;
 
 -- Unlink provider images so the builtin fallback bike icon is used, and
--- unlink the per-source logo assets (not present in the e2e MinIO bucket)
+-- unlink the per-source logo assets (not present in the e2e Garage bucket)
 -- so the bundled data-source SVG fallback is rendered instead.
 UPDATE counting_stations SET image_asset_id = NULL, image_sha256 = NULL;
 UPDATE data_sources SET logo_asset_id = NULL, logo_sha256 = NULL;

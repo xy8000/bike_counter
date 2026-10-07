@@ -200,11 +200,11 @@ mod tests {
 
     fn asset_storage() -> AssetStorageConfiguration {
         AssetStorageConfiguration::new(
-            "http://minio:9000".to_string(),
-            "minioadmin".to_string(),
-            "minioadmin".to_string(),
+            "http://garage:3900".to_string(),
+            "garageadmin".to_string(),
+            "garageadmin-secret".to_string(),
             "bike-counter-images".to_string(),
-            "us-east-1".to_string(),
+            "garage".to_string(),
         )
         .unwrap()
     }

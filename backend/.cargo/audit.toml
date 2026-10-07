@@ -8,7 +8,7 @@
 #   (>= 0.41.0) is a major version, so no compatible patched version exists yet;
 #   there is no 0.38.x backport. The affected code path only runs when
 #   aws-creds parses AWS EC2 instance-metadata / STS credentials, which this app
-#   never does (MinIO credentials are static from config.toml). Re-audit and
+#   never does (object-storage credentials are static from config.toml). Re-audit and
 #   remove the ignore once rust-s3/aws-creds allow quick-xml >= 0.41.
 [advisories]
 ignore = [
