@@ -18,7 +18,7 @@ use crate::core::domain::data_source::provider_port::{
 };
 
 use super::adapter::EcoCounterWebAdapter;
-use super::fetcher::PageFetcher;
+use super::fetcher::{HttpPageFetcher, PageFetcher};
 use super::parsing::{parse_daily_series, parse_site_list};
 
 /// A trimmed RSC station-list payload (single record line) with two bicycle
@@ -255,6 +255,99 @@ fn bare_flight_stream_is_parsed_unchanged() {
 }
 
 #[test]
+fn flight_stream_breaks_when_a_marker_has_no_following_quote() {
+    // A marker with no string argument and no later quote can never carry a
+    // chunk; the scan must stop instead of grabbing a quote outside the call.
+    let html = "<script>self.__next_f.push([1</script>";
+    assert!(parse_site_list(html, "Europe/Berlin", None).is_err());
+}
+
+#[test]
+fn flight_stream_skips_a_malformed_json_string_chunk() {
+    // `\q` is not a valid JSON escape, so the string literal cannot be decoded
+    // and the chunk is skipped.
+    let html = "<script>self.__next_f.push([1,\"\\q\"])</script>";
+    assert!(parse_site_list(html, "Europe/Berlin", None).is_err());
+}
+
+#[test]
+fn flight_stream_survives_an_unterminated_chunk() {
+    // No closing quote: the scan hits the end of the document. With no earlier
+    // chunk the body is returned unchanged (and parsing fails)…
+    let unterminated_only = "<script>self.__next_f.push([1,\"1c:{";
+    assert!(parse_site_list(unterminated_only, "Europe/Berlin", None).is_err());
+
+    // …but an already decoded chunk survives an unterminated tail.
+    let escaped = serde_json::to_string(&stations_payload()).unwrap();
+    let mixed = format!(
+        "<script>self.__next_f.push([1,{escaped}])</script>\
+         <script>self.__next_f.push([1,\"unterminated"
+    );
+    let index = parse_site_list(&mixed, "Europe/Berlin", None).unwrap();
+    assert_eq!(index.stations.len(), 2);
+}
+
+#[test]
+fn disambiguates_duplicate_station_names() {
+    // The DB has a unique `(data_source_id, name)` index; two Hessen sites share
+    // the short code `1394`, so each duplicated name is suffixed with its stable
+    // external id (the channels mirror the station names).
+    let payload = json!({ "page": { "sites": [
+        { "id": 1001, "name": "1394", "latitude": 50.0, "longitude": 8.0,
+          "location": { "lat": 50.0, "lon": 8.0 }, "travelModes": ["bike"] },
+        { "id": 1002, "name": "1394", "latitude": 51.0, "longitude": 9.0,
+          "location": { "lat": 51.0, "lon": 9.0 }, "travelModes": ["bike"] },
+        { "id": 1003, "name": "001", "latitude": 52.0, "longitude": 10.0,
+          "location": { "lat": 52.0, "lon": 10.0 }, "travelModes": ["bike"] }
+    ] } });
+    let index = parse_site_list(&format!("1c:{payload}"), "Europe/Berlin", None).unwrap();
+
+    let names: std::collections::HashSet<String> =
+        index.stations.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names.len(), 3, "station names must be unique");
+    let by_id: HashMap<&str, &str> = index
+        .stations
+        .iter()
+        .map(|s| (s.external_id.as_str(), s.name.as_str()))
+        .collect();
+    assert_eq!(by_id["1001"], "1394 (1001)");
+    assert_eq!(by_id["1002"], "1394 (1002)");
+    assert_eq!(by_id["1003"], "001");
+    let channel = index
+        .channels
+        .iter()
+        .find(|c| c.external_id == "1001")
+        .expect("channel 1001");
+    assert_eq!(channel.name, "1394 (1001)");
+}
+
+#[test]
+fn disambiguation_never_collides_with_a_surviving_name() {
+    // A station whose *raw* name equals a generated "name (id)" must not be
+    // overwritten: the suffixed candidate falls back to a further `#n` suffix.
+    let payload = json!({ "page": { "sites": [
+        { "id": 1001, "name": "1394", "latitude": 50.0, "longitude": 8.0,
+          "location": { "lat": 50.0, "lon": 8.0 }, "travelModes": ["bike"] },
+        { "id": 1002, "name": "1394", "latitude": 51.0, "longitude": 9.0,
+          "location": { "lat": 51.0, "lon": 9.0 }, "travelModes": ["bike"] },
+        { "id": 1003, "name": "1394 (1001)", "latitude": 52.0, "longitude": 10.0,
+          "location": { "lat": 52.0, "lon": 10.0 }, "travelModes": ["bike"] }
+    ] } });
+    let index = parse_site_list(&format!("1c:{payload}"), "Europe/Berlin", None).unwrap();
+
+    let names: std::collections::HashSet<String> =
+        index.stations.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names.len(), 3, "names must stay unique: {names:?}");
+    let by_id: HashMap<&str, &str> = index
+        .stations
+        .iter()
+        .map(|s| (s.external_id.as_str(), s.name.as_str()))
+        .collect();
+    assert_eq!(by_id["1003"], "1394 (1001)", "the raw unique name is kept");
+    assert_eq!(by_id["1001"], "1394 (1001) #2");
+}
+
+#[test]
 fn parses_station_list_filters_non_bike_and_builds_description() {
     let index = parse_site_list(&stations_payload(), "Europe/Berlin", None).unwrap();
     assert_eq!(index.stations.len(), 2);
@@ -364,6 +457,49 @@ fn anchors_spring_forward_days_at_true_local_midnight() {
 fn parsing_rejects_payload_without_expected_field() {
     assert!(parse_site_list(r#"1c:{"page":{}}"#, "Europe/Berlin", None).is_err());
     assert!(parse_daily_series(r#"1c:{"page":{}}"#, &Berlin).is_err());
+}
+
+// -- fetcher ----------------------------------------------------------------
+
+/// Serves exactly one HTTP response on an ephemeral loopback port and returns
+/// the URL to fetch plus the server thread handle.
+fn serve_once(status: &str, body: &'static str) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+    let addr = listener.local_addr().expect("local addr");
+    let status = status.to_string();
+    let handle = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\n\
+                 Content-Type: text/html\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (format!("http://{addr}/"), handle)
+}
+
+#[test]
+fn http_page_fetcher_returns_the_response_body() {
+    let (url, server) = serve_once("200 OK", "<html>body</html>");
+    let fetcher = HttpPageFetcher::new();
+    assert_eq!(fetcher.fetch_page(&url).unwrap(), "<html>body</html>");
+    server.join().unwrap();
+}
+
+#[test]
+fn http_page_fetcher_errors_on_a_non_success_status() {
+    let (url, server) = serve_once("404 Not Found", "missing");
+    let fetcher = HttpPageFetcher::new();
+    assert!(fetcher.fetch_page(&url).is_err());
+    server.join().unwrap();
 }
 
 // -- configuration -----------------------------------------------------------

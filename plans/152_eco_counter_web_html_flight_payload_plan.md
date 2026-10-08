@@ -118,4 +118,31 @@ No DB migration, no config change and no change to the provider seam.
 - [x] Unit tests for HTML-wrapped / chunk-split / bare payloads
 - [x] Docs updated
 - [x] `make check` (fmt + clippy + prettier + audit) and `make test-rest` green
-- [x] `cargo test scraping` green (21 tests) and live pages parse
+- [x] `cargo test scraping` green and live pages parse
+
+## Addendum: duplicate station short codes (2026-10-08, live run)
+
+Once the HTML transport was fixed, Düsseldorf (4732 measurements) and Köln
+(8313) imported cleanly, but Hessen Mobil still failed **1.2 s in** with
+`Database("db error")` — i.e. during station persistence, before any
+measurement was read.
+
+**Root cause.** The reworked Hessen payload lists **554 bicycle sites** and two
+of them share the short code `1394`. The database enforces a unique
+`(data_source_id, name)` index
+([`V8`](../backend/migrations/V8__add_counting_station_and_channel_name_uniqueness.sql:42)),
+so the second `counting_stations` insert raised a `unique_violation`, which the
+repository surfaced as a generic DB error.
+
+**Fix (provider-side).** [`parse_site_list`](../backend/src/adapter/driven/eco_counter/scraping/parsing.rs:241)
+now calls `ensure_unique_names`: every station whose raw name collides is
+renamed `"{name} ({external_id})"` (with a `#n` fallback if even that collides).
+The external id is stable, so the rename is stable across runs and the core
+still matches stations by external id; each station's single channel mirrors the
+disambiguated name, keeping the channel `(counting_station_id, name)` index
+satisfied too. This mirrors the repair [`V8`](../backend/migrations/V8__add_counting_station_and_channel_name_uniqueness.sql:11)
+applied to already-imported duplicate rows.
+
+**Verification.** The real Hessen home document parses to 554 stations with
+**554 unique names**; dedicated unit tests pin the disambiguation (including the
+collision fallback), and loopback HTTP tests cover the full page-fetch path.

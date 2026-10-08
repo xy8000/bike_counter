@@ -39,7 +39,7 @@
 //! instead of 23 h apart (which the database's overlap guard rejects).
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -314,6 +314,8 @@ pub fn parse_site_list(
         index.site_ids.push(external_id);
     }
 
+    ensure_unique_names(&mut index);
+
     index
         .stations
         .sort_by(|a, b| a.external_id.cmp(&b.external_id));
@@ -322,6 +324,59 @@ pub fn parse_site_list(
         .sort_by(|a, b| a.external_id.cmp(&b.external_id));
     index.site_ids.sort();
     Ok(index)
+}
+
+/// Makes every station name unique within the data source.
+///
+/// The database enforces a unique `(data_source_id, name)` index, and a few
+/// tenants publish duplicate short codes (e.g. two Hessen sites both named
+/// `1394`). Every station whose raw name collides is renamed
+/// `"{name} ({external_id})"`: the external id is stable, so the rename is
+/// stable across runs and the station keeps its identity (the core matches
+/// stations by external id). Each station's single channel carries the same
+/// disambiguated name, so the channel `(counting_station_id, name)` index stays
+/// satisfied too.
+fn ensure_unique_names(index: &mut SiteIndex) {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for station in &index.stations {
+        *counts.entry(station.name.as_str()).or_insert(0) += 1;
+    }
+    if counts.values().all(|count| *count == 1) {
+        return;
+    }
+
+    // Keep the names that are already unique, then disambiguate the rest so the
+    // generated names also cannot collide with a surviving raw name.
+    let mut used: HashSet<String> = index
+        .stations
+        .iter()
+        .filter(|station| counts.get(station.name.as_str()).copied().unwrap_or(0) == 1)
+        .map(|station| station.name.clone())
+        .collect();
+    let mut renames: HashMap<String, String> = HashMap::new();
+    for station in &index.stations {
+        if counts.get(station.name.as_str()).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let mut candidate = format!("{} ({})", station.name, station.external_id);
+        let mut suffix = 2;
+        while !used.insert(candidate.clone()) {
+            candidate = format!("{} ({}) #{suffix}", station.name, station.external_id);
+            suffix += 1;
+        }
+        renames.insert(station.external_id.clone(), candidate);
+    }
+
+    for station in &mut index.stations {
+        if let Some(name) = renames.get(&station.external_id) {
+            station.name = name.clone();
+        }
+    }
+    for channel in &mut index.channels {
+        if let Some(name) = renames.get(&channel.external_id) {
+            channel.name = name.clone();
+        }
+    }
 }
 
 /// Composes a human address ("street no, postcode place") from the site's
