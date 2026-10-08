@@ -106,9 +106,11 @@ which is why the failure looked like a bare `exit status: 1`.
       and the self-healing behavior.
 - [x] `TilesInit` resolves the source per build — configured pin while available,
       else the newest catalog build — so a pruned pin self-heals. Resolver policy
-      + catalog parser unit-tested; fake-CLI tests use a stub resolver
-      (network-free), and the CLI-spawning tests are serialised to avoid the
-      pre-existing `Text file busy` flake under parallel execution.
+      + catalog parser unit-tested, and the real network paths
+      (`resolve_source_default`, `url_is_available`, `fetch_latest_build_key`)
+      are exercised hermetically against a loopback HTTP server; the fake-CLI
+      tests use a stub resolver and are serialised to avoid the pre-existing
+      `Text file busy` flake under parallel execution.
 - [x] `make check` green.
 - [x] `make test-rest` (128) and full `make test` green.
 - [x] Plan file ticked and status set to `implemented`.
