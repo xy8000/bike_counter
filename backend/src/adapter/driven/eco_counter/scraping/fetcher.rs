@@ -1,12 +1,17 @@
 //! Real HTTP page fetcher for the ScreenScraping mode.
 //!
 //! The Eco-Counter dashboards (`*.eco-counter.com`) are Next.js App Router
-//! applications. Asking for a page with the `RSC: 1` request header makes the
-//! server return the React Server Components **Flight payload** (`text/x-component`)
-//! instead of the full HTML shell; the counter data lives in that payload as
-//! embedded JSON. [`HttpPageFetcher`] sends that header (plus a browser-like
-//! `User-Agent`) and retries transient transport errors, mirroring the shared
+//! applications. [`HttpPageFetcher`] fetches the ordinary **server-rendered HTML
+//! document** (plus a browser-like `User-Agent`) and retries transient transport
+//! errors, mirroring the shared
 //! [`HttpResourceFetcher`](super::super::fetcher) that serves the other modes.
+//!
+//! The dashboard used to answer a request carrying `RSC: 1` with the React Server
+//! Components **Flight payload** (`text/x-component`) directly. Since the
+//! 2026-10 rework it instead **307-redirects** such requests to a tenant-prefixed
+//! route that answers **404**, so that header must not be sent. The very same
+//! Flight stream is now inlined as escaped JSON in the HTML document
+//! (`self.__next_f.push([1,"…"])`); [`super::parsing`] unwraps it before parsing.
 //!
 //! This fetcher is deliberately **separate** from the shared
 //! [`ResourceFetcher`](super::super::fetcher::ResourceFetcher): scraping needs its
@@ -25,7 +30,7 @@ pub trait PageFetcher: Send + Sync {
     fn fetch_page(&self, url: &str) -> Result<String, String>;
 }
 
-/// Fetches a Next.js RSC payload by sending the `RSC: 1` header.
+/// Fetches a Next.js HTML page whose inlined Flight stream carries the data.
 pub struct HttpPageFetcher {
     /// Agent with an end-to-end request timeout so a hung upstream can never
     /// block an import worker thread forever.
@@ -71,8 +76,9 @@ impl PageFetcher for HttpPageFetcher {
             let request = self
                 .agent
                 .get(url)
-                // Ask for the React Server Components payload, not the HTML shell.
-                .header("RSC", "1")
+                // Deliberately NO `RSC: 1` header: the reworked dashboards
+                // 307-redirect such requests to a tenant-prefixed route that
+                // answers 404. The HTML document inlines the same flight stream.
                 // The dashboards are server-rendered for browsers; a plain ureq
                 // user agent may be treated differently by the CDN.
                 .header("User-Agent", "Mozilla/5.0 (bike-counter scraper)");

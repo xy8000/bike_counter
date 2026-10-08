@@ -6,19 +6,22 @@ Eco-Counter exposes **only through a public web view** (`*.eco-counter.com`
 Next.js dashboards) that has no usable API. **One tenant = one
 `[[data_sources]]` entry**, pointed at the tenant root via `scrape_url`.
 
-## Verified page structure (2026-09-05, `https://hessen-mobil.eco-counter.com`)
+## Verified page structure (2026-10-08, `https://duesseldorf.eco-counter.com`,
+## `https://hessen-mobil.eco-counter.com`)
 
-The dashboards are Next.js App Router apps. Requesting a page with the `RSC: 1`
-header makes the server return the React Server Components **Flight payload**
-(`text/x-component`) instead of the HTML shell — no `_rsc` token, no JS parsing
-and no headless browser are needed. The payload is a stream of newline-separated
-records `<id>:<json>`; the data arrays are fully inlined JSON objects:
+The dashboards are Next.js App Router apps. Fetching a page as **plain HTML**
+(no `RSC: 1` header) returns the server-rendered document that **inlines the
+React Server Components Flight stream** as escaped JSON in
+`self.__next_f.push([1,"…"])` script calls — no `_rsc` token, no JS parsing and
+no headless browser are needed. Decoding every chunk and concatenating them
+yields a stream of newline-separated records `<id>:<json>`; the data arrays are
+fully inlined JSON objects:
 
 - **Station list** — `GET {root}/?granularity=P1D&year={current}` embeds the
-  tenant's stations under a `"sites":[...]` array (549 stations for Hessen; a
-  `bounds_*` viewport is *not* required). Each entry carries `id` (e.g.
-  `300027685`), `name` (short code, e.g. `001`), `latitude`/`longitude` +
-  `location`, `attributes` (address street/number/postcode/place) and
+  tenant's stations under a `"sites":[...]` array (13 stations for Düsseldorf,
+  549 for Hessen; a `bounds_*` viewport is *not* required). Each entry carries
+  `id` (e.g. `100005014`), `name` (e.g. `KÖ Steinstraße`), `latitude`/`longitude`
+  + `location`, `attributes` (address street/number/postcode/place) and
   `travelModes`. Only `bike` sites are imported.
 - **Daily data** — `GET {root}/site/{id}?granularity=P1D&year={YYYY}` embeds the
   site's **daily** series under a `"chartData":[...]` array: one `travelMode`
@@ -27,6 +30,11 @@ records `<id>:<json>`; the data arrays are fully inlined JSON objects:
   `{"timestamp":"2025-01-01T00:00:00+01:00","traffic":{"counts":18}}`. A year
   request returns the whole calendar year; the current year runs Jan 1 up to
   **yesterday** (the incomplete current day is never exposed).
+
+> **Do not send `RSC: 1`.** The 2026-10 rework 307-redirects such requests to a
+> tenant-prefixed route (`/{tenant}?…&_rsc`) that answers **404**. The HTML
+> document inlines the very same Flight stream, so the header is neither needed
+> nor allowed.
 
 Each station maps to **one** cumulative daily channel (the site total — even
 directional sites expose a single `bike` series). Paging is **year by year**
@@ -72,17 +80,19 @@ import_days_back = "365"
 
 ## Module layout
 
-- [`fetcher.rs`](fetcher.rs:1) — real page fetcher sending `RSC: 1`.
+- [`fetcher.rs`](fetcher.rs:1) — real page fetcher (plain HTML, browser-like
+  `User-Agent`, no `RSC: 1`).
 - [`rate_limit.rs`](rate_limit.rs:1) — minimum-interval rate limiter.
 - [`client.rs`](client.rs:1) — URL building + rate-limited page fetches.
-- [`parsing.rs`](parsing.rs:1) — RSC record scan, `sites[]` and `chartData[]` parsers.
+- [`parsing.rs`](parsing.rs:1) — HTML Flight-stream unwrapping, record scan,
+  `sites[]` and `chartData[]` parsers.
 - [`adapter.rs`](adapter.rs:1) — `EcoCounterWebAdapter` (the `DataProvider`):
   discovery + year paging.
 - [`tests.rs`](tests.rs:1) — unit tests against in-repo RSC fixtures.
 
 ## Notes / limitations
 
-- A tenant whose RSC payload deduplicates site entries into `"$"` reference
+- A tenant whose Flight stream deduplicates site entries into `"$"` reference
   strings (instead of inlining every object) would need reference resolution;
   Hessen inlines all 549 sites.
 - Station images (the `filer.eco-counter-tools.com` URLs in the payload) are not
