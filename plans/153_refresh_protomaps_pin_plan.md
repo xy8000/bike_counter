@@ -1,10 +1,10 @@
-# 153 - Refresh the pinned Protomaps build (fix the failing `tiles_update` job)
+# 153 - Fix the failing `tiles_update` job (self-healing Protomaps pin)
 
 Status: implemented
 
-> Gates run: `make check` (fmt + clippy + Prettier + cargo audit), `make
-> test-rest` (128), and the full `make test` (823, incl. the new
-> `update_error_includes_cli_stderr`).
+> Gates run: `make check` (fmt + clippy + Prettier + cargo audit) and the full
+> `make test` — including the new `update_error_includes_cli_stderr`,
+> `latest_build_key_*` and `resolve_source_*` unit tests.
 
 ## Problem
 
@@ -71,12 +71,20 @@ which is why the failure looked like a bare `exit status: 1`.
    unit test proving the stderr text is included.
 3. **Document the symptom** in
    [`tiles/README.md`](tiles/README.md:88): a pruned pin shows up as the
-   `tiles_update` job failing with the pmtiles CLI error, and the fix is the same
-   bump procedure.
-
-Out of scope: automatic resolution of the "latest" build (Protomaps exposes no
-stable machine-readable builds endpoint; the pin is deliberately reproducible —
-see [`plans/65`](plans/65_bundle_tiles_init_into_backend_image_plan.md:118)).
+   `tiles_update` job failing with the pmtiles CLI error.
+4. **Self-heal the pin (the durable fix).** A date bump alone only buys ~a month:
+   the tiles job runs every two months
+   (`0 0 3 1 1,3,5,7,9,11 *`), so it would 404 again. Protomaps *does* publish a
+   stable machine-readable catalog
+   (`https://build-metadata.protomaps.dev/builds.json` — an array of
+   `{"key":"YYYYMMDD.pmtiles", ...}` that its own builds page consumes), so
+   [`TilesInit::build_to`](backend/src/adapter/driven/tiles_init/mod.rs:128) now
+   **resolves the source per build** via `resolve_source_default`: the configured
+   pin while it still resolves, otherwise the newest catalog build (logging a
+   warning). A pruned pin therefore never fails the job again; the pin only
+   chooses the *preferred* snapshot. The network effects are injected
+   (`resolve_source_from`) so the policy and the catalog parser are unit-tested
+   offline, and the fake-CLI tests use a stub resolver to stay network-free.
 
 ## Definition of done
 
@@ -85,9 +93,15 @@ see [`plans/65`](plans/65_bundle_tiles_init_into_backend_image_plan.md:118)).
       test scripts and every backend test expectation.
 - [x] [`TilesInit::run`](backend/src/adapter/driven/tiles_init/mod.rs:213) captures
       and includes the CLI's stderr in the error; unit test added.
-- [x] [`tiles/README.md`](tiles/README.md:88) documents the pruned-pin symptom.
+- [x] [`tiles/README.md`](tiles/README.md:88) documents the pruned-pin symptom
+      and the self-healing behavior.
+- [x] `TilesInit` resolves the source per build — configured pin while available,
+      else the newest catalog build — so a pruned pin self-heals. Resolver policy
+      + catalog parser unit-tested; fake-CLI tests use a stub resolver
+      (network-free), and the CLI-spawning tests are serialised to avoid the
+      pre-existing `Text file busy` flake under parallel execution.
 - [x] `make check` green.
-- [x] `make test-rest` green (and `make test` where Docker is available).
+- [x] `make test-rest` (128) and full `make test` green.
 - [x] Plan file ticked and status set to `implemented`.
 
 ## Operator note
