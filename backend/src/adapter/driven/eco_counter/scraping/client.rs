@@ -1,19 +1,22 @@
-//! The **screen-scraping client**: fetches the RSC payloads of the Next.js
+//! The **screen-scraping client**: fetches the HTML documents of the Next.js
 //! dashboards and applies the rate limiter before every request.
 //!
-//! Verified against `https://hessen-mobil.eco-counter.com` (2026-09-05):
+//! Verified against `https://duesseldorf.eco-counter.com` and
+//! `https://hessen-mobil.eco-counter.com` (2026-10-08):
 //!
-//! - `GET {root}/?granularity=P1D&year={year}` (with `RSC: 1`) returns the home
-//!   RSC payload that embeds the full **station list** under a `"sites":[...]`
-//!   array. A generous `bounds_*` viewport is *not* required — the response
-//!   contains every station of the tenant.
-//! - `GET {root}/site/{id}?granularity=P1D&year={year}` (with `RSC: 1`) returns
-//!   the detail RSC payload embedding the **daily series** of one site under a
-//!   `"chartData":[...]` array (`travelMode` `bike`, one point per calendar day
-//!   with `timestamp` at local midnight and `traffic.counts`).
+//! - `GET {root}/?granularity=P1D&year={year}` returns the HTML home document
+//!   whose inlined Flight stream embeds the full **station list** under a
+//!   `"sites":[...]` array. A generous `bounds_*` viewport is *not* required —
+//!   the response contains every station of the tenant.
+//! - `GET {root}/site/{id}?granularity=P1D&year={year}` returns the HTML detail
+//!   document whose inlined Flight stream embeds the **daily series** of one
+//!   site under a `"chartData":[...]` array (`travelMode` `bike`, one point per
+//!   calendar day with `timestamp` at local midnight and `traffic.counts`).
 //!
-//! Both pages are reached without a `_rsc` query token: the `RSC: 1` header is
-//! what makes Next.js answer with the Flight payload (`text/x-component`).
+//! The requests must **not** carry `RSC: 1`: the reworked dashboards 307-redirect
+//! such requests to a tenant-prefixed route that answers 404. The same Flight
+//! stream is inlined in the HTML (`self.__next_f.push([1,"…"])`) and unwrapped by
+//! [`super::parsing`].
 
 use std::sync::Arc;
 
@@ -23,7 +26,7 @@ use super::rate_limit::RateLimiter;
 /// Granularity query value for **daily** series.
 pub const GRANULARITY_DAILY: &str = "P1D";
 
-/// Fetches the RSC payloads of one tenant (`{root}/` and `{root}/site/{id}`).
+/// Fetches the HTML documents of one tenant (`{root}/` and `{root}/site/{id}`).
 pub struct PageClient {
     base_url: String,
     fetcher: Arc<dyn PageFetcher>,

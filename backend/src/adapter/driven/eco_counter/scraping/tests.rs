@@ -1,5 +1,6 @@
-//! Unit tests for the ScreenScraping mode (no network): RSC parsing, station
-//! discovery (+ persistent-state reuse) and daily measurement paging.
+//! Unit tests for the ScreenScraping mode (no network): Flight-stream parsing
+//! (bare and inlined in HTML), station discovery (+ persistent-state reuse) and
+//! daily measurement paging.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -186,6 +187,72 @@ impl PageFetcher for FakeFetcher {
 }
 
 // -- parsing -----------------------------------------------------------------
+
+/// Wraps bare Flight-stream chunks the way the live dashboards now deliver them:
+/// as escaped JSON string arguments of `self.__next_f.push([1,"…"])` calls
+/// inside a server-rendered HTML document (the `RSC: 1` route was removed
+/// upstream and now 404s).
+fn html_document(chunks: &[&str]) -> String {
+    let mut html = String::from("<!DOCTYPE html><html><body>");
+    for chunk in chunks {
+        let escaped = serde_json::to_string(chunk).expect("flight chunk is escapable");
+        html.push_str("<script>self.__next_f.push([1,");
+        html.push_str(&escaped);
+        html.push_str("])</script>");
+    }
+    html.push_str("</body></html>");
+    html
+}
+
+#[test]
+fn parses_station_list_inlined_in_html_document() {
+    let html = html_document(&[&stations_payload()]);
+    let index = parse_site_list(&html, "Europe/Berlin", None).unwrap();
+    assert_eq!(index.stations.len(), 2);
+    assert_eq!(index.channels.len(), 2);
+}
+
+#[test]
+fn concatenates_flight_chunks_split_across_push_calls() {
+    // A single record can be split across two `push` calls; the chunks must be
+    // concatenated before the line-oriented scan.
+    let payload = stations_payload();
+    let split = payload
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|&index| index >= payload.len() / 2)
+        .expect("payload non-empty");
+    let html = html_document(&[&payload[..split], &payload[split..]]);
+    let index = parse_site_list(&html, "Europe/Berlin", None).unwrap();
+    assert_eq!(index.stations.len(), 2);
+}
+
+#[test]
+fn skips_non_string_push_markers_before_the_flight_chunk() {
+    let escaped = serde_json::to_string(&stations_payload()).unwrap();
+    let html = format!(
+        "<script>self.__next_f.push([0])</script>\
+         <script>self.__next_f.push([1,{escaped}])</script>"
+    );
+    let index = parse_site_list(&html, "Europe/Berlin", None).unwrap();
+    assert_eq!(index.stations.len(), 2);
+}
+
+#[test]
+fn parses_daily_series_inlined_in_html_document() {
+    let html = html_document(&[&site_payload(2025)]);
+    let values = parse_daily_series(&html, &Berlin).unwrap();
+    assert!(!values.is_empty());
+    assert_eq!(values[0].value, 1);
+}
+
+#[test]
+fn bare_flight_stream_is_parsed_unchanged() {
+    // No `self.__next_f.push` marker: the body is a bare stream and must be
+    // passed through untouched.
+    let index = parse_site_list(&stations_payload(), "Europe/Berlin", None).unwrap();
+    assert_eq!(index.stations.len(), 2);
+}
 
 #[test]
 fn parses_station_list_filters_non_bike_and_builds_description() {

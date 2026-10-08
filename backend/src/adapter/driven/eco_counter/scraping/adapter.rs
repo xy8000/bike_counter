@@ -2,7 +2,8 @@
 //! imports the daily counts of the public Eco-Counter dashboards
 //! (`*.eco-counter.com`) that have no usable API.
 //!
-//! The scraper reads the Next.js RSC payloads (see [`super::parsing`]):
+//! The scraper reads the Next.js HTML documents, whose inlined React Server
+//! Components Flight stream carries the data (see [`super::parsing`]):
 //!
 //! - the **home page** embeds the tenant's full station list (`sites[]`), so no
 //!   per-station catalog is needed;

@@ -22,8 +22,10 @@ platform, so a single access path no longer covers all counters:
 - The **official API** (V2) discovers a whole organisation at runtime and needs
   an organisation-scoped OAuth **access token** (`Authorization: Bearer`).
 - The **web adapter** parses a browser-accessible public view (that has no
-  usable API): the Next.js RSC payloads of the `*.eco-counter.com` dashboards,
-  fetching the station list from the home page and each site's daily series from
+  usable API): the Next.js `*.eco-counter.com` dashboards. The React Server
+  Components Flight stream is inlined in the server-rendered HTML document
+  (`self.__next_f.push([1,"…"])`, no `RSC: 1` header — that route now 404s);
+  the station list comes from the home page and each site's daily series from
   its detail page (see [`scraping/README.md`](scraping/README.md)).
 
 ## Configuration

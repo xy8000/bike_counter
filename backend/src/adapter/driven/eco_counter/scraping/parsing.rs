@@ -1,17 +1,26 @@
 //! Parsers for the ScreenScraping mode: extract the embedded JSON from the
-//! Next.js React Server Components (RSC) payloads returned with the `RSC: 1`
-//! header.
+//! Next.js React Server Components (RSC) **Flight** stream.
 //!
-//! ## RSC payload shape
+//! ## Flight transport
 //!
-//! The `text/x-component` body is a stream of **records**, one per line, each of
-//! the form `<id>:<json>` (e.g. `1c:[...,{"sites":[...]}...]`, `1e:[...]`).
+//! The Flight stream is a newline-separated list of **records**, each of the
+//! form `<id>:<json>` (e.g. `1c:[...,{"sites":[...]}...]`, `1e:[...]`).
 //! Server-component JSX and repeated values are serialised with `"$"` reference
 //! strings (`"$1c:props:…"`), but the data arrays we need — the station list
 //! under `"sites"` and the daily series under `"chartData"` — are fully inlined
 //! JSON objects, so they parse with plain `serde_json`.
 //!
-//! Verified against `https://hessen-mobil.eco-counter.com` (2026-09-05):
+//! The stream was formerly served directly as `text/x-component` in response to
+//! a request carrying the `RSC: 1` header. Since the 2026-10 rework the
+//! dashboards 307-redirect (and then 404) such requests, and the same stream is
+//! instead **inlined into the server-rendered HTML document** as escaped JSON in
+//! `self.__next_f.push([1,"…"])` script calls. [`flight_stream`] unwraps it
+//! (concatenating every chunk in document order, since one record may be split
+//! across calls) and hands the plain stream to the line-oriented scan. A body
+//! that is already a bare stream is passed through unchanged.
+//!
+//! Verified against `https://duesseldorf.eco-counter.com` and
+//! `https://hessen-mobil.eco-counter.com` (2026-10-08):
 //!
 //! - home payload → one `"sites":[{...}]` array with the tenant's stations
 //!   (`id`, `name`, `location`, `latitude`/`longitude`, `attributes` address,
@@ -29,6 +38,7 @@
 //! calendar day it names — keeping consecutive daily intervals contiguous
 //! instead of 23 h apart (which the database's overlap guard rejects).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveTime, TimeZone, Utc};
@@ -57,6 +67,76 @@ pub struct SiteIndex {
     pub channels: Vec<ChannelRecord>,
     /// Station external ids (used to seed the measurement scanner).
     pub site_ids: Vec<String>,
+}
+
+/// The prefix of a Next.js `self.__next_f.push([…])` call that carries an
+/// inlined Flight text chunk (`self.__next_f.push([1,"…"])`).
+const FLIGHT_PUSH_MARKER: &str = "self.__next_f.push([";
+
+/// Returns the React Server Components Flight stream carried by `body`.
+///
+/// * When `body` is already a bare stream (no `self.__next_f.push` marker — e.g.
+///   the unit-test fixtures or a direct `text/x-component` response) it is
+///   returned **as-is**.
+/// * When `body` is a server-rendered HTML document it inlines the stream as
+///   escaped JSON string arguments of `self.__next_f.push([1,"…"])` calls; every
+///   chunk is JSON-decoded (undoing the `\"`/`\n` escaping) and concatenated in
+///   document order. Concatenation before the line scan is essential because a
+///   single record can be split across two calls.
+///
+/// Only chunks that decode to a JSON string are kept; other markers are skipped.
+fn flight_stream(body: &str) -> Cow<'_, str> {
+    if !body.contains(FLIGHT_PUSH_MARKER) {
+        return Cow::Borrowed(body);
+    }
+    let bytes = body.as_bytes();
+    let mut stream = String::new();
+    let mut cursor = 0usize;
+    let mut found = false;
+    while let Some(offset) = body[cursor..].find(FLIGHT_PUSH_MARKER) {
+        let after = cursor + offset + FLIGHT_PUSH_MARKER.len();
+        // `push([<numeric id>,"<flight text>"])`: the first quote after the
+        // marker opens the string argument, but only when the bytes in between
+        // are the numeric id, a comma and optional whitespace. Otherwise (e.g. a
+        // flush record) skip this marker instead of grabbing a far-away quote.
+        let Some(quote) = body[after..].find('"').map(|rel| after + rel) else {
+            break;
+        };
+        if !body[after..quote]
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b',' || b.is_ascii_whitespace())
+        {
+            cursor = after;
+            continue;
+        }
+        // Scan the JSON string literal, honouring backslash escapes so a `\"`
+        // inside the payload does not terminate it.
+        let mut end = quote + 1;
+        loop {
+            match bytes.get(end) {
+                Some(b'\\') => end += 2,
+                Some(b'"') => break,
+                Some(_) => end += 1,
+                None => {
+                    return if found {
+                        Cow::Owned(stream)
+                    } else {
+                        Cow::Borrowed(body)
+                    };
+                }
+            }
+        }
+        if let Ok(chunk) = serde_json::from_str::<String>(&body[quote..=end]) {
+            stream.push_str(&chunk);
+            found = true;
+        }
+        cursor = end + 1;
+    }
+    if found {
+        Cow::Owned(stream)
+    } else {
+        Cow::Borrowed(body)
+    }
 }
 
 /// Recursively searches a parsed RSC record for the first object field with
@@ -88,8 +168,10 @@ fn find_field(value: &serde_json::Value, key: &str) -> Option<serde_json::Value>
     }
 }
 
-/// Finds the first `key` field across every JSON record of an RSC payload.
+/// Finds the first `key` field across every JSON record of a Flight payload,
+/// unwrapping an HTML document first when necessary (see [`flight_stream`]).
 pub fn first_field(payload: &str, key: &str) -> Result<serde_json::Value, String> {
+    let payload = flight_stream(payload);
     for line in payload.lines() {
         let Some((_id, body)) = line.split_once(':') else {
             continue;

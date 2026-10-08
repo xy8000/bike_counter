@@ -2,10 +2,11 @@
 //! one tenant per [`DataSourceConfiguration`](crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration)
 //! pointed at a tenant root via `scrape_url`. It scrapes the public Next.js
 //! dashboards (`*.eco-counter.com`) that expose counter data only through their
-//! web view: the home page embeds the tenant's station list (`sites[]`) and each
-//! `/site/{id}` page embeds that site's **daily** series for one calendar year.
-//! Parsing never needs a browser — the RSC payloads are plain text with embedded
-//! JSON (see [`parsing`]).
+//! web view: the home document embeds the tenant's station list (`sites[]`) and
+//! each `/site/{id}` document embeds that site's **daily** series for one
+//! calendar year. Parsing never needs a browser — the React Server Components
+//! Flight stream is inlined as escaped JSON in the HTML document and unwrapped
+//! from there (see [`parsing`]).
 
 pub use adapter::EcoCounterWebAdapter;
 
