@@ -18,8 +18,9 @@
 
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use flate2::read::GzDecoder;
 use tar::Archive as TarArchive;
@@ -207,20 +208,49 @@ impl TilesInit {
         }
     }
 
-    /// Runs `command` with `args`, inheriting stdout/stderr (so the CLI's
-    /// multi-minute progress is visible in the container logs) and returning an
-    /// error when the exit status is non-zero.
+    /// Runs `command` with `args`, streaming its stdout (so the CLI's
+    /// multi-minute progress is visible in the container logs), capturing
+    /// stderr and returning an error when the exit status is non-zero. The
+    /// captured stderr is appended to the error — plus a hint when it looks like
+    /// a pruned/`404` source — so a failed run is diagnosable from the job log
+    /// instead of a bare exit status.
     fn run(&self, command: &Path, args: &[&str]) -> Result<(), String> {
         tracing::info!("> {} {}", command.display(), args.join(" "));
-        let status = Command::new(command)
+        let mut child = Command::new(command)
             .args(args)
-            .status()
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| format!("failed to spawn {}: {e}", command.display()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .map(|mut pipe| {
+                let mut buffer = String::new();
+                // The child's stdout is inherited (not a pipe), so draining
+                // stderr to EOF here cannot deadlock on a full stdout buffer.
+                let _ = pipe.read_to_string(&mut buffer);
+                buffer
+            })
+            .unwrap_or_default();
+        let status = child
+            .wait()
+            .map_err(|e| format!("failed to wait for {}: {e}", command.display()))?;
         if status.success() {
-            Ok(())
-        } else {
-            Err(format!("{} exited with {status}", command.display()))
+            return Ok(());
         }
+        let detail = stderr.trim();
+        let mut message = format!("{} exited with {status}", command.display());
+        if !detail.is_empty() {
+            message.push_str(": ");
+            message.push_str(detail);
+        }
+        if detail.contains("404") {
+            message.push_str(
+                " (the pinned Protomaps build may have been pruned upstream; \
+                 refresh maps.protomaps_build_url)",
+            );
+        }
+        Err(message)
     }
 
     /// Ensures the pinned `pmtiles` CLI binary is cached, downloading and
@@ -304,7 +334,7 @@ mod tests {
         MapsConfiguration::new(
             "0 0 3 1 1,3,5,7,9,11 *".to_string(),
             7200,
-            "https://build.protomaps.com/20260905.pmtiles".to_string(),
+            "https://build.protomaps.com/20261008.pmtiles".to_string(),
             "1.31.2".to_string(),
         )
         .unwrap()
@@ -433,6 +463,33 @@ mod tests {
         assert!(result.is_err());
         assert!(!tiles_dir.join(MAP_ARCHIVE).exists());
         assert!(!tiles_dir.join(TMP_ARCHIVE).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn update_error_includes_cli_stderr() {
+        let root = temp_dir("stderr");
+        let tiles_dir = root.join("tiles");
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        // A fake CLI that fails (as `extract` does against a pruned/404 source)
+        // and prints the reason to stderr.
+        let script = "#!/bin/sh\n\
+                      echo 'fetching: 404 Not Found' >&2\n\
+                      exit 1\n";
+        fs::write(bin_dir.join("pmtiles"), script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(bin_dir.join("pmtiles"), fs::Permissions::from_mode(0o755)).unwrap();
+        let init = TilesInit::with_dirs(maps_configuration(), tiles_dir.clone(), bin_dir);
+
+        let error = init.update().unwrap_err();
+
+        assert!(
+            error.contains("404 Not Found"),
+            "stderr missing from: {error}"
+        );
+        assert!(error.contains("pruned"), "hint missing from: {error}");
         fs::remove_dir_all(root).unwrap();
     }
 
