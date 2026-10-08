@@ -143,6 +143,16 @@ disambiguated name, keeping the channel `(counting_station_id, name)` index
 satisfied too. This mirrors the repair [`V8`](../backend/migrations/V8__add_counting_station_and_channel_name_uniqueness.sql:11)
 applied to already-imported duplicate rows.
 
+The **persisted discovery index** is normalised on load as well
+([`decode_index`](../backend/src/adapter/driven/eco_counter/scraping/adapter.rs:630)):
+a failed earlier run may have cached the index with duplicate names, and the
+cache window (seconds, default 300) would otherwise re-serve them without a
+re-fetch.
+
 **Verification.** The real Hessen home document parses to 554 stations with
 **554 unique names**; dedicated unit tests pin the disambiguation (including the
-collision fallback), and loopback HTTP tests cover the full page-fetch path.
+collision fallback and persisted-index normalisation), and loopback HTTP tests
+cover the full page-fetch path. End-to-end on the running stack: Hessen now
+persists 554 stations (the two `1394` rows stored as `1394 (300066740)` /
+`1394 (300071542)`), reports **RUNNING** instead of `Database("db error")`, and
+imports measurements.

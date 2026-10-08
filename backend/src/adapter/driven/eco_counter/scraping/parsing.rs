@@ -336,7 +336,7 @@ pub fn parse_site_list(
 /// stations by external id). Each station's single channel carries the same
 /// disambiguated name, so the channel `(counting_station_id, name)` index stays
 /// satisfied too.
-fn ensure_unique_names(index: &mut SiteIndex) {
+pub(crate) fn ensure_unique_names(index: &mut SiteIndex) {
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for station in &index.stations {
         *counts.entry(station.name.as_str()).or_insert(0) += 1;

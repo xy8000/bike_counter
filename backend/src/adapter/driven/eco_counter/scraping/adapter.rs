@@ -37,7 +37,9 @@ use crate::core::domain::health::HealthStatus;
 
 use super::client::PageClient;
 use super::fetcher::{HttpPageFetcher, PageFetcher};
-use super::parsing::{DailyValue, SiteIndex, parse_daily_series, parse_site_list};
+use super::parsing::{
+    DailyValue, SiteIndex, ensure_unique_names, parse_daily_series, parse_site_list,
+};
 use super::rate_limit::RateLimiter;
 
 /// The provider type this adapter is registered under in the config.
@@ -664,6 +666,10 @@ fn decode_index(json: &str) -> Result<SiteIndex, ProviderError> {
         .iter()
         .map(|channel| channel.external_id.clone())
         .collect();
+    // A cached index persisted before the uniqueness rule existed can still
+    // carry duplicate names; normalise on load so the core never hits the
+    // unique `(data_source_id, name)` index.
+    ensure_unique_names(&mut index);
     index
         .stations
         .sort_by(|a, b| a.external_id.cmp(&b.external_id));

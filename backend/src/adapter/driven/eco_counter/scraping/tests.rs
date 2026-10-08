@@ -2,7 +2,7 @@
 //! (bare and inlined in HTML), station discovery (+ persistent-state reuse) and
 //! daily measurement paging.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Datelike, Days, NaiveDate, Offset, TimeZone, Utc};
@@ -569,6 +569,40 @@ fn discovery_reuses_the_persisted_index_across_restart() {
     assert!(
         fetcher_b.requested().is_empty(),
         "restart must not re-scrape the station list when the index is cached"
+    );
+}
+
+#[test]
+fn persisted_index_with_duplicate_names_is_normalised_on_load() {
+    // A cached index written before the uniqueness rule can still carry two
+    // stations with the same name; loading it must disambiguate so the core
+    // never violates the unique `(data_source_id, name)` index.
+    let store = Arc::new(InMemoryState::default());
+    let stored = json!({
+        "timezone": "Europe/Berlin",
+        "stations": [
+            { "external_id": "1", "name": "1394", "description": "", "latitude": 50.0, "longitude": 8.0 },
+            { "external_id": "2", "name": "1394", "description": "", "latitude": 51.0, "longitude": 9.0 }
+        ],
+        "channels": [
+            { "external_id": "1", "station_external_id": "1", "name": "1394" },
+            { "external_id": "2", "station_external_id": "2", "name": "1394" }
+        ]
+    })
+    .to_string();
+    store.store("index", &stored).unwrap();
+    store.store("index_at", &Utc::now().to_rfc3339()).unwrap();
+
+    let fetcher = Arc::new(FakeFetcher::new(None)); // must not be needed
+    let provider = provider_with(fetcher.clone(), &[]).unwrap();
+    provider.attach_persistent_state(store.clone());
+
+    let stations = provider.get_all_counting_stations().unwrap();
+    let names: HashSet<String> = stations.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names.len(), stations.len(), "loaded names must be unique");
+    assert!(
+        fetcher.requested().is_empty(),
+        "cached index needs no fetch"
     );
 }
 
