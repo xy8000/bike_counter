@@ -37,6 +37,18 @@ describe('useResource', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('rejects an off-origin url before fetching (SSRF/CSRF guard)', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useResource<unknown>('https://evil.example/steal'))
+
+    await waitFor(() => expect(result.current.error).toBe(true))
+    expect(result.current.loading).toBe(false)
+    expect(result.current.data).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('refetches when the url changes', async () => {
     const fetchMock = vi
       .fn()
