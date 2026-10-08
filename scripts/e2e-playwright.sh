@@ -115,7 +115,7 @@ region = "garage"
 [maps]
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"
 update_max_heartbeat_interval_seconds = 3600
-protomaps_build_url = "https://build.protomaps.com/20261008.pmtiles"
+protomaps_build_url = "latest"
 go_pmtiles_version = "1.31.2"
 
 [[data_sources]]

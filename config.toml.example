@@ -71,11 +71,11 @@ region = "garage"
 update_cron = "0 0 3 1 1,3,5,7,9,11 *"
 # Max heartbeat interval for the tiles update job in seconds (default: 2 hours).
 update_max_heartbeat_interval_seconds = 7200
-# Preferred Protomaps daily build (see maps.protomaps.com/builds). Used while it
-# still resolves; if it has been pruned upstream (404), the newest build in
-# Protomaps' public catalog is used automatically (self-healing), so bumping this
-# date is optional — it only advances which snapshot is preferred.
-protomaps_build_url = "https://build.protomaps.com/20261008.pmtiles"
+# Protomaps basemap source. `latest` (the default) always resolves the newest
+# available daily build from Protomaps' public catalog; pin an explicit
+# https://build.protomaps.com/YYYYMMDD.pmtiles only to freeze a snapshot (a
+# pinned build that gets pruned upstream automatically falls back to `latest`).
+protomaps_build_url = "latest"
 # Pinned go-pmtiles CLI version used to extract/merge the basemap.
 go_pmtiles_version = "1.31.2"
 

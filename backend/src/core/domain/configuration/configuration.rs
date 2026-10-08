@@ -585,7 +585,8 @@ pub mod value_objects {
         update_cron: String,
         /// Required max interval between heartbeats for the tiles update job.
         update_max_heartbeat_interval_seconds: i64,
-        /// Pinned Protomaps daily build URL (dated snapshot).
+        /// Protomaps source: a dated daily build URL (a pinned snapshot), or the
+        /// token `latest` to always use the newest available build.
         protomaps_build_url: String,
         /// Pinned go-pmtiles CLI version.
         go_pmtiles_version: String,
@@ -638,7 +639,7 @@ pub mod value_objects {
             chrono::Duration::seconds(self.update_max_heartbeat_interval_seconds)
         }
 
-        /// Pinned Protomaps daily build URL (dated snapshot).
+        /// Protomaps source: a dated daily build URL, or the token `latest`.
         pub fn protomaps_build_url(&self) -> &str {
             &self.protomaps_build_url
         }
@@ -695,7 +696,7 @@ mod tests {
         MapsConfiguration::new(
             DEFAULT_MAPS_UPDATE_CRON.to_string(),
             7200,
-            "https://build.protomaps.com/20261008.pmtiles".to_string(),
+            "latest".to_string(),
             "1.31.2".to_string(),
         )
         .unwrap()
@@ -857,10 +858,7 @@ mod tests {
             config.update_max_heartbeat_interval(),
             chrono::Duration::seconds(7200)
         );
-        assert_eq!(
-            config.protomaps_build_url(),
-            "https://build.protomaps.com/20261008.pmtiles"
-        );
+        assert_eq!(config.protomaps_build_url(), "latest");
         assert_eq!(config.go_pmtiles_version(), "1.31.2");
     }
 
