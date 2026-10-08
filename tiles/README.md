@@ -92,8 +92,13 @@ The backend downloads a **dated** Protomaps daily build
 [`config.toml`](../config.toml.example)), not a "latest" alias — Protomaps
 publishes dated snapshots and explicitly discourages hotlinking them in
 production. This is a **provisioning-time only** input (the running app never
-talks to Protomaps — see below), but the pinned date should still be refreshed
-periodically:
+talks to Protomaps — see below).
+
+Every build **resolves the source first**: the configured pin is used while it
+still resolves, and otherwise the newest build in Protomaps' public catalog
+(`build-metadata.protomaps.dev/builds.json`) is used automatically — so a pin
+that has been pruned upstream **self-heals** instead of failing the job. The pin
+therefore only needs refreshing to *advance* the snapshot, not to keep working:
 
 1. Check the current builds at <https://maps.protomaps.com/builds/> for a
    recent `YYYYMMDD.pmtiles` filename.
@@ -101,12 +106,12 @@ periodically:
 3. `make tiles-update` to rebuild from the new pin, or wait for the next
    `tiles_update` cron run, which applies it atomically.
 
-Protomaps only keeps a **short window** (~a month) of dailies, so a pin that has
-aged out is **pruned upstream** and starts returning **HTTP 404** — `pmtiles
-extract` then fails and the `tiles_update` job errors with the CLI's own output
-(e.g. `… exited with exit status: 1`). Recover with the same bump procedure
-above; after the fix the job error includes the CLI's stderr plus a
-`refresh maps.protomaps_build_url` hint when a `404` is detected.
+Protomaps only keeps a **short window** (~a month) of dailies, so an aged pin is
+**pruned upstream** and starts returning **HTTP 404**. This no longer fails the
+job — the resolver falls back to the newest catalog build (logging a warning) —
+but a `404` observed *after* resolution (e.g. the catalog itself moved) is
+surfaced in the job error together with the CLI's stderr and a
+`refresh maps.protomaps_build_url` hint.
 
 ### Rebuilding from a fresh extract
 

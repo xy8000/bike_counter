@@ -15,16 +15,24 @@
 //! The `go-pmtiles` CLI is downloaded once (pinned by
 //! `maps.go_pmtiles_version`) into `<tiles_dir>/.pmtiles-bin` and cached across
 //! runs. The Germany and surroundings bounding boxes are hard-coded here for now.
+//!
+//! The Protomaps **source** is resolved per build ([`resolve_source_default`]):
+//! the configured `maps.protomaps_build_url` pin is used while it still
+//! resolves, and otherwise the newest build in Protomaps' public catalog is
+//! used — so a pin that has been pruned upstream self-heals instead of failing
+//! the job.
 
 use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use flate2::read::GzDecoder;
 use tar::Archive as TarArchive;
 
+use crate::adapter::driven::http::{DEFAULT_REQUEST_TIMEOUT_SECS, timed_agent};
 use crate::core::domain::configuration::configuration::value_objects::MapsConfiguration;
 use crate::core::domain::tiles::provisioning_port::TilesProvisioningPort;
 
@@ -49,6 +57,13 @@ const GERMANY_ARCHIVE: &str = "germany.pmtiles";
 const EXTRACT_ATTEMPTS: u32 = 3;
 /// Release asset architecture suffix (the backend image is linux/amd64).
 const RELEASE_ARCH: &str = "Linux_x86_64";
+/// Protomaps build **catalog** — a JSON array of the currently available daily
+/// builds (`[{"key":"YYYYMMDD.pmtiles", ...}, ...]`). Protomaps keeps only a
+/// short window (~a month) of dailies, so this is used to self-heal a pin that
+/// has been pruned upstream.
+const BUILDS_CATALOG_URL: &str = "https://build-metadata.protomaps.dev/builds.json";
+/// Base URL a catalog `key` (bare filename) is appended to.
+const BUILDS_BASE_URL: &str = "https://build.protomaps.com/";
 
 pub struct TilesInit {
     maps: MapsConfiguration,
@@ -56,6 +71,9 @@ pub struct TilesInit {
     tiles_dir: PathBuf,
     /// Directory caching the downloaded `pmtiles` CLI binary.
     bin_dir: PathBuf,
+    /// Resolves the Protomaps build URL to extract from (see
+    /// [`resolve_source_default`]); injectable so tests stay offline.
+    source_resolver: fn(&str) -> Result<String, String>,
 }
 
 impl TilesInit {
@@ -75,6 +93,7 @@ impl TilesInit {
             maps,
             tiles_dir,
             bin_dir,
+            source_resolver: resolve_source_default,
         }
     }
 
@@ -125,17 +144,21 @@ impl TilesInit {
     /// `pmtiles merge` requires — it refuses overlapping inputs. The
     /// surroundings bbox fully contains Germany, so at z6-7 Germany is covered
     /// by the surroundings extract with the identical source tiles.
+    ///
+    /// The Protomaps source is resolved via the injected `source_resolver`
+    /// (default [`resolve_source_default`]), which self-heals a pruned pin.
     fn build_to(&self, target: &Path) -> Result<(), String> {
         fs::create_dir_all(&self.tiles_dir)
             .map_err(|e| format!("failed to create {}: {e}", self.tiles_dir.display()))?;
         let cli = self.ensure_cli()?;
+        let source = (self.source_resolver)(self.maps.protomaps_build_url())?;
 
         let world = self.tiles_dir.join(WORLD_ARCHIVE);
         let surroundings = self.tiles_dir.join(SURROUNDINGS_ARCHIVE);
         let germany = self.tiles_dir.join(GERMANY_ARCHIVE);
         self.cleanup_intermediates();
 
-        self.extract_with_retry(&cli, &world, &["--maxzoom=5"])?;
+        self.extract_with_retry(&cli, &world, &["--maxzoom=5"], &source)?;
         let surroundings_bbox_flag = format!("--bbox={SURROUNDINGS_BBOX}");
         self.extract_with_retry(
             &cli,
@@ -145,12 +168,14 @@ impl TilesInit {
                 "--minzoom=6",
                 "--maxzoom=7",
             ],
+            &source,
         )?;
         let bbox_flag = format!("--bbox={GERMANY_BBOX}");
         self.extract_with_retry(
             &cli,
             &germany,
             &[bbox_flag.as_str(), "--minzoom=8", "--maxzoom=15"],
+            &source,
         )?;
 
         tracing::info!("Merging into tiles/{MAP_ARCHIVE} ...");
@@ -179,10 +204,15 @@ impl TilesInit {
         let _ = fs::remove_file(self.tiles_dir.join(GERMANY_ARCHIVE));
     }
 
-    /// Runs `pmtiles extract` against the configured Protomaps source with
+    /// Runs `pmtiles extract` against the resolved Protomaps `source` with
     /// retry, streaming the CLI's own progress to stdout.
-    fn extract_with_retry(&self, cli: &Path, dest: &Path, flags: &[&str]) -> Result<(), String> {
-        let source = self.maps.protomaps_build_url();
+    fn extract_with_retry(
+        &self,
+        cli: &Path,
+        dest: &Path,
+        flags: &[&str],
+        source: &str,
+    ) -> Result<(), String> {
         let dest_str = dest.to_str().ok_or("destination path is not UTF-8")?;
         let mut args: Vec<&str> = vec!["extract", source, dest_str];
         args.extend_from_slice(flags);
@@ -308,6 +338,72 @@ fn make_executable(bin: &Path) {
 #[cfg(not(unix))]
 fn make_executable(_bin: &Path) {}
 
+/// Resolves the Protomaps build to extract from: the **configured pin** while it
+/// is still available, otherwise the **newest** build in the public catalog — so
+/// a pin that has been pruned upstream (HTTP 404) self-heals instead of failing
+/// the job.
+fn resolve_source_default(configured: &str) -> Result<String, String> {
+    resolve_source_from(configured, url_is_available, fetch_latest_build_key)
+}
+
+/// Source-resolution policy, with the two network effects injected so it can be
+/// unit-tested without a network (see [`resolve_source_default`]).
+fn resolve_source_from(
+    configured: &str,
+    is_available: impl Fn(&str) -> bool,
+    latest_key: impl Fn() -> Result<String, String>,
+) -> Result<String, String> {
+    if is_available(configured) {
+        return Ok(configured.to_string());
+    }
+    tracing::warn!(
+        "configured Protomaps build {configured} is unavailable (pruned upstream?); \
+         resolving the newest available build"
+    );
+    let key = latest_key()?;
+    let url = format!("{BUILDS_BASE_URL}{key}");
+    tracing::info!("using newest available Protomaps build {url}");
+    Ok(url)
+}
+
+/// Whether `url` currently responds with a success status. The response body is
+/// never read, so an available multi-gigabyte archive is not downloaded.
+fn url_is_available(url: &str) -> bool {
+    timed_agent(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+        .get(url)
+        .call()
+        .is_ok()
+}
+
+/// Fetches the Protomaps build catalog and returns the newest `*.pmtiles` key.
+fn fetch_latest_build_key() -> Result<String, String> {
+    let body = timed_agent(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+        .get(BUILDS_CATALOG_URL)
+        .call()
+        .map_err(|e| format!("failed to fetch the Protomaps build catalog: {e}"))?
+        .into_body()
+        .read_to_string()
+        .map_err(|e| format!("failed to read the Protomaps build catalog: {e}"))?;
+    latest_build_key(&body)
+}
+
+/// Picks the newest `*.pmtiles` key from the catalog JSON (an array of
+/// `{"key": "...", ...}`), ordering by the `YYYYMMDD` filename.
+fn latest_build_key(catalog_json: &str) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct CatalogEntry {
+        key: String,
+    }
+    let entries: Vec<CatalogEntry> = serde_json::from_str(catalog_json)
+        .map_err(|e| format!("failed to parse the Protomaps build catalog: {e}"))?;
+    entries
+        .into_iter()
+        .map(|entry| entry.key)
+        .filter(|key| key.ends_with(".pmtiles"))
+        .max()
+        .ok_or_else(|| "the Protomaps build catalog listed no builds".to_string())
+}
+
 impl TilesProvisioningPort for TilesInit {
     fn is_available(&self) -> bool {
         self.is_available()
@@ -376,15 +472,39 @@ mod tests {
         dir
     }
 
+    /// Builds a `TilesInit` whose source resolution never touches the network (a
+    /// stub that echoes the configured pin back).
+    fn init_with_stub_source(tiles_dir: PathBuf, bin_dir: PathBuf) -> TilesInit {
+        let mut init = TilesInit::with_dirs(maps_configuration(), tiles_dir, bin_dir);
+        init.source_resolver = |configured| Ok(configured.to_string());
+        init
+    }
+
+    /// Serialises the tests that spawn the fake `pmtiles` CLI: writing and
+    /// exec'ing a fresh script from parallel test threads races with `fork` and
+    /// intermittently fails with `Text file busy` (ETXTBSY).
+    #[cfg(unix)]
+    static CLI_SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Acquires [`CLI_SPAWN_LOCK`], ignoring poisoning so one panicking test does
+    /// not cascade into unrelated ETXTBSY failures.
+    #[cfg(unix)]
+    fn cli_spawn_guard() -> std::sync::MutexGuard<'static, ()> {
+        CLI_SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     #[cfg(unix)]
     fn ensure_available_builds_the_archive_when_missing() {
+        let _guard = cli_spawn_guard();
         let root = temp_dir("build_missing");
         let tiles_dir = root.join("tiles");
         let bin_dir = root.join("bin");
         write_fake_cli(&bin_dir);
 
-        let init = TilesInit::with_dirs(maps_configuration(), tiles_dir.clone(), bin_dir);
+        let init = init_with_stub_source(tiles_dir.clone(), bin_dir);
 
         init.ensure_available().unwrap();
 
@@ -427,6 +547,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn update_builds_to_temp_and_swaps_atomically() {
+        let _guard = cli_spawn_guard();
         let root = temp_dir("update");
         let tiles_dir = root.join("tiles");
         let bin_dir = root.join("bin");
@@ -435,7 +556,7 @@ mod tests {
         // Existing archive that must survive until the swap.
         fs::write(tiles_dir.join(MAP_ARCHIVE), b"old").unwrap();
 
-        let init = TilesInit::with_dirs(maps_configuration(), tiles_dir.clone(), bin_dir);
+        let init = init_with_stub_source(tiles_dir.clone(), bin_dir);
 
         init.update().unwrap();
 
@@ -449,6 +570,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn update_reports_the_underlying_failure_without_leaving_temp_files() {
+        let _guard = cli_spawn_guard();
         let root = temp_dir("update_failure");
         let tiles_dir = root.join("tiles");
         let bin_dir = root.join("bin");
@@ -456,7 +578,7 @@ mod tests {
         // A non-executable `pmtiles` entry short-circuits the CLI download and
         // makes every subprocess fail fast (no network in unit tests).
         fs::write(bin_dir.join("pmtiles"), b"not executable").unwrap();
-        let init = TilesInit::with_dirs(maps_configuration(), tiles_dir.clone(), bin_dir);
+        let init = init_with_stub_source(tiles_dir.clone(), bin_dir);
 
         let result = init.update();
 
@@ -469,6 +591,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn update_error_includes_cli_stderr() {
+        let _guard = cli_spawn_guard();
         let root = temp_dir("stderr");
         let tiles_dir = root.join("tiles");
         let bin_dir = root.join("bin");
@@ -481,7 +604,7 @@ mod tests {
         fs::write(bin_dir.join("pmtiles"), script).unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(bin_dir.join("pmtiles"), fs::Permissions::from_mode(0o755)).unwrap();
-        let init = TilesInit::with_dirs(maps_configuration(), tiles_dir.clone(), bin_dir);
+        let init = init_with_stub_source(tiles_dir.clone(), bin_dir);
 
         let error = init.update().unwrap_err();
 
@@ -491,6 +614,56 @@ mod tests {
         );
         assert!(error.contains("pruned"), "hint missing from: {error}");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn latest_build_key_picks_the_newest_pmtiles_entry() {
+        let catalog = r#"[
+            {"key":"20230918.pmtiles","size":1},
+            {"key":"20261007.pmtiles","size":2},
+            {"key":"20261008.pmtiles","size":3},
+            {"key":"notes.txt","size":0}
+        ]"#;
+        assert_eq!(latest_build_key(catalog).unwrap(), "20261008.pmtiles");
+    }
+
+    #[test]
+    fn latest_build_key_errors_on_malformed_or_empty_catalogs() {
+        assert!(latest_build_key("not json").is_err());
+        assert!(latest_build_key("[]").is_err());
+        assert!(latest_build_key(r#"[{"key":"notes.txt"}]"#).is_err());
+    }
+
+    #[test]
+    fn resolve_source_prefers_the_configured_pin_when_available() {
+        let configured = "https://build.protomaps.com/20261008.pmtiles";
+        let fallback = || -> Result<String, String> { Ok("SHOULD-NOT-BE-USED".to_string()) };
+        let resolved = resolve_source_from(configured, |_| true, fallback).unwrap();
+        assert_eq!(resolved, configured);
+    }
+
+    #[test]
+    fn resolve_source_falls_back_to_the_newest_catalog_build() {
+        let latest = || -> Result<String, String> { Ok("20261008.pmtiles".to_string()) };
+        let resolved = resolve_source_from(
+            "https://build.protomaps.com/20260829.pmtiles",
+            |_| false,
+            latest,
+        )
+        .unwrap();
+        assert_eq!(resolved, "https://build.protomaps.com/20261008.pmtiles");
+    }
+
+    #[test]
+    fn resolve_source_propagates_a_catalog_failure() {
+        let latest = || -> Result<String, String> { Err("catalog unavailable".to_string()) };
+        let error = resolve_source_from(
+            "https://build.protomaps.com/20260829.pmtiles",
+            |_| false,
+            latest,
+        )
+        .unwrap_err();
+        assert_eq!(error, "catalog unavailable");
     }
 
     #[test]
