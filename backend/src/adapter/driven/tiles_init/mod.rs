@@ -346,7 +346,15 @@ fn make_executable(_bin: &Path) {}
 /// public catalog; a pin that still resolves is used as-is, so an aged/pruned
 /// source self-heals instead of failing the job.
 fn resolve_source_default(configured: &str) -> Result<String, String> {
-    resolve_source_from(configured, url_is_available, fetch_latest_build_key)
+    resolve_source_against(configured, BUILDS_CATALOG_URL)
+}
+
+/// Like [`resolve_source_default`] but against an explicit catalog URL, so the
+/// real network path can be exercised in tests against a local server.
+fn resolve_source_against(configured: &str, catalog_url: &str) -> Result<String, String> {
+    resolve_source_from(configured, url_is_available, || {
+        fetch_latest_build_key(catalog_url)
+    })
 }
 
 /// Source-resolution policy, with the two network effects injected so it can be
@@ -385,9 +393,9 @@ fn url_is_available(url: &str) -> bool {
 }
 
 /// Fetches the Protomaps build catalog and returns the newest `*.pmtiles` key.
-fn fetch_latest_build_key() -> Result<String, String> {
+fn fetch_latest_build_key(catalog_url: &str) -> Result<String, String> {
     let body = timed_agent(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
-        .get(BUILDS_CATALOG_URL)
+        .get(catalog_url)
         .call()
         .map_err(|e| format!("failed to fetch the Protomaps build catalog: {e}"))?
         .into_body()
@@ -480,6 +488,65 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Spawns a tiny HTTP/1.1 server on an ephemeral loopback port that answers
+    /// each request from `routes` (`(path, status, body)`; 404 otherwise) and
+    /// stops after `max_requests` connections or 10 s. Lets the real `ureq`
+    /// source-resolution paths be exercised without the internet.
+    #[cfg(unix)]
+    fn spawn_http_server(
+        routes: Vec<(&'static str, u16, &'static str)>,
+        max_requests: usize,
+    ) -> String {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let _server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut served = 0;
+            while served < max_requests && Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                stream.set_nonblocking(false).ok();
+                let mut buffer = [0u8; 2048];
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, body) = routes
+                    .iter()
+                    .find(|(route, _, _)| *route == path)
+                    .map(|(_, status, body)| (*status, *body))
+                    .unwrap_or((404, ""));
+                let reason = match status {
+                    200 => "OK",
+                    500 => "Internal Server Error",
+                    _ => "Not Found",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                served += 1;
+            }
+        });
+        base
     }
 
     /// Builds a `TilesInit` whose source resolution never touches the network (a
@@ -676,6 +743,48 @@ mod tests {
         let error = resolve_source_from("https://example.com/stale.pmtiles", |_| false, latest)
             .unwrap_err();
         assert_eq!(error, "catalog unavailable");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_source_default_accepts_an_available_configured_url() {
+        let base = spawn_http_server(vec![("/pinned.pmtiles", 200, "")], 1);
+        let configured = format!("{base}/pinned.pmtiles");
+        // The configured pin resolves, so the catalog is never touched.
+        assert_eq!(resolve_source_default(&configured).unwrap(), configured);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_source_falls_back_over_the_network_to_the_newest_catalog_build() {
+        let catalog =
+            r#"[{"key":"20260101.pmtiles","size":1},{"key":"20261008.pmtiles","size":2}]"#;
+        let base = spawn_http_server(
+            vec![
+                ("/pruned.pmtiles", 404, ""),
+                ("/catalog.json", 200, catalog),
+            ],
+            2,
+        );
+        let resolved = resolve_source_against(
+            &format!("{base}/pruned.pmtiles"),
+            &format!("{base}/catalog.json"),
+        )
+        .unwrap();
+        assert_eq!(resolved, "https://build.protomaps.com/20261008.pmtiles");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_source_surfaces_a_catalog_fetch_failure() {
+        // Port 1 has no listener: both the reachability probe and the catalog
+        // fetch fail, and the fetch error is returned.
+        let error = resolve_source_against(
+            "http://127.0.0.1:1/pruned.pmtiles",
+            "http://127.0.0.1:1/catalog.json",
+        )
+        .unwrap_err();
+        assert!(error.contains("build catalog"), "unexpected error: {error}");
     }
 
     #[test]
