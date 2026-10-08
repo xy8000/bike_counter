@@ -85,12 +85,21 @@ which is why the failure looked like a bare `exit status: 1`.
    chooses the *preferred* snapshot. The network effects are injected
    (`resolve_source_from`) so the policy and the catalog parser are unit-tested
    offline, and the fake-CLI tests use a stub resolver to stay network-free.
+5. **Make `latest` the default (no hardcoded date).** `protomaps_build_url` now
+   accepts the token `latest` (case-insensitive) meaning "always the newest
+   catalog build", and it becomes the code default
+   (`DEFAULT_MAPS_PROTOMAPS_BUILD_URL`), the `config.toml`/`config.toml.example`
+   value and the test fixtures — so no dated pin has to be refreshed at all.
+   Pinning an explicit `YYYYMMDD.pmtiles` remains an opt-in freeze.
 
 ## Definition of done
 
-- [x] `protomaps_build_url` bumped to `20261008` in `config.toml`,
+- [x] `protomaps_build_url` bumped to the then-live `20261008` in `config.toml`,
       `config.toml.example`, the `DEFAULT_MAPS_PROTOMAPS_BUILD_URL` const, both
       test scripts and every backend test expectation.
+- [x] `protomaps_build_url` supports the `latest` token (case-insensitive) and
+      defaults to it everywhere (`config.toml`, `config.toml.example`, the code
+      default and fixtures); a resolver unit test covers the token.
 - [x] [`TilesInit::run`](backend/src/adapter/driven/tiles_init/mod.rs:213) captures
       and includes the CLI's stderr in the error; unit test added.
 - [x] [`tiles/README.md`](tiles/README.md:88) documents the pruned-pin symptom

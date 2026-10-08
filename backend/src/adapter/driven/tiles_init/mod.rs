@@ -16,11 +16,11 @@
 //! `maps.go_pmtiles_version`) into `<tiles_dir>/.pmtiles-bin` and cached across
 //! runs. The Germany and surroundings bounding boxes are hard-coded here for now.
 //!
-//! The Protomaps **source** is resolved per build ([`resolve_source_default`]):
-//! the configured `maps.protomaps_build_url` pin is used while it still
-//! resolves, and otherwise the newest build in Protomaps' public catalog is
-//! used — so a pin that has been pruned upstream self-heals instead of failing
-//! the job.
+//! The Protomaps **source** is resolved per build ([`resolve_source_default`]).
+//! `maps.protomaps_build_url` is either the [`LATEST_BUILD_TOKEN`] (`latest`,
+//! the default) — always the newest available build — or a dated pin, used while
+//! it still resolves and otherwise replaced by the newest catalog build. Either
+//! way an aged/pruned source self-heals instead of failing the job.
 
 use std::env;
 use std::fs;
@@ -64,6 +64,9 @@ const RELEASE_ARCH: &str = "Linux_x86_64";
 const BUILDS_CATALOG_URL: &str = "https://build-metadata.protomaps.dev/builds.json";
 /// Base URL a catalog `key` (bare filename) is appended to.
 const BUILDS_BASE_URL: &str = "https://build.protomaps.com/";
+/// Sentinel for `maps.protomaps_build_url` meaning "always use the newest
+/// available build" — so no dated pin exists to prune or refresh.
+const LATEST_BUILD_TOKEN: &str = "latest";
 
 pub struct TilesInit {
     maps: MapsConfiguration,
@@ -276,8 +279,8 @@ impl TilesInit {
         }
         if detail.contains("404") {
             message.push_str(
-                " (the pinned Protomaps build may have been pruned upstream; \
-                 refresh maps.protomaps_build_url)",
+                " (the Protomaps source may be unreachable or pruned; set \
+                 maps.protomaps_build_url = \"latest\" or refresh the pin)",
             );
         }
         Err(message)
@@ -338,10 +341,10 @@ fn make_executable(bin: &Path) {
 #[cfg(not(unix))]
 fn make_executable(_bin: &Path) {}
 
-/// Resolves the Protomaps build to extract from: the **configured pin** while it
-/// is still available, otherwise the **newest** build in the public catalog — so
-/// a pin that has been pruned upstream (HTTP 404) self-heals instead of failing
-/// the job.
+/// Resolves the Protomaps build to extract from: [`LATEST_BUILD_TOKEN`] — or a
+/// dated pin that is no longer available — uses the **newest** build in the
+/// public catalog; a pin that still resolves is used as-is, so an aged/pruned
+/// source self-heals instead of failing the job.
 fn resolve_source_default(configured: &str) -> Result<String, String> {
     resolve_source_from(configured, url_is_available, fetch_latest_build_key)
 }
@@ -353,13 +356,19 @@ fn resolve_source_from(
     is_available: impl Fn(&str) -> bool,
     latest_key: impl Fn() -> Result<String, String>,
 ) -> Result<String, String> {
-    if is_available(configured) {
+    if configured.eq_ignore_ascii_case(LATEST_BUILD_TOKEN) {
+        tracing::info!(
+            "maps.protomaps_build_url = \"{LATEST_BUILD_TOKEN}\"; \
+             resolving the newest available build"
+        );
+    } else if is_available(configured) {
         return Ok(configured.to_string());
+    } else {
+        tracing::warn!(
+            "configured Protomaps build {configured} is unavailable (pruned upstream?); \
+             resolving the newest available build"
+        );
     }
-    tracing::warn!(
-        "configured Protomaps build {configured} is unavailable (pruned upstream?); \
-         resolving the newest available build"
-    );
     let key = latest_key()?;
     let url = format!("{BUILDS_BASE_URL}{key}");
     tracing::info!("using newest available Protomaps build {url}");
@@ -430,7 +439,8 @@ mod tests {
         MapsConfiguration::new(
             "0 0 3 1 1,3,5,7,9,11 *".to_string(),
             7200,
-            "https://build.protomaps.com/20261008.pmtiles".to_string(),
+            // The token (no dated pin); source resolution is stubbed in tests.
+            LATEST_BUILD_TOKEN.to_string(),
             "1.31.2".to_string(),
         )
         .unwrap()
@@ -617,6 +627,16 @@ mod tests {
     }
 
     #[test]
+    fn resolve_source_uses_the_newest_build_for_the_latest_token() {
+        let latest = || -> Result<String, String> { Ok("20261008.pmtiles".to_string()) };
+        // The token is detected before any reachability probe, so the injected
+        // probe must never be called.
+        let probe = |_: &str| -> bool { panic!("the latest token must not be probed") };
+        let resolved = resolve_source_from(LATEST_BUILD_TOKEN, probe, latest).unwrap();
+        assert_eq!(resolved, "https://build.protomaps.com/20261008.pmtiles");
+    }
+
+    #[test]
     fn latest_build_key_picks_the_newest_pmtiles_entry() {
         let catalog = r#"[
             {"key":"20230918.pmtiles","size":1},
@@ -636,7 +656,7 @@ mod tests {
 
     #[test]
     fn resolve_source_prefers_the_configured_pin_when_available() {
-        let configured = "https://build.protomaps.com/20261008.pmtiles";
+        let configured = "https://example.com/pinned.pmtiles";
         let fallback = || -> Result<String, String> { Ok("SHOULD-NOT-BE-USED".to_string()) };
         let resolved = resolve_source_from(configured, |_| true, fallback).unwrap();
         assert_eq!(resolved, configured);
@@ -645,24 +665,16 @@ mod tests {
     #[test]
     fn resolve_source_falls_back_to_the_newest_catalog_build() {
         let latest = || -> Result<String, String> { Ok("20261008.pmtiles".to_string()) };
-        let resolved = resolve_source_from(
-            "https://build.protomaps.com/20260829.pmtiles",
-            |_| false,
-            latest,
-        )
-        .unwrap();
+        let resolved =
+            resolve_source_from("https://example.com/stale.pmtiles", |_| false, latest).unwrap();
         assert_eq!(resolved, "https://build.protomaps.com/20261008.pmtiles");
     }
 
     #[test]
     fn resolve_source_propagates_a_catalog_failure() {
         let latest = || -> Result<String, String> { Err("catalog unavailable".to_string()) };
-        let error = resolve_source_from(
-            "https://build.protomaps.com/20260829.pmtiles",
-            |_| false,
-            latest,
-        )
-        .unwrap_err();
+        let error = resolve_source_from("https://example.com/stale.pmtiles", |_| false, latest)
+            .unwrap_err();
         assert_eq!(error, "catalog unavailable");
     }
 

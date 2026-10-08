@@ -87,31 +87,28 @@ file and swaps it in atomically so the running app stays online.
 
 ### Updating the pinned Protomaps build
 
-The backend downloads a **dated** Protomaps daily build
-(`protomaps_build_url` in the `[maps]` section of
-[`config.toml`](../config.toml.example)), not a "latest" alias — Protomaps
-publishes dated snapshots and explicitly discourages hotlinking them in
-production. This is a **provisioning-time only** input (the running app never
-talks to Protomaps — see below).
+`protomaps_build_url` in the `[maps]` section of
+[`config.toml`](../config.toml.example) selects the Protomaps source. The
+**default is the token `latest`**, which resolves the newest available daily
+build from Protomaps' public catalog
+(`build-metadata.protomaps.dev/builds.json`) on every (re)build. Pinning an
+explicit dated snapshot — `https://build.protomaps.com/YYYYMMDD.pmtiles` —
+freezes the data but is optional: Protomaps keeps only a **short window** (~a
+month) of dailies and **prunes** older ones, and a pinned build that has been
+pruned automatically falls back to `latest`. This is a **provisioning-time only**
+input (the running app never talks to Protomaps — see below).
 
-Every build **resolves the source first**: the configured pin is used while it
-still resolves, and otherwise the newest build in Protomaps' public catalog
-(`build-metadata.protomaps.dev/builds.json`) is used automatically — so a pin
-that has been pruned upstream **self-heals** instead of failing the job. The pin
-therefore only needs refreshing to *advance* the snapshot, not to keep working:
+To freeze a specific snapshot:
 
-1. Check the current builds at <https://maps.protomaps.com/builds/> for a
-   recent `YYYYMMDD.pmtiles` filename.
-2. Update `protomaps_build_url` in the `[maps]` section of `config.toml`.
+1. Check the current builds at <https://maps.protomaps.com/builds/> for a recent
+   `YYYYMMDD.pmtiles` filename.
+2. Set `protomaps_build_url` in the `[maps]` section of `config.toml`.
 3. `make tiles-update` to rebuild from the new pin, or wait for the next
    `tiles_update` cron run, which applies it atomically.
 
-Protomaps only keeps a **short window** (~a month) of dailies, so an aged pin is
-**pruned upstream** and starts returning **HTTP 404**. This no longer fails the
-job — the resolver falls back to the newest catalog build (logging a warning) —
-but a `404` observed *after* resolution (e.g. the catalog itself moved) is
-surfaced in the job error together with the CLI's stderr and a
-`refresh maps.protomaps_build_url` hint.
+If source resolution itself fails (e.g. the catalog is unreachable), the job
+error carries the CLI's stderr and a hint to set
+`maps.protomaps_build_url = "latest"` or refresh the pin.
 
 ### Rebuilding from a fresh extract
 

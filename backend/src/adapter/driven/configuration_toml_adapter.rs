@@ -79,8 +79,9 @@ fn default_log_level() -> String {
 /// omitted entirely. The extraction can take a while (multi-GB range requests),
 /// so 2 h is a generous bound for the ShedLock-style job lifetime.
 const DEFAULT_MAPS_UPDATE_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 7200;
-/// Default pinned Protomaps build when the `[maps]` table is omitted.
-const DEFAULT_MAPS_PROTOMAPS_BUILD_URL: &str = "https://build.protomaps.com/20261008.pmtiles";
+/// Default Protomaps source when the `[maps]` table is omitted: `latest` — the
+/// tiles adapter resolves the newest available build (see `tiles_init`).
+const DEFAULT_MAPS_PROTOMAPS_BUILD_URL: &str = "latest";
 /// Default pinned go-pmtiles CLI version when the `[maps]` table is omitted.
 const DEFAULT_MAPS_GO_PMTILES_VERSION: &str = "1.31.2";
 
@@ -369,7 +370,7 @@ mod tests {
             [maps]\n\
             update_cron = \"0 0 3 1 1,3,5,7,9,11 *\"\n\
             update_max_heartbeat_interval_seconds = 7200\n\
-            protomaps_build_url = \"https://build.protomaps.com/20261008.pmtiles\"\n\
+            protomaps_build_url = \"latest\"\n\
             go_pmtiles_version = \"1.31.2\"\n"
     }
 
@@ -847,10 +848,7 @@ mod tests {
             configuration.maps().update_max_heartbeat_interval_seconds(),
             7200
         );
-        assert_eq!(
-            configuration.maps().protomaps_build_url(),
-            "https://build.protomaps.com/20261008.pmtiles"
-        );
+        assert_eq!(configuration.maps().protomaps_build_url(), "latest");
         assert_eq!(configuration.maps().go_pmtiles_version(), "1.31.2");
     }
 
