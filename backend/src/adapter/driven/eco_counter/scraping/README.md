@@ -92,9 +92,13 @@ import_days_back = "365"
 
 ## Notes / limitations
 
+- **Station-name uniqueness.** A tenant may publish the same short code for two
+  sites (Hessen has two `1394`). The database requires a unique
+  `(data_source_id, name)`, so such stations are renamed `"{name} ({external_id})"`
+  at parse time — stable across runs, since the external id is stable.
 - A tenant whose Flight stream deduplicates site entries into `"$"` reference
   strings (instead of inlining every object) would need reference resolution;
-  Hessen inlines all 549 sites.
+  Hessen inlines all 554 sites.
 - Station images (the `filer.eco-counter-tools.com` URLs in the payload) are not
   imported; stations use the built-in default icon.
 - **DST-offset labels.** The dashboard renders each daily point with the UTC
