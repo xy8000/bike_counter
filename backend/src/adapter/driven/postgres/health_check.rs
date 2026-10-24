@@ -25,12 +25,12 @@ impl ServiceHealthIndicator for PostgresHealthCheck {
     fn check(&self) -> HealthStatus {
         let mut client = match self.pool.get() {
             Ok(client) => client,
-            Err(error) => return HealthStatus::Down(error.to_string()),
+            Err(error) => return HealthStatus::Down(super::db_error(&error)),
         };
 
         match client.simple_query("SELECT 1") {
             Ok(_) => HealthStatus::Up,
-            Err(error) => HealthStatus::Down(error.to_string()),
+            Err(error) => HealthStatus::Down(super::db_error(&error)),
         }
     }
 }

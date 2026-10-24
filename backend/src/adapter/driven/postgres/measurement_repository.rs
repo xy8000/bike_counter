@@ -40,13 +40,13 @@ impl PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT backfilled FROM measurement_rollup_state WHERE id = 1",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let ready = row.is_some_and(|row| row.get::<_, bool>(0));
         self.rollups_ready.store(ready, Ordering::Relaxed);
         Ok(ready)
@@ -79,7 +79,7 @@ impl PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -92,7 +92,7 @@ impl PostgresMeasurementRepository {
                  ORDER BY hour",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .into_iter()
             .map(|row| HourTotal {
@@ -114,7 +114,7 @@ impl PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -128,7 +128,7 @@ impl PostgresMeasurementRepository {
                  ORDER BY channel_id, hour",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .into_iter()
             .map(|row| ChannelHourTotal {
@@ -152,7 +152,7 @@ impl PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -165,7 +165,7 @@ impl PostgresMeasurementRepository {
                  ORDER BY weekday",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .into_iter()
             .map(|row| WeekdayTotal {
@@ -187,7 +187,7 @@ impl PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -201,7 +201,7 @@ impl PostgresMeasurementRepository {
                  ORDER BY channel_id, weekday",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .into_iter()
             .map(|row| ChannelWeekdayTotal {
@@ -222,7 +222,7 @@ impl PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -236,7 +236,7 @@ impl PostgresMeasurementRepository {
                  ORDER BY year, month",
                 &[&channel_uuids, &timezone, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .into_iter()
             .map(|row| MonthTotal {
@@ -416,7 +416,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "INSERT INTO measurements (id, value, channel_id, timestamp, resolution_seconds, interval_end) \
@@ -431,7 +431,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                     &measurement.interval_end,
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -442,10 +442,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut transaction = client
             .transaction()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         // A single multi-row INSERT instead of one round trip per measurement.
         // The 65 535 parameter cap allows ~16 383 rows per statement; provider
@@ -484,11 +484,11 @@ impl MeasurementRepository for PostgresMeasurementRepository {
 
         let inserted = transaction
             .execute(&query, &params)
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         transaction
             .commit()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(inserted)
     }
 
@@ -496,14 +496,14 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
                  FROM measurements WHERE id = $1",
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?
             .ok_or(DomainError::NotFound(id.0))?;
 
         Ok(Measurement {
@@ -520,14 +520,14 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
                  FROM measurements ORDER BY timestamp DESC",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut measurements = Vec::with_capacity(rows.len());
         for row in rows {
             measurements.push(Measurement {
@@ -549,14 +549,14 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
                  FROM measurements WHERE channel_id = $1 ORDER BY timestamp DESC",
                 &[&channel_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut measurements = Vec::with_capacity(rows.len());
         for row in rows {
             measurements.push(Measurement {
@@ -580,7 +580,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let limit = limit as i64;
         let offset = offset as i64;
         let rows = match channel_id {
@@ -590,14 +590,14 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                      FROM measurements WHERE channel_id = $1 ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
                     &[&channel_id.0, &limit, &offset],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             None => client
                 .query(
                     "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
                      FROM measurements ORDER BY timestamp DESC LIMIT $1 OFFSET $2",
                     &[&limit, &offset],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
         };
         let mut measurements = Vec::with_capacity(rows.len());
         for row in rows {
@@ -623,7 +623,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let row = client
             .query_one(
@@ -632,7 +632,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                    AND ($4::bigint IS NULL OR resolution_seconds = $4::bigint)",
                 &[&from, &to, &channel_uuids, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.get::<_, i64>(0))
     }
 
@@ -649,7 +649,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let buckets: Vec<TimeBucket> = match self.effective_bucket_source(granularity)? {
             BucketSource::Daily => {
@@ -659,7 +659,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                         &query,
                         &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
                     )
-                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .map_err(|error| DomainError::Database(super::db_error(&error)))?
                     .into_iter()
                     .map(|row| TimeBucket {
                         start: row.get(0),
@@ -694,7 +694,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 };
                 client
                     .query(&query, &params)
-                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .map_err(|error| DomainError::Database(super::db_error(&error)))?
                     .into_iter()
                     .map(|row| TimeBucket {
                         start: row.get(0),
@@ -719,7 +719,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let buckets: Vec<ChannelBucket> = match self.effective_bucket_source(granularity)? {
             BucketSource::Daily => {
@@ -729,7 +729,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                         &query,
                         &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
                     )
-                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .map_err(|error| DomainError::Database(super::db_error(&error)))?
                     .into_iter()
                     .map(|row| ChannelBucket {
                         channel_id: row.get(0),
@@ -761,7 +761,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 };
                 client
                     .query(&query, &params)
-                    .map_err(|error| DomainError::Database(error.to_string()))?
+                    .map_err(|error| DomainError::Database(super::db_error(&error)))?
                     .into_iter()
                     .map(|row| ChannelBucket {
                         channel_id: row.get(0),
@@ -792,7 +792,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -807,7 +807,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY weekday",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut weekdays = Vec::with_capacity(rows.len());
         for row in rows {
             weekdays.push(WeekdayTotal {
@@ -841,7 +841,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -857,7 +857,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id, weekday",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut weekdays = Vec::with_capacity(rows.len());
         for row in rows {
             weekdays.push(ChannelWeekdayTotal {
@@ -883,7 +883,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -898,7 +898,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY hour",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut hours = Vec::with_capacity(rows.len());
         for row in rows {
             hours.push(HourTotal {
@@ -929,7 +929,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -945,7 +945,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id, hour",
                 &[&channel_uuids, &timezone, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut hours = Vec::with_capacity(rows.len());
         for row in rows {
             hours.push(ChannelHourTotal {
@@ -967,7 +967,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -979,7 +979,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id",
                 &[&channel_uuids, &from, &to, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut totals = Vec::with_capacity(rows.len());
         for row in rows {
             totals.push(ChannelTotal {
@@ -1002,7 +1002,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1016,7 +1016,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY year, month",
                 &[&channel_uuids, &resolution_seconds],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut months = Vec::with_capacity(rows.len());
         for row in rows {
             months.push(MonthTotal {
@@ -1036,7 +1036,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut present = Vec::with_capacity(windows.len());
         for (from, to) in windows {
             // Source-scoped existence probe: drive s -> c -> m over the per-channel
@@ -1054,7 +1054,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                      )",
                     &[&data_source_id.0, from, to],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?;
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?;
             present.push(row.get(0));
         }
         Ok(present)
@@ -1069,7 +1069,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1080,7 +1080,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY resolution_seconds",
                 &[&channel_uuids, &from, &to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut coverage = Vec::with_capacity(rows.len());
         for row in rows {
             coverage.push(ResolutionCoverage {
@@ -1102,7 +1102,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1113,7 +1113,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id, resolution_seconds",
                 &[&channel_uuids, &from, &to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut coverage = Vec::with_capacity(rows.len());
         for row in rows {
             coverage.push(ChannelCoverage {
@@ -1137,7 +1137,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1147,7 +1147,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id, timestamp DESC",
                 &[&channel_uuids],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut latest = Vec::with_capacity(rows.len());
         for row in rows {
             latest.push(ChannelLatest {
@@ -1168,7 +1168,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1178,7 +1178,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id, timestamp ASC",
                 &[&channel_uuids],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut earliest = Vec::with_capacity(rows.len());
         for row in rows {
             earliest.push(ChannelFirst {
@@ -1203,7 +1203,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let row = client
             .query_one(
@@ -1215,7 +1215,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                    AND ($3::bigint IS NULL OR resolution_seconds = $3::bigint)",
                 &[&channel_uuids, &timezone, &resolution_seconds, &from, &to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.get::<_, i64>(0))
     }
 
@@ -1233,7 +1233,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1247,7 +1247,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  ORDER BY channel_id",
                 &[&channel_uuids, &timezone, &resolution_seconds, &from, &to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut totals = Vec::with_capacity(rows.len());
         for row in rows {
             totals.push(ChannelTotal {
@@ -1268,7 +1268,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
         let rows = client
             .query(
@@ -1277,7 +1277,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  WHERE channel_id = ANY($1::uuid[])",
                 &[&channel_uuids],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut bounds: Vec<ChannelBounds> = rows
             .into_iter()
             .map(|row| ChannelBounds {
@@ -1326,13 +1326,13 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE measurement_rollup_state SET backfilled = TRUE WHERE id = 1",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         self.rollups_ready.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -1341,7 +1341,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // Prefer the per-channel bounds aggregate once it is populated, so the
         // job's own range discovery is cheap after the first backfill. An empty
         // table falls through to the one-off raw MIN/MAX scan.
@@ -1350,7 +1350,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 "SELECT MIN(first_timestamp), MAX(last_timestamp) FROM measurement_channel_bounds",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let cached_first: Option<chrono::DateTime<chrono::Utc>> = cached.get(0);
         let cached_last: Option<chrono::DateTime<chrono::Utc>> = cached.get(1);
         if let Some(bounds) = cached_first.zip(cached_last) {
@@ -1361,7 +1361,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 "SELECT MIN(timestamp), MAX(timestamp) FROM measurements",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let first: Option<chrono::DateTime<chrono::Utc>> = row.get(0);
         let last: Option<chrono::DateTime<chrono::Utc>> = row.get(1);
         Ok(first.zip(last))
@@ -1375,10 +1375,10 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut transaction = client
             .transaction()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         // Serialize with any other rollup refresh (the scheduled backfill vs. the
         // post-import hook, or another instance) so their upserts cannot deadlock
@@ -1388,7 +1388,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                 "SELECT pg_advisory_xact_lock($1)",
                 &[&ROLLUP_REFRESH_LOCK_KEY],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         // Expand the requested range so every station-local calendar day that
         // overlaps `[from, to)` is covered regardless of the station timezone
@@ -1427,7 +1427,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  DO UPDATE SET total = EXCLUDED.total",
                 &[&expanded_from, &expanded_to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         // Upsert the daily buckets from the raw rows with the same filter.
         transaction
@@ -1451,7 +1451,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                  DO UPDATE SET total = EXCLUDED.total",
                 &[&expanded_from, &expanded_to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         // Maintain the per-channel bounds aggregate behind the new-station filter.
         // This covers the whole expanded range (no interior-local-day filter), so
@@ -1471,11 +1471,11 @@ impl MeasurementRepository for PostgresMeasurementRepository {
                      last_timestamp = GREATEST(measurement_channel_bounds.last_timestamp, EXCLUDED.last_timestamp)",
                 &[&expanded_from, &expanded_to],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         transaction
             .commit()
-            .map_err(|error| DomainError::Database(error.to_string()))
+            .map_err(|error| DomainError::Database(super::db_error(&error)))
     }
 }
 

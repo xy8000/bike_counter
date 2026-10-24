@@ -25,11 +25,17 @@ test('the map view URL carries the visible bbox and the open overview', async ({
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
 
   // Closing the overview with a map void click drops the station param again.
+  // The selected marker's popup opens next to it and the marker click also
+  // triggers a zoom animation, so a single immediate click can land on the
+  // popup (a guarded, non-void target). Retry the void click until the URL
+  // actually drops the station param.
   const map = page.locator('.maplibregl-map')
   const box = await map.boundingBox()
   expect(box).not.toBeNull()
-  await map.click({ position: { x: (box?.width ?? 100) - 20, y: (box?.height ?? 100) / 2 } })
-  await expect(page).not.toHaveURL(/[?&]station=/)
+  await expect(async () => {
+    await map.click({ position: { x: (box?.width ?? 100) - 20, y: (box?.height ?? 100) / 2 } })
+    await expect(page).not.toHaveURL(/[?&]station=/, { timeout: 2_000 })
+  }).toPass({ timeout: 20_000 })
   await expect(sidebarBadge(page)).toBeVisible()
 })
 

@@ -51,7 +51,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "INSERT INTO counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256, status)
@@ -73,7 +73,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     &station.status.as_str(),
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -81,7 +81,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE counting_stations
@@ -106,7 +106,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     &station.status.as_str(),
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -114,13 +114,13 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!("SELECT {STATION_COLUMNS} FROM counting_stations WHERE id = $1"),
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?
             .ok_or(DomainError::NotFound(id.0))?;
         Ok(Self::map_row(&row))
     }
@@ -129,13 +129,13 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 &format!("SELECT {STATION_COLUMNS} FROM counting_stations ORDER BY name ASC"),
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows.iter().map(Self::map_row).collect())
     }
 
@@ -146,7 +146,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!(
@@ -154,7 +154,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                 ),
                 &[&external_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.as_ref().map(Self::map_row))
     }
 
@@ -162,7 +162,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = match name {
             Some(name) => client
                 .query(
@@ -171,13 +171,13 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                     ),
                     &[&format!("%{}%", escape_like(name))],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             None => client
                 .query(
                     &format!("SELECT {STATION_COLUMNS} FROM counting_stations ORDER BY name ASC"),
                     &[],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
         };
         Ok(rows.iter().map(Self::map_row).collect())
     }
@@ -192,7 +192,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 &format!(
@@ -202,7 +202,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                 ),
                 &[&min_latitude, &min_longitude, &max_latitude, &max_longitude],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // A station with a NULL latitude/longitude never matches BETWEEN.
         Ok(rows.iter().map(Self::map_row).collect())
     }
@@ -211,10 +211,10 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_one("SELECT count(*)::bigint FROM counting_stations", &[])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.get::<_, i64>(0) as usize)
     }
 
@@ -225,7 +225,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 &format!(
@@ -234,7 +234,7 @@ impl CountingStationRepository for PostgresCountingStationRepository {
                 ),
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows.iter().map(Self::map_row).collect())
     }
 
@@ -245,13 +245,13 @@ impl CountingStationRepository for PostgresCountingStationRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_one(
                 "SELECT count(*)::bigint FROM counting_stations WHERE data_source_id = $1",
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.get::<_, i64>(0) as usize)
     }
 }

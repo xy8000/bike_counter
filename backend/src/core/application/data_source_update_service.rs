@@ -1151,6 +1151,14 @@ mod tests {
             Ok(())
         }
 
+        fn update(&self, channel: Channel) -> Result<(), DomainError> {
+            let mut channels = self.channels.lock().unwrap();
+            if let Some(existing) = channels.iter_mut().find(|c| c.id == channel.id) {
+                *existing = channel;
+            }
+            Ok(())
+        }
+
         fn find_by_id(&self, _id: channel_vo::Id) -> Result<Channel, DomainError> {
             Err(DomainError::NotFound(Uuid::new_v4()))
         }

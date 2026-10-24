@@ -44,7 +44,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "INSERT INTO data_source_imports \
@@ -60,7 +60,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
                     &run.failure_message,
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -68,14 +68,14 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let updated = client
             .execute(
                 "UPDATE data_source_imports SET status = 'FINISHED', finished_at = $2, \
                  failure_message = NULL WHERE id = $1 AND status = 'RUNNING'",
                 &[&id, &finished_at],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         if updated == 0 {
             return Err(DomainError::InvalidQuery(format!(
                 "import run {id} is not RUNNING and cannot be finished"
@@ -88,14 +88,14 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let updated = client
             .execute(
                 "UPDATE data_source_imports SET status = 'FAILED', finished_at = $2, \
                  failure_message = $3 WHERE id = $1 AND status = 'RUNNING'",
                 &[&id, &finished_at, &message],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         if updated == 0 {
             return Err(DomainError::InvalidQuery(format!(
                 "import run {id} is not RUNNING and cannot be failed"
@@ -111,7 +111,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT id, data_source_id, job_id, started_at, finished_at, status, failure_message \
@@ -120,7 +120,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
                  ORDER BY started_at DESC LIMIT 1",
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         row.map(|row| Self::map_row(&row)).transpose()
     }
 
@@ -128,7 +128,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // Job-linked orphans: a RUNNING run whose aggregate job already reached a
         // terminal state was abandoned by a worker that is gone or stuck (a
         // healthy worker finalizes its own run before the job goes terminal).
@@ -145,7 +145,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
                    AND j.status IN ('FINISHED', 'FAILED', 'CANCELLED')",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // Unlinked-orphan safety net: a RUNNING run without a job reference that
         // started before `older_than` can never be finalized by a live worker.
         let unlinked = client
@@ -155,7 +155,7 @@ impl DataImportRunRepository for PostgresImportRunRepository {
                  WHERE status = 'RUNNING' AND job_id IS NULL AND started_at < $1",
                 &[&older_than],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(job_linked + unlinked)
     }
 }

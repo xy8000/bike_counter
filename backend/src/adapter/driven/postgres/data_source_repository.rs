@@ -37,7 +37,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "INSERT INTO data_sources (id, name, provider_type) VALUES ($1, $2, $3)
@@ -48,7 +48,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
                     &data_source.provider_type.0,
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -56,13 +56,13 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at FROM data_sources WHERE id = $1",
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.as_ref().map(Self::map_row))
     }
 
@@ -70,13 +70,13 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at FROM data_sources WHERE name = $1",
                 &[&name],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.as_ref().map(Self::map_row))
     }
 
@@ -84,13 +84,13 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at FROM data_sources ORDER BY name ASC",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows.iter().map(Self::map_row).collect())
     }
 
@@ -98,10 +98,10 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute("DELETE FROM data_sources WHERE id = $1", &[&id.0])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -113,13 +113,13 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE data_sources SET imported_until = $2 WHERE id = $1",
                 &[&id.0, &timestamp],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -127,13 +127,13 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE data_sources SET imported_until = NULL WHERE id = $1",
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -145,7 +145,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE data_sources SET last_updated_at = $2 WHERE id = $1",
@@ -164,7 +164,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE data_sources SET logo_asset_id = $2, logo_sha256 = $3 WHERE id = $1",
@@ -187,7 +187,7 @@ impl DataSourceRepository for PostgresDataSourceRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE data_sources

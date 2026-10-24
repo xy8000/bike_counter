@@ -48,7 +48,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "INSERT INTO opendata_files \
@@ -66,7 +66,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
                     &file.created_at,
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -74,13 +74,13 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!("SELECT {FILE_COLUMNS} FROM opendata_files WHERE object_key = $1"),
                 &[&object_key],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.as_ref().map(Self::map_row))
     }
 
@@ -92,7 +92,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = match station_id {
             Some(station_id) => client
                 .query(
@@ -100,14 +100,14 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
                      WHERE granularity = $1 AND station_id = $2 ORDER BY period DESC",
                     &[&granularity.as_str(), &station_id],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             None => client
                 .query(
                     "SELECT DISTINCT period FROM opendata_files \
                      WHERE granularity = $1 AND station_id IS NULL ORDER BY period DESC",
                     &[&granularity.as_str()],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
         };
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
@@ -121,7 +121,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = match station_id {
             Some(station_id) => client
                 .query(
@@ -132,7 +132,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
                     ),
                     &[&granularity.as_str(), &period, &station_id],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             None => client
                 .query(
                     &format!(
@@ -142,7 +142,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
                     ),
                     &[&granularity.as_str(), &period],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
         };
         Ok(rows.iter().map(Self::map_row).collect())
     }
@@ -155,7 +155,7 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = match station_id {
             Some(station_id) => client
                 .query_one(
@@ -163,14 +163,14 @@ impl OpenDataFileRepository for PostgresOpenDataFileRepository {
                      WHERE granularity = $1 AND station_id = $2",
                     &[&granularity.as_str(), &station_id],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             None => client
                 .query_one(
                     "SELECT MAX(period) FROM opendata_files \
                      WHERE granularity = $1 AND station_id IS NULL",
                     &[&granularity.as_str()],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
         };
         Ok(row.get(0))
     }

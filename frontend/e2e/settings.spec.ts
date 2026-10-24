@@ -4,6 +4,20 @@ import { mapMarkers, openMap } from './helpers'
 const SETTINGS_BUTTON = 'Calculation settings'
 const SETTING_LABEL = /Exclude new stations from trends/
 
+/// Returns the local calendar date `days` days ago as `YYYY-MM-DD` — the format
+/// shared by `<input type="date">` and the persisted URL. The seeded e2e data is
+/// generated relative to load time, so the "Individual" range must be computed
+/// relative to today instead of hardcoded dates that drift out of the rolling
+/// window over time.
+function daysAgo(days: number): string {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 /// Opens the shared station-detail page for the first positioned station and
 /// returns its id.
 async function openDetailPage(page: Page): Promise<string> {
@@ -237,10 +251,13 @@ test('the individual range renders real buckets without a previous-period overla
     has: page.getByRole('heading', { name: 'Detailed statistics' }),
   })
 
-  // The custom range (2026-08-25..31) overlaps the seeded rolling data, so the
-  // chart draws real buckets for it. A one-week range uses the week resolution
-  // set (default mid = 1-hour buckets). Capture the request to prove the
-  // individual range is fetched without a compare (previous period) parameter.
+  // A one-week range fully inside the seeded rolling data (Münster spans the
+  // last 45 days), computed relative to today so the chart always draws real
+  // buckets. Exactly seven days maps to the week resolution set (default mid =
+  // 1-hour buckets). Capture the request to prove the individual range is
+  // fetched without a compare (previous period) parameter.
+  const from = daysAgo(7)
+  const to = daysAgo(1)
   const individualRequest = page.waitForRequest(
     (request) =>
       request.url().includes('/api/bff/station-detail/') &&
@@ -251,10 +268,10 @@ test('the individual range renders real buckets without a previous-period overla
   )
   const dialog = await openSettings(page)
   await dialog.getByRole('button', { name: 'Individual', exact: true }).click()
-  await dialog.getByLabel('From', { exact: true }).fill('2026-08-25')
-  await expect(page).toHaveURL(/[?&]from=2026-08-25/)
-  await dialog.getByLabel('To', { exact: true }).fill('2026-08-31')
-  await expect(page).toHaveURL(/[?&]to=2026-08-31/)
+  await dialog.getByLabel('From', { exact: true }).fill(from)
+  await expect(page).toHaveURL(new RegExp(`[?&]from=${from}`))
+  await dialog.getByLabel('To', { exact: true }).fill(to)
+  await expect(page).toHaveURL(new RegExp(`[?&]to=${to}`))
   await expect(individualRequest).resolves.toBeTruthy()
   await dialog.getByRole('button', { name: 'Apply' }).click()
 

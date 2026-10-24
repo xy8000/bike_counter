@@ -56,7 +56,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let metadata = Value::Object(job.metadata);
         client
             .execute(
@@ -89,7 +89,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // ShedLock acquire: INSERT wins immediately; an existing lock row is only
         // taken over when its lock_until has expired. `updated == 1` means we
         // now own the type's lock.
@@ -110,7 +110,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "DELETE FROM job_locks WHERE job_type = $1 AND locked_by = $2",
@@ -131,7 +131,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // Owner-only write: only while RUNNING and owned by `instance_id`.
         let refreshed = client
             .execute(
@@ -153,7 +153,7 @@ impl JobRepository for PostgresJobRepository {
         // Return the current status so the worker can detect a cancellation.
         let row = client
             .query_opt("SELECT status FROM jobs WHERE id = $1", &[&id])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         match row {
             Some(row) => {
                 let status: String = row.get("status");
@@ -167,17 +167,17 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut tx = client
             .transaction()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let updated = tx
             .execute(
                 "UPDATE jobs SET status = 'FINISHED', finished_at = $2, failure_message = NULL \
                  WHERE id = $1 AND status = 'RUNNING'",
                 &[&id, &finished_at],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         if updated == 0 {
             return Err(DomainError::InvalidQuery(format!(
                 "job {id} is not in RUNNING state and cannot be finished"
@@ -192,9 +192,9 @@ impl JobRepository for PostgresJobRepository {
                AND (j.instance_id IS NULL OR jl.locked_by = j.instance_id)",
             &[&id],
         )
-        .map_err(|error| DomainError::Database(error.to_string()))?;
+        .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         tx.commit()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -207,17 +207,17 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut tx = client
             .transaction()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let updated = tx
             .execute(
                 "UPDATE jobs SET status = 'FAILED', finished_at = $2, failure_message = $3 \
                  WHERE id = $1 AND status = 'RUNNING'",
                 &[&id, &finished_at, &message],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         if updated == 0 {
             return Err(DomainError::InvalidQuery(format!(
                 "job {id} can only fail from RUNNING state"
@@ -230,9 +230,9 @@ impl JobRepository for PostgresJobRepository {
                AND (j.instance_id IS NULL OR jl.locked_by = j.instance_id)",
             &[&id],
         )
-        .map_err(|error| DomainError::Database(error.to_string()))?;
+        .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         tx.commit()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -240,14 +240,14 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let updated = client
             .execute(
                 "UPDATE jobs SET status = 'CANCELLATION_REQUESTED' \
                  WHERE id = $1 AND status = 'RUNNING'",
                 &[&id],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         if updated == 0 {
             return Err(DomainError::InvalidQuery(format!(
                 "job {id} is not in RUNNING state and cannot be cancelled"
@@ -260,10 +260,10 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let mut tx = client
             .transaction()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let updated = tx
             .execute(
                 "UPDATE jobs SET status = 'CANCELLED', finished_at = $2, \
@@ -271,7 +271,7 @@ impl JobRepository for PostgresJobRepository {
                  WHERE id = $1 AND status IN ('RUNNING', 'CANCELLATION_REQUESTED')",
                 &[&id, &finished_at],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         if updated == 1 {
             // The job is now terminal: free the type's lock it owned so a
             // cancelled job can never keep claiming "running elsewhere" when its
@@ -284,9 +284,9 @@ impl JobRepository for PostgresJobRepository {
                    AND (j.instance_id IS NULL OR jl.locked_by = j.instance_id)",
                 &[&id],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
             tx.commit()
-                .map_err(|error| DomainError::Database(error.to_string()))?;
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?;
             return Ok(());
         }
         // No transition happened. A worker's own finalize can re-observe a job
@@ -294,11 +294,11 @@ impl JobRepository for PostgresJobRepository {
         // idempotent success. Anything else is not cancellable.
         let row = tx
             .query_opt("SELECT status FROM jobs WHERE id = $1", &[&id])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         match row {
             Some(row) if row.get::<_, String>("status") == "CANCELLED" => {
                 tx.commit()
-                    .map_err(|error| DomainError::Database(error.to_string()))?;
+                    .map_err(|error| DomainError::Database(super::db_error(&error)))?;
                 Ok(())
             }
             _ => Err(DomainError::InvalidQuery(format!(
@@ -311,7 +311,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "UPDATE jobs SET metadata = jsonb_set(metadata, ARRAY[$2], $3) WHERE id = $1",
@@ -325,13 +325,13 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!("SELECT {SELECT_COLUMNS} FROM jobs WHERE id = $1"),
                 &[&id],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         row.map(|row| Self::map_row(&row)).transpose()
     }
 
@@ -343,7 +343,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // Filters are pushed down to SQL so the existing idx_jobs_type_status
         // index can be used instead of loading all rows and filtering in Rust.
         // `Option` params bind to NULL when absent, keeping the WHERE clause
@@ -356,7 +356,7 @@ impl JobRepository for PostgresJobRepository {
         );
         let rows = client
             .query(&query, &[&job_type, &status.map(|status| status.as_str())])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         rows.iter().map(Self::map_row).collect()
     }
 
@@ -364,7 +364,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 &format!(
@@ -374,7 +374,7 @@ impl JobRepository for PostgresJobRepository {
                 ),
                 &[&job_type],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         rows.iter().map(Self::map_row).collect()
     }
 
@@ -382,7 +382,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!(
@@ -392,7 +392,7 @@ impl JobRepository for PostgresJobRepository {
                 ),
                 &[&job_type],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         row.map(|row| Self::map_row(&row)).transpose()
     }
 
@@ -405,7 +405,7 @@ impl JobRepository for PostgresJobRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         // Stage 1: stale RUNNING -> CANCELLATION_REQUESTED (give the worker a
         // cooperative chance to stop itself).
         client

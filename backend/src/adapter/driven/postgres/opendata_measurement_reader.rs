@@ -36,7 +36,7 @@ impl OpenDataMeasurementReader for PostgresOpenDataMeasurementReader {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT s.id AS station_id, c.id AS channel_id, c.name AS channel_name, \
@@ -50,7 +50,7 @@ impl OpenDataMeasurementReader for PostgresOpenDataMeasurementReader {
                  ORDER BY local_ts ASC, station_id ASC, channel_id ASC",
                 &[&from, &to, &station_id],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .iter()
             .map(|row| OpenDataMeasurement {
@@ -74,7 +74,7 @@ impl OpenDataMeasurementReader for PostgresOpenDataMeasurementReader {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let pattern = match granularity {
             Granularity::Daily => "YYYY-MM-DD",
             Granularity::Monthly => "YYYY-MM",
@@ -91,7 +91,7 @@ impl OpenDataMeasurementReader for PostgresOpenDataMeasurementReader {
                  ORDER BY period ASC",
                 &[&from, &to, &station_id, &pattern],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
 }

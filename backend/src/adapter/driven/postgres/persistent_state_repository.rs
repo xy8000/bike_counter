@@ -21,13 +21,13 @@ impl PersistentStateStore for PostgresPersistentStateRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT key, value FROM data_source_persistent_state WHERE data_source_id = $1",
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .iter()
             .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
@@ -38,7 +38,7 @@ impl PersistentStateStore for PostgresPersistentStateRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let id = uuid::Uuid::new_v4();
         client
             .execute(
@@ -48,7 +48,7 @@ impl PersistentStateStore for PostgresPersistentStateRepository {
                  DO UPDATE SET value = $4, updated_at = now()",
                 &[&id, &data_source_id.0, &key, &value],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -56,13 +56,13 @@ impl PersistentStateStore for PostgresPersistentStateRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "DELETE FROM data_source_persistent_state WHERE data_source_id = $1 AND key = $2",
                 &[&data_source_id.0, &key],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -70,13 +70,13 @@ impl PersistentStateStore for PostgresPersistentStateRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "DELETE FROM data_source_persistent_state WHERE data_source_id = $1",
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 }

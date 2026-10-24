@@ -31,7 +31,7 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute(
                 "INSERT INTO channels (id, counting_station_id, name, description, external_datasource_id)
@@ -44,7 +44,28 @@ impl ChannelRepository for PostgresChannelRepository {
                     &channel.external_datasource_id.as_ref().map(|id| id.0.as_str()),
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        Ok(())
+    }
+
+    fn update(&self, channel: Channel) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        client
+            .execute(
+                "UPDATE channels
+                 SET counting_station_id = $2, name = $3, description = $4
+                 WHERE id = $1",
+                &[
+                    &channel.id.0,
+                    &channel.counting_station_id.0,
+                    &channel.name.0,
+                    &channel.description.0,
+                ],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -52,14 +73,14 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT id, counting_station_id, name, description, external_datasource_id
                  FROM channels WHERE id = $1",
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?
             .ok_or(DomainError::NotFound(id.0))?;
         Ok(Self::map_row(&row))
     }
@@ -68,14 +89,14 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT id, counting_station_id, name, description, external_datasource_id
                  FROM channels ORDER BY name ASC",
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows.iter().map(Self::map_row).collect())
     }
 
@@ -86,14 +107,14 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT id, counting_station_id, name, description, external_datasource_id
                  FROM channels WHERE counting_station_id = $1 ORDER BY name ASC",
                 &[&station_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows.iter().map(Self::map_row).collect())
     }
 
@@ -104,14 +125,14 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 "SELECT id, counting_station_id, name, description, external_datasource_id
                  FROM channels WHERE external_datasource_id = $1",
                 &[&external_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.as_ref().map(Self::map_row))
     }
 
@@ -123,7 +144,7 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = match (counting_station_id, name) {
             (Some(station_id), Some(name)) => client
                 .query(
@@ -133,28 +154,28 @@ impl ChannelRepository for PostgresChannelRepository {
                      ORDER BY name ASC",
                     &[&station_id.0, &format!("%{}%", escape_like(name))],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             (Some(station_id), None) => client
                 .query(
                     "SELECT id, counting_station_id, name, description, external_datasource_id
                      FROM channels WHERE counting_station_id = $1 ORDER BY name ASC",
                     &[&station_id.0],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             (None, Some(name)) => client
                 .query(
                     "SELECT id, counting_station_id, name, description, external_datasource_id
                      FROM channels WHERE name ILIKE $1 ORDER BY name ASC",
                     &[&format!("%{}%", escape_like(name))],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
             (None, None) => client
                 .query(
                     "SELECT id, counting_station_id, name, description, external_datasource_id
                      FROM channels ORDER BY name ASC",
                     &[],
                 )
-                .map_err(|error| DomainError::Database(error.to_string()))?,
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?,
         };
         Ok(rows.iter().map(Self::map_row).collect())
     }
@@ -166,7 +187,7 @@ impl ChannelRepository for PostgresChannelRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT c.id FROM channels c \
@@ -174,7 +195,7 @@ impl ChannelRepository for PostgresChannelRepository {
                  WHERE s.data_source_id = $1 ORDER BY c.name ASC",
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .iter()
             .map(|row| value_objects::Id(row.get::<_, uuid::Uuid>(0)))
