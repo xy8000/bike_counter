@@ -33,4 +33,5 @@ pub use opendata_file_repository::PostgresOpenDataFileRepository;
 pub use opendata_measurement_reader::PostgresOpenDataMeasurementReader;
 pub use persistent_state_repository::PostgresPersistentStateRepository;
 pub use pool::create_pool;
+pub(crate) use pool::db_error;
 pub use provider_message_repository::PostgresProviderMessageRepository;

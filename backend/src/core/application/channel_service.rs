@@ -68,6 +68,10 @@ mod tests {
             Ok(())
         }
 
+        fn update(&self, _channel: Channel) -> Result<(), DomainError> {
+            Ok(())
+        }
+
         fn find_by_id(&self, id: channel_vo::Id) -> Result<Channel, DomainError> {
             self.channels
                 .iter()

@@ -326,7 +326,29 @@ impl DataImportService {
                 .find_by_external_datasource_id(external_id.clone())?;
 
             match existing {
-                Some(existing) => result.push(existing),
+                Some(existing) => {
+                    // Refresh mutable attributes so a station rename (e.g. the
+                    // duplicate-name disambiguation) propagates to its channel.
+                    // The station link is refreshed only when the provider still
+                    // maps this channel to a known station; an orphaned channel
+                    // keeps its existing link.
+                    let mut updated = Channel {
+                        name: channel_vo::Name(record.name),
+                        description: channel_vo::Description(record.description),
+                        ..existing.clone()
+                    };
+                    if let Some(station_id) = station_ids.get(&record.counting_station_external_id)
+                    {
+                        updated.counting_station_id = channel_vo::CountingStationId(*station_id);
+                    }
+                    let changed = updated.name.0 != existing.name.0
+                        || updated.description.0 != existing.description.0
+                        || updated.counting_station_id != existing.counting_station_id;
+                    if changed {
+                        self.channel_repository.update(updated.clone())?;
+                    }
+                    result.push(updated);
+                }
                 None => {
                     let counting_station_id = *station_ids
                         .get(&record.counting_station_external_id)
@@ -944,6 +966,16 @@ mod tests {
             Ok(())
         }
 
+        fn update(&self, channel: Channel) -> Result<(), DomainError> {
+            let mut channels = self.channels.lock().unwrap();
+            let slot = channels
+                .iter_mut()
+                .find(|c| c.id == channel.id)
+                .ok_or(DomainError::NotFound(channel.id.0))?;
+            *slot = channel;
+            Ok(())
+        }
+
         fn find_by_id(&self, id: channel_vo::Id) -> Result<Channel, DomainError> {
             self.channels
                 .lock()
@@ -1308,6 +1340,53 @@ mod tests {
         assert_eq!(update.added_measurements, 0);
         assert_eq!(station_repo.stations.lock().unwrap().len(), 1);
         assert_eq!(channel_repo.channels.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn resync_updates_an_existing_channels_name() {
+        let existing_station = station("station-1");
+        let existing_channel = Channel {
+            id: channel_vo::Id(Uuid::from_u128(0x99)),
+            counting_station_id: channel_vo::CountingStationId(existing_station.id.0),
+            name: channel_vo::Name("1394".to_string()),
+            description: channel_vo::Description("desc".to_string()),
+            external_datasource_id: Some(channel_vo::ExternalDatasourceId("channel-1".to_string())),
+        };
+        let provider = Arc::new(SourceMockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![ChannelRecord {
+                external_id: "channel-1".to_string(),
+                counting_station_external_id: "station-1".to_string(),
+                name: "1394 (300066740)".to_string(),
+                description: "desc".to_string(),
+            }],
+            batches: Mutex::new(VecDeque::from([source_batch(Vec::new(), None, false)])),
+            recorded_from: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing_station]),
+        });
+        let channel_repo = Arc::new(MockChannelRepository {
+            channels: Mutex::new(vec![existing_channel]),
+        });
+
+        let service = DataImportService::new(
+            station_repo.clone(),
+            channel_repo.clone(),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        service
+            .update_data_source(&runtime(provider.clone()), None, None, |_, _, _| Ok(()))
+            .expect("update should succeed");
+
+        let channels = channel_repo.channels.lock().unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].name.0, "1394 (300066740)");
     }
 
     #[test]

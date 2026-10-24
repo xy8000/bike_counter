@@ -55,13 +55,13 @@ impl AssetRepository for PostgresAssetRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!("SELECT {ASSET_COLUMNS} FROM assets WHERE id = $1"),
                 &[&id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         row.as_ref().map(Self::map_row).transpose()
     }
 
@@ -69,13 +69,13 @@ impl AssetRepository for PostgresAssetRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
                 &format!("SELECT {ASSET_COLUMNS} FROM assets WHERE object_key = $1"),
                 &[&object_key.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         row.as_ref().map(Self::map_row).transpose()
     }
 
@@ -83,7 +83,7 @@ impl AssetRepository for PostgresAssetRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_one(
                 "INSERT INTO assets (id, object_key, content_type, byte_size, sha256, origin, created_at, updated_at)
@@ -104,7 +104,7 @@ impl AssetRepository for PostgresAssetRepository {
                     &asset.origin.as_str(),
                 ],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Self::map_row(&row)
     }
 
@@ -112,10 +112,10 @@ impl AssetRepository for PostgresAssetRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         client
             .execute("DELETE FROM assets WHERE object_key = $1", &[&object_key.0])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -123,13 +123,13 @@ impl AssetRepository for PostgresAssetRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 &format!("SELECT {ASSET_COLUMNS} FROM assets ORDER BY created_at DESC"),
                 &[],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         rows.iter().map(Self::map_row).collect()
     }
 
@@ -137,10 +137,10 @@ impl AssetRepository for PostgresAssetRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query("SELECT object_key FROM assets", &[])
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .iter()
             .map(|row| ObjectKey(row.get::<_, String>(0)))

@@ -29,7 +29,7 @@ impl ProviderMessageStore for PostgresProviderMessageRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let id = uuid::Uuid::new_v4();
         let severity = severity.as_str();
         client
@@ -38,7 +38,7 @@ impl ProviderMessageStore for PostgresProviderMessageRepository {
                  VALUES ($1, $2, $3, $4)",
                 &[&id, &data_source_id.0, &severity, &message],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(())
     }
 
@@ -46,7 +46,7 @@ impl ProviderMessageStore for PostgresProviderMessageRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let rows = client
             .query(
                 "SELECT id, data_source_id, severity, message, occurred_at
@@ -55,7 +55,7 @@ impl ProviderMessageStore for PostgresProviderMessageRepository {
                  ORDER BY occurred_at DESC, id DESC",
                 &[&data_source_id.0],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(rows
             .iter()
             .map(|row| {
@@ -83,14 +83,14 @@ impl ProviderMessageStore for PostgresProviderMessageRepository {
         let mut client = self
             .pool
             .get()
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_one(
                 "SELECT count(*)::bigint FROM data_source_provider_messages \
                  WHERE data_source_id = $1 AND severity = $2 AND occurred_at >= $3",
                 &[&data_source_id.0, &severity.as_str(), &since],
             )
-            .map_err(|error| DomainError::Database(error.to_string()))?;
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         Ok(row.get::<_, i64>(0))
     }
 }

@@ -134,6 +134,9 @@ impl ChannelRepository for MemoryChannelRepository {
     fn save(&self, _channel: Channel) -> Result<(), DomainError> {
         Ok(())
     }
+    fn update(&self, _channel: Channel) -> Result<(), DomainError> {
+        Ok(())
+    }
     fn find_by_id(&self, _id: channel_vo::Id) -> Result<Channel, DomainError> {
         Err(DomainError::NotFound(Uuid::new_v4()))
     }
