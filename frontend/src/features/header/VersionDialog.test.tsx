@@ -5,7 +5,9 @@ import { VersionDialog } from './VersionDialog'
 
 describe('VersionDialog', () => {
   it('renders the title and both versions with a leading v', () => {
-    render(<VersionDialog backendVersion="0.0.9" error={false} onClose={vi.fn()} />)
+    // Deliberately distinct from the injected frontend version so the two
+    // values never collide in `getByText` (which requires a unique match).
+    render(<VersionDialog backendVersion="1.2.3" error={false} onClose={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: 'Versions' })).toBeInTheDocument()
     expect(screen.getByText('Currently installed application versions.')).toBeInTheDocument()
@@ -13,7 +15,7 @@ describe('VersionDialog', () => {
     expect(screen.getByText('Frontend')).toBeInTheDocument()
     expect(screen.getByText(`v${FRONTEND_VERSION}`)).toBeInTheDocument()
     expect(screen.getByText('Backend')).toBeInTheDocument()
-    expect(screen.getByText('v0.0.9')).toBeInTheDocument()
+    expect(screen.getByText('v1.2.3')).toBeInTheDocument()
   })
 
   it('shows a loading label while the backend version is pending', () => {

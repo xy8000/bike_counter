@@ -390,7 +390,13 @@ impl MuensterGithubAdapter {
             let mut entry = archive.by_index(i).map_err(|e| {
                 ProviderError::InvalidData(format!("cannot read zip entry {i}: {e}"))
             })?;
-            let Some(relative) = sanitize_zip_path(entry.name()) else {
+            let name = entry
+                .name()
+                .map_err(|e| {
+                    ProviderError::InvalidData(format!("cannot decode zip entry {i} name: {e}"))
+                })?
+                .into_owned();
+            let Some(relative) = sanitize_zip_path(&name) else {
                 continue;
             };
             let target = dest.join(relative);
