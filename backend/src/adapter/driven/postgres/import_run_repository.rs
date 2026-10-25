@@ -280,7 +280,7 @@ mod tests {
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id;
-    use crate::core::domain::data_source::import_run::DataImportRun;
+    use crate::core::domain::data_source::import_run::{DataImportRun, ImportRunFacts};
     use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
     use crate::core::domain::data_source::repository_port::DataSourceRepository;
 
@@ -433,6 +433,130 @@ mod tests {
         assert!(
             db.repository
                 .finish(run.id, now + Duration::seconds(2))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn finish_with_facts_records_the_import_outcome() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Münster");
+        let now = DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let run = DataImportRun::start(Uuid::new_v4(), data_source_id, None, now);
+        db.repository.insert(&run).unwrap();
+        let facts = ImportRunFacts {
+            added_measurements: 42,
+            added_stations: 3,
+            warning_count: 2,
+            error_count: 1,
+        };
+        db.repository
+            .finish_with_facts(run.id, now + Duration::seconds(60), facts)
+            .unwrap();
+
+        let latest = db
+            .repository
+            .latest_by_data_source(data_source_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.status.as_str(), "FINISHED");
+        assert_eq!(latest.facts, facts);
+    }
+
+    #[test]
+    fn fail_with_facts_records_the_import_outcome() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Bonn");
+        let now = DateTime::parse_from_rfc3339("2024-01-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let run = DataImportRun::start(Uuid::new_v4(), data_source_id, None, now);
+        db.repository.insert(&run).unwrap();
+        let facts = ImportRunFacts {
+            added_measurements: 0,
+            added_stations: 0,
+            warning_count: 0,
+            error_count: 4,
+        };
+        db.repository
+            .fail_with_facts(
+                run.id,
+                now + Duration::seconds(10),
+                "provider unreachable",
+                facts,
+            )
+            .unwrap();
+
+        let latest = db
+            .repository
+            .latest_by_data_source(data_source_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.status.as_str(), "FAILED");
+        assert_eq!(
+            latest.failure_message.as_deref(),
+            Some("provider unreachable")
+        );
+        assert_eq!(latest.facts, facts);
+    }
+
+    #[test]
+    fn list_by_data_source_returns_newest_first_with_facts() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Hamburg");
+        let earlier = DateTime::parse_from_rfc3339("2024-01-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let later = DateTime::parse_from_rfc3339("2024-01-01T11:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let first = DataImportRun::start(Uuid::new_v4(), data_source_id, None, earlier);
+        db.repository.insert(&first).unwrap();
+        let first_facts = ImportRunFacts {
+            added_measurements: 1,
+            added_stations: 1,
+            warning_count: 0,
+            error_count: 0,
+        };
+        db.repository
+            .finish_with_facts(first.id, earlier + Duration::seconds(30), first_facts)
+            .unwrap();
+
+        let second = DataImportRun::start(Uuid::new_v4(), data_source_id, None, later);
+        db.repository.insert(&second).unwrap();
+        db.repository
+            .finish(second.id, later + Duration::seconds(30))
+            .unwrap();
+
+        let runs = db.repository.list_by_data_source(data_source_id).unwrap();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id, second.id, "newest run first");
+        assert_eq!(runs[1].id, first.id);
+        assert_eq!(runs[1].facts, first_facts);
+    }
+
+    #[test]
+    fn finishing_with_facts_a_non_running_run_is_an_error() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Düsseldorf");
+        let now = Utc::now();
+        let run = DataImportRun::start(Uuid::new_v4(), data_source_id, None, now);
+        db.repository.insert(&run).unwrap();
+        db.repository
+            .finish(run.id, now + Duration::seconds(1))
+            .unwrap();
+        assert!(
+            db.repository
+                .finish_with_facts(
+                    run.id,
+                    now + Duration::seconds(2),
+                    ImportRunFacts::default()
+                )
                 .is_err()
         );
     }

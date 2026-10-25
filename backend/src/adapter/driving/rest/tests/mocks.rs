@@ -38,7 +38,9 @@ use crate::core::domain::counting_stations::counting_station::value_objects as s
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-use crate::core::domain::data_source::import_run::DataImportRun;
+use crate::core::domain::data_source::import_run::{
+    DataImportRun, ImportRunFacts, ImportRunStatus,
+};
 use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
 use crate::core::domain::data_source::provider_message::{
     ProviderMessage, ProviderMessageSeverity,
@@ -546,7 +548,37 @@ impl DataSourceAnalyticsServicePort for MockDataSourceAnalyticsService {
     }
 
     fn imports(&self, _id: data_source_vo::Id) -> Result<Vec<DataImportRun>, DomainError> {
-        Ok(Vec::new())
+        // Two runs so the handler exercises the non-empty path: a finished run
+        // (counted towards the average) followed by a failed one (excluded).
+        let base = DateTime::parse_from_rfc3339("2026-09-03T07:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut finished = DataImportRun::start(
+            Uuid::new_v4(),
+            data_source_vo::Id(Uuid::nil()),
+            None,
+            base + chrono::Duration::seconds(3600),
+        );
+        finished.status = ImportRunStatus::Finished;
+        finished.finished_at = Some(base + chrono::Duration::seconds(3660));
+        finished.facts = ImportRunFacts {
+            added_measurements: 10,
+            added_stations: 2,
+            warning_count: 1,
+            error_count: 0,
+        };
+        let mut failed =
+            DataImportRun::start(Uuid::new_v4(), data_source_vo::Id(Uuid::nil()), None, base);
+        failed.status = ImportRunStatus::Failed;
+        failed.finished_at = Some(base + chrono::Duration::seconds(10));
+        failed.failure_message = Some("provider unreachable".to_string());
+        failed.facts = ImportRunFacts {
+            added_measurements: 0,
+            added_stations: 0,
+            warning_count: 0,
+            error_count: 2,
+        };
+        Ok(vec![finished, failed])
     }
 }
 
