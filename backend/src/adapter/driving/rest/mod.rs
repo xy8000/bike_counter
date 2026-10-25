@@ -14,11 +14,11 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::adapter::driving::bff::{
-    get_bff_asset_content, get_bff_data_source_detail, get_bff_data_sources,
-    get_bff_global_summary, get_bff_station_detail_graphs, get_bff_station_detail_monthly,
-    get_bff_station_detail_overview, get_bff_station_detail_page, get_bff_station_overview,
-    get_bff_station_overview_stats, get_bff_stations_search, get_bff_stations_sidebar,
-    get_bff_stations_sidebar_stats, get_bff_stations_summary_graphs,
+    get_bff_asset_content, get_bff_data_source_detail, get_bff_data_source_imports,
+    get_bff_data_sources, get_bff_global_summary, get_bff_station_detail_graphs,
+    get_bff_station_detail_monthly, get_bff_station_detail_overview, get_bff_station_detail_page,
+    get_bff_station_overview, get_bff_station_overview_stats, get_bff_stations_search,
+    get_bff_stations_sidebar, get_bff_stations_sidebar_stats, get_bff_stations_summary_graphs,
     get_bff_stations_summary_monthly, get_bff_stations_summary_overview,
     get_bff_stations_summary_page, get_bff_version, list_bff_stations,
 };
@@ -159,6 +159,10 @@ impl RestApiAdapter {
             .route(
                 "/api/bff/data-sources/{id}",
                 get(get_bff_data_source_detail),
+            )
+            .route(
+                "/api/bff/data-sources/{id}/imports",
+                get(get_bff_data_source_imports),
             )
             .route("/api/v1", get(get_api_root))
             .route("/api/v1/counting-stations", get(list_counting_stations))

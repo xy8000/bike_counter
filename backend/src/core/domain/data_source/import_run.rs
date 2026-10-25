@@ -49,6 +49,20 @@ impl FromStr for ImportRunStatus {
     }
 }
 
+/// Snapshot of a run's import outcome, persisted when the run finishes and shown
+/// in the data-source jobs overview.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImportRunFacts {
+    /// Rows actually inserted (skipped `ON CONFLICT DO NOTHING` rows not counted).
+    pub added_measurements: i64,
+    /// Counting stations created during this run.
+    pub added_stations: i64,
+    /// WARNING provider messages recorded during this run.
+    pub warning_count: i64,
+    /// ERROR provider messages recorded during this run.
+    pub error_count: i64,
+}
+
 /// A single per-data-source import run.
 #[derive(Debug, Clone)]
 pub struct DataImportRun {
@@ -61,6 +75,8 @@ pub struct DataImportRun {
     pub finished_at: Option<DateTime<Utc>>,
     pub status: ImportRunStatus,
     pub failure_message: Option<String>,
+    /// Import outcome counters, populated when the run finishes.
+    pub facts: ImportRunFacts,
 }
 
 impl DataImportRun {
@@ -79,6 +95,7 @@ impl DataImportRun {
             finished_at: None,
             status: ImportRunStatus::Running,
             failure_message: None,
+            facts: ImportRunFacts::default(),
         }
     }
 

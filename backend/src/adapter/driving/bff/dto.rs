@@ -814,6 +814,9 @@ pub struct BffDataSourceImportDto {
     /// `RUNNING` | `FINISHED` | `FAILED`.
     #[schema(example = "FINISHED")]
     pub status: String,
+    /// `true` when the run finished successfully (`status == FINISHED`).
+    #[schema(example = true)]
+    pub successful: bool,
     #[schema(example = "2026-09-03T07:00:00Z")]
     pub started_at: DateTime<Utc>,
     #[schema(example = "2026-09-03T08:00:00Z")]
@@ -828,6 +831,23 @@ pub struct BffDataSourceImportDto {
     pub warning_count: i64,
     #[schema(example = 0)]
     pub error_count: i64,
+    /// Measurements actually inserted during this run.
+    #[schema(example = 18730)]
+    pub added_measurements: i64,
+    /// Counting stations created during this run.
+    #[schema(example = 3)]
+    pub added_stations: i64,
+}
+
+/// The per-data-source import-run history (`GET /api/bff/data-sources/{id}/imports`).
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
+pub struct BffDataSourceImportsDto {
+    /// Runs newest first.
+    pub items: Vec<BffDataSourceImportDto>,
+    /// Average duration (whole seconds) over the finished runs, or `None` when
+    /// no run has finished yet.
+    #[schema(example = 3600)]
+    pub average_duration_seconds: Option<i64>,
 }
 
 /// The detail payload of one data source (`GET /api/bff/data-sources/{id}`).

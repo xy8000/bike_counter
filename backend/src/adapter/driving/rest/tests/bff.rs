@@ -435,6 +435,7 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "/api/bff/version",
         "/api/bff/data-sources",
         "/api/bff/data-sources/{id}",
+        "/api/bff/data-sources/{id}/imports",
         "/api/bff/station-detail/{id}",
         "/api/bff/station-detail/{id}/overview",
         "/api/bff/station-detail/{id}/graphs/{timeframe}",
@@ -477,6 +478,7 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "BffDataSourceListItemDto",
         "BffDataSourceDetailDto",
         "BffDataSourceImportDto",
+        "BffDataSourceImportsDto",
     ] {
         assert!(
             schemas.contains_key(schema),
@@ -1412,4 +1414,16 @@ async fn data_source_detail_unknown_source_is_not_found() {
         .get_json(&format!("/api/bff/data-sources/{}", Uuid::new_v4()))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn data_source_imports_returns_history_and_average_duration() {
+    let app = TestApp::new();
+    let (status, body) = app
+        .get_json(&format!("/api/bff/data-sources/{}/imports", Uuid::new_v4()))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert!(body["average_duration_seconds"].is_null());
 }

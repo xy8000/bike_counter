@@ -69,4 +69,7 @@ pub struct DataSourceDetail {
 pub trait DataSourceAnalyticsServicePort: Send + Sync {
     fn overview(&self) -> Result<Vec<DataSourceOverview>, DomainError>;
     fn detail(&self, id: DataSourceId) -> Result<DataSourceDetail, DomainError>;
+
+    /// All per-source import runs, newest first, for the jobs overview.
+    fn imports(&self, id: DataSourceId) -> Result<Vec<DataImportRun>, DomainError>;
 }

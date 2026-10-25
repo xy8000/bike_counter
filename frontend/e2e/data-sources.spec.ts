@@ -43,6 +43,17 @@ test('clicking a data source opens the detail page', async ({ page }) => {
   await expect(page.getByText('Data imported until', { exact: true })).toBeVisible()
 })
 
+test('the data-source detail shows the import-jobs overview section', async ({ page }) => {
+  await page.getByRole('link', { name: /Münster/ }).click()
+  await expect(page).toHaveURL(/\/data-sources\/[0-9a-f-]+/)
+
+  // The jobs overview (issue #38) renders on every detail page. The seeded e2e
+  // stack runs with scheduled jobs disabled and no pre-seeded import runs, so
+  // the empty state is shown instead of a table.
+  await expect(page.getByRole('heading', { name: 'Import jobs' })).toBeVisible()
+  await expect(page.getByText('No import jobs recorded yet.')).toBeVisible()
+})
+
 test('top-bar link reaches the data-sources overview from the map', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('link', { name: /Data sources/ }).click()

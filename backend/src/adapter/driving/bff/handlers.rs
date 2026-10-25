@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::adapter::driving::bff::cache::{CachePolicy, cached_json};
 use crate::adapter::driving::bff::dto::{
     ActionDto, AsOfQueryParams, BffDataSourceDetailDto, BffDataSourceImportDto,
-    BffDataSourceListDto, BffDataSourceListItemDto, BffStationQueryParams,
+    BffDataSourceImportsDto, BffDataSourceListDto, BffDataSourceListItemDto, BffStationQueryParams,
     BffStationSummaryQueryParams, ChannelRefDto, GlobalSummaryDto, GlobalSummaryQueryParams,
     MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto, SidebarStationDto, SidebarStatsDto,
     StationDetailPageDto, StationMapDto, StationMapListDto, StationOverviewDto,
@@ -38,7 +38,7 @@ use crate::core::domain::assets::asset::value_objects::AssetId;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-use crate::core::domain::data_source::import_run::DataImportRun;
+use crate::core::domain::data_source::import_run::{DataImportRun, ImportRunStatus};
 use crate::core::domain::error::DomainError;
 use crate::core::domain::station_analytics::{GeoBounds, GraphResolution, GraphTimeframe};
 
@@ -1256,12 +1256,15 @@ async fn data_source_image_url(
 fn import_run_dto(run: DataImportRun, warnings: i64, errors: i64) -> BffDataSourceImportDto {
     BffDataSourceImportDto {
         status: run.status.as_str().to_string(),
+        successful: run.status == ImportRunStatus::Finished,
         started_at: run.started_at,
         finished_at: run.finished_at,
         duration_seconds: run.duration_seconds(),
         failure_message: run.failure_message,
         warning_count: warnings,
         error_count: errors,
+        added_measurements: run.facts.added_measurements,
+        added_stations: run.facts.added_stations,
     }
 }
 
@@ -1380,6 +1383,63 @@ pub async fn get_bff_data_source_detail(
         has_real_time: detail.has_real_time,
         has_full_current_year: detail.has_full_current_year,
         last_import,
+    };
+    Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
+}
+
+/// The per-data-source import-run history plus the average run duration
+/// (`GET /api/bff/data-sources/{id}/imports`). Runs are newest first; the
+/// average is computed over the finished runs only.
+#[utoipa::path(
+    get,
+    path = "/api/bff/data-sources/{id}/imports",
+    tag = "BFF API",
+    params(
+        ("id" = Uuid, Path, description = "Data source UUID")
+    ),
+    responses(
+        (status = 200, description = "Import-run history (newest first) and average duration", body = BffDataSourceImportsDto,
+            headers(
+                ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
+                ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
+            )
+        ),
+        (status = 404, description = "Data source not found", body = ErrorResponseDto),
+        (status = 500, description = "Internal Server Error", body = ErrorResponseDto)
+    )
+)]
+pub async fn get_bff_data_source_imports(
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
+    let service = state.data_source_analytics_service.clone();
+    let data_source_id = data_source_vo::Id(id);
+    let runs = blocking(move || service.imports(data_source_id))
+        .await
+        .map_err(map_domain_error)?;
+
+    let mut items = Vec::with_capacity(runs.len());
+    for run in runs {
+        let warnings = run.facts.warning_count;
+        let errors = run.facts.error_count;
+        items.push(import_run_dto(run, warnings, errors));
+    }
+
+    let finished_durations: Vec<i64> = items
+        .iter()
+        .filter(|item| item.successful)
+        .filter_map(|item| item.duration_seconds)
+        .collect();
+    let average_duration_seconds = if finished_durations.is_empty() {
+        None
+    } else {
+        Some(finished_durations.iter().sum::<i64>() / finished_durations.len() as i64)
+    };
+
+    let dto = BffDataSourceImportsDto {
+        items,
+        average_duration_seconds,
     };
     Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }

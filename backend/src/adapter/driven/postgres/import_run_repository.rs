@@ -10,7 +10,9 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::import_run::{DataImportRun, ImportRunStatus};
+use crate::core::domain::data_source::import_run::{
+    DataImportRun, ImportRunFacts, ImportRunStatus,
+};
 use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::error::DomainError;
 
@@ -35,6 +37,12 @@ impl PostgresImportRunRepository {
             finished_at: row.get("finished_at"),
             status: ImportRunStatus::from_str(&status)?,
             failure_message: row.get("failure_message"),
+            facts: ImportRunFacts {
+                added_measurements: row.get("added_measurements"),
+                added_stations: row.get("added_stations"),
+                warning_count: row.get("warning_count"),
+                error_count: row.get("error_count"),
+            },
         })
     }
 }
@@ -48,8 +56,9 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         client
             .execute(
                 "INSERT INTO data_source_imports \
-                 (id, data_source_id, job_id, started_at, finished_at, status, failure_message) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                 (id, data_source_id, job_id, started_at, finished_at, status, failure_message, \
+                  added_measurements, added_stations, warning_count, error_count) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[
                     &run.id,
                     &run.data_source_id.0,
@@ -58,6 +67,10 @@ impl DataImportRunRepository for PostgresImportRunRepository {
                     &run.finished_at,
                     &run.status.as_str(),
                     &run.failure_message,
+                    &run.facts.added_measurements,
+                    &run.facts.added_stations,
+                    &run.facts.warning_count,
+                    &run.facts.error_count,
                 ],
             )
             .map_err(|error| DomainError::Database(super::db_error(&error)))?;
@@ -104,6 +117,76 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         Ok(())
     }
 
+    fn finish_with_facts(
+        &self,
+        id: Uuid,
+        finished_at: DateTime<Utc>,
+        facts: ImportRunFacts,
+    ) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let updated = client
+            .execute(
+                "UPDATE data_source_imports SET status = 'FINISHED', finished_at = $2, \
+                 failure_message = NULL, added_measurements = $3, added_stations = $4, \
+                 warning_count = $5, error_count = $6 \
+                 WHERE id = $1 AND status = 'RUNNING'",
+                &[
+                    &id,
+                    &finished_at,
+                    &facts.added_measurements,
+                    &facts.added_stations,
+                    &facts.warning_count,
+                    &facts.error_count,
+                ],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        if updated == 0 {
+            return Err(DomainError::InvalidQuery(format!(
+                "import run {id} is not RUNNING and cannot be finished"
+            )));
+        }
+        Ok(())
+    }
+
+    fn fail_with_facts(
+        &self,
+        id: Uuid,
+        finished_at: DateTime<Utc>,
+        message: &str,
+        facts: ImportRunFacts,
+    ) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let updated = client
+            .execute(
+                "UPDATE data_source_imports SET status = 'FAILED', finished_at = $2, \
+                 failure_message = $3, added_measurements = $4, added_stations = $5, \
+                 warning_count = $6, error_count = $7 \
+                 WHERE id = $1 AND status = 'RUNNING'",
+                &[
+                    &id,
+                    &finished_at,
+                    &message,
+                    &facts.added_measurements,
+                    &facts.added_stations,
+                    &facts.warning_count,
+                    &facts.error_count,
+                ],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        if updated == 0 {
+            return Err(DomainError::InvalidQuery(format!(
+                "import run {id} is not RUNNING and cannot be failed"
+            )));
+        }
+        Ok(())
+    }
+
     fn latest_by_data_source(
         &self,
         data_source_id: DataSourceId,
@@ -114,7 +197,8 @@ impl DataImportRunRepository for PostgresImportRunRepository {
             .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         let row = client
             .query_opt(
-                "SELECT id, data_source_id, job_id, started_at, finished_at, status, failure_message \
+                "SELECT id, data_source_id, job_id, started_at, finished_at, status, failure_message, \
+                        added_measurements, added_stations, warning_count, error_count \
                  FROM data_source_imports \
                  WHERE data_source_id = $1 \
                  ORDER BY started_at DESC LIMIT 1",
@@ -122,6 +206,27 @@ impl DataImportRunRepository for PostgresImportRunRepository {
             )
             .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         row.map(|row| Self::map_row(&row)).transpose()
+    }
+
+    fn list_by_data_source(
+        &self,
+        data_source_id: DataSourceId,
+    ) -> Result<Vec<DataImportRun>, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let rows = client
+            .query(
+                "SELECT id, data_source_id, job_id, started_at, finished_at, status, failure_message, \
+                        added_measurements, added_stations, warning_count, error_count \
+                 FROM data_source_imports \
+                 WHERE data_source_id = $1 \
+                 ORDER BY started_at DESC",
+                &[&data_source_id.0],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        rows.iter().map(Self::map_row).collect()
     }
 
     fn finalize_orphaned_running(&self, older_than: DateTime<Utc>) -> Result<u64, DomainError> {

@@ -43,6 +43,8 @@ pub struct DataSourceUpdate {
     /// Number of measurements actually inserted (rows skipped by
     /// `ON CONFLICT DO NOTHING` are not counted).
     pub added_measurements: u64,
+    /// Counting stations created during this run.
+    pub added_stations: u64,
     /// Timestamp of the last processed measurement (the cursor to advance
     /// `data_sources.imported_until` to).
     pub last_measurement_timestamp: Option<DateTime<Utc>>,
@@ -137,7 +139,7 @@ impl DataImportService {
     fn sync_counting_stations(
         &self,
         runtime: &DataSourceRuntime,
-    ) -> Result<HashMap<String, Uuid>, DomainError> {
+    ) -> Result<(HashMap<String, Uuid>, u64), DomainError> {
         let stations = runtime
             .provider
             .get_all_counting_stations()
@@ -151,6 +153,7 @@ impl DataImportService {
         };
 
         let mut external_to_id = HashMap::with_capacity(stations.len());
+        let mut added_stations = 0u64;
         for record in stations {
             let external_id = station_vo::ExternalDatasourceId(record.external_id.clone());
             // Coordinates are optional: both lat/lng must be present.
@@ -229,6 +232,7 @@ impl DataImportService {
                         )?;
                     }
                     self.counting_station_repository.save(station.clone())?;
+                    added_stations += 1;
                     station
                 }
             };
@@ -255,7 +259,7 @@ impl DataImportService {
             }
         }
 
-        Ok(external_to_id)
+        Ok((external_to_id, added_stations))
     }
 
     /// Hash-based station-image sync: point the station at the provider's image
@@ -415,7 +419,7 @@ impl DataImportService {
         mut on_phase: impl FnMut(DataSourceImportPhase) -> Result<(), DomainError>,
     ) -> Result<DataSourceUpdate, DomainError> {
         on_phase(DataSourceImportPhase::Starting)?;
-        let station_ids = {
+        let (station_ids, added_stations) = {
             on_phase(DataSourceImportPhase::SyncingStations)?;
             self.sync_counting_stations(runtime)?
         };
@@ -538,6 +542,7 @@ impl DataImportService {
         Ok(DataSourceUpdate {
             processed_measurements: processed,
             added_measurements: added,
+            added_stations,
             last_measurement_timestamp: watermark,
             first_measurement_timestamp: run_first,
             last_measurement_timestamp_bound: run_last,

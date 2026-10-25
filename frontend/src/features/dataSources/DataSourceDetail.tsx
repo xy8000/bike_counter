@@ -8,6 +8,7 @@ import { ErrorBoundary } from '../../lib/ErrorBoundary'
 import { fetchDataSourceDetail } from './api'
 import { DataSourceMap } from './DataSourceMap'
 import { dataSourceImageUrl } from './DataSourcesList'
+import { ImportHistory } from './ImportHistory'
 import { FeatureBadges, ImportStatus, formatSeconds } from './ImportStatus'
 import type { DataSourceDetail as DataSourceDetailType } from './types'
 
@@ -108,9 +109,9 @@ export function DataSourceDetail() {
         </div>
       )}
 
-      {!error && detail && (
+      {!error && detail && dataSourceId && (
         <ErrorBoundary>
-          <DetailContent detail={detail} />
+          <DetailContent detail={detail} dataSourceId={dataSourceId} />
         </ErrorBoundary>
       )}
     </StationPage>
@@ -124,7 +125,10 @@ function formatImportDuration(run: DataSourceDetailType['last_import']): string 
   return run.duration_seconds !== null ? formatSeconds(run.duration_seconds) : 'Unknown'
 }
 
-function DetailContent({ detail }: Readonly<{ detail: DataSourceDetailType }>) {
+function DetailContent({
+  detail,
+  dataSourceId,
+}: Readonly<{ detail: DataSourceDetailType; dataSourceId: string }>) {
   const failed = detail.last_import?.status === 'FAILED'
   // A run that has not finished has no duration yet: show "Unknown" instead of
   // pretending it ran for a final amount of time.
@@ -196,6 +200,10 @@ function DetailContent({ detail }: Readonly<{ detail: DataSourceDetailType }>) {
           </StatCard>
         </div>
       </section>
+
+      {/* The per-source import jobs (start time, duration, success, warnings,
+          errors, new measurements/stations) and the average run duration. */}
+      <ImportHistory dataSourceId={dataSourceId} />
     </div>
   )
 }

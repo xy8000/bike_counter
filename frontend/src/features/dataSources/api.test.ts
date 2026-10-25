@@ -1,7 +1,7 @@
 import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchDataSourceDetail, fetchDataSources } from './api'
-import type { DataSourceDetail, DataSourceSummary } from './types'
+import { fetchDataSourceDetail, fetchDataSourceImports, fetchDataSources } from './api'
+import type { DataSourceDetail, DataSourceImports, DataSourceSummary } from './types'
 
 const SUMMARY: DataSourceSummary = {
   id: 'ms',
@@ -71,6 +71,27 @@ describe('dataSources api', () => {
 
       await expect(fetchDataSourceDetail('ms')).rejects.toThrow(
         '/api/bff/data-sources/ms responded with 404',
+      )
+    })
+  })
+
+  describe('fetchDataSourceImports', () => {
+    it('fetches the import-run history for the data-source id', async () => {
+      const payload: DataSourceImports = { items: [], average_duration_seconds: 60 }
+      const fetchMock = vi.fn().mockResolvedValue(ok(payload))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const imports = await fetchDataSourceImports('ms')
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/bff/data-sources/ms/imports')
+      expect(imports).toEqual(payload)
+    })
+
+    it('rejects when the history responds with a non-ok status', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
+
+      await expect(fetchDataSourceImports('ms')).rejects.toThrow(
+        '/api/bff/data-sources/ms/imports responded with 500',
       )
     })
   })

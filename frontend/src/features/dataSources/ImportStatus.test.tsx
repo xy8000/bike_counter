@@ -77,12 +77,15 @@ describe('ImportStatus', () => {
       <ImportStatus
         import={{
           status: 'RUNNING',
+          successful: false,
           started_at: startedAt,
           finished_at: null,
           duration_seconds: null,
           failure_message: null,
           warning_count: 0,
           error_count: 0,
+          added_measurements: 0,
+          added_stations: 0,
         }}
       />,
     )
@@ -95,12 +98,15 @@ describe('ImportStatus', () => {
       <ImportStatus
         import={{
           status: 'FAILED',
+          successful: false,
           started_at: '2026-01-01T10:00:00Z',
           finished_at: '2026-01-01T10:01:00Z',
           duration_seconds: 60,
           failure_message: 'boom',
           warning_count: 0,
           error_count: 0,
+          added_measurements: 0,
+          added_stations: 0,
         }}
       />,
     )
@@ -112,12 +118,15 @@ describe('ImportStatus', () => {
       <ImportStatus
         import={{
           status: 'FINISHED',
+          successful: true,
           started_at: '2026-01-01T10:00:00Z',
           finished_at: '2026-01-01T10:00:30Z',
           duration_seconds: 30,
           failure_message: null,
           warning_count: 0,
           error_count: 0,
+          added_measurements: 0,
+          added_stations: 0,
         }}
       />,
     )
