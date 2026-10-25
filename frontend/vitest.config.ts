@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 
+// Read the version via `readFileSync` rather than a JSON import: importing
+// `./package.json` without `with { type: 'json' }` is rejected by Vite's
+// upcoming `configLoader: 'native'` (see GitHub issue #36).
 const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')) as {
   version: string
 }

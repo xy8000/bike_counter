@@ -4,6 +4,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+// Read the version via `readFileSync` rather than a JSON import: importing
+// `./package.json` without `with { type: 'json' }` is rejected by Vite's
+// upcoming `configLoader: 'native'` (see GitHub issue #36).
 const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')) as {
   version: string
 }
