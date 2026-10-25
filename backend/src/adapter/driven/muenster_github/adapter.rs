@@ -160,17 +160,20 @@ impl MuensterGithubAdapter {
         })
     }
 
-    /// The configured cache window in seconds.
+    /// The configured cache window in seconds (test-only read path).
+    #[cfg(test)]
     pub fn cache_duration(&self) -> u64 {
         self.cache_duration
     }
 
     /// The configured maximum archive age in seconds (test-only read path).
+    #[cfg(test)]
     pub fn max_archive_age(&self) -> u64 {
         self.max_archive_age
     }
 
     /// The configured import time window in hours (test-only read path).
+    #[cfg(test)]
     pub fn max_measurement_timeframe_hours(&self) -> u64 {
         self.max_measurement_timeframe.num_hours() as u64
     }
@@ -501,7 +504,6 @@ impl MuensterGithubAdapter {
             stations,
             channels,
             channel_csvs,
-            extracted_dir,
         }))
     }
 

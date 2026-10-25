@@ -309,12 +309,10 @@ pub fn parse_measurements_csv(
 /// stations Bonn renamed between years. Columns without an index prefix
 /// (aggregates like `Summe`, per-bridge totals) are returned unchanged so they
 /// never match an imported station name.
-pub fn normalize_column_name(header: &str) -> String {
-    header_parts(header).1
-}
-
+///
+/// This is the `normalized_name` half of [`header_parts`].
 /// Splits a wide-CSV column header into `(had_index_prefix, normalized_name)`.
-fn header_parts(header: &str) -> (bool, String) {
+pub(super) fn header_parts(header: &str) -> (bool, String) {
     if let Some((prefix, rest)) = header.split_once(' ')
         && is_index_token(prefix)
     {

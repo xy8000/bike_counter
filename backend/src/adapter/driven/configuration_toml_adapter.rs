@@ -417,12 +417,16 @@ mod tests {
         assert_eq!(configuration.database().database_name(), "database");
         assert_eq!(configuration.data_source_update_cron(), "0 15 * * * *");
         assert_eq!(
-            configuration.data_source_update_max_heartbeat_interval_seconds(),
+            configuration
+                .data_source_update_max_heartbeat_interval()
+                .num_seconds(),
             3600
         );
         assert_eq!(configuration.asset_cleanup_cron(), "0 0 4 * * *");
         assert_eq!(
-            configuration.asset_cleanup_max_heartbeat_interval_seconds(),
+            configuration
+                .asset_cleanup_max_heartbeat_interval()
+                .num_seconds(),
             3600
         );
         assert_eq!(
@@ -534,7 +538,9 @@ mod tests {
             DEFAULT_DATA_SOURCE_UPDATE_CRON
         );
         assert_eq!(
-            configuration.data_source_update_max_heartbeat_interval_seconds(),
+            configuration
+                .data_source_update_max_heartbeat_interval()
+                .num_seconds(),
             3600
         );
     }
@@ -613,12 +619,16 @@ mod tests {
             DEFAULT_DATA_SOURCE_UPDATE_CRON
         );
         assert_eq!(
-            configuration.data_source_update_max_heartbeat_interval_seconds(),
+            configuration
+                .data_source_update_max_heartbeat_interval()
+                .num_seconds(),
             1800
         );
         assert_eq!(configuration.asset_cleanup_cron(), "0 15 * * * *");
         assert_eq!(
-            configuration.asset_cleanup_max_heartbeat_interval_seconds(),
+            configuration
+                .asset_cleanup_max_heartbeat_interval()
+                .num_seconds(),
             3600
         );
     }
@@ -817,7 +827,10 @@ mod tests {
         let configuration = result.unwrap();
         assert_eq!(configuration.maps().update_cron(), "0 0 3 1 1,3,5,7,9,11 *");
         assert_eq!(
-            configuration.maps().update_max_heartbeat_interval_seconds(),
+            configuration
+                .maps()
+                .update_max_heartbeat_interval()
+                .num_seconds(),
             1800
         );
         assert_eq!(
@@ -845,7 +858,10 @@ mod tests {
         let configuration = result.unwrap();
         assert_eq!(configuration.maps().update_cron(), DEFAULT_MAPS_UPDATE_CRON);
         assert_eq!(
-            configuration.maps().update_max_heartbeat_interval_seconds(),
+            configuration
+                .maps()
+                .update_max_heartbeat_interval()
+                .num_seconds(),
             7200
         );
         assert_eq!(configuration.maps().protomaps_build_url(), "latest");
@@ -877,7 +893,10 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         let configuration = result.unwrap();
         assert_eq!(
-            configuration.maps().update_max_heartbeat_interval_seconds(),
+            configuration
+                .maps()
+                .update_max_heartbeat_interval()
+                .num_seconds(),
             7200
         );
     }
@@ -931,7 +950,9 @@ mod tests {
             super::DEFAULT_OPENDATA_EXPORT_CRON
         );
         assert_eq!(
-            configuration.opendata_export_max_heartbeat_interval_seconds(),
+            configuration
+                .opendata_export_max_heartbeat_interval()
+                .num_seconds(),
             super::DEFAULT_OPENDATA_EXPORT_MAX_HEARTBEAT_INTERVAL_SECONDS
         );
         assert_eq!(
@@ -973,7 +994,9 @@ mod tests {
         let configuration = result.unwrap();
         assert_eq!(configuration.opendata_export_cron(), "0 15 4 * * *");
         assert_eq!(
-            configuration.opendata_export_max_heartbeat_interval_seconds(),
+            configuration
+                .opendata_export_max_heartbeat_interval()
+                .num_seconds(),
             1800
         );
         assert_eq!(

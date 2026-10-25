@@ -91,38 +91,6 @@ pub enum BucketGranularity {
     Quarter,
 }
 
-/// Per-resolution coverage of a window: how much history exists at each
-/// `resolution_seconds`, so the analytics can pick the finest resolution that
-/// actually covers the requested window (the "combine" rule).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResolutionCoverage {
-    /// Interval length in seconds (e.g. 300 = 5 min, 3600 = 1 hour).
-    pub resolution_seconds: i64,
-    /// Earliest measurement timestamp at this resolution within the window.
-    pub first: DateTime<Utc>,
-    /// Latest measurement timestamp at this resolution within the window.
-    pub last: DateTime<Utc>,
-    /// Number of measurements at this resolution within the window.
-    pub count: i64,
-}
-
-/// Per-resolution coverage of a window **restricted to a single channel**
-/// (per-channel series). Like [`ResolutionCoverage`] but each row carries its
-/// `channel_id`, so the analytics can decide per station whether a window is
-/// fully covered (the Bike-Trends like-for-like filter) in one query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChannelCoverage {
-    pub channel_id: Uuid,
-    /// Interval length in seconds (e.g. 300 = 5 min, 3600 = 1 hour).
-    pub resolution_seconds: i64,
-    /// Earliest measurement timestamp at this resolution within the window.
-    pub first: DateTime<Utc>,
-    /// Latest measurement timestamp at this resolution within the window.
-    pub last: DateTime<Utc>,
-    /// Number of measurements at this resolution within the window.
-    pub count: i64,
-}
-
 /// The latest measurement timestamp of one channel (empty when the channel has
 /// no measurements at all), used to decide whether a station still has "current"
 /// data.
@@ -152,12 +120,16 @@ pub struct ChannelBounds {
 }
 
 pub trait MeasurementRepository {
+    /// Saves a single measurement (test-only: the import path uses `save_batch`).
+    #[cfg(test)]
     fn save(&self, measurement: Measurement) -> Result<(), DomainError>;
     /// Inserts a batch idempotently and returns the number of rows actually
     /// inserted (rows skipped by `ON CONFLICT DO NOTHING` are not counted).
     fn save_batch(&self, measurements: Vec<Measurement>) -> Result<u64, DomainError>;
     fn find_by_id(&self, id: value_objects::Id) -> Result<Measurement, DomainError>;
-    fn find_all(&self) -> Result<Vec<Measurement>, DomainError>;
+    /// Reads every measurement of one channel (test-only: production reads use
+    /// the paginated/aggregated queries below).
+    #[cfg(test)]
     fn find_by_channel_id(
         &self,
         channel_id: value_objects::ChannelId,
@@ -196,6 +168,9 @@ pub trait MeasurementRepository {
     ///
     /// `resolution_seconds` restricts the aggregation to a single resolution;
     /// `None` sums all rows.
+    /// Test-only counterpart of [`sum_buckets_by_channel`](Self::sum_buckets_by_channel)
+    /// that sums across channels instead of per channel.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn sum_buckets(
         &self,
@@ -223,7 +198,9 @@ pub trait MeasurementRepository {
     ) -> Result<Vec<ChannelBucket>, DomainError>;
 
     /// Sums `value` per ISO weekday (1 = Monday .. 7 = Sunday) over the window
-    /// (used for the weekday radar chart).
+    /// (used for the weekday radar chart). Only the raw-vs-rollup parity test
+    /// reads it; the per-channel variant below is the production path.
+    #[cfg(test)]
     fn sum_weekdays(
         &self,
         from: DateTime<Utc>,
@@ -304,36 +281,6 @@ pub trait MeasurementRepository {
         _windows: &[(DateTime<Utc>, DateTime<Utc>)],
     ) -> Result<Vec<bool>, DomainError> {
         Ok(vec![false; _windows.len()])
-    }
-
-    /// Per-resolution coverage of `[from, to]` across the given channels:
-    /// distinct `resolution_seconds` present, each with its earliest/latest
-    /// timestamp and row count, ascending by resolution. Empty when no rows are
-    /// in the window.
-    ///
-    /// Defaults to empty coverage so resolution-unaware mocks need no override.
-    fn resolution_coverage(
-        &self,
-        _from: DateTime<Utc>,
-        _to: DateTime<Utc>,
-        _channel_ids: &[value_objects::ChannelId],
-    ) -> Result<Vec<ResolutionCoverage>, DomainError> {
-        Ok(Vec::new())
-    }
-
-    /// Like [`resolution_coverage`](Self::resolution_coverage) but grouped per
-    /// channel, so each returned row carries its `channel_id` (used to decide per
-    /// station whether a window is fully covered in one query). Ascending by
-    /// channel then resolution.
-    ///
-    /// Defaults to empty coverage so resolution-unaware mocks need no override.
-    fn resolution_coverage_by_channel(
-        &self,
-        _from: DateTime<Utc>,
-        _to: DateTime<Utc>,
-        _channel_ids: &[value_objects::ChannelId],
-    ) -> Result<Vec<ChannelCoverage>, DomainError> {
-        Ok(Vec::new())
     }
 
     /// The latest measurement timestamp per channel, only for channels with at
@@ -499,10 +446,6 @@ mod tests {
             unimplemented!()
         }
 
-        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-            unimplemented!()
-        }
-
         fn find_by_channel_id(
             &self,
             _channel_id: value_objects::ChannelId,
@@ -624,22 +567,10 @@ mod tests {
         assert!(repository.measurement_bounds().unwrap().is_none());
         assert!(repository.refresh_rollups(now, now).is_ok());
 
-        // Coverage/bounds probes default to empty rather than an error.
+        // Bounds probes default to empty rather than an error.
         assert!(repository.channel_bounds(&ids).unwrap().is_empty());
         assert!(repository.earliest_by_channel(&ids).unwrap().is_empty());
         assert!(repository.latest_by_channel(&ids).unwrap().is_empty());
-        assert!(
-            repository
-                .resolution_coverage(now, now, &ids)
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            repository
-                .resolution_coverage_by_channel(now, now, &ids)
-                .unwrap()
-                .is_empty()
-        );
         assert!(
             repository
                 .sum_weekdays_by_channel(now, now, "UTC", &ids, None)

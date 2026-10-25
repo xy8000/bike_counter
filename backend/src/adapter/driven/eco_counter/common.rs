@@ -25,7 +25,8 @@ pub fn parse_host_and_port(url: &str) -> Option<(String, u16)> {
     Some((host.to_string(), port))
 }
 
-/// Convenience UTC timestamp for fixtures/tests.
+/// Convenience UTC timestamp for fixtures/tests (test-only helper).
+#[cfg(test)]
 pub fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
 }

@@ -83,10 +83,6 @@ mod tests {
                 .cloned())
         }
 
-        fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
-            Ok(None)
-        }
-
         fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
             Ok(self.data_sources.clone())
         }

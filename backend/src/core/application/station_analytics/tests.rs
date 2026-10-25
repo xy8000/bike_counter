@@ -21,9 +21,8 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 use crate::core::domain::measurements::measurement::Measurement;
 use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
 use crate::core::domain::measurements::repository_port::{
-    BucketGranularity, ChannelBucket, ChannelCoverage, ChannelFirst, ChannelHourTotal,
-    ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal,
-    ResolutionCoverage, TimeBucket, WeekdayTotal,
+    BucketGranularity, ChannelBucket, ChannelFirst, ChannelHourTotal, ChannelTotal,
+    ChannelWeekdayTotal, HourTotal, MeasurementRepository, MonthTotal, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::service_port::StationAnalyticsServicePort;
 use crate::core::domain::station_analytics::{
@@ -259,9 +258,6 @@ impl MeasurementRepository for MemoryMeasurementRepository {
     fn find_by_id(&self, _id: measurement_vo::Id) -> Result<Measurement, DomainError> {
         Err(DomainError::NotFound(Uuid::new_v4()))
     }
-    fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-        Ok(self.measurements.clone())
-    }
     fn find_by_channel_id(
         &self,
         _channel_id: measurement_vo::ChannelId,
@@ -489,63 +485,6 @@ impl MeasurementRepository for MemoryMeasurementRepository {
             .collect())
     }
 
-    fn resolution_coverage(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-        channel_ids: &[measurement_vo::ChannelId],
-    ) -> Result<Vec<ResolutionCoverage>, DomainError> {
-        let mut map: BTreeMap<i64, (DateTime<Utc>, DateTime<Utc>, i64)> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
-            let r = m.resolution_seconds.0;
-            let entry = map.entry(r).or_insert((m.timestamp.0, m.timestamp.0, 0));
-            entry.0 = entry.0.min(m.timestamp.0);
-            entry.1 = entry.1.max(m.timestamp.0);
-            entry.2 += 1;
-        }
-        Ok(map
-            .into_iter()
-            .map(
-                |(resolution_seconds, (first, last, count))| ResolutionCoverage {
-                    resolution_seconds,
-                    first,
-                    last,
-                    count,
-                },
-            )
-            .collect())
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn resolution_coverage_by_channel(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-        channel_ids: &[measurement_vo::ChannelId],
-    ) -> Result<Vec<ChannelCoverage>, DomainError> {
-        let mut map: BTreeMap<(Uuid, i64), (DateTime<Utc>, DateTime<Utc>, i64)> = BTreeMap::new();
-        for m in self.in_window(from, to, channel_ids) {
-            let r = m.resolution_seconds.0;
-            let key = (m.channel_id.0, r);
-            let entry = map.entry(key).or_insert((m.timestamp.0, m.timestamp.0, 0));
-            entry.0 = entry.0.min(m.timestamp.0);
-            entry.1 = entry.1.max(m.timestamp.0);
-            entry.2 += 1;
-        }
-        Ok(map
-            .into_iter()
-            .map(
-                |((channel_id, resolution_seconds), (first, last, count))| ChannelCoverage {
-                    channel_id,
-                    resolution_seconds,
-                    first,
-                    last,
-                    count,
-                },
-            )
-            .collect())
-    }
-
     fn earliest_by_channel(
         &self,
         channel_ids: &[measurement_vo::ChannelId],
@@ -663,9 +602,6 @@ impl DataSourceRepository for MemoryDataSourceRepository {
         Ok(())
     }
     fn find_by_id(&self, _id: data_source_vo::Id) -> Result<Option<DataSource>, DomainError> {
-        Ok(None)
-    }
-    fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
         Ok(None)
     }
     fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
@@ -2009,7 +1945,12 @@ fn stations_summary_overview_skips_stations_without_any_measurements() {
         .stations_summary_overview(bounds(), &[], now, true)
         .unwrap();
 
-    for key in MetricKey::ALL {
+    for key in [
+        MetricKey::LastDay,
+        MetricKey::Last7Days,
+        MetricKey::LastMonth,
+        MetricKey::LastYear,
+    ] {
         assert_eq!(metric_of(&plain, key).current, 0);
         assert_eq!(metric_of(&filtered, key).current, 0);
     }

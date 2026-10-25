@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -250,13 +248,12 @@ fn main() {
         .sync_builtin_images(&builtin_images())
         .unwrap_or_else(|error| panic!("Failed to sync built-in images: {error:?}"));
 
-    // Data import + scheduled data-source update service (share the runtimes).
+    // Data import + scheduled data-source update service.
     let data_import_service = Arc::new(
         DataImportService::new(
             counting_station_repo.clone(),
             channel_repo.clone(),
             measurement_repo.clone(),
-            startup.data_source_runtimes.clone(),
         )
         .with_asset_service(asset_service.clone()),
     );

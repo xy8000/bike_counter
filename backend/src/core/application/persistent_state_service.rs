@@ -174,16 +174,6 @@ mod tests {
                 .cloned())
         }
 
-        fn find_by_name(&self, name: &str) -> Result<Option<DataSource>, DomainError> {
-            Ok(self
-                .data_sources
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|ds| ds.name.0 == name)
-                .cloned())
-        }
-
         fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
             Ok(self.data_sources.lock().unwrap().clone())
         }

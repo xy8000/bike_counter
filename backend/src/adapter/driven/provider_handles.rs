@@ -57,12 +57,6 @@ impl PersistentStateAccess for ScopedPersistentState {
             .delete(self.data_source_id, key)
             .map_err(ProviderError::from)
     }
-
-    fn clear(&self) -> Result<(), ProviderError> {
-        self.store
-            .clear(self.data_source_id)
-            .map_err(ProviderError::from)
-    }
 }
 
 /// Concrete scoped sink: wraps the message store for one data source id and maps
@@ -216,22 +210,6 @@ mod tests {
         let touched = store.touched.lock().unwrap();
         assert_eq!(touched.len(), 4);
         assert!(touched.iter().all(|touched_id| *touched_id == first));
-    }
-
-    #[test]
-    fn clear_wipes_only_the_bound_source() {
-        let store = Arc::new(RecordingStore::default());
-        let first = id(1);
-        let second = id(2);
-        let first_handle = ScopedPersistentState::new(store.clone(), first);
-        let second_handle = ScopedPersistentState::new(store.clone(), second);
-
-        first_handle.store("k", "first").unwrap();
-        second_handle.store("k", "second").unwrap();
-        first_handle.clear().unwrap();
-
-        assert!(first_handle.load().unwrap().is_empty());
-        assert_eq!(second_handle.load().unwrap().get("k").unwrap(), "second");
     }
 
     /// In-memory message store that records the data source ids and messages it

@@ -112,12 +112,6 @@ impl MeasurementRollupService {
         }
     }
 
-    /// Refreshes the rollups for the given imported range. Called directly after
-    /// an import so the aggregates are fresh without waiting for the cron tick.
-    pub fn refresh(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), DomainError> {
-        self.measurement_repository.refresh_rollups(from, to)
-    }
-
     fn active_job_exists(&self) -> bool {
         match self
             .job_repository
@@ -483,10 +477,6 @@ mod tests {
         }
 
         fn find_by_id(&self, _id: value_objects::Id) -> Result<Measurement, DomainError> {
-            unimplemented!()
-        }
-
-        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
             unimplemented!()
         }
 
@@ -1116,20 +1106,6 @@ mod tests {
         service(repo.clone(), measurements.clone()).run_if_due();
 
         assert!(measurements.refreshes().is_empty());
-    }
-
-    #[test]
-    fn refresh_delegates_directly_without_job_tracking() {
-        let repo = Arc::new(MemoryJobRepository::new(vec![]));
-        let measurements = Arc::new(MockMeasurementRepository::new(None, false));
-        let from = Utc::now() - Duration::days(2);
-        let to = Utc::now();
-
-        service(repo.clone(), measurements.clone())
-            .refresh(from, to)
-            .unwrap();
-
-        assert_eq!(measurements.refreshes(), vec![(from, to)]);
     }
 
     #[test]

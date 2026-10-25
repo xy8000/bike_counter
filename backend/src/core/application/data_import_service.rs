@@ -14,7 +14,6 @@ use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::channels::channel::value_objects as channel_vo;
 use crate::core::domain::channels::repository_port::ChannelRepository;
-use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
@@ -30,7 +29,6 @@ use crate::core::domain::measurements::repository_port::MeasurementRepository;
 /// A configured data source together with its built provider.
 #[derive(Clone)]
 pub struct DataSourceRuntime {
-    pub configuration: DataSourceConfiguration,
     /// Deterministic id derived from the data source name.
     pub data_source_id: DataSourceId,
     pub provider: Arc<dyn DataProvider>,
@@ -103,7 +101,6 @@ pub struct DataImportService {
     counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
     channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
     measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
-    runtimes: Vec<DataSourceRuntime>,
     /// Asset service used to sync station images during import. `None` (the
     /// default, used by unit tests and plain data imports) disables image
     /// handling entirely.
@@ -115,13 +112,11 @@ impl DataImportService {
         counting_station_repository: Arc<dyn CountingStationRepository + Send + Sync>,
         channel_repository: Arc<dyn ChannelRepository + Send + Sync>,
         measurement_repository: Arc<dyn MeasurementRepository + Send + Sync>,
-        runtimes: Vec<DataSourceRuntime>,
     ) -> Self {
         Self {
             counting_station_repository,
             channel_repository,
             measurement_repository,
-            runtimes,
             asset_service: None,
         }
     }
@@ -431,6 +426,7 @@ impl DataImportService {
     ///
     /// Returns how many measurements were processed and added and the timestamp
     /// of the last processed measurement (the cursor for the next run).
+    #[cfg(test)]
     pub fn update_data_source(
         &self,
         runtime: &DataSourceRuntime,
@@ -681,7 +677,6 @@ mod tests {
     use crate::core::domain::assets::asset::{Asset, AssetOrigin, BuiltinImage};
     use crate::core::domain::assets::service_port::AssetServicePort;
     use crate::core::domain::channels::channel::value_objects as channel_vo;
-    use crate::core::domain::configuration::configuration::value_objects::DataProviderConfiguration;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::provider_port::{
@@ -691,14 +686,6 @@ mod tests {
     use crate::core::domain::health::HealthStatus;
     use crate::core::domain::measurements::measurement::Measurement;
     use crate::core::domain::measurements::measurement::value_objects as measurement_vo;
-
-    fn data_source_config(name: &str, provider_type: &str) -> DataSourceConfiguration {
-        DataSourceConfiguration::new(
-            name.to_string(),
-            DataProviderConfiguration::new(provider_type.to_string(), HashMap::new()).unwrap(),
-        )
-        .unwrap()
-    }
 
     fn station(external_id: &str) -> CountingStation {
         CountingStation {
@@ -871,7 +858,6 @@ mod tests {
 
     fn runtime(provider: Arc<dyn DataProvider>) -> DataSourceRuntime {
         DataSourceRuntime {
-            configuration: data_source_config("Münster", "münster_opendata_github_provider"),
             data_source_id: DataSourceId(DataSource::id_from_name("Münster")),
             provider,
         }
@@ -1104,10 +1090,6 @@ mod tests {
                 .ok_or(DomainError::NotFound(id.0))
         }
 
-        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-            Ok(self.measurements.lock().unwrap().clone())
-        }
-
         fn find_by_channel_id(
             &self,
             channel_id: measurement_vo::ChannelId,
@@ -1321,7 +1303,6 @@ mod tests {
             station_repo.clone(),
             channel_repo.clone(),
             measurement_repo.clone(),
-            Vec::new(),
         );
 
         let update = service
@@ -1370,7 +1351,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let update = service
@@ -1429,7 +1409,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         service
@@ -1480,7 +1459,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         service
@@ -1532,7 +1510,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         service
@@ -1590,7 +1567,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         service
@@ -1657,7 +1633,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         service
@@ -1713,7 +1688,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         service
@@ -1751,7 +1725,6 @@ mod tests {
             station_repo.clone(),
             channel_repo.clone(),
             measurement_repo.clone(),
-            Vec::new(),
         );
 
         let update = service
@@ -1797,7 +1770,6 @@ mod tests {
             }),
             channel_repo.clone(),
             measurement_repo.clone(),
-            Vec::new(),
         );
 
         let update = service
@@ -1860,7 +1832,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let checkpoints = Arc::new(Mutex::new(Vec::new()));
@@ -1925,7 +1896,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         // The deadline already passed: after the first batch the loop stops.
@@ -1993,7 +1963,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let progress = Arc::new(Mutex::new(Vec::new()));
@@ -2043,7 +2012,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let update = service
@@ -2074,7 +2042,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let error = service
@@ -2109,7 +2076,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let error = service
@@ -2136,7 +2102,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         )
         .with_asset_service(assets.clone());
 
@@ -2190,7 +2155,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         )
         .with_asset_service(assets.clone());
 
@@ -2244,7 +2208,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         )
         .with_asset_service(assets.clone());
 
@@ -2294,7 +2257,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         )
         .with_asset_service(assets.clone());
 
@@ -2338,7 +2300,6 @@ mod tests {
             Arc::new(MockMeasurementRepository {
                 measurements: Mutex::new(Vec::new()),
             }),
-            Vec::new(),
         );
 
         let phases = Arc::new(Mutex::new(Vec::new()));

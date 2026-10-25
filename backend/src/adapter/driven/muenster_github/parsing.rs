@@ -26,8 +26,6 @@ pub(crate) const RESOLUTION_SECONDS: i64 = 900;
 struct RawSite {
     name: String,
     directory: String,
-    #[allow(dead_code)]
-    start: i64,
     channels: Vec<(i64, String)>,
 }
 

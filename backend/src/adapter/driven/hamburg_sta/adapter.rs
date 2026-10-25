@@ -258,12 +258,15 @@ impl HamburgStaAdapter {
         })
     }
 
-    /// The configured cache window in seconds.
+    /// The configured cache window in seconds (test-only accessor).
+    #[cfg(test)]
     pub fn cache_duration_secs(&self) -> u64 {
         self.cache_duration.as_secs()
     }
 
-    /// The configured number of fields paged in parallel per batch.
+    /// The configured number of fields paged in parallel per batch (test-only
+    /// accessor).
+    #[cfg(test)]
     pub(crate) fn concurrency(&self) -> usize {
         self.concurrency
     }

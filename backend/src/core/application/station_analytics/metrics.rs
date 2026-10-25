@@ -254,9 +254,6 @@ mod tests {
         fn find_by_id(&self, _id: data_source_vo::Id) -> Result<Option<DataSource>, DomainError> {
             unimplemented!()
         }
-        fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
-            unimplemented!()
-        }
         fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
             Ok(self.data_sources.clone())
         }

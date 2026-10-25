@@ -19,7 +19,6 @@ use chrono::{DateTime, Utc};
 
 use crate::core::domain::channels::channel::Channel;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
-use crate::core::domain::counting_stations::counting_station::value_objects::GeoCoordinates;
 use crate::core::domain::measurements::repository_port::{
     BucketGranularity, ChannelTotal, HourTotal, TimeBucket, WeekdayTotal,
 };
@@ -117,13 +116,6 @@ pub enum MetricKey {
 }
 
 impl MetricKey {
-    pub const ALL: [MetricKey; 4] = [
-        MetricKey::LastDay,
-        MetricKey::Last7Days,
-        MetricKey::LastMonth,
-        MetricKey::LastYear,
-    ];
-
     /// Stable string key used in the BFF payload.
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -423,22 +415,12 @@ impl GeoBounds {
     pub fn is_valid(&self) -> bool {
         self.min_latitude <= self.max_latitude && self.min_longitude <= self.max_longitude
     }
-
-    /// Returns `true` when `coordinates` lie inside the box (inclusive bounds).
-    pub fn contains(&self, coordinates: GeoCoordinates) -> bool {
-        coordinates.latitude >= self.min_latitude
-            && coordinates.latitude <= self.max_latitude
-            && coordinates.longitude >= self.min_longitude
-            && coordinates.longitude <= self.max_longitude
-    }
 }
 
 pub mod service_port;
 
 #[cfg(test)]
 mod tests {
-    use crate::core::domain::counting_stations::counting_station::value_objects::GeoCoordinates;
-
     use super::*;
 
     #[test]
@@ -540,50 +522,5 @@ mod tests {
             max_longitude: 7.0,
         };
         assert!(!inverted_lng.is_valid());
-    }
-
-    #[test]
-    fn geo_bounds_contains_uses_inclusive_bounds() {
-        let bounds = GeoBounds {
-            min_latitude: 51.0,
-            min_longitude: 7.0,
-            max_latitude: 52.0,
-            max_longitude: 8.0,
-        };
-
-        let inside = GeoCoordinates {
-            latitude: 51.5,
-            longitude: 7.5,
-        };
-        assert!(bounds.contains(inside));
-
-        // The edges are inclusive.
-        let on_min_edge = GeoCoordinates {
-            latitude: 51.0,
-            longitude: 7.0,
-        };
-        assert!(bounds.contains(on_min_edge));
-        let on_max_edge = GeoCoordinates {
-            latitude: 52.0,
-            longitude: 8.0,
-        };
-        assert!(bounds.contains(on_max_edge));
-
-        // Just outside either axis is rejected.
-        let below_lat = GeoCoordinates {
-            latitude: 50.9999,
-            longitude: 7.5,
-        };
-        assert!(!bounds.contains(below_lat));
-        let above_lat = GeoCoordinates {
-            latitude: 52.0001,
-            longitude: 7.5,
-        };
-        assert!(!bounds.contains(above_lat));
-        let past_lng = GeoCoordinates {
-            latitude: 51.5,
-            longitude: 8.0001,
-        };
-        assert!(!bounds.contains(past_lng));
     }
 }

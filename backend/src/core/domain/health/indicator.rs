@@ -25,17 +25,6 @@ pub struct HealthComponent {
     pub status: HealthStatus,
 }
 
-/// Checks the health of a downstream service.
-///
-/// Implementations are synchronous so they can be run inside
-/// `tokio::task::spawn_blocking` (the `postgres` crate must not run on a
-/// tokio worker thread).
-pub trait ServiceHealthIndicator: Send + Sync {
-    fn name(&self) -> String;
-
-    fn check(&self) -> HealthStatus;
-}
-
 #[cfg(test)]
 mod tests {
     use super::HealthStatus;

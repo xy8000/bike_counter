@@ -10,7 +10,7 @@
 //!   `{"date":"2026-08-01T00:00:00+0000","isoDate":"…+0200","counts":…,"status":…}`;
 //!   `date` is the UTC bucket start (authoritative), `counts` the value.
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::core::domain::data_source::provider_port::{
@@ -27,8 +27,6 @@ pub struct RawSite {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
-    pub domain_id: Option<i64>,
-    #[serde(default)]
     pub domain: Option<String>,
     #[serde(default)]
     pub latitude: Option<f64>,
@@ -37,9 +35,6 @@ pub struct RawSite {
     /// e.g. `(UTC+01:00) Europe/Paris;DST`.
     #[serde(default)]
     pub timezone: Option<String>,
-    /// The site's native bucket length in seconds (e.g. `60`).
-    #[serde(default)]
-    pub interval: Option<i64>,
 }
 
 /// One row of a site time series (`GET /data/site/{id}`).
@@ -48,9 +43,6 @@ pub struct RawDataPoint {
     /// UTC bucket start (`YYYY-MM-DDTHH:MM:SS±hhmm`); authoritative.
     #[serde(default)]
     pub date: Option<String>,
-    /// Local-time display variant; advisory only.
-    #[serde(default)]
-    pub iso_date: Option<String>,
     /// The count (a plain number when the site aggregates its channels).
     pub counts: Option<serde_json::Value>,
 }
@@ -149,14 +141,15 @@ pub fn parse_point(row: &RawDataPoint, resolution: i64) -> Option<MeasurementRec
     })
 }
 
-/// Convenience UTC timestamp for fixtures/tests.
-pub fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    /// Convenience UTC timestamp for fixtures.
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
+    }
 
     #[test]
     fn parses_site_list() {

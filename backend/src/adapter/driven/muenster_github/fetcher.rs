@@ -16,10 +16,6 @@ pub struct UpstreamHeaders {
 }
 
 impl UpstreamHeaders {
-    pub fn is_empty(&self) -> bool {
-        self.etag.is_none() && self.last_modified.is_none()
-    }
-
     /// True when this header set equals `other` (ETag preferred, fall back to
     /// Last-Modified).
     pub fn matches(&self, other: &UpstreamHeaders) -> bool {

@@ -732,9 +732,4 @@ impl PersistentStateAccess for InMemoryState {
         self.rows.lock().unwrap().remove(key);
         Ok(())
     }
-
-    fn clear(&self) -> Result<(), ProviderError> {
-        self.rows.lock().unwrap().clear();
-        Ok(())
-    }
 }

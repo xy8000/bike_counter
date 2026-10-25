@@ -204,7 +204,8 @@ impl EcoCounterV1Adapter {
         })
     }
 
-    /// The configured discovery cache window in seconds.
+    /// The configured discovery cache window in seconds (test-only accessor).
+    #[cfg(test)]
     pub fn cache_duration_secs(&self) -> u64 {
         self.cache_duration.as_secs()
     }

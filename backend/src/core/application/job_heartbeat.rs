@@ -23,7 +23,6 @@ use crate::core::domain::jobs::repository_port::JobRepository;
 pub struct JobHeartbeat {
     stop: Arc<AtomicBool>,
     handle: thread::JoinHandle<()>,
-    cancelled: Arc<AtomicBool>,
 }
 
 impl JobHeartbeat {
@@ -40,10 +39,8 @@ impl JobHeartbeat {
         interval: chrono::Duration,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
-        let cancelled = Arc::new(AtomicBool::new(false));
 
         let stop_thread = stop.clone();
-        let cancelled_thread = cancelled.clone();
         // Beat every interval/3 (floor 1 s, ceiling 5 s).
         let tick_secs = (interval.num_seconds() / 3).clamp(1, 5) as u64;
         let tick = StdDuration::from_secs(tick_secs);
@@ -57,12 +54,8 @@ impl JobHeartbeat {
                 match job_repository.heartbeat(job_id, job_type, instance_id, now, now + interval) {
                     // Still RUNNING: keep beating.
                     Ok(JobStatus::Running) => {}
-                    // Cancellation requested / already cancelled / terminal: signal
-                    // the worker and exit.
-                    Ok(_) => {
-                        cancelled_thread.store(true, Ordering::Relaxed);
-                        return;
-                    }
+                    // Cancellation requested / already cancelled / terminal: exit.
+                    Ok(_) => return,
                     // A transient failure is not fatal: try again next tick.
                     Err(_) => {}
                 }
@@ -79,17 +72,7 @@ impl JobHeartbeat {
             }
         });
 
-        Self {
-            stop,
-            handle,
-            cancelled,
-        }
-    }
-
-    /// A clone of the shared cancellation flag the worker checks at sub-task
-    /// boundaries (set when the job is no longer RUNNING).
-    pub fn cancelled_flag(&self) -> Arc<AtomicBool> {
-        self.cancelled.clone()
+        Self { stop, handle }
     }
 
     /// Signals the loop to stop and joins it. Call after the job work finishes,
@@ -218,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn heartbeats_repeatedly_and_flags_cancellation() {
+    fn heartbeats_repeatedly_until_cancelled() {
         let beats = Arc::new(Mutex::new(Vec::new()));
         let repo = Arc::new(RecordingRepo {
             beats: beats.clone(),
@@ -228,19 +211,13 @@ mod tests {
         let interval = Duration::seconds(3); // tick = 1 s
 
         let heartbeat = JobHeartbeat::start(repo, job_id, JOB_TYPE, INSTANCE, interval);
-        let cancelled = heartbeat.cancelled_flag();
 
         // The loop beats until the repo reports CANCELLATION_REQUESTED (beat 3),
-        // then sets the flag and exits on its own.
+        // then exits on its own.
         let deadline = Utc::now() + Duration::seconds(10);
-        while !cancelled.load(std::sync::atomic::Ordering::Relaxed) && Utc::now() < deadline {
+        while beats.lock().unwrap().len() < 3 && Utc::now() < deadline {
             std::thread::sleep(Duration::milliseconds(50).to_std().unwrap());
         }
-        assert!(
-            cancelled.load(std::sync::atomic::Ordering::Relaxed),
-            "the heartbeat loop must set the cancellation flag"
-        );
-        // No need to stop() — the loop already exited on the cancellation.
         heartbeat.stop();
 
         let recorded = beats.lock().unwrap().len();

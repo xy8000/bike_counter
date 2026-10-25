@@ -15,7 +15,6 @@ pub struct ArchiveIndex {
     pub channels: Vec<ChannelRecord>,
     /// channel external id -> monthly CSV paths containing that channel.
     pub channel_csvs: HashMap<String, Vec<PathBuf>>,
-    pub extracted_dir: PathBuf,
 }
 
 /// Turns a zip entry name into a safe relative path, rejecting any that would

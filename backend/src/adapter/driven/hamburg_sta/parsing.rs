@@ -20,7 +20,9 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Duration, FixedOffset, TimeZone, Utc};
+#[cfg(test)]
+use chrono::TimeZone;
+use chrono::{DateTime, Duration, FixedOffset, Utc};
 use serde::Deserialize;
 
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
@@ -30,8 +32,6 @@ use crate::core::domain::data_source::provider_port::{
 
 /// IANA timezone of all Hamburg counting stations.
 pub const TIMEZONE: &str = "Europe/Berlin";
-/// The `@iot.nextLink` pagination field.
-pub const IOT_NEXT_LINK: &str = "@iot.nextLink";
 /// The `layerName` of the field 5-min datastreams (the official metadata name).
 pub const LAYER_NAME: &str = "Anzahl_Fahrraeder_Zaehlfeld_5-Min";
 /// Name prefix of the current (live) field datastreams.
@@ -49,15 +49,7 @@ pub struct RawPage<T> {
 /// A GeoJSON geometry (used by `observedArea` and the Location `geometry`).
 #[derive(Deserialize, Clone)]
 pub struct RawGeometry {
-    #[serde(rename = "type")]
-    pub geometry_type: String,
     pub coordinates: Option<serde_json::Value>,
-}
-
-/// A GeoJSON `Feature` (used by the Locations `location`).
-#[derive(Deserialize)]
-pub struct RawFeature {
-    pub geometry: RawGeometry,
 }
 
 /// The rich shape of a Datastream returned by the discovery query.
@@ -324,7 +316,9 @@ pub fn observations_url(base_url: &str, datastream_id: i64) -> String {
     format!("{base_url}Datastreams({datastream_id})/Observations")
 }
 
-/// Convenience UTC timestamp for fixtures/tests.
+/// Convenience UTC timestamp for fixtures (shared by the adapter and parser
+/// test modules).
+#[cfg(test)]
 pub fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, mo, d, h, mi, s).single().unwrap()
 }

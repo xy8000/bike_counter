@@ -131,7 +131,6 @@ impl StartupService {
             );
 
             runtimes.push(DataSourceRuntime {
-                configuration: data_source.clone(),
                 data_source_id,
                 provider,
             });
@@ -285,16 +284,6 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|ds| ds.id == id)
-                .cloned())
-        }
-
-        fn find_by_name(&self, name: &str) -> Result<Option<DataSource>, DomainError> {
-            Ok(self
-                .data_sources
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|ds| ds.name.0 == name)
                 .cloned())
         }
 
@@ -563,12 +552,6 @@ mod tests {
         fn delete(&self, key: &str) -> Result<(), ProviderError> {
             self.store
                 .delete(self.data_source_id, key)
-                .map_err(ProviderError::from)
-        }
-
-        fn clear(&self) -> Result<(), ProviderError> {
-            self.store
-                .clear(self.data_source_id)
                 .map_err(ProviderError::from)
         }
     }
