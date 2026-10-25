@@ -29,7 +29,7 @@ use crate::adapter::driving::bff::dto::{
     MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto, SidebarStationDto, SidebarStatsDto,
     StationDetailPageDto, StationMapDto, StationMapListDto, StationOverviewDto,
     StationOverviewStatsDto, StationSearchDto, StationStatusDto, StationSummaryDto,
-    StationsSummaryOverviewDto, StationsSummaryPageDto, SummaryPeriodGraphsDto,
+    StationsSummaryOverviewDto, StationsSummaryPageDto, SummaryPeriodGraphsDto, VersionDto,
 };
 use crate::adapter::driving::rest::dto::{ErrorResponseDto, LinkDto};
 use crate::adapter::driving::rest::handlers::{AppState, blocking, map_domain_error};
@@ -744,6 +744,20 @@ pub async fn get_bff_global_summary(
         last_update: summary.last_update,
     };
     Ok(cached_json(&dto, CachePolicy::ShortLived, &headers))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/bff/version",
+    tag = "BFF API",
+    responses(
+        (status = 200, description = "Backend application version", body = VersionDto)
+    )
+)]
+pub async fn get_bff_version() -> Json<VersionDto> {
+    Json(VersionDto {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
 }
 
 /// The **page-shaped** overview payload for one counting station: everything the

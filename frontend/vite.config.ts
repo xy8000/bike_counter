@@ -1,10 +1,21 @@
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')) as {
+  version: string
+}
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // The frontend version is baked into the bundle at build time and read by
+  // frontend/src/lib/version.ts; it is also injected for the Vitest unit suite
+  // (vitest.config.ts) so both suites see the same value.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
