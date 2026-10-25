@@ -5,8 +5,3 @@ export interface GlobalSummary {
   bikes_last_day_total: number
   last_update: string | null
 }
-
-/// Backend application version (from GET /api/bff/version).
-export interface VersionResponse {
-  version: string
-}

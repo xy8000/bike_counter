@@ -13,7 +13,7 @@ const SUMMARY: GlobalSummary = {
   last_update: '2026-01-02T12:00:00Z',
 }
 
-function renderTopBar(fetchImpl: (url: string) => Promise<Response> | Response) {
+function renderTopBar(fetchImpl: () => Promise<Response> | Response) {
   const fetchMock = vi.fn(fetchImpl)
   vi.stubGlobal('fetch', fetchMock)
   const onOpenSearch = vi.fn()
@@ -73,21 +73,6 @@ describe('TopBar', () => {
     renderTopBar(() => Promise.reject(new Error('network down')))
 
     expect(await screen.findByText('Global summary unavailable.')).toBeInTheDocument()
-  })
-
-  it('opens the version dialog with the frontend and backend versions', async () => {
-    renderTopBar((url) => {
-      if (url === '/api/bff/version') return ok({ version: '0.0.8' })
-      return ok(SUMMARY)
-    })
-
-    fireEvent.click(await screen.findByTitle('Show versions'))
-
-    expect(screen.getByRole('heading', { name: 'Versions' })).toBeInTheDocument()
-    expect(screen.getByText('Frontend')).toBeInTheDocument()
-    expect(screen.getByText('Backend')).toBeInTheDocument()
-    // Both rows are rendered as `vX.Y.Z`.
-    expect(screen.getAllByText(/^v\d+\.\d+\.\d+$/)).toHaveLength(2)
   })
 
   it('shows a skeleton while the summary is loading', () => {

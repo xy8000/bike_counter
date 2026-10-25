@@ -1,4 +1,4 @@
-import { Database, Info, Search, Tag } from 'lucide-react'
+import { Database, Info, Search } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -6,8 +6,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp } from '../../lib/format'
 import { GlobalSummaryDialog } from './GlobalSummaryDialog'
 import { useGlobalSummary } from './useGlobalSummary'
-import { VersionDialog } from './VersionDialog'
-import { useVersion } from './useVersion'
 
 /// Top header bar: brand (links home), centered search trigger, and the global
 /// summary. Only the `updated …` timestamp stays visible inline; it doubles as a
@@ -17,9 +15,7 @@ import { useVersion } from './useVersion'
 /// search icon sits next to the timestamp trigger.
 export function TopBar({ onOpenSearch }: Readonly<{ onOpenSearch: () => void }>) {
   const { summary, error } = useGlobalSummary()
-  const { backendVersion, error: versionError } = useVersion()
   const [summaryOpen, setSummaryOpen] = useState(false)
-  const [versionOpen, setVersionOpen] = useState(false)
 
   return (
     <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-primary px-4 py-2 text-primary-foreground shadow-md sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-4">
@@ -69,17 +65,6 @@ export function TopBar({ onOpenSearch }: Readonly<{ onOpenSearch: () => void }>)
           <Search aria-hidden="true" />
         </Button>
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setVersionOpen(true)}
-          aria-label="Show versions"
-          title="Show versions"
-        >
-          <Tag aria-hidden="true" />
-        </Button>
-
         {summary && (
           <button
             type="button"
@@ -100,13 +85,6 @@ export function TopBar({ onOpenSearch }: Readonly<{ onOpenSearch: () => void }>)
 
       {summaryOpen && summary && (
         <GlobalSummaryDialog summary={summary} onClose={() => setSummaryOpen(false)} />
-      )}
-      {versionOpen && (
-        <VersionDialog
-          backendVersion={backendVersion}
-          error={versionError}
-          onClose={() => setVersionOpen(false)}
-        />
       )}
     </header>
   )
