@@ -131,6 +131,21 @@ impl DataImportService {
         self
     }
 
+    /// Reserves a unique station name for `base` against `used` by appending the
+    /// stable external id (and, if needed, a numeric suffix). Mirrors the
+    /// scraping adapter's within-batch rename so a provider that re-uses a name
+    /// under a *new* external id cannot violate the unique
+    /// `(data_source_id, name)` index.
+    fn unique_station_name(base: &str, external_id: &str, used: &mut HashSet<String>) -> String {
+        let mut candidate = format!("{base} ({external_id})");
+        let mut suffix = 2;
+        while !used.insert(candidate.clone()) {
+            candidate = format!("{base} ({external_id}) #{suffix}");
+            suffix += 1;
+        }
+        candidate
+    }
+
     /// Saves new counting stations and returns a map of `external_id -> station
     /// UUID` so channels can be linked to their station. The core owns all
     /// entity identity: every new station gets a fresh `Uuid::new_v4()`.
@@ -149,6 +164,18 @@ impl DataImportService {
             Some(service) => Some(service.default_asset()?),
             None => None,
         };
+
+        // The DB enforces a unique `(data_source_id, name)` index. Seed the set
+        // of used names from the stations already persisted for this source so a
+        // provider that re-uses a name under a *new* external id gets a stable
+        // disambiguated name instead of failing the INSERT with a duplicate-key
+        // error (e.g. Hessen re-issuing a short code under a new site id).
+        let mut used_names: HashSet<String> = self
+            .counting_station_repository
+            .find_by_data_source_id(station_vo::DataSourceId(runtime.data_source_id.0))?
+            .into_iter()
+            .map(|station| station.name.0)
+            .collect();
 
         let mut external_to_id = HashMap::with_capacity(stations.len());
         for record in stations {
@@ -205,9 +232,18 @@ impl DataImportService {
                     updated
                 }
                 None => {
+                    let name = if used_names.insert(record.name.clone()) {
+                        record.name.clone()
+                    } else {
+                        Self::unique_station_name(
+                            &record.name,
+                            &record.external_id,
+                            &mut used_names,
+                        )
+                    };
                     let mut station = CountingStation {
                         id: station_vo::Id(Uuid::new_v4()),
-                        name: station_vo::Name(record.name.clone()),
+                        name: station_vo::Name(name),
                         description: station_vo::Description(record.description.clone()),
                         external_datasource_id: Some(external_id),
                         data_source_id: Some(station_vo::DataSourceId(runtime.data_source_id.0)),
@@ -1340,6 +1376,68 @@ mod tests {
         assert_eq!(update.added_measurements, 0);
         assert_eq!(station_repo.stations.lock().unwrap().len(), 1);
         assert_eq!(channel_repo.channels.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reuses_a_name_under_a_new_external_id_without_colliding() {
+        // The Hessen provider re-issued short code "1530" under a new external
+        // id, so the previously persisted "1530" (old id) and the fresh "1530"
+        // (new id) would collide on the unique (data_source_id, name) index. The
+        // new station must be inserted under a stable disambiguated name instead
+        // of failing the import with a duplicate-key error.
+        let source_id = DataSource::id_from_name("Münster");
+        let existing = CountingStation {
+            id: station_vo::Id(Uuid::from_u128(0x61)),
+            name: station_vo::Name("1530".to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId("old-1530".to_string())),
+            data_source_id: Some(station_vo::DataSourceId(source_id)),
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        };
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![existing]),
+        });
+        let provider = Arc::new(SourceMockProvider {
+            stations: vec![CountingStationRecord {
+                external_id: "new-1530".to_string(),
+                name: "1530".to_string(),
+                description: "desc".to_string(),
+                latitude: None,
+                longitude: None,
+                timezone: "Europe/Berlin".to_string(),
+                image_sha256: None,
+            }],
+            channels: Vec::new(),
+            batches: Mutex::new(VecDeque::from([source_batch(Vec::new(), None, false)])),
+            recorded_from: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+            Vec::new(),
+        );
+
+        service
+            .update_data_source(&runtime(provider.clone()), None, None, |_, _, _| Ok(()))
+            .expect("update should succeed");
+
+        let stations = station_repo.stations.lock().unwrap();
+        assert_eq!(stations.len(), 2);
+        let fresh = stations
+            .iter()
+            .find(|s| s.external_datasource_id.as_ref().map(|e| e.0.as_str()) == Some("new-1530"))
+            .expect("the re-issued station should be inserted");
+        assert_eq!(fresh.name.0, "1530 (new-1530)");
     }
 
     #[test]
