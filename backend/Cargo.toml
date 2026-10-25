@@ -5,7 +5,10 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-arrow = "60.0.0"
+# Only the plain Arrow arrays/schema/record batches are used, not the `csv`,
+# `json` or `ipc` default codecs (see
+# adapter/driven/opendata_file_generator.rs), so the default features are off.
+arrow = { version = "60.0.0", default-features = false }
 axum = "0.8.9"
 bytes = "1.12.1"
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -19,7 +22,9 @@ include_dir = "0.7.4"
 # feature compiles a static OpenSSL from source, which is required for the
 # fully-static musl Docker build (Alpine's openssl-dev ships only shared libs).
 openssl = { version = "0.10.81", features = ["vendored"] }
-parquet = { version = "60.0.0", features = ["arrow"] }
+# Default features (brotli, lz4, zstd, flate2-zlib-rs, simdutf8) are dropped:
+# the only compression the parquet writer uses is SNAPPY.
+parquet = { version = "60.0.0", default-features = false, features = ["arrow", "snap"] }
 postgres = { version = "0.19.14", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 r2d2 = "0.8.10"
 r2d2_postgres = "0.18.2"
@@ -38,7 +43,10 @@ ureq = "3.5.0"
 utoipa = { version = "6.0.0", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "10.0.2", features = ["axum"] }
 uuid = { version = "1.29.0", features = ["v4", "v5", "serde"] }
-zip = "9.1.0"
+# Only plain (flate2-based) deflate archives are read and written by the
+# Münster importer; the default features would add aes-crypto, bzip2, deflate64,
+# lzma, ppmd, time, zstd and xz (four extra C toolchain builds).
+zip = { version = "9.1.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 http-body-util = "0.1.5"
@@ -47,3 +55,21 @@ http-body-util = "0.1.5"
 testcontainers = { version = "0.27.3", features = ["blocking"] }
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 tower = { version = "0.5.3", features = ["util"] }
+
+# Build-speed tuning (see plans/163_rust_build_time_optimization_plan.md).
+# `debug = "line-tables-only"` keeps file/line information for our own backtraces
+# while dropping the type/variable DWARF, and the dependency override removes the
+# bulk of the multi-GB debug artifacts; the `test` profile is tuned separately
+# because `cargo test` / `cargo llvm-cov` do not inherit `package` overrides.
+# `release` is deliberately untouched so shipped binaries keep their symbols.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false

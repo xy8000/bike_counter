@@ -75,6 +75,14 @@ start. The Cargo-based gate targets operate on the [`backend/`](backend) crate,
 and the frontend is built with `make frontend-build` (or
 `cd frontend && npm run build`) after `npm ci` in [`frontend/`](frontend).
 
+### Backend build speed
+
+[`backend/Cargo.toml`](backend/Cargo.toml) keeps the `dev`/`test` builds cheap
+(see [plan 163](plans/163_rust_build_time_optimization_plan.md)): they carry
+`line-tables-only` debug info for this crate and none for dependencies, and
+`parquet`/`zip` are built with the `snap` / deflate codecs only, so the unused
+compression backends (brotli, lz4, zstd, lzma, bzip2, xz) are not compiled.
+
 ## Implementing a new Adapter (DataProvider)
 
 ### 1. Implement the `DataProvider` trait
