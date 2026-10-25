@@ -1,6 +1,6 @@
 # 157 - Release v0.0.8 to GitHub and Docker Hub
 
-Status: in progress
+Status: implemented
 
 ## Problem
 
@@ -78,8 +78,8 @@ Full CI gates run on the PR (`make check`, `make test`, `make coverage`,
 - [x] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.8`
 - [x] [`release.yml`](../.github/workflows/release.yml) doc-comment examples refreshed to `0.0.8`
 - [x] Prep committed and pushed on `release/v0.0.8-release-prep`
-- [ ] PR merged to `main` — owner action
-- [ ] Annotated tag `v0.0.8` pushed — owner action
-- [ ] Release workflow completed green for `v0.0.8` — pending CI
-- [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.8` / `:latest` and `xy8000/bike-counter-frontend:0.0.8` / `:latest` — pending CI
-- [ ] GitHub Release `v0.0.8` exists with release notes — pending CI
+- [x] PR merged to `main` — owner action
+- [x] Annotated tag `v0.0.8` pushed — owner action
+- [x] Release workflow completed green for `v0.0.8` — verified CI
+- [x] Docker Hub shows `xy8000/bike-counter-backend:0.0.8` / `:latest` and `xy8000/bike-counter-frontend:0.0.8` / `:latest` — verified CI
+- [x] GitHub Release `v0.0.8` exists with release notes — published 2026-10-24

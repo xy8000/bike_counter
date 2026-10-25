@@ -130,13 +130,15 @@ Full CI gates also run on the PR (`make check`, `make test`, `make coverage`,
 ## Definition of done
 
 - [x] Plan file in [`plans/`](.) created
-- [ ] Version bumped to `0.0.9` in `Cargo.toml`, `Cargo.lock`, `package.json`, `package-lock.json`
-- [ ] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.9`
-- [ ] `VersionDto` OpenAPI example and [`release.yml`](../.github/workflows/release.yml) doc comments refreshed to `0.0.9`
-- [ ] `make check` and `make test-rest` green
-- [ ] Prep committed and pushed on `release/v0.0.9-release-prep`
-- [ ] `main` fast-forwarded to the prep commit and pushed
-- [ ] Annotated tag `v0.0.9` created and pushed
+- [x] Version bumped to `0.0.9` in `Cargo.toml`, `Cargo.lock`, `package.json`, `package-lock.json`
+- [x] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.9`
+- [x] `VersionDto` OpenAPI example and [`release.yml`](../.github/workflows/release.yml) doc comments refreshed to `0.0.9`
+- [x] Dependency refresh applied (backend + frontend) and both lockfiles regenerated
+- [x] `cargo audit` green again (only the allowed `yoke-derive` yanked warning remains)
+- [x] `make check`, `make test`, `make test-rest`, `make test-unit` and `make coverage` green
+- [x] Prep committed and pushed on `release/v0.0.9-release-prep`
+- [x] `main` fast-forwarded to the prep commit and pushed
+- [x] Annotated tag `v0.0.9` created (commit `81aa708`) and pushed
 - [ ] Release workflow completed green for `v0.0.9` — pending CI
 - [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.9` / `:latest` and `xy8000/bike-counter-frontend:0.0.9` / `:latest` — pending CI
 - [ ] GitHub Release `v0.0.9` exists with release notes — pending CI
