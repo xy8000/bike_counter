@@ -18,6 +18,6 @@ echo "--- cargo fmt --check"
 cargo fmt --check --quiet
 
 echo "--- cargo clippy --all-targets -- -D warnings"
-cargo clippy --quiet --all-targets -- -D warnings
+nice -n 1 cargo clippy --quiet --all-targets -- -D warnings
 
 echo "fmt-test: OK"
