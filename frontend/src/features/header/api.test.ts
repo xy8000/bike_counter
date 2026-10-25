@@ -1,6 +1,6 @@
 import { ok } from '@/test-utils/http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchGlobalSummary } from './api'
+import { fetchBackendVersion, fetchGlobalSummary } from './api'
 import type { GlobalSummary } from './types'
 
 const SUMMARY: GlobalSummary = {
@@ -37,5 +37,22 @@ describe('fetchGlobalSummary', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 500)))
 
     await expect(fetchGlobalSummary(false)).rejects.toThrow('global summary responded with 500')
+  })
+})
+
+describe('fetchBackendVersion', () => {
+  it('fetches and returns the backend version', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ version: '0.0.8' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchBackendVersion()).resolves.toBe('0.0.8')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/bff/version')
+  })
+
+  it('rejects when the response is not ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 500)))
+
+    await expect(fetchBackendVersion()).rejects.toThrow('version responded with 500')
   })
 })

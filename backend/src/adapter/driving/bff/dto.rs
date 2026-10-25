@@ -215,6 +215,13 @@ pub struct GlobalSummaryDto {
     pub last_update: Option<DateTime<Utc>>,
 }
 
+/// Backend application version, returned by `GET /api/bff/version`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+pub struct VersionDto {
+    #[schema(example = "0.0.8")]
+    pub version: String,
+}
+
 /// The **shell** BFF payload for the station overview panel: the station
 /// identity (image + name + description), its channel count, the last update
 /// and a HATEOAS `_links.stats` link to the stats sub-resource. The

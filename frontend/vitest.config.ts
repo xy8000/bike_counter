@@ -1,5 +1,10 @@
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
+
+const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')) as {
+  version: string
+}
 
 /// Vitest unit-test configuration for the frontend.
 ///
@@ -18,6 +23,11 @@ export default defineConfig({
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
     },
+  },
+  // Mirror the production Vite define (vite.config.ts) so the unit suite sees
+  // the same frontend version constant from package.json.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
   },
   test: {
     environment: 'jsdom',
