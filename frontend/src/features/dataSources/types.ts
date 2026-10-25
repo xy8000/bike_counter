@@ -25,12 +25,24 @@ export interface DataSourceMapStation {
 
 export interface DataSourceImport {
   status: 'RUNNING' | 'FINISHED' | 'FAILED'
+  /// `true` when the run finished successfully (`status === FINISHED`).
+  successful: boolean
   started_at: string
   finished_at: string | null
   duration_seconds: number | null
   failure_message: string | null
   warning_count: number
   error_count: number
+  added_measurements: number
+  added_stations: number
+}
+
+/// The per-data-source import-run history (`GET /api/bff/data-sources/{id}/imports`).
+export interface DataSourceImports {
+  /// Runs newest first.
+  items: DataSourceImport[]
+  /// Average duration (seconds) over the finished runs.
+  average_duration_seconds: number | null
 }
 
 export interface DataSourceDetail {

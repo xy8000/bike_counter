@@ -260,15 +260,18 @@ fn main() {
         )
         .with_asset_service(asset_service.clone()),
     );
-    let data_source_update_service = Arc::new(DataSourceUpdateService::new(
-        job_repo.clone(),
-        data_source_repo.clone(),
-        import_run_repo.clone(),
-        data_import_service,
-        configuration.clone(),
-        startup.data_source_runtimes,
-        instance_id,
-    ));
+    let data_source_update_service = Arc::new(
+        DataSourceUpdateService::new(
+            job_repo.clone(),
+            data_source_repo.clone(),
+            import_run_repo.clone(),
+            data_import_service,
+            configuration.clone(),
+            startup.data_source_runtimes,
+            instance_id,
+        )
+        .with_provider_message_store(provider_message_repo.clone()),
+    );
 
     // All station analytics backing the BFF read endpoints (sidebar/search
     // summaries, the global summary, the overview page, the detail graphs and

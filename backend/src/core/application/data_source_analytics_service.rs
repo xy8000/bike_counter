@@ -10,6 +10,7 @@ use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
+use crate::core::domain::data_source::import_run::DataImportRun;
 use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
@@ -156,6 +157,12 @@ impl DataSourceAnalyticsService {
             last_import_errors,
         })
     }
+
+    /// All per-source import runs, newest first, for the jobs overview table and
+    /// its average-duration calculation.
+    pub fn imports(&self, id: DataSourceId) -> Result<Vec<DataImportRun>, DomainError> {
+        self.import_run_repository.list_by_data_source(id)
+    }
 }
 
 /// UTC half-open windows for every local calendar month from January up to and
@@ -197,6 +204,10 @@ impl DataSourceAnalyticsServicePort for DataSourceAnalyticsService {
 
     fn detail(&self, id: DataSourceId) -> Result<DataSourceDetail, DomainError> {
         self.detail(id)
+    }
+
+    fn imports(&self, id: DataSourceId) -> Result<Vec<DataImportRun>, DomainError> {
+        self.imports(id)
     }
 }
 

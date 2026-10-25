@@ -24,12 +24,15 @@ const ITEMS: DataSourceSummary[] = [
     image_url: '/logos/ms.png',
     last_import: {
       status: 'FINISHED',
+      successful: true,
       started_at: '2026-01-02T10:00:00Z',
       finished_at: '2026-01-02T10:01:00Z',
       duration_seconds: 60,
       failure_message: null,
       warning_count: 0,
       error_count: 0,
+      added_measurements: 0,
+      added_stations: 0,
     },
   },
   {

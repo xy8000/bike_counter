@@ -34,12 +34,15 @@ function detail(overrides: Partial<DataSourceDetailType>): DataSourceDetailType 
     has_full_current_year: false,
     last_import: {
       status: 'FINISHED',
+      successful: true,
       started_at: '2026-01-02T10:00:00Z',
       finished_at: '2026-01-02T11:02:05Z',
       duration_seconds: 3725,
       failure_message: null,
       warning_count: 2,
       error_count: 0,
+      added_measurements: 0,
+      added_stations: 0,
     },
     ...overrides,
   }
@@ -52,6 +55,9 @@ function makeServer(
     const url = String(input)
     if (options.pending) return new Promise<Response>(() => {})
     if (options.error) return Promise.reject(new Error('detail failed'))
+    if (url.includes('/api/bff/data-sources/ms/imports')) {
+      return Promise.resolve(ok({ items: [], average_duration_seconds: null }))
+    }
     if (url.includes('/api/bff/data-sources/ms')) {
       return Promise.resolve(ok(options.payload ?? detail({})))
     }
@@ -148,12 +154,15 @@ describe('DataSourceDetail', () => {
       payload: detail({
         last_import: {
           status: 'FAILED',
+          successful: false,
           started_at: '2026-01-02T10:00:00Z',
           finished_at: '2026-01-02T10:01:00Z',
           duration_seconds: 60,
           failure_message: 'Connection refused',
           warning_count: 0,
           error_count: 3,
+          added_measurements: 0,
+          added_stations: 0,
         },
       }),
     })
@@ -170,12 +179,15 @@ describe('DataSourceDetail', () => {
       payload: detail({
         last_import: {
           status: 'RUNNING',
+          successful: false,
           started_at: new Date(Date.now() - 5_000).toISOString(),
           finished_at: null,
           duration_seconds: null,
           failure_message: null,
           warning_count: 0,
           error_count: 0,
+          added_measurements: 0,
+          added_stations: 0,
         },
       }),
     })

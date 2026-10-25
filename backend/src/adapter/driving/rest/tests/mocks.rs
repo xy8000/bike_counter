@@ -38,6 +38,7 @@ use crate::core::domain::counting_stations::counting_station::value_objects as s
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
+use crate::core::domain::data_source::import_run::DataImportRun;
 use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
 use crate::core::domain::data_source::provider_message::{
     ProviderMessage, ProviderMessageSeverity,
@@ -542,6 +543,10 @@ impl DataSourceAnalyticsServicePort for MockDataSourceAnalyticsService {
             last_import_warnings: 0,
             last_import_errors: 0,
         })
+    }
+
+    fn imports(&self, _id: data_source_vo::Id) -> Result<Vec<DataImportRun>, DomainError> {
+        Ok(Vec::new())
     }
 }
 

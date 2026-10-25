@@ -21,8 +21,10 @@ use crate::core::application::data_import_service::{
 };
 use crate::core::domain::configuration::configuration::Configuration;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::import_run::DataImportRun;
+use crate::core::domain::data_source::import_run::{DataImportRun, ImportRunFacts};
 use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
+use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
+use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
 use crate::core::domain::data_source::repository_port::DataSourceRepository;
 use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
 use crate::core::domain::error::DomainError;
@@ -62,6 +64,8 @@ pub struct DataSourceUpdateService {
     configuration: Arc<Configuration>,
     runtimes: Vec<DataSourceRuntime>,
     instance_id: Uuid,
+    /// Used to snapshot the run's warning/error counts; `None` in unit tests.
+    provider_message_store: Option<Arc<dyn ProviderMessageStore + Send + Sync>>,
 }
 
 impl DataSourceUpdateService {
@@ -82,7 +86,18 @@ impl DataSourceUpdateService {
             configuration,
             runtimes,
             instance_id,
+            provider_message_store: None,
         }
+    }
+
+    /// Enables snapshotting the run's warning/error counts from the persisted
+    /// provider messages (used by the real backend wiring).
+    pub fn with_provider_message_store(
+        mut self,
+        store: Arc<dyn ProviderMessageStore + Send + Sync>,
+    ) -> Self {
+        self.provider_message_store = Some(store);
+        self
     }
 
     /// Decides whether the data-source update job should run now and executes
@@ -423,6 +438,17 @@ impl DataSourceUpdateService {
             },
         );
 
+        // Snapshot the run's warning/error counters before finalizing so the
+        // jobs overview can show them without re-deriving from provider
+        // messages (which are only countable "since a timestamp").
+        let (warning_count, error_count) = match &self.provider_message_store {
+            Some(store) => (
+                store.count_since(data_source_id, ProviderMessageSeverity::Warning, started_at)?,
+                store.count_since(data_source_id, ProviderMessageSeverity::Error, started_at)?,
+            ),
+            None => (0, 0),
+        };
+
         match result {
             Ok(update) => {
                 // Per-source success marker only when the whole source was
@@ -454,7 +480,16 @@ impl DataSourceUpdateService {
                         "Failed to record FINISHED status for {data_source_id:?}: {error:?}"
                     );
                 }
-                if let Err(error) = self.import_run_repository.finish(run_id, Utc::now()) {
+                let facts = ImportRunFacts {
+                    added_measurements: update.added_measurements as i64,
+                    added_stations: update.added_stations as i64,
+                    warning_count,
+                    error_count,
+                };
+                if let Err(error) =
+                    self.import_run_repository
+                        .finish_with_facts(run_id, Utc::now(), facts)
+                {
                     tracing::error!("Failed to finish import run {run_id}: {error:?}");
                 }
                 Ok(())
@@ -480,10 +515,17 @@ impl DataSourceUpdateService {
                 Ok(())
             }
             Err(error) => {
-                if let Err(run_error) =
-                    self.import_run_repository
-                        .fail(run_id, Utc::now(), &format!("{error:?}"))
-                {
+                let facts = ImportRunFacts {
+                    warning_count,
+                    error_count,
+                    ..ImportRunFacts::default()
+                };
+                if let Err(run_error) = self.import_run_repository.fail_with_facts(
+                    run_id,
+                    Utc::now(),
+                    &format!("{error:?}"),
+                    facts,
+                ) {
                     tracing::error!("Failed to fail import run {run_id}: {run_error:?}");
                 }
                 if let Err(status_error) = self.job_repository.update_metadata(

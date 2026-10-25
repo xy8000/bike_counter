@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use super::data_source::value_objects::Id as DataSourceId;
-use super::import_run::DataImportRun;
+use super::import_run::{DataImportRun, ImportRunFacts};
 use crate::core::domain::error::DomainError;
 
 /// Persistence port for per-data-source import runs. Implemented by the
@@ -21,11 +21,48 @@ pub trait DataImportRunRepository: Send + Sync {
     /// Moves a RUNNING run to FAILED at `finished_at` with a failure message.
     fn fail(&self, id: Uuid, finished_at: DateTime<Utc>, message: &str) -> Result<(), DomainError>;
 
+    /// Moves a RUNNING run to FINISHED at `finished_at`, snapshotting the run's
+    /// import outcome counters. The default delegates to [`finish`](Self::finish)
+    /// and drops the facts so in-memory test doubles keep compiling.
+    fn finish_with_facts(
+        &self,
+        id: Uuid,
+        finished_at: DateTime<Utc>,
+        _facts: ImportRunFacts,
+    ) -> Result<(), DomainError> {
+        self.finish(id, finished_at)
+    }
+
+    /// Moves a RUNNING run to FAILED at `finished_at` with a message and the
+    /// run's outcome counters. The default delegates to [`fail`](Self::fail).
+    fn fail_with_facts(
+        &self,
+        id: Uuid,
+        finished_at: DateTime<Utc>,
+        message: &str,
+        _facts: ImportRunFacts,
+    ) -> Result<(), DomainError> {
+        self.fail(id, finished_at, message)
+    }
+
     /// The newest run of a data source (by `started_at`), if any.
     fn latest_by_data_source(
         &self,
         data_source_id: DataSourceId,
     ) -> Result<Option<DataImportRun>, DomainError>;
+
+    /// All runs of a data source, newest first (by `started_at`). The default
+    /// returns at most the latest run so in-memory test doubles keep compiling;
+    /// the Postgres adapter returns the full history.
+    fn list_by_data_source(
+        &self,
+        data_source_id: DataSourceId,
+    ) -> Result<Vec<DataImportRun>, DomainError> {
+        Ok(self
+            .latest_by_data_source(data_source_id)?
+            .into_iter()
+            .collect())
+    }
 
     /// Finalizes RUNNING import runs that can no longer be owned by a live
     /// worker: a run whose aggregate `jobs` row is terminal (`FINISHED`/
