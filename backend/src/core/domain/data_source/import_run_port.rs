@@ -76,3 +76,93 @@ pub trait DataImportRunRepository: Send + Sync {
     /// this so such orphans are finalized promptly.
     fn finalize_orphaned_running(&self, older_than: DateTime<Utc>) -> Result<u64, DomainError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    struct Recording {
+        finished: Mutex<Vec<Uuid>>,
+        failed: Mutex<Vec<String>>,
+    }
+
+    impl DataImportRunRepository for Recording {
+        fn insert(&self, _run: &DataImportRun) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn finish(&self, id: Uuid, _finished_at: DateTime<Utc>) -> Result<(), DomainError> {
+            self.finished.lock().unwrap().push(id);
+            Ok(())
+        }
+
+        fn fail(
+            &self,
+            _id: Uuid,
+            _finished_at: DateTime<Utc>,
+            message: &str,
+        ) -> Result<(), DomainError> {
+            self.failed.lock().unwrap().push(message.to_string());
+            Ok(())
+        }
+
+        fn latest_by_data_source(
+            &self,
+            _data_source_id: DataSourceId,
+        ) -> Result<Option<DataImportRun>, DomainError> {
+            Ok(None)
+        }
+
+        fn finalize_orphaned_running(
+            &self,
+            _older_than: DateTime<Utc>,
+        ) -> Result<u64, DomainError> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn finish_with_facts_delegates_to_finish() {
+        let repo = Recording {
+            finished: Mutex::new(Vec::new()),
+            failed: Mutex::new(Vec::new()),
+        };
+        let id = Uuid::new_v4();
+        repo.finish_with_facts(id, Utc::now(), ImportRunFacts::default())
+            .unwrap();
+        assert_eq!(repo.finished.lock().unwrap().as_slice(), &[id]);
+    }
+
+    #[test]
+    fn fail_with_facts_delegates_to_fail() {
+        let repo = Recording {
+            finished: Mutex::new(Vec::new()),
+            failed: Mutex::new(Vec::new()),
+        };
+        repo.fail_with_facts(
+            Uuid::new_v4(),
+            Utc::now(),
+            "boom",
+            ImportRunFacts::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            repo.failed.lock().unwrap().as_slice(),
+            &["boom".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_by_data_source_defaults_to_latest() {
+        let repo = Recording {
+            finished: Mutex::new(Vec::new()),
+            failed: Mutex::new(Vec::new()),
+        };
+        let runs = repo
+            .list_by_data_source(DataSourceId(Uuid::new_v4()))
+            .unwrap();
+        assert!(runs.is_empty());
+    }
+}

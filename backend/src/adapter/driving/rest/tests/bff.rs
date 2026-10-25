@@ -1424,6 +1424,19 @@ async fn data_source_imports_returns_history_and_average_duration() {
         .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["items"], serde_json::json!([]));
-    assert!(body["average_duration_seconds"].is_null());
+    let items = body["items"].as_array().expect("items must be an array");
+    assert_eq!(items.len(), 2, "the history lists every run");
+    // Newest first: the finished run precedes the failed one.
+    assert_eq!(items[0]["status"], "FINISHED");
+    assert_eq!(items[0]["successful"], true);
+    assert_eq!(items[0]["duration_seconds"], 60);
+    assert_eq!(items[0]["added_measurements"], 10);
+    assert_eq!(items[0]["added_stations"], 2);
+    assert_eq!(items[0]["warning_count"], 1);
+    assert_eq!(items[1]["status"], "FAILED");
+    assert_eq!(items[1]["successful"], false);
+    assert_eq!(items[1]["failure_message"], "provider unreachable");
+    assert_eq!(items[1]["error_count"], 2);
+    // The average only counts the finished run (60s); the failed one is excluded.
+    assert_eq!(body["average_duration_seconds"], 60);
 }

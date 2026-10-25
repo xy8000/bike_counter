@@ -1498,6 +1498,10 @@ mod tests {
         fail_insert: Mutex<bool>,
         fail_finish: Mutex<bool>,
         fail_fail: Mutex<bool>,
+        /// Facts recorded by `finish_with_facts` (one entry per finalized run).
+        finished_facts: Mutex<Vec<ImportRunFacts>>,
+        /// Facts recorded by `fail_with_facts` (one entry per failed run).
+        failed_facts: Mutex<Vec<ImportRunFacts>>,
     }
 
     impl MemoryImportRunRepository {
@@ -1542,6 +1546,27 @@ mod tests {
             Ok(())
         }
 
+        fn finish_with_facts(
+            &self,
+            id: Uuid,
+            finished_at: DateTime<Utc>,
+            facts: ImportRunFacts,
+        ) -> Result<(), DomainError> {
+            self.finished_facts.lock().unwrap().push(facts);
+            self.finish(id, finished_at)
+        }
+
+        fn fail_with_facts(
+            &self,
+            id: Uuid,
+            finished_at: DateTime<Utc>,
+            message: &str,
+            facts: ImportRunFacts,
+        ) -> Result<(), DomainError> {
+            self.failed_facts.lock().unwrap().push(facts);
+            self.fail(id, finished_at, message)
+        }
+
         fn latest_by_data_source(
             &self,
             data_source_id: DataSourceId,
@@ -1564,6 +1589,47 @@ mod tests {
             // worker is active; the reaper is exercised by the reconciliation
             // service tests instead.
             Ok(0)
+        }
+    }
+
+    /// A provider-message store that returns fixed warning/error counts so the
+    /// update service's per-run facts snapshot can be asserted.
+    struct RecordingProviderMessageStore {
+        warnings: i64,
+        errors: i64,
+    }
+
+    impl ProviderMessageStore for RecordingProviderMessageStore {
+        fn record(
+            &self,
+            _data_source_id: DataSourceId,
+            _severity: ProviderMessageSeverity,
+            _message: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn find_by_data_source(
+            &self,
+            _data_source_id: DataSourceId,
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider_message::ProviderMessage>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
+
+        fn count_since(
+            &self,
+            _data_source_id: DataSourceId,
+            severity: ProviderMessageSeverity,
+            _since: DateTime<Utc>,
+        ) -> Result<i64, DomainError> {
+            Ok(match severity {
+                ProviderMessageSeverity::Warning => self.warnings,
+                ProviderMessageSeverity::Error => self.errors,
+                _ => 0,
+            })
         }
     }
 
@@ -1910,6 +1976,52 @@ mod tests {
             stored.last_updated_at.is_some(),
             "a successful source update stamps last_updated_at (drives the header)"
         );
+    }
+
+    #[test]
+    fn records_import_run_facts_including_provider_message_counts() {
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            batches: Mutex::new(VecDeque::from([SourceMeasurementBatch {
+                measurements: vec![SourceMeasurement {
+                    channel_external_id: "channel-1".to_string(),
+                    record: measurement_record(1, t0),
+                }],
+                next_from: Some(t0),
+                more: false,
+            }])),
+        });
+
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        let service = service_with_import_runs(
+            job_repo.clone(),
+            data_source_repo,
+            import_runs.clone(),
+            vec![runtime(provider)],
+        )
+        .with_provider_message_store(Arc::new(RecordingProviderMessageStore {
+            warnings: 2,
+            errors: 1,
+        }));
+
+        service.run_if_due();
+
+        assert_eq!(job_repo.jobs()[0].status, JobStatus::Finished);
+        let facts = import_runs.finished_facts.lock().unwrap().clone();
+        assert_eq!(facts.len(), 1, "the successful run records its facts");
+        assert_eq!(facts[0].added_measurements, 1);
+        assert_eq!(facts[0].added_stations, 1);
+        assert_eq!(
+            facts[0].warning_count, 2,
+            "warning count is snapshotted from the provider-message store"
+        );
+        assert_eq!(facts[0].error_count, 1);
     }
 
     #[test]

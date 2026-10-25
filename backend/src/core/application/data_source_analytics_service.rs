@@ -219,7 +219,9 @@ mod tests {
     use chrono::{DateTime, Datelike, Duration, Utc};
     use uuid::Uuid;
 
-    use super::{DataSourceAnalyticsService, current_year_month_windows};
+    use super::{
+        DataSourceAnalyticsService, DataSourceAnalyticsServicePort, current_year_month_windows,
+    };
     use crate::core::domain::channels::channel::{Channel, value_objects as channel_vo};
     use crate::core::domain::channels::repository_port::ChannelRepository;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
@@ -871,6 +873,45 @@ mod tests {
         );
         assert_eq!(detail.last_import_warnings, 2);
         assert_eq!(detail.last_import_errors, 1);
+    }
+
+    #[test]
+    fn imports_lists_the_run_history_via_the_repository() {
+        let data_sources = MemoryDataSourceRepository::default();
+        let ds = source(1, "Münster");
+        data_sources.upsert(ds.clone()).unwrap();
+
+        let earlier = DateTime::parse_from_rfc3339("2024-06-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let later = DateTime::parse_from_rfc3339("2024-06-02T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let runs = MemoryImportRunRepository::default();
+        runs.insert(&DataImportRun::start(Uuid::new_v4(), ds.id, None, earlier))
+            .unwrap();
+        let latest = DataImportRun::start(Uuid::new_v4(), ds.id, None, later);
+        runs.insert(&latest).unwrap();
+
+        let service = service(
+            data_sources,
+            MemoryCountingStationRepository::default(),
+            MemoryChannelRepository::default(),
+            MemoryMeasurementRepository::default(),
+            runs,
+            MemoryProviderMessageStore::default(),
+        );
+
+        // The inherent method (used by the BFF handler) and the port method
+        // (used through the trait object) both resolve the run history; the
+        // in-memory double's default returns the newest run.
+        let imports = service.imports(ds.id).unwrap();
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].id, latest.id);
+
+        let via_port = DataSourceAnalyticsServicePort::imports(&service, ds.id).unwrap();
+        assert_eq!(via_port.len(), 1);
+        assert_eq!(via_port[0].id, latest.id);
     }
 
     #[test]
