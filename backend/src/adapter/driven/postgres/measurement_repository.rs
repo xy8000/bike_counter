@@ -6,11 +6,12 @@ use uuid::Uuid;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::{Measurement, value_objects};
 use crate::core::domain::measurements::repository_port::{
-    BucketGranularity, ChannelBounds, ChannelBucket, ChannelCoverage, ChannelFirst,
-    ChannelHourTotal, ChannelLatest, ChannelTotal, ChannelWeekdayTotal, HourTotal,
-    MeasurementBounds, MeasurementRepository, MonthTotal, ResolutionCoverage, TimeBucket,
-    WeekdayTotal,
+    BucketGranularity, ChannelBounds, ChannelBucket, ChannelFirst, ChannelHourTotal, ChannelLatest,
+    ChannelTotal, ChannelWeekdayTotal, HourTotal, MeasurementBounds, MeasurementRepository,
+    MonthTotal,
 };
+#[cfg(test)]
+use crate::core::domain::measurements::repository_port::{TimeBucket, WeekdayTotal};
 
 use super::pool::PgPool;
 
@@ -140,7 +141,8 @@ impl PostgresMeasurementRepository {
     }
 
     /// The weekday radar over the raw table, used until the rollup backfill has
-    /// completed.
+    /// completed (test-only: only the rollup-parity test reads it).
+    #[cfg(test)]
     fn sum_weekdays_raw(
         &self,
         from: chrono::DateTime<chrono::Utc>,
@@ -412,6 +414,7 @@ fn daily_buckets_sql(granularity: BucketGranularity, with_channel: bool) -> Stri
 }
 
 impl MeasurementRepository for PostgresMeasurementRepository {
+    #[cfg(test)]
     fn save(&self, measurement: Measurement) -> Result<(), DomainError> {
         let mut client = self
             .pool
@@ -516,32 +519,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         })
     }
 
-    fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-        let mut client = self
-            .pool
-            .get()
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
-        let rows = client
-            .query(
-                "SELECT id, value, channel_id, timestamp, resolution_seconds, interval_end \
-                 FROM measurements ORDER BY timestamp DESC",
-                &[],
-            )
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
-        let mut measurements = Vec::with_capacity(rows.len());
-        for row in rows {
-            measurements.push(Measurement {
-                id: value_objects::Id(row.get(0)),
-                value: value_objects::Value(row.get(1)),
-                channel_id: value_objects::ChannelId(row.get(2)),
-                timestamp: value_objects::Timestamp(row.get(3)),
-                resolution_seconds: value_objects::ResolutionSeconds(row.get(4)),
-                interval_end: row.get(5),
-            });
-        }
-        Ok(measurements)
-    }
-
+    #[cfg(test)]
     fn find_by_channel_id(
         &self,
         channel_id: value_objects::ChannelId,
@@ -636,6 +614,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(row.get::<_, i64>(0))
     }
 
+    #[cfg(test)]
     fn sum_buckets(
         &self,
         from: chrono::DateTime<chrono::Utc>,
@@ -774,6 +753,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(buckets)
     }
 
+    #[cfg(test)]
     fn sum_weekdays(
         &self,
         from: chrono::DateTime<chrono::Utc>,
@@ -1058,73 +1038,6 @@ impl MeasurementRepository for PostgresMeasurementRepository {
             present.push(row.get(0));
         }
         Ok(present)
-    }
-
-    fn resolution_coverage(
-        &self,
-        from: chrono::DateTime<chrono::Utc>,
-        to: chrono::DateTime<chrono::Utc>,
-        channel_ids: &[value_objects::ChannelId],
-    ) -> Result<Vec<ResolutionCoverage>, DomainError> {
-        let mut client = self
-            .pool
-            .get()
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
-        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
-        let rows = client
-            .query(
-                "SELECT resolution_seconds, MIN(timestamp), MAX(timestamp), COUNT(*)::bigint \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $2 AND timestamp <= $3 \
-                 GROUP BY resolution_seconds \
-                 ORDER BY resolution_seconds",
-                &[&channel_uuids, &from, &to],
-            )
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
-        let mut coverage = Vec::with_capacity(rows.len());
-        for row in rows {
-            coverage.push(ResolutionCoverage {
-                resolution_seconds: row.get(0),
-                first: row.get(1),
-                last: row.get(2),
-                count: row.get(3),
-            });
-        }
-        Ok(coverage)
-    }
-
-    fn resolution_coverage_by_channel(
-        &self,
-        from: chrono::DateTime<chrono::Utc>,
-        to: chrono::DateTime<chrono::Utc>,
-        channel_ids: &[value_objects::ChannelId],
-    ) -> Result<Vec<ChannelCoverage>, DomainError> {
-        let mut client = self
-            .pool
-            .get()
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
-        let channel_uuids: Vec<Uuid> = channel_ids.iter().map(|id| id.0).collect();
-        let rows = client
-            .query(
-                "SELECT channel_id, resolution_seconds, MIN(timestamp), MAX(timestamp), COUNT(*)::bigint \
-                 FROM measurements \
-                 WHERE channel_id = ANY($1::uuid[]) AND timestamp >= $2 AND timestamp <= $3 \
-                 GROUP BY channel_id, resolution_seconds \
-                 ORDER BY channel_id, resolution_seconds",
-                &[&channel_uuids, &from, &to],
-            )
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
-        let mut coverage = Vec::with_capacity(rows.len());
-        for row in rows {
-            coverage.push(ChannelCoverage {
-                channel_id: row.get(0),
-                resolution_seconds: row.get(1),
-                first: row.get(2),
-                last: row.get(3),
-                count: row.get(4),
-            });
-        }
-        Ok(coverage)
     }
 
     fn latest_by_channel(
@@ -2488,64 +2401,6 @@ mod tests {
             2,
             "the 3-column natural key must collapse duplicates"
         );
-    }
-
-    #[test]
-    fn resolution_coverage_reports_per_resolution_first_last_and_count() {
-        let TestRepo {
-            repository,
-            _container,
-        } = test_repository();
-        let base = timestamp(2_000_000);
-        let rows = vec![
-            Measurement {
-                id: value_objects::Id(Uuid::new_v4()),
-                value: value_objects::Value(1),
-                channel_id: channel_id(),
-                timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(300)),
-                resolution_seconds: value_objects::ResolutionSeconds(300),
-                interval_end: None,
-            },
-            Measurement {
-                id: value_objects::Id(Uuid::new_v4()),
-                value: value_objects::Value(2),
-                channel_id: channel_id(),
-                timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(600)),
-                resolution_seconds: value_objects::ResolutionSeconds(300),
-                interval_end: None,
-            },
-            Measurement {
-                id: value_objects::Id(Uuid::new_v4()),
-                value: value_objects::Value(10),
-                channel_id: channel_id(),
-                timestamp: value_objects::Timestamp(base + chrono::Duration::seconds(900)),
-                resolution_seconds: value_objects::ResolutionSeconds(900),
-                interval_end: None,
-            },
-        ];
-        repository.save_batch(rows).unwrap();
-
-        let coverage = repository
-            .resolution_coverage(
-                base,
-                base + chrono::Duration::seconds(3600),
-                &[channel_id()],
-            )
-            .unwrap();
-        assert_eq!(coverage.len(), 2, "one entry per distinct resolution");
-        let five_min = coverage
-            .iter()
-            .find(|c| c.resolution_seconds == 300)
-            .unwrap();
-        assert_eq!(five_min.count, 2);
-        assert_eq!(five_min.first, base + chrono::Duration::seconds(300));
-        assert_eq!(five_min.last, base + chrono::Duration::seconds(600));
-        let quarter = coverage
-            .iter()
-            .find(|c| c.resolution_seconds == 900)
-            .unwrap();
-        assert_eq!(quarter.count, 1);
-        assert_eq!(quarter.first, base + chrono::Duration::seconds(900));
     }
 
     #[test]

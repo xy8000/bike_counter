@@ -99,12 +99,6 @@ impl DataImportRun {
         }
     }
 
-    /// Whether this run reports a failure (and thus drives the "last import
-    /// failed" warning in the UI).
-    pub fn failed(&self) -> bool {
-        matches!(self.status, ImportRunStatus::Failed)
-    }
-
     /// The run duration in seconds when it has finished (`finished_at` set).
     pub fn duration_seconds(&self) -> Option<i64> {
         self.finished_at
@@ -146,7 +140,6 @@ mod tests {
         let run = DataImportRun::start(Uuid::new_v4(), DataSourceId(Uuid::new_v4()), None, now);
         assert_eq!(run.status, ImportRunStatus::Running);
         assert_eq!(run.finished_at, None);
-        assert!(!run.failed());
         assert_eq!(run.duration_seconds(), None);
     }
 
@@ -156,16 +149,15 @@ mod tests {
         let mut run = DataImportRun::start(Uuid::new_v4(), DataSourceId(Uuid::new_v4()), None, now);
         run.finished_at = Some(now + Duration::seconds(42));
         run.status = ImportRunStatus::Finished;
-        assert!(!run.failed());
         assert_eq!(run.duration_seconds(), Some(42));
     }
 
     #[test]
-    fn failed_run_is_detected() {
+    fn failed_run_keeps_the_failure_message() {
         let now = Utc::now();
         let mut run = DataImportRun::start(Uuid::new_v4(), DataSourceId(Uuid::new_v4()), None, now);
         run.status = ImportRunStatus::Failed;
         run.failure_message = Some("boom".to_string());
-        assert!(run.failed());
+        assert_eq!(run.failure_message.as_deref(), Some("boom"));
     }
 }

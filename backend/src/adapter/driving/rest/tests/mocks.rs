@@ -223,10 +223,6 @@ impl MeasurementRepository for MockMeasurementRepository {
             .ok_or(DomainError::NotFound(id.0))
     }
 
-    fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-        Ok(self.measurements.clone())
-    }
-
     fn find_by_channel_id(
         &self,
         channel_id: measurement_vo::ChannelId,
@@ -436,14 +432,6 @@ impl DataSourceRepository for MockDataSourceRepository {
             .data_sources
             .iter()
             .find(|data_source| data_source.id.0 == id.0)
-            .cloned())
-    }
-
-    fn find_by_name(&self, name: &str) -> Result<Option<DataSource>, DomainError> {
-        Ok(self
-            .data_sources
-            .iter()
-            .find(|data_source| data_source.name.0 == name)
             .cloned())
     }
 
@@ -1063,12 +1051,6 @@ pub fn sample_provider_message_service_with(
 #[derive(Default)]
 pub struct MockOpenDataFileRepository {
     files: Mutex<Vec<crate::core::domain::opendata::file::OpenDataFile>>,
-}
-
-impl MockOpenDataFileRepository {
-    pub fn seed(&self, files: Vec<crate::core::domain::opendata::file::OpenDataFile>) {
-        self.files.lock().unwrap().extend(files);
-    }
 }
 
 impl crate::core::domain::opendata::file_repository_port::OpenDataFileRepository

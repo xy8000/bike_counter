@@ -106,7 +106,6 @@ impl JobReconciliationService {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     use chrono::{DateTime, Duration, Utc};
@@ -133,14 +132,12 @@ mod tests {
     /// Minimal in-memory repository: only insert/find_all/reconcile are used.
     struct MemoryJobRepository {
         jobs: Mutex<Vec<Job>>,
-        locks: Mutex<HashMap<String, (Uuid, DateTime<Utc>)>>,
     }
 
     impl MemoryJobRepository {
         fn new(jobs: Vec<Job>) -> Self {
             Self {
                 jobs: Mutex::new(jobs),
-                locks: Mutex::new(HashMap::new()),
             }
         }
     }
@@ -407,10 +404,10 @@ mod tests {
         service.reconcile_all(Utc::now());
         for id in &stale_ids {
             let job = service.job_repository.find_by_id(*id).unwrap().unwrap();
-            assert!(
-                job.is_cancellation_requested(),
-                "a stale job ({id}) must be requested on the first pass, was {:?}",
-                job.status
+            assert_eq!(
+                job.status,
+                JobStatus::CancellationRequested,
+                "a stale job ({id}) must be requested on the first pass"
             );
         }
 
@@ -418,10 +415,10 @@ mod tests {
         service.reconcile_all(Utc::now());
         for id in stale_ids {
             let job = service.job_repository.find_by_id(id).unwrap().unwrap();
-            assert!(
-                job.is_cancelled(),
-                "a stale job ({id}) must be force-cancelled on the second pass, was {:?}",
-                job.status
+            assert_eq!(
+                job.status,
+                JobStatus::Cancelled,
+                "a stale job ({id}) must be force-cancelled on the second pass"
             );
         }
 
@@ -431,7 +428,7 @@ mod tests {
             .find_active_by_type(DATA_SOURCE_UPDATE_JOB_TYPE)
             .unwrap();
         assert_eq!(fresh_jobs.len(), 1);
-        assert!(fresh_jobs[0].is_running());
+        assert_eq!(fresh_jobs[0].status, JobStatus::Running);
     }
 
     #[test]

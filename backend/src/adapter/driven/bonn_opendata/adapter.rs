@@ -135,7 +135,8 @@ impl BonnOpendataAdapter {
         })
     }
 
-    /// The configured cache window in seconds.
+    /// The configured cache window in seconds (test-only accessor).
+    #[cfg(test)]
     pub fn cache_duration_secs(&self) -> u64 {
         self.cache_duration.as_secs()
     }
@@ -144,16 +145,6 @@ impl BonnOpendataAdapter {
     #[cfg(test)]
     pub(crate) fn historical_urls(&self) -> &[String] {
         &self.historical_urls
-    }
-
-    /// The cached index, if any (test-only accessor).
-    #[cfg(test)]
-    pub(crate) fn cache_index(&self) -> Option<Arc<BonnIndex>> {
-        self.cache
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|cached| cached.index.clone())
     }
 
     /// The attached provider-message sink, if any (cloned handle for callers).

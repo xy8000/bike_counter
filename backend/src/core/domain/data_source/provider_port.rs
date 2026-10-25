@@ -35,9 +35,21 @@ pub enum ProviderError {
     Storage(String),
 }
 
+impl std::fmt::Display for ProviderError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreachable(message) => write!(formatter, "provider unreachable: {message}"),
+            Self::InvalidData(message) => {
+                write!(formatter, "provider returned invalid data: {message}")
+            }
+            Self::Storage(message) => write!(formatter, "provider storage error: {message}"),
+        }
+    }
+}
+
 impl From<ProviderError> for crate::core::domain::error::DomainError {
     fn from(error: ProviderError) -> Self {
-        crate::core::domain::error::DomainError::Provider(format!("{error:?}"))
+        crate::core::domain::error::DomainError::Provider(error.to_string())
     }
 }
 
@@ -72,17 +84,6 @@ pub struct CountingStationRecord {
 /// reported in [`CountingStationRecord`] differs from the persisted one.
 #[derive(Debug, Clone)]
 pub struct StationImage {
-    pub sha256: String,
-    pub content_type: String,
-    pub bytes: Vec<u8>,
-}
-
-/// The actual logo bytes of a data source, returned by
-/// [`DataProvider::get_data_source_image`] when the provider can serve a
-/// replaceable logo. `None` (the default) makes the frontend fall back to the
-/// bundled data-source SVG.
-#[derive(Debug, Clone)]
-pub struct DataSourceImage {
     pub sha256: String,
     pub content_type: String,
     pub bytes: Vec<u8>,
@@ -175,15 +176,6 @@ pub trait DataProvider: Send + Sync {
         Ok(None)
     }
 
-    /// The optional, replaceable logo of the data source itself, requested by
-    /// the core during an update so it can be stored as a content-addressed
-    /// asset (mirroring station images). The default returns `Ok(None)`, so
-    /// providers without a logo (and all existing mocks) are unaffected — the
-    /// frontend then falls back to the bundled data-source SVG.
-    fn get_data_source_image(&self) -> Result<Option<DataSourceImage>, ProviderError> {
-        Ok(None)
-    }
-
     /// The configured default page size passed to
     /// [`Self::get_measurements_source`].
     fn max_measurement_batch_size(&self) -> usize;
@@ -213,9 +205,6 @@ pub trait PersistentStateAccess: Send + Sync {
 
     /// Deletes a single key for the provider's data source (idempotent).
     fn delete(&self, key: &str) -> Result<(), ProviderError>;
-
-    /// Wipes all state for the provider's data source.
-    fn clear(&self) -> Result<(), ProviderError>;
 }
 
 /// A callable sink through which a provider emits scoped messages.
@@ -255,8 +244,13 @@ mod tests {
     #[test]
     fn provider_error_converts_to_domain_error() {
         let error: DomainError = ProviderError::Unreachable("nope".to_string()).into();
-        assert!(matches!(error, DomainError::Provider(_)));
-        assert!(format!("{error:?}").contains("Unreachable"));
+        let DomainError::Provider(message) = error else {
+            panic!("expected a provider error");
+        };
+        // Both the variant and its payload survive the conversion, in a
+        // human-readable form.
+        assert!(message.contains("unreachable"), "message: {message}");
+        assert!(message.contains("nope"), "message: {message}");
     }
 
     #[test]
@@ -318,10 +312,6 @@ mod tests {
         }
 
         fn delete(&self, _key: &str) -> Result<(), ProviderError> {
-            Ok(())
-        }
-
-        fn clear(&self) -> Result<(), ProviderError> {
             Ok(())
         }
     }

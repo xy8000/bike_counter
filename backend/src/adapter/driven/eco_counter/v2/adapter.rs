@@ -37,7 +37,6 @@ pub(crate) const DEFAULT_IMPORT_DAYS_BACK: i64 = 365;
 pub struct EcoCounterV2Adapter {
     base_url: String,
     domain_id: Option<i64>,
-    step: i64,
     step_token: &'static str,
     resolution_seconds: i64,
     max_measurement_batch_size: usize,
@@ -183,7 +182,6 @@ impl EcoCounterV2Adapter {
         Ok(Self {
             base_url: base_url.clone(),
             domain_id,
-            step,
             step_token,
             resolution_seconds,
             max_measurement_batch_size,
@@ -198,16 +196,10 @@ impl EcoCounterV2Adapter {
         })
     }
 
-    pub fn step(&self) -> i64 {
-        self.step
-    }
-
+    /// The configured discovery cache window in seconds (test-only accessor).
+    #[cfg(test)]
     pub fn cache_duration_secs(&self) -> u64 {
         self.cache_duration.as_secs()
-    }
-
-    fn messages_sink(&self) -> Option<Arc<dyn ProviderMessageSink + Send + Sync>> {
-        self.messages.lock().unwrap().clone()
     }
 
     fn emit(&self, severity: ProviderMessageSeverity, message: impl AsRef<str>) {

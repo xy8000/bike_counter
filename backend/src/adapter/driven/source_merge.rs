@@ -83,11 +83,6 @@ impl SourceScanner {
         self.anchor == from && self.ids == channel_external_ids
     }
 
-    /// Re-seeds this scanner for a new run / channel set.
-    pub fn reset(&mut self, from: Option<DateTime<Utc>>, channel_external_ids: &[String]) {
-        *self = SourceScanner::new(from, channel_external_ids);
-    }
-
     /// Picks the next not-done channel to page (round-robin), returning its
     /// external id and the exclusive lower bound of its next fetch. `None` when
     /// every channel is done.

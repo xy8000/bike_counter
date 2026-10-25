@@ -30,15 +30,6 @@ impl HttpResourceFetcher {
         Self::with_timeout(None, Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
     }
 
-    /// A fetcher that authenticates every request with a Bearer access token
-    /// (default request timeout).
-    pub fn with_bearer(token: impl Into<String>) -> Self {
-        Self::with_timeout(
-            Some(token.into()),
-            Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
-        )
-    }
-
     /// A fetcher with an explicit end-to-end request timeout.
     pub fn with_timeout(bearer: Option<String>, timeout: Duration) -> Self {
         Self {

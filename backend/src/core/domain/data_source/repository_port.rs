@@ -10,8 +10,6 @@ pub trait DataSourceRepository {
 
     fn find_by_id(&self, id: Id) -> Result<Option<DataSource>, DomainError>;
 
-    fn find_by_name(&self, name: &str) -> Result<Option<DataSource>, DomainError>;
-
     fn find_all(&self) -> Result<Vec<DataSource>, DomainError>;
 
     fn delete(&self, id: Id) -> Result<(), DomainError>;
@@ -27,19 +25,6 @@ pub trait DataSourceRepository {
     /// updated (per source, so a partial multi-source run still counts the
     /// sources that succeeded).
     fn update_last_updated(&self, id: Id, timestamp: DateTime<Utc>) -> Result<(), DomainError>;
-
-    /// Points the data source at its provider logo asset (`Some`) or clears it
-    /// (`None`), together with the persisted provider hash. The default is a
-    /// no-op so in-memory doubles that never exercise the logo path need no
-    /// change; the Postgres adapter persists it.
-    fn update_logo(
-        &self,
-        _id: Id,
-        _logo_asset_id: Option<crate::core::domain::assets::asset::value_objects::AssetId>,
-        _logo_sha256: Option<String>,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
 
     /// Records the source-wide earliest/latest measurement timestamps for a run
     /// that inserted measurements. The merge is idempotent (the persisted lower

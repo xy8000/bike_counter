@@ -161,11 +161,6 @@ impl Configuration {
         &self.data_source_update_cron
     }
 
-    /// Required max interval between heartbeats for the update job (no default).
-    pub fn data_source_update_max_heartbeat_interval_seconds(&self) -> i64 {
-        self.data_source_update_max_heartbeat_interval_seconds
-    }
-
     /// The configured max heartbeat interval as a `chrono::Duration` for the domain.
     pub fn data_source_update_max_heartbeat_interval(&self) -> chrono::Duration {
         chrono::Duration::seconds(self.data_source_update_max_heartbeat_interval_seconds)
@@ -174,11 +169,6 @@ impl Configuration {
     /// CRON expression defining when the asset cleanup job is re-triggered.
     pub fn asset_cleanup_cron(&self) -> &str {
         &self.asset_cleanup_cron
-    }
-
-    /// Required max interval between heartbeats for the asset cleanup job (no default).
-    pub fn asset_cleanup_max_heartbeat_interval_seconds(&self) -> i64 {
-        self.asset_cleanup_max_heartbeat_interval_seconds
     }
 
     /// The configured max heartbeat interval as a `chrono::Duration` for the domain.
@@ -199,11 +189,6 @@ impl Configuration {
     /// CRON expression defining when the opendata export job re-triggers.
     pub fn opendata_export_cron(&self) -> &str {
         &self.opendata_export_cron
-    }
-
-    /// Required max interval between heartbeats for the opendata export job.
-    pub fn opendata_export_max_heartbeat_interval_seconds(&self) -> i64 {
-        self.opendata_export_max_heartbeat_interval_seconds
     }
 
     /// The configured opendata export max heartbeat interval as a
@@ -247,11 +232,6 @@ impl Configuration {
     /// CRON expression defining when the measurement rollup job re-triggers.
     pub fn measurement_rollup_cron(&self) -> &str {
         &self.measurement_rollup_cron
-    }
-
-    /// Required max interval between heartbeats for the measurement rollup job.
-    pub fn measurement_rollup_max_heartbeat_interval_seconds(&self) -> i64 {
-        self.measurement_rollup_max_heartbeat_interval_seconds
     }
 
     /// The configured measurement rollup max heartbeat interval as a
@@ -564,13 +544,6 @@ pub mod value_objects {
             &self.log_level
         }
 
-        /// Returns the full provider var map. Used by tests and by provider
-        /// adapters that need to enumerate all vars; most adapters only need
-        /// the key-based lookup in [`Self::var`].
-        pub fn vars(&self) -> &HashMap<String, String> {
-            &self.vars
-        }
-
         pub fn var(&self, key: &str) -> Option<&str> {
             self.vars.get(key).map(|value| value.as_str())
         }
@@ -627,11 +600,6 @@ pub mod value_objects {
         /// CRON expression defining when the tiles update job is re-triggered.
         pub fn update_cron(&self) -> &str {
             &self.update_cron
-        }
-
-        /// Required max interval between heartbeats for the tiles update job.
-        pub fn update_max_heartbeat_interval_seconds(&self) -> i64 {
-            self.update_max_heartbeat_interval_seconds
         }
 
         /// The configured max heartbeat interval as a `chrono::Duration` for the domain.
@@ -770,17 +738,6 @@ mod tests {
     }
 
     #[test]
-    fn exposes_the_full_provider_var_map() {
-        let mut vars = HashMap::new();
-        vars.insert("url".to_string(), "https://example.com".to_string());
-        let provider = DataProviderConfiguration::new("github_zip".to_string(), vars).unwrap();
-        assert_eq!(
-            provider.vars(),
-            &HashMap::from([("url".to_string(), "https://example.com".to_string())])
-        );
-    }
-
-    #[test]
     fn rejects_empty_asset_storage_values() {
         let cases = [
             (
@@ -853,7 +810,7 @@ mod tests {
     fn exposes_maps_values() {
         let config = maps_config();
         assert_eq!(config.update_cron(), DEFAULT_MAPS_UPDATE_CRON);
-        assert_eq!(config.update_max_heartbeat_interval_seconds(), 7200);
+        assert_eq!(config.update_max_heartbeat_interval().num_seconds(), 7200);
         assert_eq!(
             config.update_max_heartbeat_interval(),
             chrono::Duration::seconds(7200)
@@ -947,7 +904,9 @@ mod tests {
             DEFAULT_DATA_SOURCE_UPDATE_CRON
         );
         assert_eq!(
-            configuration.data_source_update_max_heartbeat_interval_seconds(),
+            configuration
+                .data_source_update_max_heartbeat_interval()
+                .num_seconds(),
             3600
         );
         assert_eq!(
@@ -959,7 +918,9 @@ mod tests {
             DEFAULT_ASSET_CLEANUP_CRON
         );
         assert_eq!(
-            configuration.asset_cleanup_max_heartbeat_interval_seconds(),
+            configuration
+                .asset_cleanup_max_heartbeat_interval()
+                .num_seconds(),
             7200
         );
         assert_eq!(
@@ -1184,7 +1145,9 @@ mod tests {
             DEFAULT_OPENDATA_EXPORT_CRON
         );
         assert_eq!(
-            configured.opendata_export_max_heartbeat_interval_seconds(),
+            configured
+                .opendata_export_max_heartbeat_interval()
+                .num_seconds(),
             43200
         );
         assert_eq!(
@@ -1241,7 +1204,9 @@ mod tests {
             DEFAULT_MEASUREMENT_ROLLUP_CRON
         );
         assert_eq!(
-            configured.measurement_rollup_max_heartbeat_interval_seconds(),
+            configured
+                .measurement_rollup_max_heartbeat_interval()
+                .num_seconds(),
             1200
         );
         assert_eq!(

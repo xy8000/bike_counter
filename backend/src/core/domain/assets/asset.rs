@@ -79,18 +79,6 @@ pub mod value_objects {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Sha256(pub String);
 
-    impl ObjectKey {
-        pub fn parse(key: impl Into<String>) -> Result<Self, DomainError> {
-            let key = key.into();
-            if key.trim().is_empty() {
-                return Err(DomainError::InvalidQuery(
-                    "object_key must not be empty".to_string(),
-                ));
-            }
-            Ok(Self(key))
-        }
-    }
-
     impl ContentType {
         pub fn parse(content_type: impl Into<String>) -> Result<Self, DomainError> {
             let content_type = content_type.into();
@@ -125,19 +113,6 @@ mod tests {
     fn asset_origin_string_forms_are_stable() {
         assert_eq!(AssetOrigin::Builtin.as_str(), "builtin");
         assert_eq!(AssetOrigin::Provider.as_str(), "provider");
-    }
-
-    #[test]
-    fn object_key_rejects_empty() {
-        assert!(matches!(
-            value_objects::ObjectKey::parse(""),
-            Err(DomainError::InvalidQuery(_))
-        ));
-        assert!(matches!(
-            value_objects::ObjectKey::parse("   "),
-            Err(DomainError::InvalidQuery(_))
-        ));
-        assert!(value_objects::ObjectKey::parse("builtin/station.jpg").is_ok());
     }
 
     #[test]

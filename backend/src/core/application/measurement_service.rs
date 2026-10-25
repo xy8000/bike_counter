@@ -87,10 +87,6 @@ mod tests {
                 .ok_or(DomainError::NotFound(id.0))
         }
 
-        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-            Ok(self.measurements.clone())
-        }
-
         fn find_by_channel_id(
             &self,
             channel_id: measurement_vo::ChannelId,

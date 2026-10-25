@@ -47,9 +47,6 @@ pub struct RawFeatureCollection {
     /// WFS 2.0 total count of matching features (GeoServer GeoJSON output).
     #[serde(rename = "numberMatched", default)]
     pub number_matched: Option<u64>,
-    /// WFS 2.0 features returned on this page (GeoServer GeoJSON output).
-    #[serde(rename = "numberReturned", default)]
-    pub number_returned: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]

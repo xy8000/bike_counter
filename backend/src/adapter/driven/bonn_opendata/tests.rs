@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use super::fetcher::ResourceFetcher;
 use super::parsing::{
-    CsvRow, WideRow, berlin_to_utc, build_index, drop_aggregate_stations, is_aggregate,
-    normalize_column_name, parse_german_datetime, parse_host_and_port, parse_measurements_csv,
+    CsvRow, WideRow, berlin_to_utc, build_index, drop_aggregate_stations, header_parts,
+    is_aggregate, parse_german_datetime, parse_host_and_port, parse_measurements_csv,
     parse_stations_geojson, parse_yearly_hourly_csv,
 };
 use super::*;
@@ -299,23 +299,23 @@ fn drop_aggregate_stations_removes_computed_totals() {
 }
 
 #[test]
-fn normalize_column_name_strips_index_and_aliases() {
+fn header_parts_strip_the_index_and_alias_renamed_stations() {
     assert_eq!(
-        normalize_column_name("5.01 BN - Kennedybrücke (Nordseite)"),
-        "BN - Kennedybrücke (Nordseite)"
+        header_parts("5.01 BN - Kennedybrücke (Nordseite)"),
+        (true, "BN - Kennedybrücke (Nordseite)".to_string())
     );
     // Alias table for renamed stations.
     assert_eq!(
-        normalize_column_name("5.02 BN - Kennedybrücke (Südseite) Barometer"),
+        header_parts("5.02 BN - Kennedybrücke (Südseite) Barometer").1,
         "BN - Kennedybrücke (Südseite)"
     );
     assert_eq!(
-        normalize_column_name("5.10 BN - Bröhltalweg"),
+        header_parts("5.10 BN - Bröhltalweg").1,
         "BN - Bröltalbahnweg"
     );
     // Aggregate columns have no index prefix and are left unchanged.
-    assert_eq!(normalize_column_name("Summe"), "Summe");
-    assert_eq!(normalize_column_name("Kennedybrücke"), "Kennedybrücke");
+    assert_eq!(header_parts("Summe"), (false, "Summe".to_string()));
+    assert_eq!(header_parts("Kennedybrücke").1, "Kennedybrücke");
 }
 
 #[test]

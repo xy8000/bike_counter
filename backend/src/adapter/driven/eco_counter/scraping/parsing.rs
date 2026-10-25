@@ -220,10 +220,6 @@ struct RawLocation {
 #[serde(rename_all = "camelCase")]
 struct RawAttributes {
     #[serde(default)]
-    address_country: Option<String>,
-    #[serde(default)]
-    address_region: Option<String>,
-    #[serde(default)]
     address_street: Option<String>,
     #[serde(default)]
     address_number: Option<String>,

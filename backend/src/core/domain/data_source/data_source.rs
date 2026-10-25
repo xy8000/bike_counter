@@ -25,9 +25,6 @@ pub struct DataSource {
     /// it is set when the provider serves a logo image (otherwise the frontend
     /// falls back to the bundled data-source SVG).
     pub logo_asset_id: Option<AssetId>,
-    /// Persisted provider logo hash used for hash-based change detection during
-    /// import. `None` when the provider reports no logo.
-    pub logo_sha256: Option<String>,
     /// The earliest measurement timestamp ever stored across the source's
     /// channels. Persisted and maintained by the import flow so the data-source
     /// detail page ("first data from", historical badge) never has to scan the
@@ -49,7 +46,6 @@ impl DataSource {
             imported_until: None,
             last_updated_at: None,
             logo_asset_id: None,
-            logo_sha256: None,
             first_measurement_at: None,
             last_measurement_at: None,
         }
@@ -107,7 +103,6 @@ mod tests {
         assert_eq!(data_source.imported_until, None);
         assert_eq!(data_source.last_updated_at, None);
         assert_eq!(data_source.logo_asset_id, None);
-        assert_eq!(data_source.logo_sha256, None);
         assert_eq!(data_source.first_measurement_at, None);
         assert_eq!(data_source.last_measurement_at, None);
     }

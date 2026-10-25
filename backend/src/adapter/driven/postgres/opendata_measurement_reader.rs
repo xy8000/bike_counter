@@ -13,9 +13,6 @@ use crate::core::domain::opendata::measurement_reader_port::OpenDataMeasurementR
 
 use super::pool::PgPool;
 
-/// The export timezone, shared with the export job.
-const EXPORT_TIMEZONE: &str = "Europe/Berlin";
-
 pub struct PostgresOpenDataMeasurementReader {
     pool: PgPool,
 }

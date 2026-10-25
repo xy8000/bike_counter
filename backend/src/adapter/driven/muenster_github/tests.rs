@@ -204,11 +204,6 @@ impl PersistentStateAccess for InMemoryAccess {
         self.map.lock().unwrap().remove(key);
         Ok(())
     }
-
-    fn clear(&self) -> Result<(), ProviderError> {
-        self.map.lock().unwrap().clear();
-        Ok(())
-    }
 }
 
 #[test]

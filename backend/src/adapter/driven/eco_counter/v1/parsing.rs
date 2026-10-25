@@ -28,8 +28,6 @@ use crate::core::domain::data_source::provider_port::{
 
 use super::catalog::CatalogStation;
 
-/// IANA timezone of the German counting stations served by this mode.
-pub const TIMEZONE: &str = "Europe/Berlin";
 /// Number of seconds per `step` value returned by the data endpoint.
 pub const STEP_RESOLUTION_SECONDS: [(i64, i64); 3] = [(2, 900), (3, 3600), (4, 86400)];
 
@@ -40,8 +38,6 @@ pub struct RawSiteMetadata {
     pub token: Option<String>,
     #[serde(default)]
     pub titre: Option<String>,
-    #[serde(rename = "idPdc", default)]
-    pub id_pdc: i64,
     #[serde(default)]
     pub latitude: Option<f64>,
     #[serde(default)]
@@ -226,7 +222,6 @@ mod tests {
           "titre":"Stadt Stein Nürnberger Straße","idPdc":100063085,"cumulFlowId":100063085,
           "latitude":49.4163,"longitude":11.0188,"pratique":2,"domaine":7242,"date":"2020-10-01"}"#;
         let meta: RawSiteMetadata = serde_json::from_str(json).unwrap();
-        assert_eq!(meta.id_pdc, 100063085);
         assert_eq!(meta.token.as_deref().unwrap().len(), 64);
         assert_eq!(meta.latitude, Some(49.4163));
         assert_eq!(meta.domaine, Some(7242));

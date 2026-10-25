@@ -26,7 +26,6 @@ use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
 use crate::core::domain::data_source::repository_port::DataSourceRepository;
-use crate::core::domain::data_source::service_port::DataSourceUpdateServicePort;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::jobs::job::{Job, JobStatus};
 use crate::core::domain::jobs::repository_port::JobRepository;
@@ -565,12 +564,6 @@ impl DataSourceUpdateService {
     }
 }
 
-impl DataSourceUpdateServicePort for DataSourceUpdateService {
-    fn run_if_due(&self) {
-        self.run_if_due();
-    }
-}
-
 impl ScheduledJobPort for DataSourceUpdateService {
     fn run_if_due(&self) {
         self.run_if_due();
@@ -589,8 +582,7 @@ mod tests {
     use crate::core::domain::channels::channel::value_objects as channel_vo;
     use crate::core::domain::channels::repository_port::ChannelRepository;
     use crate::core::domain::configuration::configuration::value_objects::{
-        AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
-        DatabaseConfiguration,
+        AssetStorageConfiguration, DatabaseConfiguration,
     };
     use crate::core::domain::configuration::configuration::{
         Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
@@ -655,14 +647,6 @@ mod tests {
                 "1.31.2".to_string(),
             )
             .unwrap(),
-        )
-        .unwrap()
-    }
-
-    fn data_source_config() -> DataSourceConfiguration {
-        DataSourceConfiguration::new(
-            "Münster".to_string(),
-            DataProviderConfiguration::new("provider".to_string(), HashMap::new()).unwrap(),
         )
         .unwrap()
     }
@@ -1032,10 +1016,6 @@ mod tests {
                 .cloned())
         }
 
-        fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
-            Ok(None)
-        }
-
         fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
             Ok(self.data_sources.lock().unwrap().clone())
         }
@@ -1248,10 +1228,6 @@ mod tests {
             Err(DomainError::NotFound(Uuid::new_v4()))
         }
 
-        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-            Ok(self.measurements.lock().unwrap().clone())
-        }
-
         fn find_by_channel_id(
             &self,
             _channel_id: measurement_vo::ChannelId,
@@ -1444,7 +1420,6 @@ mod tests {
 
     fn runtime(provider: Arc<dyn DataProvider>) -> DataSourceRuntime {
         DataSourceRuntime {
-            configuration: data_source_config(),
             data_source_id: DataSourceId(DataSource::id_from_name("Münster")),
             provider,
         }
@@ -1666,7 +1641,6 @@ mod tests {
             station_repo,
             channel_repo,
             measurement_repo,
-            Vec::new(),
         ));
         DataSourceUpdateService::new(
             job_repo,
@@ -2329,11 +2303,6 @@ mod tests {
     /// `runtime` helper is hard-wired to Münster).
     fn named_runtime(name: &str, provider: Arc<dyn DataProvider>) -> DataSourceRuntime {
         DataSourceRuntime {
-            configuration: DataSourceConfiguration::new(
-                name.to_string(),
-                DataProviderConfiguration::new("provider".to_string(), HashMap::new()).unwrap(),
-            )
-            .unwrap(),
             data_source_id: DataSourceId(DataSource::id_from_name(name)),
             provider,
         }
@@ -2494,12 +2463,10 @@ mod tests {
         let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
         let service = service_with(job_repo.clone(), data_source_repo, Vec::new());
 
-        // The scheduler drives the service through both port traits; each
+        // The scheduler drives the service through the scheduling port; the
         // wrapper must delegate to the inherent `run_if_due`.
         let scheduled: &dyn ScheduledJobPort = &service;
         scheduled.run_if_due();
-        let port: &dyn DataSourceUpdateServicePort = &service;
-        port.run_if_due();
 
         let jobs = job_repo.jobs();
         assert_eq!(jobs.len(), 1, "the first tick starts exactly one job");

@@ -197,7 +197,6 @@ fn health_is_down_for_an_unreachable_host() {
 fn parses_config_defaults() {
     let a = EcoCounterV2Adapter::with_fetcher(&config(&[]), Arc::new(FakeFetcher::new(vec![])))
         .unwrap();
-    assert_eq!(a.step(), 3);
     assert_eq!(a.cache_duration_secs(), 300);
 }
 

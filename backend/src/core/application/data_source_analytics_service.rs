@@ -230,6 +230,7 @@ mod tests {
     use crate::core::domain::data_source::data_source::DataSource;
     use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
     use crate::core::domain::data_source::import_run::DataImportRun;
+    use crate::core::domain::data_source::import_run::ImportRunStatus;
     use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
     use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
     use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
@@ -262,10 +263,6 @@ mod tests {
                 .iter()
                 .find(|data_source| data_source.id == id)
                 .cloned())
-        }
-
-        fn find_by_name(&self, _name: &str) -> Result<Option<DataSource>, DomainError> {
-            Ok(None)
         }
 
         fn find_all(&self) -> Result<Vec<DataSource>, DomainError> {
@@ -455,10 +452,6 @@ mod tests {
 
         fn find_by_id(&self, _id: measurement_vo::Id) -> Result<Measurement, DomainError> {
             Err(DomainError::NotFound(Uuid::new_v4()))
-        }
-
-        fn find_all(&self) -> Result<Vec<Measurement>, DomainError> {
-            Ok(Vec::new())
         }
 
         fn find_by_channel_id(
@@ -866,7 +859,7 @@ mod tests {
 
         let detail = service.detail(ds.id).unwrap();
         let last_import = detail.last_import.unwrap();
-        assert!(last_import.failed());
+        assert_eq!(last_import.status, ImportRunStatus::Failed);
         assert_eq!(
             last_import.failure_message.as_deref(),
             Some("provider unreachable")

@@ -32,8 +32,3 @@ pub trait PersistentStateServicePort: Send + Sync {
     fn delete(&self, id: Id, key: &str) -> Result<(), DomainError>;
     fn clear(&self, id: Id) -> Result<(), DomainError>;
 }
-
-/// Entry point for the data-source update job, used by the cron scheduler.
-pub trait DataSourceUpdateServicePort: Send + Sync {
-    fn run_if_due(&self);
-}

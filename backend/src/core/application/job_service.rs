@@ -408,7 +408,6 @@ mod tests {
         let id = Uuid::from_u128(0x32);
         let updated = service.cancel(id, true).unwrap();
         assert_eq!(updated.status, JobStatus::Cancelled);
-        assert!(updated.is_terminal());
     }
 
     #[test]

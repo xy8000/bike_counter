@@ -131,7 +131,8 @@ impl LeipzigWfsAdapter {
         })
     }
 
-    /// The configured cache window in seconds.
+    /// The configured cache window in seconds (test-only accessor).
+    #[cfg(test)]
     pub fn cache_duration_secs(&self) -> u64 {
         self.cache_duration.as_secs()
     }
@@ -140,16 +141,6 @@ impl LeipzigWfsAdapter {
     #[cfg(test)]
     pub(crate) fn wfs_page_size(&self) -> usize {
         self.wfs_page_size
-    }
-
-    /// The cached index, if any (test-only accessor).
-    #[cfg(test)]
-    pub(crate) fn cache_index(&self) -> Option<Arc<LeipzigIndex>> {
-        self.cache
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|cached| cached.index.clone())
     }
 
     /// The attached provider-message sink, if any (cloned handle for callers).

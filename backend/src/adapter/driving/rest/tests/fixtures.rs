@@ -30,7 +30,6 @@ pub const MEASUREMENT_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_00
 pub const JOB_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0031);
 pub const JOB_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0032);
 pub const DATA_SOURCE_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0041);
-pub const DATA_SOURCE_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0042);
 pub const MESSAGE_ID_A: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0051);
 pub const MESSAGE_ID_B: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0052);
 pub const UNKNOWN_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF);
@@ -161,7 +160,6 @@ pub fn data_source_a() -> DataSource {
         imported_until: None,
         last_updated_at: None,
         logo_asset_id: None,
-        logo_sha256: None,
         first_measurement_at: None,
         last_measurement_at: None,
     }
