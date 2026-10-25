@@ -52,7 +52,7 @@ export function ImportHistory({ dataSourceId }: Readonly<{ dataSourceId: string 
 
       {error && <p className="text-sm text-muted-foreground">Could not load the import jobs.</p>}
 
-      {!error && imports && imports.items.length === 0 && (
+      {!error && imports?.items.length === 0 && (
         <p className="text-sm text-muted-foreground">No import jobs recorded yet.</p>
       )}
 
