@@ -20,7 +20,7 @@ use crate::adapter::driving::bff::{
     get_bff_station_overview_stats, get_bff_stations_search, get_bff_stations_sidebar,
     get_bff_stations_sidebar_stats, get_bff_stations_summary_graphs,
     get_bff_stations_summary_monthly, get_bff_stations_summary_overview,
-    get_bff_stations_summary_page, list_bff_stations,
+    get_bff_stations_summary_page, get_bff_version, list_bff_stations,
 };
 pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
@@ -113,6 +113,7 @@ impl RestApiAdapter {
             )
             .route("/api/bff/stations/search", get(get_bff_stations_search))
             .route("/api/bff/global-summary", get(get_bff_global_summary))
+            .route("/api/bff/version", get(get_bff_version))
             .route(
                 "/api/bff/station-overview/{id}",
                 get(get_bff_station_overview),

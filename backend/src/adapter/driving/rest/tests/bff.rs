@@ -313,6 +313,19 @@ async fn bff_global_summary_accepts_exclude_new_stations() {
     assert!(body["bikes_last_day_total"].is_i64() || body["bikes_last_day_total"].is_u64());
 }
 
+#[tokio::test]
+async fn bff_version_returns_cargo_pkg_version() {
+    let app = TestApp::new();
+    let (status, body) = app.get_json("/api/bff/version").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["version"],
+        env!("CARGO_PKG_VERSION"),
+        "the endpoint should expose the crate version from Cargo.toml"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Frontend cache: Cache-Control + ETag revalidation (304)
 // ---------------------------------------------------------------------------
@@ -419,6 +432,7 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "/api/bff/stations/search",
         "/api/bff/stations/summary",
         "/api/bff/global-summary",
+        "/api/bff/version",
         "/api/bff/data-sources",
         "/api/bff/data-sources/{id}",
         "/api/bff/station-detail/{id}",
@@ -449,6 +463,7 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "StationSearchDto",
         "ActionDto",
         "GlobalSummaryDto",
+        "VersionDto",
         "StationsSummaryPageDto",
         "SummaryStationDto",
         "StationsSummaryOverviewDto",
