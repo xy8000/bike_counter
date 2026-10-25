@@ -20,8 +20,12 @@
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
+# Run CPU-heavy build/test steps at a slightly lower priority (nice +1) so a
+# local cargo/npm build never starves the rest of the machine.
+NICE := nice -n 1
+
 build: ## Build the backend (debug)
-	cargo build --manifest-path backend/Cargo.toml --quiet
+	$(NICE) cargo build --manifest-path backend/Cargo.toml --quiet
 
 tiles: ## Build tiles/map.pmtiles (worldwide backdrop + Germany detail) via the backend's `tiles` subcommand (reuses go-pmtiles)
 	docker compose run --rm --no-deps backend tiles
@@ -58,16 +62,16 @@ audit: ## CI gate: cargo audit, fails on any advisory (scripts/audit.sh)
 	./scripts/audit.sh
 
 test: ## Run all backend tests (repository tests spin up a Postgres test container via Docker)
-	cargo test --manifest-path backend/Cargo.toml --quiet
+	$(NICE) cargo test --manifest-path backend/Cargo.toml --quiet
 
 test-rest: ## Run only the REST endpoint tests (in-memory mocks, no Docker required)
-	cargo test --manifest-path backend/Cargo.toml --quiet adapter::driving::rest::tests
+	$(NICE) cargo test --manifest-path backend/Cargo.toml --quiet adapter::driving::rest::tests
 
 test-unit: ## Frontend unit tests with Vitest (jsdom, whole frontend/src)
-	npm run test:unit --prefix frontend
+	$(NICE) npm run test:unit --prefix frontend
 
 test-unit-coverage: ## Frontend unit tests + v8 whole-src coverage (fails below the 80% thresholds in frontend/vitest.config.ts)
-	npm run test:unit:coverage --prefix frontend
+	$(NICE) npm run test:unit:coverage --prefix frontend
 
 test-e2e: ## End-to-end smoke test against the real docker-compose stack (requires Docker)
 	./scripts/docker-compose-test.sh
@@ -82,7 +86,7 @@ test-all: check test ## Formatting/lint gate, then the full test suite
 
 coverage: ## Coverage gates: backend production lines (overall >= COVERAGE_THRESHOLD (default 80%) and core >= CORE_COVERAGE_THRESHOLD (default 95%) via scripts/coverage.sh) AND frontend Vitest whole-src coverage (>= 80% lines per frontend/vitest.config.ts)
 	./scripts/coverage.sh
-	npm run test:unit:coverage --prefix frontend
+	$(NICE) npm run test:unit:coverage --prefix frontend
 
 coverage-open: coverage ## Open the HTML coverage report in a browser
 	@(command -v xdg-open >/dev/null 2>&1 && xdg-open backend/target/coverage/html/index.html) || \
@@ -93,4 +97,4 @@ clean: ## Remove backend build artifacts
 	cargo clean --manifest-path backend/Cargo.toml
 
 frontend-build: ## Build the React frontend (production bundle into frontend/dist)
-	npm run build --prefix frontend
+	$(NICE) npm run build --prefix frontend
