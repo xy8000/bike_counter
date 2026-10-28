@@ -39,7 +39,7 @@ use crate::core::domain::counting_stations::repository_port::CountingStationRepo
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
 use crate::core::domain::data_source::import_run::{
-    DataImportRun, ImportRunFacts, ImportRunStatus,
+    DataImportRun, ImportRunFacts, ImportRunPage, ImportRunStatus,
 };
 use crate::core::domain::data_source::persistent_state_port::PersistentStateStore;
 use crate::core::domain::data_source::provider_message::{
@@ -477,6 +477,47 @@ impl MockDataSourceAnalyticsService {
             data_source_repository,
         }
     }
+
+    /// Deterministic 55-run history, newest first: the newest run failed, the 54
+    /// older runs finished after 60s, so pagination and the overall average are
+    /// both testable.
+    fn import_runs(&self) -> Vec<DataImportRun> {
+        let base = DateTime::parse_from_rfc3339("2026-09-03T07:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        (0..55)
+            .map(|index| {
+                let started_at = base + chrono::Duration::seconds((55 - index) as i64 * 3600);
+                let mut run = DataImportRun::start(
+                    Uuid::new_v4(),
+                    data_source_vo::Id(Uuid::nil()),
+                    None,
+                    started_at,
+                );
+                if index == 0 {
+                    run.status = ImportRunStatus::Failed;
+                    run.finished_at = Some(started_at + chrono::Duration::seconds(10));
+                    run.failure_message = Some("provider unreachable".to_string());
+                    run.facts = ImportRunFacts {
+                        added_measurements: 0,
+                        added_stations: 0,
+                        warning_count: 0,
+                        error_count: 2,
+                    };
+                } else {
+                    run.status = ImportRunStatus::Finished;
+                    run.finished_at = Some(started_at + chrono::Duration::seconds(60));
+                    run.facts = ImportRunFacts {
+                        added_measurements: 10,
+                        added_stations: 2,
+                        warning_count: 1,
+                        error_count: 0,
+                    };
+                }
+                run
+            })
+            .collect()
+    }
 }
 
 impl DataSourceAnalyticsServicePort for MockDataSourceAnalyticsService {
@@ -535,38 +576,29 @@ impl DataSourceAnalyticsServicePort for MockDataSourceAnalyticsService {
         })
     }
 
-    fn imports(&self, _id: data_source_vo::Id) -> Result<Vec<DataImportRun>, DomainError> {
-        // Two runs so the handler exercises the non-empty path: a finished run
-        // (counted towards the average) followed by a failed one (excluded).
-        let base = DateTime::parse_from_rfc3339("2026-09-03T07:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let mut finished = DataImportRun::start(
-            Uuid::new_v4(),
-            data_source_vo::Id(Uuid::nil()),
-            None,
-            base + chrono::Duration::seconds(3600),
-        );
-        finished.status = ImportRunStatus::Finished;
-        finished.finished_at = Some(base + chrono::Duration::seconds(3660));
-        finished.facts = ImportRunFacts {
-            added_measurements: 10,
-            added_stations: 2,
-            warning_count: 1,
-            error_count: 0,
+    fn imports_page(
+        &self,
+        _id: data_source_vo::Id,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ImportRunPage, DomainError> {
+        let all = self.import_runs();
+        let total = all.len() as u64;
+        let finished_durations: Vec<i64> = all
+            .iter()
+            .filter(|run| run.status == ImportRunStatus::Finished)
+            .filter_map(DataImportRun::duration_seconds)
+            .collect();
+        let average_duration_seconds = if finished_durations.is_empty() {
+            None
+        } else {
+            Some(finished_durations.iter().sum::<i64>() / finished_durations.len() as i64)
         };
-        let mut failed =
-            DataImportRun::start(Uuid::new_v4(), data_source_vo::Id(Uuid::nil()), None, base);
-        failed.status = ImportRunStatus::Failed;
-        failed.finished_at = Some(base + chrono::Duration::seconds(10));
-        failed.failure_message = Some("provider unreachable".to_string());
-        failed.facts = ImportRunFacts {
-            added_measurements: 0,
-            added_stations: 0,
-            warning_count: 0,
-            error_count: 2,
-        };
-        Ok(vec![finished, failed])
+        Ok(ImportRunPage {
+            items: all.into_iter().skip(offset).take(limit).collect(),
+            total,
+            average_duration_seconds,
+        })
     }
 }
 

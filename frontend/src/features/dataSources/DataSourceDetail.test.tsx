@@ -56,7 +56,9 @@ function makeServer(
     if (options.pending) return new Promise<Response>(() => {})
     if (options.error) return Promise.reject(new Error('detail failed'))
     if (url.includes('/api/bff/data-sources/ms/imports')) {
-      return Promise.resolve(ok({ items: [], average_duration_seconds: null }))
+      return Promise.resolve(
+        ok({ items: [], total: 0, offset: 0, limit: 50, average_duration_seconds: null }),
+      )
     }
     if (url.includes('/api/bff/data-sources/ms')) {
       return Promise.resolve(ok(options.payload ?? detail({})))

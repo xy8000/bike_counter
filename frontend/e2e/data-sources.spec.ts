@@ -43,15 +43,45 @@ test('clicking a data source opens the detail page', async ({ page }) => {
   await expect(page.getByText('Data imported until', { exact: true })).toBeVisible()
 })
 
-test('the data-source detail shows the import-jobs overview section', async ({ page }) => {
+test('the Import jobs table paginates the seeded runs', async ({ page }) => {
+  // Register before the click so the initial page request is not missed.
+  const firstPageResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes('/imports?offset=0&limit=50') && response.status() === 200,
+  )
+
   await page.getByRole('link', { name: /Münster/ }).click()
   await expect(page).toHaveURL(/\/data-sources\/[0-9a-f-]+/)
 
-  // The jobs overview (issue #38) renders on every detail page. The seeded e2e
-  // stack runs with scheduled jobs disabled and no pre-seeded import runs, so
-  // the empty state is shown instead of a table.
+  // Issue #48: the table renders the newest 50 of the 55 seeded runs by default.
   await expect(page.getByRole('heading', { name: 'Import jobs' })).toBeVisible()
-  await expect(page.getByText('No import jobs recorded yet.')).toBeVisible()
+  const rows = page.getByTestId('import-run-row')
+  await expect(rows).toHaveCount(50)
+  await expect(page.getByText('Showing 1-50 of 55 import jobs')).toBeVisible()
+  await expect(page.getByText('Page 1 of 2')).toBeVisible()
+
+  const payload = await (await firstPageResponse).json()
+  expect(payload.total).toBe(55)
+  expect(payload.items).toHaveLength(50)
+  expect(payload.offset).toBe(0)
+  expect(payload.limit).toBe(50)
+  expect(payload.average_duration_seconds).toBe(30)
+
+  const previous = page.getByRole('button', { name: 'Previous' })
+  const next = page.getByRole('button', { name: 'Next' })
+  await expect(previous).toBeDisabled()
+  await expect(next).toBeEnabled()
+
+  await next.click()
+  await expect(page.getByText('Showing 51-55 of 55 import jobs')).toBeVisible()
+  await expect(page.getByText('Page 2 of 2')).toBeVisible()
+  await expect(rows).toHaveCount(5)
+  await expect(previous).toBeEnabled()
+  await expect(next).toBeDisabled()
+
+  await previous.click()
+  await expect(page.getByText('Showing 1-50 of 55 import jobs')).toBeVisible()
+  await expect(rows).toHaveCount(50)
 })
 
 test('top-bar link reaches the data-sources overview from the map', async ({ page }) => {

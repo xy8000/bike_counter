@@ -10,7 +10,7 @@ use crate::core::domain::channels::repository_port::ChannelRepository;
 use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
 use crate::core::domain::counting_stations::repository_port::CountingStationRepository;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::import_run::DataImportRun;
+use crate::core::domain::data_source::import_run::ImportRunPage;
 use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
 use crate::core::domain::data_source::provider_message_port::ProviderMessageStore;
@@ -158,10 +158,16 @@ impl DataSourceAnalyticsService {
         })
     }
 
-    /// All per-source import runs, newest first, for the jobs overview table and
-    /// its average-duration calculation.
-    pub fn imports(&self, id: DataSourceId) -> Result<Vec<DataImportRun>, DomainError> {
-        self.import_run_repository.list_by_data_source(id)
+    /// One newest-first page of an import-run history plus the total count and
+    /// the average duration over all finished runs.
+    pub fn imports_page(
+        &self,
+        id: DataSourceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ImportRunPage, DomainError> {
+        self.import_run_repository
+            .list_page_by_data_source(id, offset, limit)
     }
 }
 
@@ -206,8 +212,13 @@ impl DataSourceAnalyticsServicePort for DataSourceAnalyticsService {
         self.detail(id)
     }
 
-    fn imports(&self, id: DataSourceId) -> Result<Vec<DataImportRun>, DomainError> {
-        self.imports(id)
+    fn imports_page(
+        &self,
+        id: DataSourceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ImportRunPage, DomainError> {
+        self.imports_page(id, offset, limit)
     }
 }
 
@@ -638,6 +649,27 @@ mod tests {
                 .cloned())
         }
 
+        fn list_by_data_source(
+            &self,
+            data_source_id: DataSourceId,
+        ) -> Result<Vec<DataImportRun>, DomainError> {
+            let mut runs: Vec<DataImportRun> = self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|run| run.data_source_id == data_source_id)
+                .cloned()
+                .collect();
+            runs.sort_by(|left, right| {
+                right
+                    .started_at
+                    .cmp(&left.started_at)
+                    .then_with(|| right.id.cmp(&left.id))
+            });
+            Ok(runs)
+        }
+
         fn finalize_orphaned_running(
             &self,
             _older_than: DateTime<Utc>,
@@ -896,15 +928,79 @@ mod tests {
         );
 
         // The inherent method (used by the BFF handler) and the port method
-        // (used through the trait object) both resolve the run history; the
-        // in-memory double's default returns the newest run.
-        let imports = service.imports(ds.id).unwrap();
-        assert_eq!(imports.len(), 1);
-        assert_eq!(imports[0].id, latest.id);
+        // (used through the trait object) both resolve the full run history in
+        // newest-first order.
+        let imports = service.imports_page(ds.id, 0, 50).unwrap();
+        assert_eq!(imports.total, 2);
+        assert_eq!(imports.items.len(), 2);
+        assert_eq!(imports.items[0].id, latest.id);
+        assert_eq!(imports.items[1].started_at, earlier);
 
-        let via_port = DataSourceAnalyticsServicePort::imports(&service, ds.id).unwrap();
-        assert_eq!(via_port.len(), 1);
-        assert_eq!(via_port[0].id, latest.id);
+        let via_port =
+            DataSourceAnalyticsServicePort::imports_page(&service, ds.id, 0, 50).unwrap();
+        assert_eq!(via_port.total, 2);
+        assert_eq!(via_port.items[0].id, latest.id);
+    }
+
+    #[test]
+    fn imports_page_slices_the_history_and_averages_finished_runs() {
+        let data_sources = MemoryDataSourceRepository::default();
+        let ds = source(1, "Münster");
+        data_sources.upsert(ds.clone()).unwrap();
+
+        let base = DateTime::parse_from_rfc3339("2024-06-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let runs = MemoryImportRunRepository::default();
+
+        let mut finished = Vec::new();
+        for (step, duration_seconds) in [(1, 10), (2, 20), (3, 30)] {
+            let started_at = base + Duration::minutes(step);
+            let mut run = DataImportRun::start(Uuid::new_v4(), ds.id, None, started_at);
+            run.status = ImportRunStatus::Finished;
+            run.finished_at = Some(started_at + Duration::seconds(duration_seconds));
+            runs.insert(&run).unwrap();
+            finished.push(run.id);
+        }
+
+        let failed_started_at = base + Duration::minutes(4);
+        let mut failed = DataImportRun::start(Uuid::new_v4(), ds.id, None, failed_started_at);
+        failed.status = ImportRunStatus::Failed;
+        failed.finished_at = Some(failed_started_at + Duration::seconds(5));
+        failed.failure_message = Some("provider unreachable".to_string());
+        runs.insert(&failed).unwrap();
+
+        let service = service(
+            data_sources,
+            MemoryCountingStationRepository::default(),
+            MemoryChannelRepository::default(),
+            MemoryMeasurementRepository::default(),
+            runs,
+            MemoryProviderMessageStore::default(),
+        );
+
+        let first_page = service.imports_page(ds.id, 0, 2).unwrap();
+        assert_eq!(first_page.total, 4);
+        assert_eq!(first_page.items.len(), 2);
+        assert_eq!(first_page.items[0].id, failed.id, "newest run first");
+        assert_eq!(first_page.items[1].id, finished[2]);
+        assert_eq!(first_page.average_duration_seconds, Some(20));
+
+        let second_page = service.imports_page(ds.id, 2, 2).unwrap();
+        assert_eq!(second_page.total, 4);
+        assert_eq!(second_page.items.len(), 2);
+        assert_eq!(second_page.items[0].id, finished[1]);
+        assert_eq!(second_page.items[1].id, finished[0]);
+        assert_eq!(second_page.average_duration_seconds, Some(20));
+
+        let beyond_end = service.imports_page(ds.id, 10, 2).unwrap();
+        assert_eq!(beyond_end.total, 4);
+        assert!(beyond_end.items.is_empty());
+        assert_eq!(beyond_end.average_duration_seconds, Some(20));
+
+        let via_port = DataSourceAnalyticsServicePort::imports_page(&service, ds.id, 0, 2).unwrap();
+        assert_eq!(via_port.total, 4);
+        assert_eq!(via_port.items.len(), 2);
     }
 
     #[test]

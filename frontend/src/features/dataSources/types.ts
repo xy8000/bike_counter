@@ -37,11 +37,18 @@ export interface DataSourceImport {
   added_stations: number
 }
 
-/// The per-data-source import-run history (`GET /api/bff/data-sources/{id}/imports`).
+/// One page of the per-data-source import-run history
+/// (`GET /api/bff/data-sources/{id}/imports`).
 export interface DataSourceImports {
-  /// Runs newest first.
+  /// Runs newest first (at most `limit` of them).
   items: DataSourceImport[]
-  /// Average duration (seconds) over the finished runs.
+  /// Total number of runs of the data source, independent of the page window.
+  total: number
+  /// Number of newest runs skipped (the page start).
+  offset: number
+  /// Maximum page size the server applied.
+  limit: number
+  /// Average duration (seconds) over **all** finished runs of the source.
   average_duration_seconds: number | null
 }
 
