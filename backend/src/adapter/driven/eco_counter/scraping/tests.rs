@@ -2,7 +2,7 @@
 //! (bare and inlined in HTML), station discovery (+ persistent-state reuse) and
 //! daily measurement paging.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Datelike, Days, NaiveDate, Offset, TimeZone, Utc};
@@ -288,10 +288,10 @@ fn flight_stream_survives_an_unterminated_chunk() {
 }
 
 #[test]
-fn disambiguates_duplicate_station_names() {
-    // The DB has a unique `(data_source_id, name)` index; two Hessen sites share
-    // the short code `1394`, so each duplicated name is suffixed with its stable
-    // external id (the channels mirror the station names).
+fn keeps_duplicate_station_names_verbatim() {
+    // Two Hessen sites share the short code `1394`. Names are display data, not
+    // identity (the external id is the key), so both keep the published name and
+    // the channel mirrors it — nothing is suffixed.
     let payload = json!({ "page": { "sites": [
         { "id": 1001, "name": "1394", "latitude": 50.0, "longitude": 8.0,
           "location": { "lat": 50.0, "lon": 8.0 }, "travelModes": ["bike"] },
@@ -302,29 +302,26 @@ fn disambiguates_duplicate_station_names() {
     ] } });
     let index = parse_site_list(&format!("1c:{payload}"), "Europe/Berlin", None).unwrap();
 
-    let names: std::collections::HashSet<String> =
-        index.stations.iter().map(|s| s.name.clone()).collect();
-    assert_eq!(names.len(), 3, "station names must be unique");
     let by_id: HashMap<&str, &str> = index
         .stations
         .iter()
         .map(|s| (s.external_id.as_str(), s.name.as_str()))
         .collect();
-    assert_eq!(by_id["1001"], "1394 (1001)");
-    assert_eq!(by_id["1002"], "1394 (1002)");
+    assert_eq!(by_id["1001"], "1394");
+    assert_eq!(by_id["1002"], "1394");
     assert_eq!(by_id["1003"], "001");
     let channel = index
         .channels
         .iter()
         .find(|c| c.external_id == "1001")
         .expect("channel 1001");
-    assert_eq!(channel.name, "1394 (1001)");
+    assert_eq!(channel.name, "1394");
 }
 
 #[test]
-fn disambiguation_never_collides_with_a_surviving_name() {
-    // A station whose *raw* name equals a generated "name (id)" must not be
-    // overwritten: the suffixed candidate falls back to a further `#n` suffix.
+fn never_rewrites_a_name_that_looks_like_a_former_suffix() {
+    // A station whose raw name literally ends in "(<other id>)" is kept as the
+    // provider published it.
     let payload = json!({ "page": { "sites": [
         { "id": 1001, "name": "1394", "latitude": 50.0, "longitude": 8.0,
           "location": { "lat": 50.0, "lon": 8.0 }, "travelModes": ["bike"] },
@@ -335,16 +332,13 @@ fn disambiguation_never_collides_with_a_surviving_name() {
     ] } });
     let index = parse_site_list(&format!("1c:{payload}"), "Europe/Berlin", None).unwrap();
 
-    let names: std::collections::HashSet<String> =
-        index.stations.iter().map(|s| s.name.clone()).collect();
-    assert_eq!(names.len(), 3, "names must stay unique: {names:?}");
     let by_id: HashMap<&str, &str> = index
         .stations
         .iter()
         .map(|s| (s.external_id.as_str(), s.name.as_str()))
         .collect();
-    assert_eq!(by_id["1003"], "1394 (1001)", "the raw unique name is kept");
-    assert_eq!(by_id["1001"], "1394 (1001) #2");
+    assert_eq!(by_id["1001"], "1394");
+    assert_eq!(by_id["1003"], "1394 (1001)", "the raw name is kept as sent");
 }
 
 #[test]
@@ -573,10 +567,9 @@ fn discovery_reuses_the_persisted_index_across_restart() {
 }
 
 #[test]
-fn persisted_index_with_duplicate_names_is_normalised_on_load() {
-    // A cached index written before the uniqueness rule can still carry two
-    // stations with the same name; loading it must disambiguate so the core
-    // never violates the unique `(data_source_id, name)` index.
+fn persisted_index_with_duplicate_names_loads_unchanged() {
+    // A cached index may carry two stations with the same name; loading it must
+    // keep both names verbatim (names are not unique, the external id is).
     let store = Arc::new(InMemoryState::default());
     let stored = json!({
         "timezone": "Europe/Berlin",
@@ -598,8 +591,11 @@ fn persisted_index_with_duplicate_names_is_normalised_on_load() {
     provider.attach_persistent_state(store.clone());
 
     let stations = provider.get_all_counting_stations().unwrap();
-    let names: HashSet<String> = stations.iter().map(|s| s.name.clone()).collect();
-    assert_eq!(names.len(), stations.len(), "loaded names must be unique");
+    assert_eq!(stations.len(), 2);
+    assert!(
+        stations.iter().all(|station| station.name == "1394"),
+        "loaded names are kept verbatim"
+    );
     assert!(
         fetcher.requested().is_empty(),
         "cached index needs no fetch"

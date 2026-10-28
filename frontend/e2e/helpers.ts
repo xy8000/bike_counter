@@ -33,8 +33,12 @@ export function mapMarkers(page: Page): Locator {
 /// a bare `getByAltText(name)` resolves to several images once a panel is open;
 /// scoping to the `.station-marker` class keeps the locator on the map flag
 /// (see `stationMarkerImage` in frontend/src/lib/map.tsx).
+///
+/// Station names are not unique (providers publish the same name for several
+/// stations), so the locator is narrowed to the first match: the specs only ever
+/// assert state on "a" marker with that name, never on all of them.
 export function stationMarker(page: Page, name: string): Locator {
-  return page.locator(`.station-marker[alt=${JSON.stringify(name)}]`)
+  return page.locator(`.station-marker[alt=${JSON.stringify(name)}]`).first()
 }
 
 /// A MapLibre cluster circle: renders instead of a group of overlapping station

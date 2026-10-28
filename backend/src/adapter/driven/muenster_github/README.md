@@ -81,11 +81,12 @@ Example block in [`config.toml.example`](../../../../../config.toml.example:25).
    the extraction directory. Extraction goes to a fresh obscured temp dir.
 3. **Aggregate entry is skipped.** `parse_site_index` drops the station aggregate
    column (`id == directory`) so the global summary is not double-counted.
-4. **Naming invariants enforced defensively.** Channel names are made unique
-   within their station and station names unique within the archive by appending
-   the external id when the upstream data is not already unique (e.g. `Bohlweg
-   Fahrräder Stadteinwärts (353484923)`), so imports never violate the V8
-   uniqueness constraints.
+4. **Names are copied verbatim.** The archive really repeats channel names inside
+   one station (e.g. `Bohlweg Fahrräder Stadteinwärts` appears three times) and
+   may repeat station names across the archive. Names are display data: the
+   identity is the row `id` (UUID) and the provider key is
+   `external_datasource_id`, so the parser never rewrites a name and a collision
+   can never fail an import (plan 165 / issue #47).
 5. **Hardcoded station metadata.** The archive's `site_min.json` carries no GPS
    coordinates, so [`station_metadata.rs`](station_metadata.rs:19) hardcodes the
    canonical name + WGS84 coordinates for the known stations (keyed by external

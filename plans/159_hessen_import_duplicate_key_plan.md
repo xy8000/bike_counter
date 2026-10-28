@@ -1,6 +1,11 @@
 # 159 - Hessen import duplicate-key fix
 
-Status: implemented
+Status: superseded
+
+> Superseded by [`165`](165_name_collisions_must_not_fail_imports_plan.md): the
+> disambiguation added here only covered the **insert** path, so the next run wrote
+> the raw name back and failed again (issue #47). Name uniqueness is gone instead of
+> arbitrated.
 
 ## Goal
 

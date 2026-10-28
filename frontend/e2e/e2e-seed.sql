@@ -7,7 +7,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict pLBRXZLzxfWeZjMsqUkmKdXbDC85MpuODEfceua2MdQa6T0buTwtoirlZMFFYbe
+\restrict wc4Zm1Q5PUcMI5kNkOPLMXwjCgDqZu8h1ZAcdFgty0WbDbS0hqEQDMjETwrLoz4
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -170,6 +170,10 @@ CREATE TABLE public.data_source_imports (
     status text NOT NULL,
     failure_message text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    added_measurements bigint DEFAULT 0 NOT NULL,
+    added_stations bigint DEFAULT 0 NOT NULL,
+    warning_count bigint DEFAULT 0 NOT NULL,
+    error_count bigint DEFAULT 0 NOT NULL,
     CONSTRAINT data_source_imports_status_check CHECK ((status = ANY (ARRAY['RUNNING'::text, 'FINISHED'::text, 'FAILED'::text])))
 );
 
@@ -250,6 +254,53 @@ CREATE TABLE public.jobs (
 
 
 --
+-- Name: measurement_channel_bounds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.measurement_channel_bounds (
+    channel_id uuid NOT NULL,
+    first_timestamp timestamp with time zone NOT NULL,
+    last_timestamp timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: measurement_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.measurement_daily (
+    channel_id uuid NOT NULL,
+    resolution_seconds bigint NOT NULL,
+    local_date date NOT NULL,
+    total bigint NOT NULL
+);
+
+
+--
+-- Name: measurement_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.measurement_hourly (
+    channel_id uuid NOT NULL,
+    resolution_seconds bigint NOT NULL,
+    local_date date NOT NULL,
+    local_hour smallint NOT NULL,
+    total bigint NOT NULL
+);
+
+
+--
+-- Name: measurement_rollup_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.measurement_rollup_state (
+    id smallint DEFAULT 1 NOT NULL,
+    backfilled boolean DEFAULT false NOT NULL,
+    CONSTRAINT measurement_rollup_state_id_check CHECK ((id = 1))
+);
+
+
+--
 -- Name: measurements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -261,6 +312,25 @@ CREATE TABLE public.measurements (
     resolution_seconds bigint NOT NULL,
     interval_end timestamp with time zone,
     CONSTRAINT measurements_resolution_positive CHECK ((resolution_seconds > 0))
+);
+
+
+--
+-- Name: opendata_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.opendata_files (
+    id uuid NOT NULL,
+    object_key text NOT NULL,
+    station_id uuid,
+    granularity text NOT NULL,
+    period text NOT NULL,
+    format text NOT NULL,
+    byte_size bigint NOT NULL,
+    sha256 text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT opendata_files_format_check CHECK ((format = ANY (ARRAY['parquet'::text, 'csv.gz'::text, 'json'::text]))),
+    CONSTRAINT opendata_files_granularity_check CHECK ((granularity = ANY (ARRAY['daily'::text, 'monthly'::text])))
 );
 
 
@@ -365,6 +435,38 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: measurement_channel_bounds measurement_channel_bounds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_channel_bounds
+    ADD CONSTRAINT measurement_channel_bounds_pkey PRIMARY KEY (channel_id);
+
+
+--
+-- Name: measurement_daily measurement_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_daily
+    ADD CONSTRAINT measurement_daily_pkey PRIMARY KEY (channel_id, resolution_seconds, local_date);
+
+
+--
+-- Name: measurement_hourly measurement_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_hourly
+    ADD CONSTRAINT measurement_hourly_pkey PRIMARY KEY (channel_id, resolution_seconds, local_date, local_hour);
+
+
+--
+-- Name: measurement_rollup_state measurement_rollup_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_rollup_state
+    ADD CONSTRAINT measurement_rollup_state_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: measurements measurements_channel_timestamp_resolution_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -378,6 +480,22 @@ ALTER TABLE ONLY public.measurements
 
 ALTER TABLE ONLY public.measurements
     ADD CONSTRAINT measurements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: opendata_files opendata_files_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.opendata_files
+    ADD CONSTRAINT opendata_files_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: opendata_files opendata_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.opendata_files
+    ADD CONSTRAINT opendata_files_pkey PRIMARY KEY (id);
 
 
 --
@@ -400,7 +518,7 @@ ALTER TABLE ONLY public.data_source_persistent_state
 -- Name: idx_channels_counting_station_id_name; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_channels_counting_station_id_name ON public.channels USING btree (counting_station_id, name);
+CREATE INDEX idx_channels_counting_station_id_name ON public.channels USING btree (counting_station_id, name);
 
 
 --
@@ -414,7 +532,7 @@ CREATE UNIQUE INDEX idx_channels_external_datasource_id ON public.channels USING
 -- Name: idx_counting_stations_data_source_id_name; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_counting_stations_data_source_id_name ON public.counting_stations USING btree (data_source_id, name) WHERE (data_source_id IS NOT NULL);
+CREATE INDEX idx_counting_stations_data_source_id_name ON public.counting_stations USING btree (data_source_id, name) WHERE (data_source_id IS NOT NULL);
 
 
 --
@@ -467,6 +585,48 @@ CREATE INDEX idx_jobs_type_status_heartbeat ON public.jobs USING btree (job_type
 
 
 --
+-- Name: idx_opendata_files_global_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_opendata_files_global_period ON public.opendata_files USING btree (granularity, period) WHERE (station_id IS NULL);
+
+
+--
+-- Name: idx_opendata_files_station_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_opendata_files_station_period ON public.opendata_files USING btree (station_id, granularity, period);
+
+
+--
+-- Name: measurement_daily_channel_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX measurement_daily_channel_date_idx ON public.measurement_daily USING btree (channel_id, local_date) INCLUDE (resolution_seconds, total);
+
+
+--
+-- Name: measurement_daily_date_resolution_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX measurement_daily_date_resolution_idx ON public.measurement_daily USING btree (local_date, resolution_seconds);
+
+
+--
+-- Name: measurement_hourly_channel_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX measurement_hourly_channel_date_idx ON public.measurement_hourly USING btree (channel_id, local_date) INCLUDE (resolution_seconds, local_hour, total);
+
+
+--
+-- Name: measurement_hourly_date_resolution_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX measurement_hourly_date_resolution_idx ON public.measurement_hourly USING btree (local_date, resolution_seconds);
+
+
+--
 -- Name: measurements_channel_resolution_time_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -478,6 +638,20 @@ CREATE INDEX measurements_channel_resolution_time_idx ON public.measurements USI
 --
 
 CREATE INDEX measurements_timestamp_idx ON public.measurements USING btree ("timestamp") INCLUDE (channel_id, resolution_seconds, value);
+
+
+--
+-- Name: uq_opendata_files_global; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_opendata_files_global ON public.opendata_files USING btree (granularity, period, format) WHERE (station_id IS NULL);
+
+
+--
+-- Name: uq_opendata_files_station; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_opendata_files_station ON public.opendata_files USING btree (station_id, granularity, period, format) WHERE (station_id IS NOT NULL);
 
 
 --
@@ -566,6 +740,30 @@ ALTER TABLE ONLY public.data_sources
 
 
 --
+-- Name: measurement_channel_bounds measurement_channel_bounds_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_channel_bounds
+    ADD CONSTRAINT measurement_channel_bounds_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
+
+
+--
+-- Name: measurement_daily measurement_daily_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_daily
+    ADD CONSTRAINT measurement_daily_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
+
+
+--
+-- Name: measurement_hourly measurement_hourly_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.measurement_hourly
+    ADD CONSTRAINT measurement_hourly_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
+
+
+--
 -- Name: measurements measurements_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -577,7 +775,7 @@ ALTER TABLE ONLY public.measurements
 -- PostgreSQL database dump complete
 --
 
-\unrestrict pLBRXZLzxfWeZjMsqUkmKdXbDC85MpuODEfceua2MdQa6T0buTwtoirlZMFFYbe
+\unrestrict wc4Zm1Q5PUcMI5kNkOPLMXwjCgDqZu8h1ZAcdFgty0WbDbS0hqEQDMjETwrLoz4
 
 
 -- Refinery migration history (all migrations already applied, so
@@ -586,7 +784,7 @@ ALTER TABLE ONLY public.measurements
 -- PostgreSQL database dump
 --
 
-\restrict gGMIhqZTVNM3JYdCFPa8xMUPGPVAusL1mIDELv6Ezn7fqVRruz8GnaiyrfcnI9d
+\restrict ZjYmSD3SEIFjDleNPaGeyzdTZlBNNENDuSaMjU7B4s4zQHYPcfquAP6TeLDGfiE
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -630,6 +828,12 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 20	add_measurements_timestamp_index	2026-09-03T08:03:18.914135575Z	317077820093727940
 21	add_data_source_measurement_bounds	2026-09-03T08:36:46.793533633Z	644983370569446308
 22	add_job_cancellation	2026-09-05T20:20:00.000000000Z	238502165988053264
+23	add_opendata_files	2026-10-28T18:40:40.385938504Z	9616673728998492484
+24	add_measurement_rollups	2026-10-28T18:40:40.38594172Z	8432941241831278498
+25	add_measurement_channel_bounds	2026-10-28T18:40:40.385942672Z	2876333344832181217
+26	add_rollup_read_indexes	2026-10-28T18:40:40.385943904Z	8186839327827891249
+27	add_import_run_facts	2026-10-28T18:40:40.38594713Z	12207297312188217504
+28	drop_name_uniqueness	2026-10-28T18:40:40.385948342Z	5414587629527988699
 \.
 
 
@@ -637,7 +841,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 -- PostgreSQL database dump complete
 --
 
-\unrestrict gGMIhqZTVNM3JYdCFPa8xMUPGPVAusL1mIDELv6Ezn7fqVRruz8GnaiyrfcnI9d
+\unrestrict ZjYmSD3SEIFjDleNPaGeyzdTZlBNNENDuSaMjU7B4s4zQHYPcfquAP6TeLDGfiE
 
 
 -- Data sources (ids are deterministic UUIDv5 of the config names).
@@ -645,7 +849,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 -- PostgreSQL database dump
 --
 
-\restrict oCGT4gBW84gp1KHTk3f7aZPau3I2jttlsn5MRyxKiIpUUjf6j0F2fnW5JE6HJNA
+\restrict uEBva3EBSyIZPPibNibrcVbD0EtQkBU0AhbQhEPqKrdaIBix93bka8d1sr86ScA
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -667,13 +871,13 @@ SET row_security = off;
 --
 
 COPY public.data_sources (id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at) FROM stdin;
-b9145b59-ec36-52da-9343-bde7f49d6046	Landeshauptstadt Düsseldorf | Dauerzählstellen Radverkehr	eco_counter_web_http_provider	2026-09-03 22:00:00+00	2026-09-05 16:01:39.195426+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
-2750a682-90bd-5d2c-8b86-c9038c228d9c	Hessen Mobil	eco_counter_web_http_provider	2026-09-03 22:00:00+00	2026-09-05 14:14:10.167406+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
-eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2026-09-03 22:00:00+00	2026-09-05 16:02:15.388129+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
-10f34f2e-5b11-5314-81b3-159d0e3a0556	Bonn	bonn_opendata_http_provider	2026-09-04 21:00:00+00	2026-09-05 16:00:40.273133+00	\N	\N	2022-12-31 23:00:00+00	2026-09-04 21:00:00+00
-81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	Eco-Counter	eco_counter_v1_http_provider	2026-09-05 16:00:00+00	2026-09-05 16:00:42.365398+00	\N	\N	2025-09-05 01:00:00+00	2026-09-05 16:00:00+00
-a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	2026-09-04 21:45:00+00	2026-09-05 16:00:48.565951+00	\N	\N	2018-12-31 23:00:00+00	2026-09-04 21:45:00+00
-48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	Hamburg	hamburg_sta_http_provider	2026-09-05 15:50:00+00	2026-09-05 16:00:56.405592+00	\N	\N	2020-04-23 12:05:00+00	2026-09-05 15:50:00+00
+a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:48.565951+00	\N	\N	2018-12-31 23:00:00+00	2026-09-04 21:45:00+00
+10f34f2e-5b11-5314-81b3-159d0e3a0556	Bonn	bonn_opendata_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:40.273133+00	\N	\N	2022-12-31 23:00:00+00	2026-09-04 21:00:00+00
+48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	Hamburg	hamburg_sta_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:56.405592+00	\N	\N	2020-04-23 12:05:00+00	2026-09-05 15:50:00+00
+81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	Eco-Counter	eco_counter_v1_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:42.365398+00	\N	\N	2025-09-05 01:00:00+00	2026-09-05 16:00:00+00
+2750a682-90bd-5d2c-8b86-c9038c228d9c	Hessen Mobil	eco_counter_web_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 14:14:10.167406+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+b9145b59-ec36-52da-9343-bde7f49d6046	Landeshauptstadt Düsseldorf | Dauerzählstellen Radverkehr	eco_counter_web_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:01:39.195426+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:02:15.388129+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
 \.
 
 
@@ -681,7 +885,7 @@ a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	
 -- PostgreSQL database dump complete
 --
 
-\unrestrict oCGT4gBW84gp1KHTk3f7aZPau3I2jttlsn5MRyxKiIpUUjf6j0F2fnW5JE6HJNA
+\unrestrict uEBva3EBSyIZPPibNibrcVbD0EtQkBU0AhbQhEPqKrdaIBix93bka8d1sr86ScA
 
 
 -- Assets (metadata only; provider objects are not synced into the e2e
@@ -691,7 +895,7 @@ a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	
 -- PostgreSQL database dump
 --
 
-\restrict djbkauGhq9zfrglI0tDZK67LFnzeSHzr0exBR6FmowEE6EcSjTIyg9dbBYufkUp
+\restrict necuGN1LRBATRve1BeyaQ5aYijXc74BXLqZYcN1cDxIbsYwr1mqYTFh4AQ0HfIp
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -721,7 +925,7 @@ dc0af10d-7f50-4763-9639-ab4a5a3f773c	builtin/bike-icon-black-transparent.svg	ima
 -- PostgreSQL database dump complete
 --
 
-\unrestrict djbkauGhq9zfrglI0tDZK67LFnzeSHzr0exBR6FmowEE6EcSjTIyg9dbBYufkUp
+\unrestrict necuGN1LRBATRve1BeyaQ5aYijXc74BXLqZYcN1cDxIbsYwr1mqYTFh4AQ0HfIp
 
 
 -- Counting stations and channels (all).
@@ -729,7 +933,7 @@ dc0af10d-7f50-4763-9639-ab4a5a3f773c	builtin/bike-icon-black-transparent.svg	ima
 -- PostgreSQL database dump
 --
 
-\restrict shC33G8ioC42U8BZeocahstpgag1GvMfV4UECDi1WVUHbp36PVTJ8Ji1if0j1Z1
+\restrict NTbCfZK5B1QwinwezwU7bsaW3tvMbn06FgWyImMEzH2hKRtKETpjrnUvV2DMTBV
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -751,811 +955,811 @@ SET row_security = off;
 --
 
 COPY public.counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256, status) FROM stdin;
-09f3dc59-40c7-4527-982c-86e42a7f4e8b	Bismarckallee		300038855	a023b021-9754-56c7-8c4e-9c391069aff5	51.956	7.6186	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e58da4d9-b781-4873-9479-e67a97fe464e	Bohlweg		300037926	a023b021-9754-56c7-8c4e-9c391069aff5	51.9688	7.6435	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-85c48593-03a5-477a-8df0-fa3ba53bf6b2	Coesfelder Kreuz		300039328	a023b021-9754-56c7-8c4e-9c391069aff5	51.9659	7.6012	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße		100034978	a023b021-9754-56c7-8c4e-9c391069aff5	51.9715	7.6356	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege		300037931	a023b021-9754-56c7-8c4e-9c391069aff5	51.9796	7.6065	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße		300037925	a023b021-9754-56c7-8c4e-9c391069aff5	51.968	7.638	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1866c3c6-02ff-4178-9afe-0871c9eb0302	Grevener Straße		300039331	a023b021-9754-56c7-8c4e-9c391069aff5	51.975	7.612	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d1b2d952-5724-4b0f-b6cf-931828c03ec3	Hafenstraße		100031300	a023b021-9754-56c7-8c4e-9c391069aff5	51.9549	7.6289	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-10456344-748c-4ae6-9108-f986092d0e37	Hammer Straße		100034980	a023b021-9754-56c7-8c4e-9c391069aff5	51.9545	7.6263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-86b93643-80ea-4ab9-abf5-c5f8c88363bd	Hüfferstraße		100034982	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6109	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade Abschnitt 1 (Dingstiege)		300037544	a023b021-9754-56c7-8c4e-9c391069aff5	51.9795	7.6632	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade Abschnitt 5		100053305	a023b021-9754-56c7-8c4e-9c391069aff5	51.9181	7.6497	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade Abschnitt 6		300037936	a023b021-9754-56c7-8c4e-9c391069aff5	51.8895	7.65	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7e23d159-5899-4c55-957a-d89963173fdc	Lütkenbecker Weg		300037920	a023b021-9754-56c7-8c4e-9c391069aff5	51.943	7.6485	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor		100035541	a023b021-9754-56c7-8c4e-9c391069aff5	51.967	7.6154	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade (nördlich Salzstraße)		100031297	a023b021-9754-56c7-8c4e-9c391069aff5	51.9606	7.634	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westlicher Hals)		300037405	a023b021-9754-56c7-8c4e-9c391069aff5	51.9589	7.6195	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße		300037932	a023b021-9754-56c7-8c4e-9c391069aff5	51.955	7.595	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8bc74780-c0dd-4e71-97f0-e0ada75a0e41	Warendorfer Straße		100034983	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6375	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fed9ecfe-72ac-4098-b99d-a6597965fe90	Weißenburg Str.		300037933	a023b021-9754-56c7-8c4e-9c391069aff5	51.9475	7.6295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f7a545f1-4d17-49d0-9c19-e36d5340da49	Weseler Straße		100034981	a023b021-9754-56c7-8c4e-9c391069aff5	51.9506	7.6177	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f2661888-fad4-4ffe-be44-a0e4ef7df0e0	Wolbecker Straße		100020113	a023b021-9754-56c7-8c4e-9c391069aff5	51.957	7.64	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1d91486f-ed15-4eb1-811d-4f6779d760b0	BN - Brühler Straße		11	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.74042933	7.0695014145	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b39332ac-f545-499f-a0e0-3a371a5a5839	BN - Nordbrücke (Südseite)		3	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.758688588	7.1042793525	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-edeef68f-2110-4648-ab10-12d181780847	BN - Wilhelm-Spiritus-Ufer		13	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.728124333	7.1120745095	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2cc780a8-48b5-47dc-8492-0cc0dcc6e560	BN - Kennedybrücke (Nordseite)		1	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7390301848	7.1152570731	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3c9e9903-f357-4569-a757-ee1b4177c8e3	BN - Nordbrücke (Nordseite)		4	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7590811376	7.1038102283	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-05717a4e-df8e-4a99-9f2e-a8a4f386030d	BN - Südbrücke (Südseite)		5	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7121532099	7.140091817	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-31e21830-145b-4c59-8199-37c8eb3c2f85	BN - Südbrücke (Nordseite)		6	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7199570855	7.1445975348	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f8e36b25-2165-4a6d-afde-c13c67df65ac	BN - Von-Sandt-Ufer		8	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7008288026	7.1668880896	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0867be14-2aca-4396-b4c6-dc6b554d715f	BN - Bröltalbahnweg		10	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7424892925	7.1134669781	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3fe282f7-f725-4bfa-b534-2d53dd42431b	BN - Estermannufer		7	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7681019456	7.0688012735	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c5b739c5-b831-47ba-9e6e-dcb6d012e8d2	BN - Hochwasserdamm Beuel		15	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7334176473	7.1150669195	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-625a6e6b-bd00-454d-9984-2cc674491219	BN - Rhenusallee		9	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7222859932	7.1336086832	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1a9de3f3-9dca-4e84-8cb9-06f3ff5bb920	BN - Rheinweg		19	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7158900448	7.116439997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5198bd82-f11b-46ce-84a2-094e1a96da2b	BN - Joseph-Beuys-Allee		18	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7152400448	7.117649997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-635e3ed1-65d0-47b5-952a-dffefdada546	MQ1.2	Messquerschnitt (Zählfeld-Gruppe) MQ1.2	MQ1.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559502	9.989767	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fcae169d-de64-4d2d-a792-66a00423bdca	MQ1.3	Messquerschnitt (Zählfeld-Gruppe) MQ1.3	MQ1.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559542	9.990131	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8a366bf2-f714-40c2-8a54-f8722d96400b	MQ10.1+10.2	Messquerschnitt (Zählfeld-Gruppe) MQ10.1+10.2	MQ10.1+10.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.528877	10.068003	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d555d386-8664-4683-80b4-7c258912093d	MQ11.1	Messquerschnitt (Zählfeld-Gruppe) MQ11.1	MQ11.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5332298	10.0276723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-998268eb-f5f5-4f45-83aa-60effb497175	MQ11.2	Messquerschnitt (Zählfeld-Gruppe) MQ11.2	MQ11.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.533474	10.027118	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-70482357-f2a6-44c9-ae8e-ac086840c50e	MQ13.1	Messquerschnitt (Zählfeld-Gruppe) MQ13.1	MQ13.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536659	10.028893	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b3e125a6-f275-44a5-a493-9d9e0b96b352	MQ15.1	Messquerschnitt (Zählfeld-Gruppe) MQ15.1	MQ15.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534806	10.023657	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0c9b5df9-a269-4096-8cce-181a09456e9a	MQ15.2	Messquerschnitt (Zählfeld-Gruppe) MQ15.2	MQ15.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534968	10.024064	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1bf368ed-790e-4565-8445-1721f2ba2060	MQ16.1	Messquerschnitt (Zählfeld-Gruppe) MQ16.1	MQ16.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491056	10.018815	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eefa0525-6191-46ad-9c9a-fd5e0de84beb	MQ16.2	Messquerschnitt (Zählfeld-Gruppe) MQ16.2	MQ16.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490771	10.019263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7b161005-f138-4714-9ae8-5c093eb0e74b	MQ16.3	Messquerschnitt (Zählfeld-Gruppe) MQ16.3	MQ16.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.4915841	10.0187062	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-194dff83-9672-44cc-a3a9-d8069389a12c	MQ16.4	Messquerschnitt (Zählfeld-Gruppe) MQ16.4	MQ16.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491983	10.018692	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str.		300037928	a023b021-9754-56c7-8c4e-9c391069aff5	51.979	7.621	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-baae3578-829f-4680-8d0b-ccced489e56e	MQ16.5	Messquerschnitt (Zählfeld-Gruppe) MQ16.5	MQ16.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492149	10.014794	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1a5da770-5f21-459f-b497-ae3029f7523c	MQ16.6	Messquerschnitt (Zählfeld-Gruppe) MQ16.6	MQ16.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492061	10.014586	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5289f3b1-8ab3-400d-89a6-08cb0ee8b15e	MQ17.2	Messquerschnitt (Zählfeld-Gruppe) MQ17.2	MQ17.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.499384	9.999714	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7a38034f-9bd5-44af-963e-26d9b736f6b1	MQ19.1	Messquerschnitt (Zählfeld-Gruppe) MQ19.1	MQ19.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555697	9.93429	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-15244802-0b50-4857-aac7-2cf9384541fa	MQ19.2	Messquerschnitt (Zählfeld-Gruppe) MQ19.2	MQ19.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555714	9.935825	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-26575ab9-f8c5-48f0-aedb-182be7e79fa3	MQ2.2	Messquerschnitt (Zählfeld-Gruppe) MQ2.2	MQ2.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557324	9.966427	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-668f312f-6960-4078-bc0c-36089af4a603	MQ2.3	Messquerschnitt (Zählfeld-Gruppe) MQ2.3	MQ2.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558287	9.967125	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bf845988-3bdd-4511-b3bc-fb09bad70276	MQ2.4	Messquerschnitt (Zählfeld-Gruppe) MQ2.4	MQ2.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557423	9.96769	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-47f0cdec-2f2c-48f9-8e79-aca33f2bd17d	MQ2.5	Messquerschnitt (Zählfeld-Gruppe) MQ2.5	MQ2.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557282	9.96841	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bbcb9757-aadc-4ab4-a2bd-cbece98bbfb9	MQ21.1	Messquerschnitt (Zählfeld-Gruppe) MQ21.1	MQ21.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550347	9.937152	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e3267ba2-ec09-45ad-b31d-8dd0bbe62d2e	MQ21.2	Messquerschnitt (Zählfeld-Gruppe) MQ21.2	MQ21.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55015	9.936802	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-886cbc86-1788-4d99-afdd-dad68f1084f1	MQ21.3+21.4	Messquerschnitt (Zählfeld-Gruppe) MQ21.3+21.4	MQ21.3+21.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550317	9.934094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9542c3c1-4436-4a36-99cf-d2dca965ed2b	MQ22.1	Messquerschnitt (Zählfeld-Gruppe) MQ22.1	MQ22.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5713729	9.8687564	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0d19b786-27af-44aa-81a5-2d5657ef5f36	MQ22.2	Messquerschnitt (Zählfeld-Gruppe) MQ22.2	MQ22.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571228	9.867894	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-017bbf49-47d4-47dd-a252-6ba093fbeb22	MQ24.2	Messquerschnitt (Zählfeld-Gruppe) MQ24.2	MQ24.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5633	9.811997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e9bfc08e-8925-470a-adae-40c904e1fda9	MQ24.3	Messquerschnitt (Zählfeld-Gruppe) MQ24.3	MQ24.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.56323	9.811675	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b7293c19-5c8c-4d5a-af06-a468ec299b62	MQ24.4	Messquerschnitt (Zählfeld-Gruppe) MQ24.4	MQ24.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563846	9.812288	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cba14d7e-69bb-4443-b0aa-9c80c3d0cb3b	MQ24.5	Messquerschnitt (Zählfeld-Gruppe) MQ24.5	MQ24.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563695	9.812502	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2d430191-5148-4000-9f38-9264de575911	MQ24.6	Messquerschnitt (Zählfeld-Gruppe) MQ24.6	MQ24.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.562749	9.81221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cc1b0068-f2f4-49da-b059-a4f9635f7f4b	MQ25.1	Messquerschnitt (Zählfeld-Gruppe) MQ25.1	MQ25.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557633	9.998646	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0c930397-8b1e-4e13-9455-82f70550833a	MQ25.2	Messquerschnitt (Zählfeld-Gruppe) MQ25.2	MQ25.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558098	9.996308	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-889f932a-cefc-4bdc-b4ff-9ff5630dafc8	MQ26.1	Messquerschnitt (Zählfeld-Gruppe) MQ26.1	MQ26.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5613056	9.9903889	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a4f2be3d-95b0-4404-aeb0-3aedc8c07ecf	MQ26.2	Messquerschnitt (Zählfeld-Gruppe) MQ26.2	MQ26.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.561347	9.989535	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-595839f1-bfa3-4f94-8fc8-bbc23373eb19	MQ27.1	Messquerschnitt (Zählfeld-Gruppe) MQ27.1	MQ27.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5593836	9.99578881	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e5c3ad5a-3d1e-4cd7-b657-72b26651132c	MQ27.2#1	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#1	MQ27.2#1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558178	9.993338	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b1923170-7866-4a80-8487-c22850f6efe4	MQ27.2#2	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#2	MQ27.2#2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558288	9.993451	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-afb35ef4-a641-4965-a717-730e782e2432	MQ27.3	Messquerschnitt (Zählfeld-Gruppe) MQ27.3	MQ27.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55835	9.993696	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d00a5f81-88b4-450f-bf2f-e49d063d0d9d	MQ28.1	Messquerschnitt (Zählfeld-Gruppe) MQ28.1	MQ28.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567134	9.970557	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-12aff17e-afac-4cd3-8dff-1f94db662930	MQ28.6	Messquerschnitt (Zählfeld-Gruppe) MQ28.6	MQ28.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567014	9.971653	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ef44abd2-386a-4b47-99cf-4793ea1894bf	MQ29.1	Messquerschnitt (Zählfeld-Gruppe) MQ29.1	MQ29.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575746	9.970223	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2b4a35f1-4983-41ec-8d42-acfac2a2935c	MQ29.2	Messquerschnitt (Zählfeld-Gruppe) MQ29.2	MQ29.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576193	9.970251	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-19fe5121-2590-4ff9-9ca8-6412a815fa19	MQ29.4	Messquerschnitt (Zählfeld-Gruppe) MQ29.4	MQ29.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576142	9.970148	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1dfef925-989f-4786-85d9-5c91d2191d89	MQ3.1	Messquerschnitt (Zählfeld-Gruppe) MQ3.1	MQ3.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549739	9.974404	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6c908933-50ab-4e93-86eb-be9a02ae26b0	MQ3.2	Messquerschnitt (Zählfeld-Gruppe) MQ3.2	MQ3.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549444	9.973766	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-68bd4cf2-b2ab-4e89-ba21-a764421789b2	MQ30.1+30.2	Messquerschnitt (Zählfeld-Gruppe) MQ30.1+30.2	MQ30.1+30.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580137	9.999324	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-66656cfe-7b46-463f-ab61-446975497073	MQ31.1	Messquerschnitt (Zählfeld-Gruppe) MQ31.1	MQ31.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582629	9.9714	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c77b5fdb-f885-4874-bb07-68da0e4c0375	MQ31.2	Messquerschnitt (Zählfeld-Gruppe) MQ31.2	MQ31.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582224	9.972698	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b83ca7a6-8eca-4b97-bb21-4c03c7788138	MQ31.3	Messquerschnitt (Zählfeld-Gruppe) MQ31.3	MQ31.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58237	9.97116	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7283419f-e56a-443a-bce7-7e6303e3c2aa	MQ31.4	Messquerschnitt (Zählfeld-Gruppe) MQ31.4	MQ31.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581422	9.970706	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1096c768-e862-4248-ba0b-61271e1c36cf	MQ31.6	Messquerschnitt (Zählfeld-Gruppe) MQ31.6	MQ31.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581274	9.972468	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dbfa3e2a-f2ed-4075-874a-a93941aac4d6	MQ32.1	Messquerschnitt (Zählfeld-Gruppe) MQ32.1	MQ32.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575775	9.953637	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9a453733-19aa-4dc4-8764-5ab2027c268c	MQ32.2	Messquerschnitt (Zählfeld-Gruppe) MQ32.2	MQ32.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575613	9.954004	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5ba4fc53-19a2-4071-ae02-55de1a0767fe	MQ33.1	Messquerschnitt (Zählfeld-Gruppe) MQ33.1	MQ33.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602845	9.891511	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-77e0772d-b481-4b1b-ab0f-0a2e8cd83138	MQ20.2	Messquerschnitt (Zählfeld-Gruppe) MQ20.2	MQ20.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551914	9.942567	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-0da1ed56-5073-4143-9da5-51b9364196f9	MQ33.2	Messquerschnitt (Zählfeld-Gruppe) MQ33.2	MQ33.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.60194	9.89026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-016b5f5d-dd27-4ff8-a23f-ef8c85f25712	MQ34.1	Messquerschnitt (Zählfeld-Gruppe) MQ34.1	MQ34.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628653	9.93175	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1d0e5994-72cf-4e57-8581-3b0c06fd9cda	MQ34.2	Messquerschnitt (Zählfeld-Gruppe) MQ34.2	MQ34.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628498	9.932425	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c2415aae-e97a-497f-9ad0-9b144214da82	MQ35.1	Messquerschnitt (Zählfeld-Gruppe) MQ35.1	MQ35.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6170439	9.9504622	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-510367da-29cc-4746-9ba2-349cebfeb44b	MQ35.2	Messquerschnitt (Zählfeld-Gruppe) MQ35.2	MQ35.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.616118	9.951241	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1e515b7e-d856-4aaf-af8a-c7f4b7856af7	MQ36.1	Messquerschnitt (Zählfeld-Gruppe) MQ36.1	MQ36.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580543499	9.999595627	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8a93eb34-c409-4d76-bbb6-216b9f09ba32	MQ37.1	Messquerschnitt (Zählfeld-Gruppe) MQ37.1	MQ37.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564829	10.018398	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bc3b7abc-681f-45d8-868e-20e5a2ad396e	MQ37.2	Messquerschnitt (Zählfeld-Gruppe) MQ37.2	MQ37.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564519	10.018337	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0a83facf-5d95-46de-90af-b5d1e935d7ae	MQ37.3	Messquerschnitt (Zählfeld-Gruppe) MQ37.3	MQ37.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.566198	10.020138	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bd1aa173-8048-4587-9b4e-d5544bd92772	MQ38.1	Messquerschnitt (Zählfeld-Gruppe) MQ38.1	MQ38.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576818	10.010544	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e3408d9a-b86b-4a7a-8c96-b4f8b4934aa6	MQ38.2	Messquerschnitt (Zählfeld-Gruppe) MQ38.2	MQ38.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.577056	10.010206	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4fd23adf-e422-4f7d-9447-df6238bd7c72	MQ39.1	Messquerschnitt (Zählfeld-Gruppe) MQ39.1	MQ39.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575603	10.034868	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f8b9cdeb-2edf-419a-88c8-6e68b4ec112f	MQ39.2	Messquerschnitt (Zählfeld-Gruppe) MQ39.2	MQ39.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575833	10.034069	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-562190bd-0d6a-40c7-9c5c-b6c78d6b7715	MQ39.3	Messquerschnitt (Zählfeld-Gruppe) MQ39.3	MQ39.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574726	10.034438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-54faaa05-4f0c-44e9-af64-90d174521ac5	MQ39.4	Messquerschnitt (Zählfeld-Gruppe) MQ39.4	MQ39.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574555	10.035141	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e578a68b-f9be-42d2-b1df-9034c9b8fc64	MQ39.5	Messquerschnitt (Zählfeld-Gruppe) MQ39.5	MQ39.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575758	10.036348	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fbfac096-29f4-459b-ab4a-b26bc1d497b4	MQ39.6	Messquerschnitt (Zählfeld-Gruppe) MQ39.6	MQ39.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575342	10.036291	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b0c972c5-924f-4df8-909f-8f8024acd767	MQ39.7	Messquerschnitt (Zählfeld-Gruppe) MQ39.7	MQ39.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574753	10.036206	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-80f154b5-7f96-4abc-86ee-f611f460a3c8	MQ39.8	Messquerschnitt (Zählfeld-Gruppe) MQ39.8	MQ39.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574649	10.035881	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-66fc0691-137b-4e1f-9de7-b61f67b20e9b	MQ4.1	Messquerschnitt (Zählfeld-Gruppe) MQ4.1	MQ4.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54552	9.971877	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1c8ac7ea-e0a8-4434-a640-144319c45a72	MQ4.2	Messquerschnitt (Zählfeld-Gruppe) MQ4.2	MQ4.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545348	9.971869	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-977a27e6-f014-49a7-b9e3-3c60561492aa	MQ40.1+40.2	Messquerschnitt (Zählfeld-Gruppe) MQ40.1+40.2	MQ40.1+40.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598792	10.042896	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-029c0f2e-b221-4572-afea-d21b60b9de01	MQ40.4	Messquerschnitt (Zählfeld-Gruppe) MQ40.4	MQ40.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597921	10.042453	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9f4ffa2b-f465-48cd-934a-ec33e649cfd2	MQ40.5	Messquerschnitt (Zählfeld-Gruppe) MQ40.5	MQ40.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59801	10.0421266	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a2163a49-3d46-4158-a470-2c1fb73ff554	MQ40.6	Messquerschnitt (Zählfeld-Gruppe) MQ40.6	MQ40.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598353	10.040616	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-990a13e0-d11a-4154-83bf-b62b1e14a950	MQ40.7	Messquerschnitt (Zählfeld-Gruppe) MQ40.7	MQ40.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598456	10.040752	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9abc559e-05e6-467b-a8b5-2de7c271e1f7	MQ40.8	Messquerschnitt (Zählfeld-Gruppe) MQ40.8	MQ40.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599466	10.041376	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5e11aa77-b127-40f9-b2f1-4769b2febc13	MQ40.9	Messquerschnitt (Zählfeld-Gruppe) MQ40.9	MQ40.9	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599749	10.041109	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-097fc8d1-a0fc-49fd-a345-1d1eb647b380	MQ41.1	Messquerschnitt (Zählfeld-Gruppe) MQ41.1	MQ41.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649518	10.017232	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fc7c8417-2e38-400d-9ad0-2c69a4819a2d	MQ41.2	Messquerschnitt (Zählfeld-Gruppe) MQ41.2	MQ41.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649258	10.017161	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-125359db-d6f7-4ead-8489-d69e125f90fb	MQ41.3	Messquerschnitt (Zählfeld-Gruppe) MQ41.3	MQ41.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.648629	10.017824	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c01ada55-c3fd-4b4e-b6b1-436f1107dfb1	MQ41.4	Messquerschnitt (Zählfeld-Gruppe) MQ41.4	MQ41.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649257	10.018631	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f699f15d-c4f4-4f1e-ad30-059c7b1f0dfb	MQ41.5	Messquerschnitt (Zählfeld-Gruppe) MQ41.5	MQ41.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649513	10.018663	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3f02fea6-0595-4ee4-ae34-7b3444ab5079	MQ41.6	Messquerschnitt (Zählfeld-Gruppe) MQ41.6	MQ41.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650325	10.017771	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7fd6b4d5-4508-4f7b-b610-5c1e476a4914	MQ41.7	Messquerschnitt (Zählfeld-Gruppe) MQ41.7	MQ41.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650046	10.01798	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-69544b4a-f8a6-4c3a-a2de-7736634778a9	MQ42.1+42.2	Messquerschnitt (Zählfeld-Gruppe) MQ42.1+42.2	MQ42.1+42.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564546	10.045668	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a5d2fb4b-011c-4cd7-8d45-ea18886bdfa0	MQ42.7+42.8	Messquerschnitt (Zählfeld-Gruppe) MQ42.7+42.8	MQ42.7+42.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563912	10.044655	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0b429d14-66af-4826-bf8e-1b13b18e2887	MQ43.1	Messquerschnitt (Zählfeld-Gruppe) MQ43.1	MQ43.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571186	10.064556	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3217aeed-e380-44d0-8b04-751701f97ba7	MQ43.2	Messquerschnitt (Zählfeld-Gruppe) MQ43.2	MQ43.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571528	10.065005	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a88bf1ba-0e9f-416d-bbea-b56e1863e3fd	MQ44.1+44.2	Messquerschnitt (Zählfeld-Gruppe) MQ44.1+44.2	MQ44.1+44.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.595287	10.146631	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bbdcd18c-0585-4a1a-9ec9-b04a78113ca8	MQ44.3+44.4	Messquerschnitt (Zählfeld-Gruppe) MQ44.3+44.4	MQ44.3+44.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.594784	10.146565	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b9f0c58c-3dcb-45ef-88e6-c163173e92df	MQ45.3	Messquerschnitt (Zählfeld-Gruppe) MQ45.3	MQ45.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605673	10.119519	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2d1dbe5d-bc8d-47ab-916a-6a749245d101	MQ45.4	Messquerschnitt (Zählfeld-Gruppe) MQ45.4	MQ45.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605632	10.119057	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4f1662f1-d2a1-4d6f-8104-7a218b6ce83f	MQ46.1	Messquerschnitt (Zählfeld-Gruppe) MQ46.1	MQ46.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656396	10.094956	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7214a2a3-f139-4ef6-aa6e-33e7194138ce	MQ46.2	Messquerschnitt (Zählfeld-Gruppe) MQ46.2	MQ46.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656217	10.094338	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-22d55dde-7d1f-4d1b-85fc-faf685542902	MQ46.3	Messquerschnitt (Zählfeld-Gruppe) MQ46.3	MQ46.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656607	10.094081	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9be76c54-7fbb-41e0-a0a6-c8a1d8bcfc3f	MQ46.4	Messquerschnitt (Zählfeld-Gruppe) MQ46.4	MQ46.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.657029	10.094174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e172eed9-9d6f-4ceb-91da-98e3f7170ecf	MQ46.5	Messquerschnitt (Zählfeld-Gruppe) MQ46.5	MQ46.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656398	10.092844	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f6bfb17e-9e13-40aa-b243-97fcda01a0b6	MQ46.6	Messquerschnitt (Zählfeld-Gruppe) MQ46.6	MQ46.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656126	10.093074	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7e5beffd-8445-484d-ac51-2bd9d8e3a214	MQ46.7	Messquerschnitt (Zählfeld-Gruppe) MQ46.7	MQ46.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.65604	10.093221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-88e21d93-2183-4a05-a2cf-3cc2d730a7d6	MQ46.8	Messquerschnitt (Zählfeld-Gruppe) MQ46.8	MQ46.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6558936	10.0937151	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d37b8931-e1ad-46e1-ac65-f6a593da61ca	MQ47.1	Messquerschnitt (Zählfeld-Gruppe) MQ47.1	MQ47.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491224	10.207669	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-485b1f4e-86b4-4e61-bfaa-7040370aa893	MQ48.1	Messquerschnitt (Zählfeld-Gruppe) MQ48.1	MQ48.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489577	10.186242	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9ad79121-31cd-4948-9914-08b385301e1f	MQ48.2	Messquerschnitt (Zählfeld-Gruppe) MQ48.2	MQ48.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489552	10.18657	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-677127de-d3a9-4a33-8ecd-cf794f6fddec	MQ49.1	Messquerschnitt (Zählfeld-Gruppe) MQ49.1	MQ49.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.470913	9.993656	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d0638c5e-db0f-4274-870c-2e3605e8355f	MQ50.1	Messquerschnitt (Zählfeld-Gruppe) MQ50.1	MQ50.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456969	9.985025	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-07d18993-983a-4d82-9217-5fdc93255953	MQ50.2	Messquerschnitt (Zählfeld-Gruppe) MQ50.2	MQ50.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456928	9.986936	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4a905f69-f28d-4138-84c9-b5cbd29ed88d	MQ50.3	Messquerschnitt (Zählfeld-Gruppe) MQ50.3	MQ50.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456396	9.985592	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e4b45ee8-cb4f-4947-9f3e-b1679a4aac8d	MQ50.4	Messquerschnitt (Zählfeld-Gruppe) MQ50.4	MQ50.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456908	9.985975	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0d614c5c-5d5f-4d7f-8cb4-178765874647	MQ50.5	Messquerschnitt (Zählfeld-Gruppe) MQ50.5	MQ50.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.45644	9.985882	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a9699225-3ee9-481c-a3cc-f156745238bb	MQ50.6	Messquerschnitt (Zählfeld-Gruppe) MQ50.6	MQ50.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456992	9.984587	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-075d0a14-5e2a-4442-bce7-2a2fa84716c3	MQ52.1	Messquerschnitt (Zählfeld-Gruppe) MQ52.1	MQ52.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.461624	9.978958	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2a74d2f5-ee45-48a5-b068-057be374fa8f	MQ53.2	Messquerschnitt (Zählfeld-Gruppe) MQ53.2	MQ53.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555794	9.949541	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e9ae5f96-83ce-40db-99e5-04412eca1e43	MQ54.1	Messquerschnitt (Zählfeld-Gruppe) MQ54.1	MQ54.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.553388	9.897991	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e5955033-155b-456b-b9e9-15ffc9dbc4c0	MQ55.2	Messquerschnitt (Zählfeld-Gruppe) MQ55.2	MQ55.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548809	9.947219	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1cef93d5-3005-463d-b70f-cf3930c198f0	MQ55.3	Messquerschnitt (Zählfeld-Gruppe) MQ55.3	MQ55.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548736	9.947563	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e1486d48-8de6-4e8f-b13f-af0aa12cd6d2	MQ56.1	Messquerschnitt (Zählfeld-Gruppe) MQ56.1	MQ56.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555075	9.999794	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1e4f9fed-c71e-40c1-a9fc-d37894d1309a	MQ56.2	Messquerschnitt (Zählfeld-Gruppe) MQ56.2	MQ56.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.554296	9.998839	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2e3b31a0-a308-45d5-af08-869155b0e488	MQ57.1	Messquerschnitt (Zählfeld-Gruppe) MQ57.1	MQ57.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549987	9.966551	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bf1f01ae-eb8c-475f-8e21-959a012059ff	MQ57.2	Messquerschnitt (Zählfeld-Gruppe) MQ57.2	MQ57.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549883	9.966789	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-df101039-59f6-46e5-a59f-05fb71d641ab	MQ58.2	Messquerschnitt (Zählfeld-Gruppe) MQ58.2	MQ58.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588565	10.074989	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8757950c-caed-412c-ac99-ba176dd1acc4	MQ58.3	Messquerschnitt (Zählfeld-Gruppe) MQ58.3	MQ58.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588683	10.075165	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4b99f7f9-c9e5-40e4-b24c-39f64f87ecf4	MQ59.1	Messquerschnitt (Zählfeld-Gruppe) MQ59.1	MQ59.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579863	9.93956	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7b7ec8b8-d426-4f2f-81c0-29265b2be2a4	MQ59.2	Messquerschnitt (Zählfeld-Gruppe) MQ59.2	MQ59.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579671	9.939617	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-30d66148-696f-470a-9a96-1bad5ceec307	MQ6.1+6.2	Messquerschnitt (Zählfeld-Gruppe) MQ6.1+6.2	MQ6.1+6.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.541074	9.966599	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6ec07dec-7c4f-463d-9bec-ba0ea26a3b9b	MQ60.1	Messquerschnitt (Zählfeld-Gruppe) MQ60.1	MQ60.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.63297	10.025849	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c361a9a8-ca59-42f1-a1f8-138cfda05b67	MQ61.1	Messquerschnitt (Zählfeld-Gruppe) MQ61.1	MQ61.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55437	10.013955	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3ed49c63-e1d3-4e3a-a1ed-0b99fc99c71d	MQ61.2	Messquerschnitt (Zählfeld-Gruppe) MQ61.2	MQ61.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55423	10.014049	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-61768a1d-0367-48f6-b87b-1c2b90e7fa99	MQ62.1	Messquerschnitt (Zählfeld-Gruppe) MQ62.1	MQ62.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490752	10.158439	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ac4b360d-5cb1-4558-adac-e1a0f6b17611	MQ63.1	Messquerschnitt (Zählfeld-Gruppe) MQ63.1	MQ63.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.570707	9.958068	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9b2bdd44-3c3d-4dec-a10f-62f4b5d292d8	MQ64.1	Messquerschnitt (Zählfeld-Gruppe) MQ64.1	MQ64.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.466293	9.986074	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-23615cb6-5a28-470a-9569-60d7a2a8b5c5	MQ65.1	Messquerschnitt (Zählfeld-Gruppe) MQ65.1	MQ65.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460342	9.975723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b8306794-1a8e-4d6e-baf2-6c7c4b5c0ebb	MQ65.2	Messquerschnitt (Zählfeld-Gruppe) MQ65.2	MQ65.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460248	9.975731	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9f26a8b2-7ce6-4f36-b4eb-f6d7a20355f5	MQ66.1	Messquerschnitt (Zählfeld-Gruppe) MQ66.1	MQ66.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558882	9.962624	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-97aea76f-ba6b-4dc3-a6dc-0fd2eb0bc397	MQ66.2	Messquerschnitt (Zählfeld-Gruppe) MQ66.2	MQ66.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558984	9.961814	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d904a6f0-5dcc-46e9-8573-433a619089d0	MQ68.1	Messquerschnitt (Zählfeld-Gruppe) MQ68.1	MQ68.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494852	10.20662	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7234e762-c5a0-41a6-8904-35e44cb69087	MQ68.2	Messquerschnitt (Zählfeld-Gruppe) MQ68.2	MQ68.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494705	10.206855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6178eab3-5231-427c-a4e0-57b310f6c077	MQ69.1	Messquerschnitt (Zählfeld-Gruppe) MQ69.1	MQ69.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5222	10.015052	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bebc1a3b-74e2-470e-9a96-c1ca970551a3	MQ69.2	Messquerschnitt (Zählfeld-Gruppe) MQ69.2	MQ69.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.521604	10.014901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-820f3c6f-e838-469c-873d-f0e833a9ccc1	MQ70.1	Messquerschnitt (Zählfeld-Gruppe) MQ70.1	MQ70.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602904	10.029791	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8ae8f801-9ab1-4ee3-9973-15a07f67d284	MQ71.1	Messquerschnitt (Zählfeld-Gruppe) MQ71.1	MQ71.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54532	9.99732	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8921abf3-401e-49d0-a83f-bb8d92e02628	MQ71.2	Messquerschnitt (Zählfeld-Gruppe) MQ71.2	MQ71.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545308	9.997238	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4121befc-c0a0-43e6-8a42-5cb5fc0843ae	MQ72.1	Messquerschnitt (Zählfeld-Gruppe) MQ72.1	MQ72.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569591	9.97361	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0bbe8772-a504-49ca-9649-a52c65678163	MQ72.2	Messquerschnitt (Zählfeld-Gruppe) MQ72.2	MQ72.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569716	9.973282	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a80f6806-8443-4013-bbd5-e4b5ff013828	MQ73.1+73.2	Messquerschnitt (Zählfeld-Gruppe) MQ73.1+73.2	MQ73.1+73.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.631293	9.950951	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7772ed13-90d1-40d2-80d7-715ea9b31079	MQ74.1	Messquerschnitt (Zählfeld-Gruppe) MQ74.1	MQ74.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597476	9.932351	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-176b8e62-a6d7-4404-ad52-828bbc765756	MQ74.2	Messquerschnitt (Zählfeld-Gruppe) MQ74.2	MQ74.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59698	9.932577	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7bd84b64-46d2-4959-bdad-730b0c013003	MQ76.1	Messquerschnitt (Zählfeld-Gruppe) MQ76.1	MQ76.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59838	9.958425	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d83d6097-875b-4617-9999-17fd8546c386	MQ77.1	Messquerschnitt (Zählfeld-Gruppe) MQ77.1	MQ77.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598286	9.941963	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c8d71786-655f-4ebd-9bc3-15f182c38821	MQ78.1	Messquerschnitt (Zählfeld-Gruppe) MQ78.1	MQ78.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563392	9.976375	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-52d1d96d-6d99-4faa-9cbd-be7bd2823b3c	MQ78.2	Messquerschnitt (Zählfeld-Gruppe) MQ78.2	MQ78.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563345	9.976814	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8ddcaec5-e00a-4e80-b320-65569bd7408b	MQ79.1	Messquerschnitt (Zählfeld-Gruppe) MQ79.1	MQ79.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564579	9.986991	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9c1522e1-b6ef-4239-a463-afba09fc6ec3	MQ8.1	Messquerschnitt (Zählfeld-Gruppe) MQ8.1	MQ8.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55561	10.038192	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-94f61afd-3a3a-4edb-b125-3fe4db4e9481	MQ80.1	Messquerschnitt (Zählfeld-Gruppe) MQ80.1	MQ80.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.583661	9.995193	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-00d8fa50-0192-4866-89db-a3f5ef364d2a	MQ80.2	Messquerschnitt (Zählfeld-Gruppe) MQ80.2	MQ80.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.995601	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2e02b374-63ec-450b-8fa6-52d146fcc3ed	MQ81.1	Messquerschnitt (Zählfeld-Gruppe) MQ81.1	MQ81.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.932026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-077157be-fbf1-4ab0-9c00-ba5d12ee9686	MQ85.1	Messquerschnitt (Zählfeld-Gruppe) MQ85.1	MQ85.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598475	9.965094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7455f858-9703-4527-8693-73b4c624763d	MQ85.2	Messquerschnitt (Zählfeld-Gruppe) MQ85.2	MQ85.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598244	9.965587	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1999951b-d0d5-4605-82a5-99948d2faab1	MQ86.1	Messquerschnitt (Zählfeld-Gruppe) MQ86.1	MQ86.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559758	10.010613	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-07907880-9dfc-4349-aa5e-fc9a40aa0db5	MQ87.1	Messquerschnitt (Zählfeld-Gruppe) MQ87.1	MQ87.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.560293	9.912201	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-04979100-9e64-4ed6-95c3-bec20ab22d09	MQ9.1	Messquerschnitt (Zählfeld-Gruppe) MQ9.1	MQ9.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.53762575	10.107728436	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4552ab93-28e4-42a2-af8c-46d5790a950f	MQ9.2	Messquerschnitt (Zählfeld-Gruppe) MQ9.2	MQ9.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537557	10.107269	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-79601896-2c58-40ff-9e28-7ce12aee9d41	MQ9.3	Messquerschnitt (Zählfeld-Gruppe) MQ9.3	MQ9.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537886	10.108873	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e663e3be-f262-4f4e-9c4a-efd8444b4f9f	MQ9.4	Messquerschnitt (Zählfeld-Gruppe) MQ9.4	MQ9.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.538032	10.109565	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ede561df-d84e-4e80-88d9-7d7406622cbd	MQ9.5	Messquerschnitt (Zählfeld-Gruppe) MQ9.5	MQ9.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537127	10.108677	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8ddae2e9-8035-42e4-b152-91e380bc828d	MQ9.6	Messquerschnitt (Zählfeld-Gruppe) MQ9.6	MQ9.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536605	10.109432	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-18077a4e-dc01-43b6-b408-ecb321d2f5d9	BN - John-J.-McCloy-Ufer		14	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.6710361979	7.187889234	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-743e7c29-0940-4011-bf2a-3f5e44446a28	BN - Straßburger Weg		12	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7193231194	7.1134228228	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-f6ce388b-6401-4fb6-a2ba-a71124ba7ad4	Stadt Stein Nürnberger Straße	Eco-Counter Zählerstandort (kumulierte Zählung)	100063085	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	49.4163	11.0188	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-13c3c641-e1f7-4ded-8a8f-dc2c1904ca6a	MQ20.1	Messquerschnitt (Zählfeld-Gruppe) MQ20.1	MQ20.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551849	9.942183	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-5f127565-6b7f-42ee-9155-913a0db396cd	MQ20.3	Messquerschnitt (Zählfeld-Gruppe) MQ20.3	MQ20.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5518	9.942182	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-7d624589-fc5a-422b-a35f-28380acfff14	MQ31.5	Messquerschnitt (Zählfeld-Gruppe) MQ31.5	MQ31.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581576	9.972654	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-d7059ec7-b7c1-4a15-9eef-97ea35a69180	064b	Im Mundklingen 2, 64342 Seeheim-Jugenheim	300022489	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.780459	8.648295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-25f34d59-8798-409c-b5d2-124cb3b41b2f	121	K 31, 64653 Lorsch	300022501	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.661562	8.576529	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7844e667-8569-4814-9235-f37b6f7f3196	122	In Den Langen Ruten 10, 64653 Lorsch	300022502	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.651834	8.588048	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4dc4be7d-38b3-423b-89ce-b2b05665cbd5	BN - Kennedybrücke (Südseite)		2	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7374853528	7.1059408371	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b7721b6b-b7c0-45b6-be6e-d4719bb9950d	123	Am Sportplatz 1, 68642 Bürstadt	300022506	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.648463	8.505124	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-13ae5275-9622-4811-9a80-f52faae01aef	051	Darmstädter Straße 75, 64572 Büttelborn	300022516	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.904475	8.536846	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-934465bc-9c04-41c7-8f0c-d46daac3309c	028	Hahner Straße 4, 64372 Ober-Ramstadt	300022578	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.82076694459276	8.750551342964174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-caa7e16c-6946-4974-adf0-47360c0a12b9	059	Rheinstraße 2, 65391 Lorch	300022608	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.040216	7.811698	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1f9e5140-ae97-4750-90c7-d40526933c78	084	Aarstraße 5, 65232 Taunusstein	300022633	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.13081	8.11911	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-796c56e7-6305-4187-824f-45b9a4a2b84c	085	Mainzer Straße 2, 65205 Wiesbaden	300022664	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.052994	8.277912	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-57a6db75-7f2c-4c91-aa49-6c02ad7fa599	086	Auweg 4, 65347 Eltville am Rhein	300022666	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.012307	8.064773	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4c963be6-8d7d-4d9b-86fd-150c29a8ad43	117	Am Schwarzen Berg 9a, 64521 Groß-Gerau	300022699	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.867808	8.487299	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8de4f3e1-fcdc-4035-a487-8d7d77c9786e	043	Lenzenbergstraße 118a, 65931 Frankfurt	300022870	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10407	8.50174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fdcdf742-8f49-4a06-a149-c5c847e35f75	044	Schmalkaldener Straße 19, 65929 Frankfurt	300022899	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10444400452868	8.504185080528261	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f9a81a12-8ca8-424a-85d3-a426328b2679	137a	K 705, 65527 Niedernhausen	300023017	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17381296360336	8.294790387153627	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6f4e996d-56f7-4483-8f88-e196e6b3ceb0	137b	K 705, 65527 Niedernhausen	300023018	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17370989251206	8.294683098793032	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8771705f-a9f8-434e-8037-634f400379e8	138a	Lochmühle 2, 65527 Niedernhausen	300023019	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17702179903081	8.298384547233583	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-79a0c451-96f8-4b86-be8b-62e671609c44	138b	Lochmühle 2, 65527 Niedernhausen	300023020	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17706989556704	8.29848110675812	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7e615aa8-638e-4f96-9815-e5fef24ecd0c	063	Am Höllberg 41, 64625 Bensheim	300023021	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.714285	8.615094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-abeb1c53-849e-4d18-8586-0cc059e3f019	047	Schneiderstraße 9, 65931 Frankfurt	300023023	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.088241	8.513669	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c4e8d7ba-9f65-40c4-840e-545c840f0d5a	135a	Bensheimer Straße 2, 65428 Rüsselsheim	300023024	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968742	8.441705	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3f13f2e0-90f0-4da9-9d7b-0a299c0ad8d8	135b	Bensheimer Straße 2, 65428 Rüsselsheim	300023025	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968707	8.441448	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8a4b1fb7-85d7-4e25-b109-47d46f15d97c	135c	Bensheimer Straße 2, 65428 Rüsselsheim	300023027	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968777	8.441926	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fdb5eff6-eda0-4655-a219-b0d2bdbffec3	087b	Im Lorsbachtal 52, 65719 Hofheim am Taunus	300023094	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124062	8.417656	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4abb336c-6515-4ad5-92bd-01703f648a7c	087a	Im Lorsbachtal 52, 65719 Hofheim am Taunus	300023095	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124074	8.417782	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-782a65c3-1e76-4abe-b7e1-a4f5823a7b4b	045	Rudolfstraße 2, 65830 Kriftel	300023096	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.093464	8.473581	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0b6edea7-60cd-4f59-9c74-682400ed2fcf	052	Heusenstammer Schneise, 63069 Offenbach	300023219	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.071312	8.735104	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c20ad583-505c-4583-9e4c-c38a44d2bcd8	054	Bornwaldweg 8, 63303 Dreieich	300023225	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.027194	8.721126	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bbfef302-d937-4691-ab38-a4c97de02951	071a	Pfungstädter Straße 191, 64297 Darmstadt	300023417	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.814585	8.622561	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e93bf808-4d5b-4b0c-b403-f873263ec6d1	071c	Pfungstädter Straße 180, 64297 Darmstadt	300023418	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.81438786508744	8.622631430625917	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eeb7b2a3-5c2b-4d15-b723-799f9d7e2724	073	Schwimmbadstraße 33, 64732 Bad König	300023481	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.74447792954899	8.996660113334658	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6fa44868-6158-4e3e-9240-26858c048c0a	056	An Der Lettkaut 46, 63303 Dreieich	300023562	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00804	8.674593	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-161bfaa5-18ea-404f-be68-fec3721a4bd0	032	Schleusenweg 18, 65549 Limburg an der Lahn	300023574	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.38997378228848	8.08198928833008	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fbcbfc0b-78b0-4c30-9710-a0007a3a4853	055b	An Der Lettkaut 2, 63303 Dreieich	300023583	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00555525756325	8.685740767032259	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4a3447cd-bdfb-42e1-82ba-07d3b8d5a993	033	L 3020, 65549 Limburg an der Lahn	300023585	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.38841417645314	8.082085847854616	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f2e308d2-9524-491e-8d11-3a07967becb2	026	Erzgebirgstraße 42, 65520 Bad Camberg	300023603	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.287158	8.269894	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1925bd59-8561-4605-accc-2faed4ae6aa2	055a	An Der Lettkaut 2, 63303 Dreieich	300023605	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00540836271789	8.685679435729982	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d027dc36-5870-41e6-a42c-02354bbdce8b	034	Bahnhofstraße 9, 65594 Runkel	300023608	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.40388141892312	8.160535097122194	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d29b3154-26bb-410c-8a55-caa390c632d7	005	Sodener Weg 80, 36396 Steinau an der Straße	300023629	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.304011	9.426305	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4f9db2b0-9704-4693-bcbb-1c851e326075	110	L 3121, 63110 Rodgau	300023639	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.020005	8.927682	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f74a886d-6448-4779-90d7-66081b84eb53	049b	Neckarstraße 46, 64569 Nauheim	300023654	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.94133705545538	8.444877459114652	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-756966a0-54b5-4459-8735-0609d0668f9b	049a	Mainzer Landstraße 18, 64569 Nauheim	300023655	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.94128419433152	8.444802962985706	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f0b46c81-a7e3-452c-98d8-8f17305983c8	128	Rumpenheimer Straße 73a, 63165 Mühlheim am Main	300023661	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.131972	8.820444	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3afd2de3-2038-4db3-9235-ecb82220698e	062	A 66, 63526 Erlensee	300023683	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.144837332681874	8.959830295352733	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d50a62fd-6302-4be8-9ca6-4297b63b276b	127	Pfaffenbrunnenweg 149, 63165 Mühlheim am Main	300023706	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.120881	8.878231	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1e37e863-47e8-42f2-ae27-30a22c383916	119a	Friedberger Landstraße 427a, 60389 Frankfurt	300023733	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.14907	8.70976	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-50d37bd3-9056-4f98-aca5-da6f72ae2631	027	Rheinufer 10, 55252 Wiesbaden	300023897	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.007881	8.280194	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c37ad5b6-96d1-4b24-90f7-ddfadcfee16d	107c	Pionierweg, 61381 Friedrichsdorf	300023972	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.279968	8.612589	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7264ec8f-e8a5-4be7-96ee-784531b362fa	093	B 252, 34477 Twistetal	300023989	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3229507	8.9213161	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1183b62d-0ee9-4c8d-a059-331090e34eaf	142	Am Keseberg 1, 34516 Vöhl	300024019	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.13044714725219	8.877794265681588	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-081f3be1-74d3-4b26-bb63-79a3660bf382	008	Kasseler Straße 22, 34388 Trendelburg	300024063	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.559219	9.415306	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f26b5aaf-8465-4068-94c4-7fbc82308aed	018	Landgraf-Carl-Weg 7, 34388 Trendelburg	300024065	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.559182	9.411189	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0331cf1c-3903-43f0-8bfb-49e660b7030c	126b	Wittmarstraße 25, 34414 Volkmarsen	300024072	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.44414927256679	9.120879649854034	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f0faa72b-9a9e-46c6-951f-8653f57fabe9	124	Hochsauerlandstraße 32, 34508 Willingen	300024079	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2786086	8.6380424	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-271a52cc-c5ed-4813-a5f3-9166632a05ce	097	Birkenallee 32, 34225 Baunatal	300024100	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.260135	9.421791	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-55dcc8ed-54b9-44b7-898c-9f52063499dd	098	Kasseler Straße 79, 34281 Gudensberg	300024108	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.186396	9.393864	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d2eff03a-ca6b-426b-ad25-e4814ca86760	107a	Köpperner Tal, 61381 Friedrichsdorf	300024124	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.281251	8.614871	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4784c44d-a5b9-4c08-8620-bf77f6dc968e	107b	Köpperner Tal, 61381 Friedrichsdorf	300024125	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.281159	8.614847	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e1c69e99-ca4d-4e25-9ebb-70b758051537	126a	Wittmarstraße 25, 34414 Volkmarsen	300024689	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.444184	9.121025	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-342bec76-2274-4aff-8adc-5cbd1d29c14b	074	Lindenstraße 31, 61279 Grävenwiesbach	300024729	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.397502	8.460949	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c214516b-6dd3-466d-aa29-5d6e49ac8553	130	Mühlenweg 19, 61239 Ober-Mörlen	300024746	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.363008	8.64232	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-759ee2f4-f637-481e-b1b7-a0980e5f0ca6	134	Bürgerhausstraße 10, 35410 Hungen	300024832	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.43989	8.925089	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-118364d6-c428-40cc-a82f-142ba1c6a888	023	Mühlweg 5, 35633 Lahnau	300024956	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.575041	8.562544	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8157d17e-d128-4b79-bccb-3d1cbb40dfae	115	Alte Straße 5, 35578 Wetzlar	300024971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.550363	8.46732	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e28ad6d1-52d1-4cb9-8d12-b2ece9ff1049	076	B 277, 35614 Aßlar	300025055	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.59437	8.43609	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eb54aed8-a4f1-4109-83cc-04e5e6562a77	099	Alte Frankfurter Straße 29, 34281 Gudensberg	300025106	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.164951	9.318208	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-78fb239c-0b0c-4767-b194-0f1d19f27025	031a	Berghof 1, 34399 Wesertal	300025131	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.5975583	9.5836931	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-48a6f365-e128-4451-8f98-0e79b238548e	029a	B 80, 34399 Wesertal	300025144	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.5914917	9.5753041	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e2d8ba1b-05a0-4f7b-8448-836adb7a0f12	125	Krugweg 1, 34454 Bad Arolsen	300025166	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.435057	8.958232	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c5afe716-1b14-4620-a6a2-93af08c414eb	094	Rocklinghausen 2, 34477 Twistetal	300025186	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3210971	8.9448834	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ac575611-f0ca-40ef-8f7f-4435a5288e29	141	Orketalstraße 2, 34516 Vöhl	300025203	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.131306	8.874157	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-28ba9852-1bbf-442c-82cb-6aff4a4688e6	092	Am Bahnhof 1, 35108 Allendorf	300025221	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.032988	8.72721	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9ac55f32-c40f-4ba1-bef4-cc109d36e8d4	091	Siegener Straße 62, 35066 Frankenberg	300025228	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.043818	8.766338	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-99594c91-6d9c-4cb7-b503-ccda852b69d0	102	B 253, 34560 Fritzlar	300025264	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.124106	9.235686	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-077fdccb-9e09-4dff-a781-112eb64e69cc	131	B 253, 34560 Fritzlar	300025274	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.124212	9.235291	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-193b5dfd-987f-4c86-a559-cb51f91ab0dc	039	B 455, 63667 Nidda	300025305	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45092	9.04229	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ef9ecef1-bf1c-4245-8b4b-8c666dc813c5	040	Schlaggasse 44, 63667 Nidda	300025313	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.449481	9.048017	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9e6c84dd-5d5e-4f57-acd3-e5086317536d	104	Hain-Gründauer Straße 64, 63584 Gründau	300025339	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2414095	9.1197638	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-59c3fdc7-dbad-4187-82d2-e7cba8780a7a	069	B 276, 35321 Laubach	300025387	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.519292	9.09324	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2aaf8f27-2f36-4815-aa48-52c7dbade718	106	L 3184, 63667 Nidda	300025483	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3853577	9.0281281	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-26bba575-ba30-423e-ab03-788e8d9e097f	038	B 455, 63667 Nidda	300025528	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45188	9.043449	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fef8f50d-9038-4455-9cbc-e0ce167ab1dc	119b	Friedberger Landstraße 427a, 60389 Frankfurt	300025551	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.149228	8.709188	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-879afcc0-2021-451b-88f6-5915ed4515f1	041	B 455, 63667 Nidda	300025604	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45188	9.043449	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-24fc07d9-7cf5-4958-b0e0-bf5feb72a85f	024	Hof Niederfeld 1, 35428 Langgöns	300025661	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.509734	8.654937	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ddfe16ff-ea93-4c6c-a31e-6d87a9cd67c3	075	Sportplatzstraße 20, 61279 Grävenwiesbach	300025675	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.383807	8.406892	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-075fe118-01da-4288-a18c-7aac09e7ac61	025	Greizer Straße 18, 35447 Reiskirchen	300025725	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.595277	8.854319	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d0ba0a5a-9c7f-494b-9133-d25a85f2e8ec	133	Hochwarte 11, 35394 Gießen	300025734	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.564968	8.7405	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e1a3fb2e-0771-4bdb-9c46-dfc742a75f5d	095	Junkerhofstraße 9, 34466 Wolfhagen	300025773	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.358935	9.12251	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0fd17977-7290-4db6-85d5-f0e94db2f360	096	B 83, 34393 Grebenstein	300025779	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.413788	9.440625	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3bfa3b48-d4af-41fd-b6c5-67c956651627	100	Kasseler Straße 59, 37217 Witzenhausen	300025902	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.326411	9.774644	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-53655ed8-bd96-4cf6-9999-f130618c1f4d	078	B 255, 35649 Bischoffen	300025977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.713592	8.499111	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-82173b64-2595-4da7-9a97-10157ec9b2ef	083	Lange Wiese 7, 35708 Haiger	300025986	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.740632	8.239213	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3ffa50b8-02b9-467a-88bf-0fe91ac0a143	081	Berliner Straße 17, 35683 Dillenburg	300026004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.729255	8.292364	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2209b58a-91a1-47c8-96a1-26d430155d83	088	Hüttenstraße 1, 35232 Biedenkopf	300026028	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.867733	8.558567	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-098be9c2-70dd-4b98-a854-3eac4eead362	058	Bert-Brecht-Straße 66, 64291 Darmstadt	300026735	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.932738	8.659898	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-daa443fe-2238-4527-ab43-c1ddde3e4cac	057	Erzhäuser Straße 77, 64291 Darmstadt	300026742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.938147856440935	8.649208221759183	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b5673c88-f075-453c-a9f2-004b53184f37	066	Gut Plausdorf 1, 35287 Amöneburg	300026763	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.808167	8.970818	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-52b8ea39-3fe5-4b96-b0ff-64f1a521c05c	090	Hauptstraße 2, 35083 Wetter	300026859	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.918268	8.708246	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-429a3aa7-f4b7-4158-9dfc-4f5556a5bd73	013	Zimmerplatzweg 14, 35043 Marburg	300026914	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.77422495646949	8.75800146794063	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c0f7f1b7-1870-40b3-b862-7a7fbac7f24b	082	Hauptstraße 1, 35083 Wetter	300026964	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.9189428	8.7050098	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-314c33ac-46e5-4f30-a11c-5651895f4fbf	068	Lauterbacher Straße 30, 34628 Willingshausen	300027016	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.863937	9.192529	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-25ddd35a-cd0b-48b0-a36c-30482ee2166d	009	Zu Den Auewiesen 2, 34613 Schwalmstadt	300027026	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.895875	9.160975	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f6b4ce13-5cd9-4092-868c-a21a73b4e356	112	Kasseler Straße 2, 34621 Frielendorf	300027095	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.939551	9.274604	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8fcbb132-0f3d-4942-b70f-f73f66de834a	015	An Der Schleuse 14, 35606 Solms	300027135	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549419	8.427021	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-61c3d671-61d2-4cab-90b9-3e5372bf8b4d	077	Im Brühl 1, 35614 Aßlar	300027143	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.592154	8.436444	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d67115ab-896f-4d77-85ec-1089b9dc4245	020	Landgrafenstraße 5a, 34326 Morschen	300027303	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.064514	9.619295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1b87db16-4286-48c1-968d-a13da1c7af32	021	L 3067, 34599 Neuental	300027319	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.979054	9.206268	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a64d09d6-1cba-46f4-a9a7-5483004b9673	060	Am Hopfenberg 24, 36286 Neuenstein	300027341	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.907589	9.515396	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1cabb1ab-8470-48dc-b491-0b58f4fbe334	065	Zollstockerweg 12, 36304 Alsfeld	300027385	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.757205	9.241374	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-64a353b8-d6ca-4a2a-b8e8-7f56b6938458	007	Brückenstraße 8b, 36341 Lauterbach	300027418	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.644775	9.363825	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d052f3c3-b84c-42e8-a15c-ca87fe9419aa	067	Schrecksbacher Straße 14, 34637 Schrecksbach	300027432	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.847818	9.291475	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d3190914-3961-499e-9ee2-f03da3551018	006	Am Bahnhof 5, 36318 Schwalmtal	300027443	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.703938	9.306125	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-340a803e-adf9-420a-9b58-708ea667d33e	070	Grünberger Straße 20, 36325 Feldatal	300027451	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.64527	9.13058	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-81e0ead9-e0fc-4065-b099-59ea9bfce61a	143	Milseburg 9, 36115 Hilders	300027562	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.559557	9.910363	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c52f849a-cd11-4128-80ab-02f4b4576188	035	Brunnenstraße 21, 36282 Hauneck	300027601	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.820718	9.727752	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-75103e2c-ec5e-4872-b676-bd702b2a71f7	036	Oberhauner Straße 26, 36282 Hauneck	300027638	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.821562	9.73528	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bd7c41c0-afe2-4e41-a75c-55ebdcae8428	002	Akazienweg 6, 36269 Philippsthal	300027672	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.858373	9.977205	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d6392ba3-e17c-4c4e-bffc-ae4199656617	001	Hof Lämmerthal 1, 36277 Schenklengsfeld	300027685	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.857235	9.805901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3e38fe42-08fb-4a52-8fb7-ab3ce4a1c45a	150	Eichenweg 8, 35794 Mengerskirchen	300027925	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.54305	8.14732	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3f85a534-dfe6-4f91-8719-8428d98abab2	016	Weilburger Straße 9, 35792 Weilburg	300027948	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.506557	8.271959	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-73d70c47-8545-485c-a8dd-7f1625942f5b	003	An Der Aspe 7, 36137 Großenlüder	300028013	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.583187	9.551504	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-284a09a7-4ef2-44a8-9ee2-f2b019aa7e87	061	An Der Wasserscheide 6, 36280 Oberaula	300028438	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.852587	9.434167	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ebe20483-b252-4c93-aa3a-383e336c4983	101	Waldecker Straße 31, 35110 Frankenau	300028442	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.089396	8.950159	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8ac25f47-06ab-4a3d-a847-c3e8cb680cbf	010	Am Graben 5, 34582 Borken	300028467	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.035235	9.250291	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0da6914c-20bf-43c7-a5ef-48a0f975cbec	072	Höchster Straße 14, 64853 Otzberg	300028469	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.806852	8.948973	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-40d2c002-e610-4292-87e1-9c9f1a964720	139	Am Holzweg 28, 65830 Kriftel	300028473	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.077970945397595	8.480629920959474	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b8b96451-3a42-423a-8c40-43d45e3532db	103	Landstraße 86, 37284 Waldkappel	300028665	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.145373	9.920657	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e9eedbb7-9059-4638-8da6-cf1ea21c6d6b	113	Alter Graben 16, 36205 Sontra	300028667	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.103591	9.960599	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-26c69280-47ba-43ce-8fc3-9f96825c1431	105	Am Berg 16, 63683 Ortenberg	300029624	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.333868	9.038855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5bfef0d0-3194-41e8-aefe-e50103d8f5a3	129	Butzbacher Straße 110a, 35510 Butzbach	300029628	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.424771	8.678182	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0e88cc14-8959-4eba-868d-dbad16975bad	011	Zum Steinkreuz 8, 34466 Wolfhagen	300029976	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.334768	9.252955	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7fb24229-4ea3-440a-b390-ced97da8f01e	Leipziger Straße	Industriestraße 26, 34260 Kaufungen	300032693	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.285710416300944	9.583924012622449	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1186af82-2dc4-484d-85ae-cac8c44a4715	800	Auf Der Mainspitze 21, 65462 Ginsheim-Gustavsburg	300032707	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99376	8.30474	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-71a454c9-df1f-420c-89a1-bfb6a709ebb0	801	Mainzer Straße 153, 65428 Rüsselsheim	300032708	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99700880391229	8.385154008865358	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8dbb2929-d6eb-4f8a-82d7-8e669fb42219	802	Mönchhofallee 20, 65479 Raunheim	300032709	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.03636646906296	8.475088477134706	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2de3773a-a4ca-4f9e-b42b-77bcc9eadd0f	804	Hauptstraße 65, 65462 Ginsheim-Gustavsburg	300032710	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.962412	8.346344	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7e411607-8937-48de-aae0-5517c41b7ad2	808	Mönchbruchallee, 65428 Rüsselsheim	300032711	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99927434669023	8.514758348464968	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-45fd5f40-fa54-4afd-baa0-96e81265b6a4	810		300032712	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.767857	8.4789693	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a3999497-2430-499b-ba0b-9a1b0404e637	850	Im Espen 1, 35091 Cölbe	300032713	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.856805	8.788355	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-36382e5b-68d2-4ee5-ac30-4eb7f5df8448	851	Alsfelder Straße 102, 35274 Kirchhain	300032714	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.807566	8.937352	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e0c822b4-7c9b-4a54-ac82-f6435150653e	852	Falkenweg 24, 35260 Stadtallendorf	300032715	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.82699	9.040242	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7ac4d911-9233-4d17-90db-cf0346f7d386	853	Mühlweg 7, 35274 Kirchhain	300032716	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.842431	8.868084	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ef36ec74-1471-4ecc-820f-8fc8bdb96539	854	Perfstraße 4, 35216 Biedenkopf	300032717	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.9090387	8.4621254	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-197e7b14-8636-4f6c-8d1c-2567e124564d	855	Alter Kirchhainer Weg 16, 35039 Marburg	300032718	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.805601	8.784028	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-35534dc0-809d-44c5-8752-7b327be0f389	856	Auf Dem Krummacker 8, 35216 Biedenkopf	300032719	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.922005	8.460612	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b6df7f36-f989-4916-a85c-48ff93ea64b3	857	Binge 40, 35083 Wetter	300032720	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.908797	8.718868	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a94169f3-6926-4dec-b192-98806f763629	858	Auestraße 35, 35288 Wohratal	300032721	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.915813	8.942747	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ab69519b-4fd0-4f81-874e-04e048097333	859	Mühlstraße 68a, 35075 Gladenbach	300032722	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7526626	8.527576	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a815e643-3839-4f96-9d31-60e4c9e2609c	860	Hüttenmühlweg 14, 35075 Gladenbach	300032723	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7513449	8.589884	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-aaab1011-193f-411f-b9ef-89dc1198bdf2	861	Strassmühle 2, 35085 Ebsdorfergrund	300032724	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.714012	8.777644	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fdae896e-279a-4618-9518-b47639ad7306	862	Gießener Landstraße 27, 35102 Lohra	300032725	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.68537	8.606149	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e649f59f-9485-4ef0-af86-2449d890e558	863	Kälbachtalbrücke, 35279 Neustadt	300032726	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.87421275347331	9.1214969658904	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-143cf41a-37da-4afc-ac5c-dd88079cc981	864	Am Hopfen 3, 35096 Weimar	300032727	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.725780541659766	8.716765426215717	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-98559781-5c10-464d-9b24-b4fb2f46a625	865	Auf Dem Kreuz 1, 35719 Angelburg	300032728	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.832451	8.453297	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8fb7692d-ed75-42ba-a024-1ee3547bbf3f	880	Frankfurter Straße 129, 61231 Bad Nauheim	300032729	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.375038	8.740434	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d3815963-6d88-4b57-ae56-ee8e8e936443	881	Elsegrund 6, 63654 Büdingen	300032730	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.292119	9.03581	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1e847f8c-bcd7-494c-8107-38866b5e1d4e	883	Parkweg 3, 61197 Florstadt	300032731	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.332634988227554	8.907256070233418	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-53210d4c-46a3-4da1-87bd-bb0b35863f72	884	Frankfurter Straße 35, 61169 Friedberg	300032732	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.320836	8.746944	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9702a0f3-824f-4f19-ac24-6ccb3f9852e8	885		300032733	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.413406	9.223973	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bd3eb677-3935-4d36-8e04-4e991338c9b8	886	Schlinkenweg 14, 61184 Karben	300032734	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.236573	8.71221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8e7fe179-070b-43af-860b-be4321671d27	887	Dieselstraße 32, 61184 Karben	300032735	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.221151	8.763435	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3521269a-1c90-483c-8122-d1759d67acc8	888	Max-Planck-Straße 40, 61184 Karben	300032736	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.220821	8.767392	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4008f308-ae2e-426a-bc3c-879a97320bb9	889	Seewiese 17, 63667 Nidda	300032737	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.407297	9.009599	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-985da359-a693-495f-8f9a-5ad74a13ddda	834	Außerhalb 1, 64859 Eppertshausen	300032739	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.950067	8.827531	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b33acdea-ecb9-430d-9c25-eb144c879068	830	Jenaer Straße 21, 64372 Ober-Ramstadt	300032740	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.838404	8.763913	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-84e3396d-c706-4891-abae-01586e3bda37	832	Waldstraße 79n, 64846 Dieburg	300032742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.887503	8.8201899	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fc3ffc5f-8deb-414d-893a-fccc15226677	833	Ober-Beerbacher Straße, 64342 Seeheim-Jugenheim	300032743	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.762613	8.660226	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4242120d-b46c-47a5-9b8b-afcfd8c4d891	831	Eichelsweg 16, 64367 Mühltal	300032744	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.790314	8.702873	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9f361fef-1f79-4a02-ac7d-2e9f6ad04dfd	420	Frankfurter Straße 115a, 65779 Kelkheim	300032745	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12953	8.45905	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8d792d28-ad29-4d52-993e-cfccd041e0ef	430	Wallstraße 20, 61462 Königstein im Taunus	300032747	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17556	8.453883	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-00931e5f-904e-4f73-b26c-a90e1a101aac	807	Am Hegbachsee 46, 64569 Nauheim	300032748	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.945796	8.468996	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-21f7b47e-73af-419d-8dda-f6e311d44bd5	780	Obere Schulstraße 7, 61273 Wehrheim	300032749	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.27779	8.549736	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f6de9763-bbf4-479a-a54a-0efcc36fda33	771	Bahnstraße 79, 65843 Sulzbach	300032751	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.126039753149776	8.521517515182497	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7a26ef5b-65c7-451a-8760-6a35f2b12995	772	Oberliederbacher Weg 44, 65843 Sulzbach	300032752	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1316	8.51419	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1eff667a-c829-4c29-adfb-e23823ef1a7e	770	Dunantring 71, 65936 Sulzbach	300032753	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12323	8.55277	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ab276087-f730-4f40-8f09-0de2d4d26cb1	740	Gut Bodenhausen 11, 34317 Habichtswald	300032802	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.33162	9.30741	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-92f1c023-e93e-45d5-9518-a55b910ad7b6	390	Massenheimer Landstraße 15, 65239 Hochheim am Main	300032803	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.02751	8.36506	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d2e011c8-32aa-483f-9322-e9bca76d15e2	391	Rheinstraße 43, 65239 Hochheim am Main	300032804	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00241213676519	8.35916340351105	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eec2579d-08b4-4efc-b68e-7f0519e05d78	410	Königstor 50, 34117 Kassel	300032805	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.313523	9.48088	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6d79294e-899a-44a0-998d-9b9452e0e699	411	Fiedlerstraße 5, 34127 Kassel	300032806	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.328154	9.503701	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5fb124c9-b76d-44e6-a8a7-455243ce6d1a	412	Menzelstraße 46, 34121 Kassel	300032807	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.301025	9.483848	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9c81b688-1bf6-440b-8190-f856f3290105	413	Brüder-Grimm-Straße 139, 34134 Kassel	300032808	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.292278	9.460877	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cf3b3dcd-e679-4bef-9434-0ffbf1f85142	414	Landaustraße 1a, 34121 Kassel	300032809	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.307063	9.49073	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5d902fba-b94c-4146-851c-55998c1f3d43	510a	Berliner Straße 76, 63065 Offenbach	300032810	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.105873	8.763238	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d57cc522-1d78-436e-9190-4349c026c6f8	510b	Berliner Straße 80, 63065 Offenbach	300032811	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.106109	8.762816	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e03dfcd6-0f0d-4b0c-8bbd-2c5e4c187979	511	Richard-Wagner-Straße 71, 63069 Offenbach	300032812	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.087803	8.752807	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-492955b5-8598-4c87-b52e-2c608766200e	512	Lämmerspieler Weg 27, 63071 Offenbach	300032813	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.102226	8.781639	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-263b3e10-8c17-49b6-bb12-e2b2e05ea10b	513	Luisenstraße 78, 63067 Offenbach	300032814	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.105046	8.756004	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0cf28682-c7cf-47b1-8239-8590e290bd4f	514a	Mühlheimer Straße 425, 63075 Offenbach	300032815	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.114905	8.809187	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7fd02962-8534-412d-b9fe-61b6558f17f6	514b		300032816	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115142	8.809067	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eb473a51-db8a-49c5-b5ae-21e76bb73bf9	515	Rumpenheimer Straße 143, 63075 Offenbach	300032817	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12573	8.792634	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-559ea59f-3341-4b8f-9982-977725e4d2b8	514	Mühlheimer Straße 425, 63075 Offenbach	300032818	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115009182002304	8.80908250808716	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fdde778a-cd52-45e7-bad0-6abda459ab8e	370		300032820	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.55862	9.66381	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f810fd04-d5bf-44f4-a905-5a06a92f7b3b	371	Karl-Storch-Straße 4, 36041 Fulda	300032821	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.534088	9.668252	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bb7d740c-9838-48d3-963a-b7e56f4a950b	372	Wasserkuppenstraße 29-31, 36043 Fulda	300032822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.535947	9.698615	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f826f524-00f0-47bc-9c22-3d7f89a456b8	373	Gallasiniring 20a, 36043 Fulda	300032823	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549972	9.699978	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6510a11b-da9b-41e8-a728-afc07440c110	374	Birkenallee 8, 36037 Fulda	300032824	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.559141	9.693172	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-488e07cb-e8d1-4325-a4bc-2a9d5f3fd80c	470	Frankfurter Landstraße 1, 64546 Mörfelden-Walldorf	300032825	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.999922610215464	8.588443994522097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-348c4cb5-9761-431f-aeea-c1ddbc6847b4	471	Elisabeth-Selbert-Straße 8, 64546 Mörfelden-Walldorf	300032826	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.98228879729856	8.564963936805727	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0416cc06-15b3-4ddb-83b8-afb8eb3d6c72	500	Frankfurter Landstraße 72, 61440 Oberursel	300032829	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.192623149347774	8.594720363616945	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-21f57f27-9176-4242-bd4c-43e25c60174a	501	Gattenhöferweg 43, 61440 Oberursel	300032830	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191307776477046	8.583487272262575	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2f25395e-709c-4356-8f42-fd17d2fcaee5	502	Herzbergstraße 11, 61440 Oberursel	300032831	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.204332835198606	8.585793972015383	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8ecdaa56-5a74-4901-ae02-ca35f4a4e7dd	574	Volpertshäuser Straße 38, 35578 Wetzlar	300032833	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.540046	8.525261	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9f0527f3-90b3-4e55-84de-7d92fe8691e7	573	Solmserstraße 75, 35578 Wetzlar	300032834	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.54537	8.501787	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4886f3f3-b5b7-4de7-a1e2-6fad21f72748	572	Wolfgang-Kühle-Straße 10, 35576 Wetzlar	300032835	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5659731	8.5106459	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8c1534d3-a284-4ce9-af50-3fb6a9e683d1	570	Dillufer 40, 35576 Wetzlar	300032836	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5548821	8.49048	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-882b463f-9fe7-41e5-af22-0a415d680ca4	533	Kreisquerverbindung, 63110 Rodgau	300032839	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.01519	8.851267	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-40fbce8a-ce5e-4c73-b4a8-4a439b0f95d5	532	Nieuwpoorter Straße, 63110 Rodgau	300032840	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.015754	8.890968	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-28669ad8-c16b-4b41-8615-d10f2ad220fd	531		300032841	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.012575791017355	8.883588910102846	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2ca366da-df86-4c9d-b6c9-e5ba936a0e34	530	Hauptstraße 50a, 63110 Rodgau	300032842	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.04992	8.87793	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-142f7b13-5976-4800-8e72-def0d120c2ac	360	Rheinstraße 72, 63303 Dreieich	300032867	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9910717	8.736355	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-486dc72b-4eca-40c7-b490-7e81cbeecb18	361	Kurt-Schumacher-Ring 110, 63303 Dreieich	300032868	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.036387	8.695243	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d1616daf-7293-4afc-b884-21a20be748f6	362	Liebknechtstraße 144, 63303 Dreieich	300032869	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.020415	8.674265	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-64e285cb-9662-49ce-9082-920e2a3ad871	340	Fehlheimer Straße 9, 64625 Bensheim	300032871	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.683512925332494	8.619681000709535	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-69e8c71b-b528-47e8-8e62-4a033703cb4f	400	Niederhofheimer Straße 60a, 65719 Hofheim am Taunus	300032873	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.09562	8.46079	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0a80f571-5d67-4ca4-9e12-1f3bed5b8826	401		300032874	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.08021	8.43859	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bea5a6ba-e4af-422b-ac00-ee736242742b	402	Zeilsheimer Straße 20, 65719 Hofheim am Taunus	300032875	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.08837675341379	8.452633023262026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f26659eb-b0e7-4d23-ada1-b58b168489ed	403	Casteller Straße 97g, 65719 Hofheim am Taunus	300032876	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.05614	8.4052	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-346bd82a-12da-4895-8c65-a59bdd2f8d52	404	Oberer Haingraben 28a, 65719 Hofheim am Taunus	300032877	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0627882	8.4202249	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6680a00f-f351-4c8d-b756-baaa595a8448	440	Frankenberger Landstraße 11, 34497 Korbach	300032878	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.263137	8.884441	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6c30218a-29e9-492a-aff3-9afa96cb6f95	450	Frankfurter Straße 93, 61476 Kronberg	300032879	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17262419684514	8.525733947753908	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-89250ae5-c973-49ce-9e30-a41a4ca6968d	451	Im Haak 6, 61476 Kronberg	300032880	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.18692866314112	8.493794202804567	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-77051cde-02cb-4ae8-8d3c-de983e29d717	452	Sodener Straße 36, 61476 Kronberg	300032881	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1802	8.53783	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c2ed6976-b494-4f88-97f1-7cbe6d8cdd72	490	Leipziger Straße 35, 63179 Obertshausen	300032884	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.07737	8.852167	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-413e7ccb-9ac8-4656-beba-dc8cee58add0	310a	Zum Niddersteg 2, 63674 Altenstadt	300032885	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.283053	8.940106	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7eaa7e60-7f54-4393-8f82-05e4adba14af	310b	Zum Niddersteg 7, 63674 Altenstadt	300032886	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.282786	8.940033	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-393d0c78-6ddb-4790-a653-14dd75c494cb	540		300032887	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.307169	8.732088	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bea85abc-4b1e-4930-a1b1-d1183c2a5e04	541	Gutenbergstraße 8b, 61191 Rosbach vor der Höhe	300032888	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.271702	8.705564	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-adb56df9-b34f-4fa2-838b-8dbaadca98ca	550	Ascheröder Straße 57, 34613 Schwalmstadt	300032890	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.909912	9.203595	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c9c440de-5192-4642-940e-bf8cc6289e03	551	Festungsstraße 6, 34613 Schwalmstadt	300032891	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.908842	9.234421	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9c77af6b-6be4-4fc0-8871-c396fb801b84	553	Zwalmstraße 2, 34613 Schwalmstadt	300032892	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.914943	9.19679	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-081c6056-3426-437b-ae55-a4f7ce96cb74	900		300032993	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.112920247359	8.75178334164736	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8df9fed0-10b8-4276-a298-d998d529262d	910	Einsteinstraße 1, 64285 Darmstadt	300032994	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.84743	8.64602	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-de472b6f-4390-4396-8f74-41e9fd533251	710	Eichenhang 18, 34277 Fuldabrück	300032995	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.257009	9.503334	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-981302af-cf0d-49d3-ba1d-e5cd029dfa97	701	Am Heegbach 16, 63329 Egelsbach	300032996	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.954739	8.651637	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f740bb4a-b8b0-40f8-a9b7-47c161d0106a	554	Ludwig-Jahn-Straße 2, 34626 Neukirchen	300032997	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.866981	9.339741	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d9f3f8ae-9cf0-42d1-a1b8-b4d9b43fe13c	560	Kreuzstraße 72, 64331 Weiterstadt	300032998	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9079428	8.5864387	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a203ddf1-c984-4797-b070-2698b4ef398e	561	Rudolf-Diesel-Straße 26a, 64331 Weiterstadt	300032999	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.903192	8.609398	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ec164ceb-70fd-498d-b4c3-65c0db14124b	562	Münchweg 1a, 64331 Weiterstadt	300033000	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.91302	8.61726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5e60daa2-74cf-48b0-b1d1-a339c65fdf94	590	Frankfurter Straße 215, 61118 Bad Vilbel	300033002	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.171578	8.731607	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3da51535-6f23-47d1-9199-1799bc62d90c	591	Hermann-Gmeiner-Str. 3, 61118 Bad Vilbel	300033003	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.171462	8.731707	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-07db0e94-867a-42a7-ac73-7b63ddd7672b	592	Huizener Straße 76, 61118 Bad Vilbel	300033004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17991	8.72212	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-97fdaf1e-1b05-48c9-813b-bf977dae3830	320	Berliner Straße 3, 34537 Bad Wildungen	300033005	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.121158	9.137177	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b6e2e9b0-b57c-4391-a3df-127c008cd5b1	330	Auhammer 7, 35088 Battenberg	300033006	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.03617906279141	8.61930656439654	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f5f366ef-ce91-447a-a2fa-cba1c3057608	380	Darmstädter Straße 102, 64646 Heppenheim	300033007	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6591501	8.630257	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cf2f327e-de7d-4d3a-bd5b-81a6e5b22003	381	Ernst-Schneider-Straße 17, 64646 Heppenheim	300033008	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.640949	8.635017	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0a244517-d4eb-4d2d-b636-be5235768d1e	300a	Bockenheimer Landstraße 3, 60325 Frankfurt	300033286	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115535	8.67047	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-753900ab-ed80-49d2-bbe3-b8bab3b3a5b1	300b	Bockenheimer Landstraße 3, 60325 Frankfurt	300033287	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115455	8.670261	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c65fb70c-edc1-4664-83e0-a0f5eb6d275b	301a	Friedberger Landstraße 115, 60318 Frankfurt	300033288	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12671	8.6919	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-568d041f-1adb-45b3-9ecf-b5883c247e60	301b	Friedberger Landstraße 121, 60318 Frankfurt	300033289	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12712	8.69183	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-87b4cb20-bc3a-4662-b8e1-a862985f00fa	302a	Schaumainkai 50, 60596 Frankfurt	300033290	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.104972	8.675413	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3215fd5d-c2ac-446b-8f40-ae9abce612d0	302b	Schaumainkai 55, 60596 Frankfurt	300033291	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.104585	8.674973	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5d1d6a40-c106-4177-8762-8acd3fbce53b	303	Alexander-Riese-Weg 2, 60439 Frankfurt	300033292	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.162759	8.652591	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7f68b240-043a-4d4a-9462-fe6253aad0a9	304	Ziegelhüttenweg 333, 60598 Frankfurt	300033293	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.079886	8.672052	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9140b93b-70d2-4901-8324-97c1629d0143	350	Weidenweg 1, 64289 Darmstadt	300033295	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8950573	8.6654254	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6c27897d-e045-4156-a1f5-b0050fd55d50	351	Havelstraße 1, 64295 Darmstadt	300033296	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8678561642216	8.64139833043737	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-29e54d5d-bf3f-4adc-97f0-b1bf7136c5ad	352		300033297	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.874005	8.672037	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9938d090-3a96-4cef-b300-090928648899	353	Rheinstraße 24, 64283 Darmstadt	300033298	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.872126	8.646659	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f013bf27-c3af-48c3-90a0-17f20c787f45	354	Robert-Bosch-Straße 14, 64293 Darmstadt	300033299	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.869377	8.623713	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-01ce127c-b117-4e88-9658-42b9eb9902f6	Steinbacher Straße		300034327	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.161369	8.55826	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2a79a816-b05f-4cb8-99d8-0d3618f085d9	920	Grabenstraße 36, 65428 Rüsselsheim	300039700	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9928	8.41684	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b7d1a05b-d34c-4068-af62-36ad89766001	921	Oppenheimer Straße 2, 65428 Rüsselsheim	300039701	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9816	8.40201	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5268b5ed-d4d6-4189-9cc0-7d333f2d9a35	922	Burggrafenlacher Weg 35, 65428 Rüsselsheim	300039702	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.98741354697087	8.416708856821062	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a4275e6d-27b3-4f19-8fae-1b30be1d5749	923	Robert-Bunsen-Straße 49, 65428 Rüsselsheim	300039703	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.97728252024877	8.437306618411899	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f123b162-cc38-417e-8d5c-beabe52f419e	924	Lucas-Cranach-Straße 2, 65428 Rüsselsheim	300039704	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9873	8.44169	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-df337c62-c1d6-4953-b7fe-663c20c4005b	1072 R	Ober-Rodener Straße 60, 63322 Rödermark	300042071	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.977368	8.806373	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7c47ff8d-c0e0-4d7b-8e00-46a7a30919d8	1072 M	Ober-Rodener Straße 60, 63322 Rödermark	300042697	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.977462	8.806311	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4bf69ec2-4d4d-42ee-ba92-e47dceb1b267	1083	Waldhaus 1, 64397 Modautal	300042698	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.764273	8.726217	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5b5a1a4a-b0ce-4dda-8e8b-2ab89fd12494	1084	Im Betzel 18, 64401 Groß-Bieberau	300042699	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.78502	8.81122	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5a3e4ac5-73f4-40bc-b6e3-f3a6a32f24e2	1073 R	Seestraße 13, 63533 Mainhausen	300043174	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.01769	9.017761	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f369ccf1-aea0-4240-9c3c-50b5f40b48c3	1085	Beethovenweg 21, 64823 Groß-Umstadt	300043176	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.88877	8.935672	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-44e32424-17bd-4bcb-882f-b0f8884c8b08	1086	Viehtrieb 16, 64832 Babenhausen	300043177	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.972973	8.942131	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fdf6593f-e2b8-4d65-9bcd-9e8b75eb9670	1066 M	Nassgewann 7, 65329 Hohenstein	300043179	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191193	8.120215	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-622e27ec-9817-455e-943e-d244e7b359f0	1065 M	Bärstadter Straße 4b, 65388 Schlangenbad	300043180	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10889	8.096001	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f086f768-5b37-40ff-bd93-664d6c10ddd6	1081	Birkenhöhe 29, 64760 Oberzent	300043185	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.556911	8.955133	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-31cece4a-42d7-4841-b885-6eef726d9f78	1079 M	Birkenauer Talstraße 101, 69469 Weinheim	300043186	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.561631	8.691441	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-58039960-e562-44ed-b4ed-b12ec2fe13a5	1079 R	Birkenauer Talstraße 101, 69469 Weinheim	300043189	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.561573	8.691438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-46eb79ca-43ff-4b12-8919-230e107f2db2	1001	Hainaer Straße 20, 35066 Frankenberg	300043196	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.050865	8.853943	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2c924bc8-d4ad-4d85-a9b3-c9b74755c0af	1029	Industriestraße 1, 35716 Dietzhölztal	300043260	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.835304	8.329263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6d451a4b-e73a-441a-9c46-db840bbe2010	1006	Hof Hammer 1, 35119 Rosenthal	300043408	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.957336	8.900755	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-64acad4b-d5ab-477a-a7aa-be74d5d41704	1067 M	Am Hümes 2, 65510 Hünstetten	300043450	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.246001	8.185778	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ba05a758-e30f-4fb1-84ac-cd42dfd66349	1067 R	Am Hümes 2, 65510 Hünstetten	300043465	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.246032	8.185663	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-04fd952a-6b96-42d3-bf74-f7fb3b9b67ea	1031	L 3289, 35085 Ebsdorfergrund	300043646	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.779588	8.853643	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-560b3f1d-0ada-4193-ae7e-9f5a0f373c23	1032	Cyriaxstraße 1, 35043 Marburg	300043720	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.77278	8.713625	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4800e341-8609-4338-b1a7-538ab1841694	1047	Siemensstraße 2, 35041 Marburg	300043825	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.837503	8.773578	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-060c32ed-609d-48d7-a9e2-b18c763ffe21	563	Am Rotböll 4b, 64331 Weiterstadt	300044983	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.93068494682793	8.62157464027405	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4750596f-d1d2-4625-bea9-d52ae8ac41c9	1004	Südring 8, 34497 Korbach	300045290	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2696309	8.8490651	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9a85dfc4-65f4-47d3-9db8-1eb41ecf9216	1013	Teichweg 19a, 34376 Immenhausen	300045358	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.44898	9.4854412	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2325905d-0f46-45ca-9cf3-1d4d4b6acd30	1005	Randstraße, 34513 Waldeck	300045415	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1960138	9.006177	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5b75249f-495f-4c4d-afa2-b477f4e08ba7	1520	Alte Dieburger Straße 56, 64380 Roßdorf	300045452	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.867939	8.766951	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dbdb54a6-4710-4aaf-a8bd-714ec8a96d82	1028M	L 2304, 36148 Kalbach	300045851	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3669907	9.718062	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cfc2c527-22f8-4fa2-91bc-d4f88aace631	1051	Am Kirchenpfad 8, 36323 Grebenau	300045880	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7469662	9.4809148	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fbfcf59e-3f33-42b6-99bf-aef50360580c	1024	Am Hasenberg 12, 36088 Hünfeld	300045892	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6653403	9.6518163	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3273d796-bdbb-40ff-870a-18334287ed10	1026 M	Frankfurter Straße 1, 36154 Hosenfeld	300045912	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5045628	9.4793628	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3575d69e-c445-4df0-9031-ab1f1287ca15	1027	Frankfurter Straße 45, 36119 Neuhof	300045940	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.446158	9.608311	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cccd371e-dade-4b81-b53e-7f23471a2ef9	1055	Distelrasen 7, 36381 Schlüchtern	300045960	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.383832	9.5306774	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bc27f81e-01d6-4fb3-86d5-8277dcb48de4	1063 M	Am Hoherodskopf 8, 63679 Schotten	300046000	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5124652	9.2332783	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-04203c32-5c18-40f4-8fb9-4df501bf7731	1670	Untermühle 2, 63526 Erlensee	300046031	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1795324	8.9873495	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8450c032-b732-4266-b08b-8be6ed665289	1009	Flugplatzstraße 33, 34379 Calden	300046345	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4068852	9.3891604	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-be718cec-e0d2-41b2-9b47-41419c6a1c25	1076	L 3096, 64560 Riedstadt	300046413	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8559893	8.4733123	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-51370ed8-84d6-455c-a17d-8ca59b7af7d0	1035	Erlesbergstraße 20, 35423 Lich	300046505	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5361605	8.8815571	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d38d9082-d64b-4087-bc46-2471ff937886	1050	Am Kaiserberg 11, 35396 Gießen	300046591	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6156271	8.7035822	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-663810df-e777-4e54-8484-1beb883f8ba9	1049	Tannenweg 58c, 35440 Linden	300046658	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5440017	8.6762582	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-502480bf-b57e-479c-bae6-dbcc05c30b18	1037	Gießener Pforte 41, 35440 Linden	300046664	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.544131	8.6497596	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-180a354d-ba4c-4f05-a993-4b97642d326b	1038	Gießener Straße, 35444 Biebertal	300046693	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6076676	8.6206634	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e7eefdd5-6777-41a5-aa83-427c519f1ab2	1064	Windhäuser Straße, 36325 Feldatal	300046809	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6569914	9.2261222	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e87be3c1-9e5c-4e2b-9c63-8165d58415ff	1058	Gartenstraße 3a, 63571 Gelnhausen	300046815	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2070403	9.1548104	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2b6de37d-cd2a-4429-a11c-d09022e8cf3f	1061	Jahnstraße 23a, 63589 Gelnhausen	300046822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1722912	9.1830578	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-da51b1b3-24fe-4908-8872-d0c541f43eda	1062	Aschaffenburger Straße 121, 63457 Hanau	300046860	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1134429	8.9705378	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cdf208fe-e5b7-4cd5-b18a-a4314c25283c	1044	Auf Der Grenz 2, 65589 Hadamar	300046894	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4281841	8.0348989	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4a257926-6bbd-4e0e-b29d-ec213f9e0c6b	1041	Weilstraße 12, 35781 Weilburg	300046946	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4723611	8.2690121	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0a717821-fd97-4420-8f06-3d270f24c225	1043	Flachsberg 2, 35789 Weilmünster	300046977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4109948	8.3471293	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1a7e4e9a-bd73-464e-b102-d9e91933a05e	1039	A 45 111, 35630 Ehringshausen	300046979	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.616234	8.3886198	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5b0020cc-bbe8-43c6-9652-0204f473ef0e	1048	Otto-Wels-Straße 32, 35586 Wetzlar	300046981	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5822636	8.4838097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3d04aaf8-eb8e-4c66-bbbc-ac07fcc220ed	1053 M	Ringstraße 19, 36399 Freiensteinau	300047012	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4197343	9.4182513	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fc6f992f-3c19-4467-a5e2-f45d1b1e4920	1056 M	Wehrtbornstraße 62, 63654 Büdingen	300047050	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3376612	9.2043842	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eea62949-40ec-4c69-ab85-f5404da37d3d	1060	Kilianstädter Straße 10, 63454 Hanau	300047104	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1823803	8.8857316	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e2f64428-f162-4cb7-8aea-a4aa0f18bac0	1054 M	L 3053, 35510 Butzbach	300047138	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4347481	8.6091302	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f257865a-5d02-4993-b7d3-52fa4a9112ba	1046	Wermertshäuser Straße 36, 35466 Ebsdorfergrund	300047631	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6930378	8.9093913	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6c8690b9-896f-439f-9258-859e5858fcc2	1052	Heegstraße 40, 35325 Mücke	300047639	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6308459	9.0284824	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5b67acca-e623-4f68-a465-e547a2b53287	1057	Herrnhuter Straße 2, 63654 Büdingen	300047688	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2784293	9.097436	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bdfab3e3-8764-4123-afef-08a7f1d6e6bb	1033	Rehmühle 1, 35745 Herborn	300047741	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6596793	8.30679	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e55fda14-11e2-4310-ad9c-df5965eb06a6	1040	Beilsteiner Straße 29, 35753 Greifenstein	300047754	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596431	8.2766605	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-397fb59f-6cd0-410c-9cc3-a3c8dc9ff536	1042	Unterer Grimms 27a, 35647 Waldsolms	300047800	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.435542	8.4852309	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d0ec96b1-cd67-4c96-ba2c-0428c46aa11d	1034	Großgasse 28, 35460 Staufenberg	300047875	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6546273	8.7366839	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-264029da-1d87-459f-9a6a-541831d25000	1020 M	Untersuhler Straße 14, 36208 Wildeck	300047923	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.970553	10.019531	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5a7496a9-b320-41a5-85d4-0dd3c1969666	1016 M	Hunsrückstraße 4, 36199 Rotenburg an der Fulda	300047959	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.026477	9.771942	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a61e0e32-dda7-4779-a471-5599c33c9024	1019	Zum Lichtloch 3, 36214 Nentershausen	300048048	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.991452	9.941334	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9fb67f9c-04ca-43a6-b57a-908e741d2ea7	1023	L 3258, 36088 Hünfeld	300048049	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6970542	9.841369	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a5c5d587-456e-44be-817c-695f8fe1a2a5	1022	L 3170, 36132 Eiterfeld	300048067	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7445495	9.8402852	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bd09e3c6-67e8-4ef6-b421-06dc4f3157f1	1015 R	Alte Zeche 7, 37247 Großalmerode	300048093	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.222618	9.805446	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-34e8579b-0383-43ac-8673-cbb884e27071	1069 R	Keltenstraße 2, 65439 Flörsheim am Main	300048125	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.048272	8.438446	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-426f79f3-4260-410f-adfa-3e3efa7c6edc	140	Keltenstraße 2, 65439 Flörsheim am Main	300048131	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.048047	8.438127	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ceb6a1cc-1441-4f26-bb2b-ad4b624607b6	1059	L 3008 2, 61118 Bad Vilbel	300048159	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1913567	8.7630219	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-64a4eba6-505b-4c3b-bd84-bc2f9cee1be3	1077	L 3112, 64579 Gernsheim	300048181	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.7463615	8.537532	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a98c3528-8477-4275-9339-a9c240607a95	1014 M	L 3422, 37242 Bad Sooden-Allendorf	300048844	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.268037	9.9316068	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-67da6191-3145-4d21-bd75-bac2b16e124f	1530	Hauptstraße 19, 34302 Guxhagen	300048857	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1784143	9.4812236	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-165d9c3d-f053-4cb2-9159-b95c14814c7f	1025	Am Tannenküppel 9, 36100 Petersberg	300049446	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5641667	9.7412746	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bd4dd5f4-da1b-4685-a187-88233322d0c1	Woogsweg	Scharounweg 6, 64289 Darmstadt	300049541	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.90125858055004	8.672665357589723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-84356a1a-3188-4d0b-9d3e-47a772a6f519	Arheilger Straße	Schreberweg 15, 64289 Darmstadt	300049542	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.89192848119509	8.661609292030336	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-51f3633f-538d-4fd2-9f95-fb71432a1ae7	1150	Auf Der Binn 7, 64658 Fürth	300052661	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.644122	8.7513688	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cddd862d-28e2-4e79-82fb-c0b6d6b7622e	1146	Nibelungenstraße 81, 68623 Lampertheim	300052686	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6360971	8.4026784	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8dc071b8-32ee-4b22-af7c-bf619a4b94d7	1151	In Den Schadenhecken 51, 64747 Breuberg	300052811	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8243325	9.0449247	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1c1e6bef-4561-471d-bdc3-0a48ac296997	1154	Industriestraße 23, 69239 Neckarsteinach	300052836	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.4012076	8.8588234	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7f7a7c5d-1d59-4a18-8441-508bba210d14	1145	Außerhalb 26, 68642 Bürstadt	300052874	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6732395	8.4515298	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-27a68e7e-8d3c-4689-b559-3fa2609c3be1	1124	B 253, 35684 Dillenburg	300052977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.768008	8.289006	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7c33ab21-a589-4e03-ad02-dd1cea60e6ec	1135	Im Langen Garten 1, 36304 Alsfeld	300053004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7236569	9.2311169	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d5af3a5a-357b-4cd6-93ef-77f9ada20d40	1125	Alsfelder Straße 55, 35305 Grünberg	300053036	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5913799	8.971904	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8dcdf93b-4dd8-4033-93f4-9cf4bd596df8	1140 M	B 8, 61479 Glashütten	300053092	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2102686	8.4136294	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dfa75be7-c7b0-498e-80d8-d39c7c341cf4	1138 M	Im Aartal 18e, 65326 Aarbergen	300053153	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2393581	8.0599672	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-95d240aa-3810-4d06-a499-d412c5503e45	1138 R	Im Aartal 18e, 65326 Aarbergen	300053166	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2393713	8.0599427	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-69f05caa-d4a6-45f6-95eb-8e0b1d0dd076	1111	Ahornstraße 2, 34513 Waldeck	300053210	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2452541	9.0105512	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-980babb8-2d01-4754-b730-cb555e3df28b	1106	Ziegelhütte 4, 34497 Korbach	300053236	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2877975	8.8330129	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-22045a05-2bd9-4d0f-831b-6ea99642c42a	1107	Helser Höhe 1, 34454 Bad Arolsen	300053298	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4028351	9.015716	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ba68375e-89aa-4dfd-afec-f14ffca9411f	1112	Mündener Straße 49, 34385 Gutsbezirk Reinhardswald	300053300	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.6504128	9.4632616	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-78791f43-f7e1-485e-bc82-9a65f02a6f2f	1105	Alte Wiesen 2, 35108 Allendorf	300053370	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0701175	8.6354442	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-457ba19e-53c6-41d5-a0e1-3f448ef5a5f4	1102	Mündener Straße 37, 34233 Fuldatal	300053371	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4014742	9.5922985	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4ecffbbc-58b6-45cc-acbe-d4cd95061334	1108	Hüttenstraße 5, 34516 Vöhl	300053372	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2167541	8.896405	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-13ea6ed7-4a2b-4b23-9f15-5b10dd71d4b7	1101	B 3, 34582 Borken	300053424	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.065443	9.228901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6f5c6317-9eeb-4bb7-8e53-3fc784f8da76	1153	Außerhalb 11 2, 64354 Reinheim	300054607	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8534114	8.7963936	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9fec7562-1e76-42b1-ac4b-b669bc1703a3	1903	Kloster-Eberbach-Straße 2, 65346 Eltville am Rhein	300054692	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0374333	8.0670528	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d9ed2d48-26d2-4e1d-9ad6-bc013d942bc0	1143	Außerhalb 4, 64347 Riedstadt	300054880	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8563673	8.516892	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5cfc6ce4-db1f-46e8-89b2-a7a7eb02e6e8	1920	B 276, 63633 Birstein	300054912	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4129382	9.3214125	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-db86eeb1-d0c3-4041-a08c-13eed593bf07	1129	Bahnhofstraße 6, 63633 Birstein	300054923	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3503293	9.3100846	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7edfe95e-1710-48d7-b7cd-12f0c3a2782f	1130	B 275, 61197 Florstadt	300055208	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.328914	8.8956174	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2b5071c1-dd2c-4f25-8cb5-d14c72faa730	1132	Insterburger Straße 19a, 63486 Bruchköbel	300055231	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1629616	8.9119185	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3ed89acb-c255-4bc7-ae2b-86f922f4a382	1139	New-York-Straße 101, 65191 Wiesbaden	300060310	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.07965482737	8.2737	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5c5c5243-b316-4ed2-9e54-5a3b857e9121	1148	Forstrat Louis-Weg, 64720 Michelstadt	300060329	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6767389	9.0704308	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0bb2534d-861a-4e62-8fc4-f2cfd98c80e5	1142	B 44, 64521 Groß-Gerau	300060338	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9581907	8.5424752	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1f1e152e-9125-4ac4-a01b-dfb621d09208	1144	Frankenfelder Weg 21, 64579 Gernsheim	300060374	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.7773437	8.5110391	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8bcdeba0-2c91-4fb5-a932-49148fbdd069	1133	Röhrig 26, 63599 Biebergemünd	300060380	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1594649	9.3492116	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9261b9d9-0a9f-44ea-bec9-8b09811174a4	1134	Lohrer Straße 29, 63639 Flörsbachtal	300060402	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0942454	9.4634822	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6afe008a-70c4-4840-916a-a8e29865f187	1137 R	Taunusstraße 8, 65344 Eltville am Rhein	300060406	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0566449	8.119155	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d25cd5bd-668b-45c6-aa1b-b1aad34b984c	1122	Wartburgstraße 1, 36142 Tann	300060439	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6556745	10.0064162	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-919cc4d5-8153-4a4d-b048-8b512a8ccc7a	1119	Lingeloh 1, 36088 Hünfeld	300060452	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6560985	9.7530218	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-27fb06be-30f6-4d40-abe4-252e44000682	1121	Rodenbach 29, 36129 Gersfeld	300060521	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.421611	9.9374113	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6efe9dd8-ca6f-4848-90a8-2410db91c428	1141	Köhlerweg, 60528 Frankfurt	300060609	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0559836	8.6434042	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-918d4b32-24db-43bd-ae12-aa9e91fdcd1b	1900	Rückerweg 6, 34477 Twistetal	300060779	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.315806	9.0077939	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-468e4279-0d6b-4cc4-a28a-e40003d29600	1117	Riedmühle 1, 36205 Sontra	300060818	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.029858	10.0105993	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8511587b-ab47-421d-83f5-061c47aea6c3	1115	Leipziger Straße 203, 37235 Hessisch Lichtenau	300060826	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.19874	9.7467875	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7e20214f-273e-450b-9a3e-4975f9810764	1116 R	Am Ehrenmal 16, 36205 Sontra	300060851	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1148754	9.9786473	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c0e6d3ed-e0b0-420f-b03e-d29996f289eb	1114	An Der Werra 10, 37215 Witzenhausen	300060887	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3235832	9.886529	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1dea2b3a-703a-4991-98a9-86b7c0e3dbb3	1104	Lindenstraße 21, 34212 Melsungen	300060909	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1521169	9.5575865	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-29f70e83-1a58-47b6-ba90-965bdd5888b7	1109	Efzestraße 17, 34590 Wabern	300060917	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0895638	9.371461	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9f611dac-4773-4484-a857-3f67260152c5	1136	B 42, 65385 Rüdesheim am Rhein	300061600	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9741312	7.8932671	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fe9a2858-06d2-444e-b8ce-b1f1c925c5e0	1942	Königsteiner Straße 32, 61440 Oberursel	300061632	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.199621	8.557802	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7bd6d89a-9261-484c-8a33-21de136f0dd6	R4 Trendelburg	Wülmersen 1, 34388 Trendelburg	300062314	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.60741678757214	9.432481527328491	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3aee6ba5-9b4d-4c59-9f2a-324080a609e0	099b	Alte Frankfurter Straße 29, 34281 Gudensberg	300062584	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1646495	9.317688	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b293d516-7909-4cd9-90de-8d6dae9a0788	1118	Kleine Industriestraße 13, 36251 Bad Hersfeld	300062610	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.8645267	9.7206717	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c0e4575e-0efb-499f-bb44-bbcc8a9a696e	1128	Fuldaer Straße 20, 36341 Wartenberg	300062791	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6398137	9.4209329	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2c42b70e-7a09-4b74-b0b7-4172a7b7be6c	1126	Friedberger Straße 22, 35410 Hungen	300062795	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4664142	8.8967438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2173a048-3955-4ef2-8d3f-4c37fe4913eb	1800	Billinghäuser Weg 5, 34474 Diemelstadt	300065669	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4989115	8.9528855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9dc2df7d-e57d-4510-adba-f0f63bcf9f69	1801	K 50, 34497 Korbach	300065670	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2238049	8.8436617	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c8a1be71-35a1-494b-917a-b6d4ff9250c8	1802	An Der Kolbenmühle 2, 34537 Bad Wildungen	300065671	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0461045	9.0683097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1223c95a-2f57-40c8-b9b2-4865ad65dc3b	1803	K 8 1, 34454 Bad Arolsen	300065672	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3417778	9.0096503	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9cd67a8f-37b7-44b8-bd08-25e50f25e3a9	1804	Am Steuken 6, 34497 Korbach	300065673	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3173682	8.8686745	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d04eb60b-ae5f-411d-ab30-284216ea92c4	1805	Heuweg, 34513 Waldeck	300065674	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2574511	9.0536248	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-13e3f962-e20f-4472-a854-0913831ff39a	1320	Düsseldorfer Straße 5, 65760 Eschborn	300065682	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.129511	8.565771	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7b52ae18-b1bd-4fa0-a872-3f44576d618e	1321	Kronberger Straße 66, 65760 Eschborn	300065683	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.163802	8.536151	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-82cd99ac-68e3-4c2f-a0f8-e8c40982d446	1322	Ludwig-Erhard-Straße 12, 65760 Eschborn	300065684	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.144913	8.552011	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fbb9239b-79ed-4f0d-9e47-93aa6888dd7a	1450	Griedeler Straße 1, 35510 Butzbach	300065765	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.437014	8.691392	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a89ba726-1ac9-4ba5-aec1-568b2cc89d70	1451	C.-Schneider-Straße 27, 35510 Butzbach	300065766	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.426777	8.6624685	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-820281be-b2b6-4718-980e-559f6888fd45	1452	L 3056, 35510 Butzbach	300065767	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.392349	8.640951	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-76a3f889-0d69-44ee-b751-020d35efb007	1453	Windhofstraße 46, 35510 Butzbach	300065768	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.451948	8.657641	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d6be3320-95d4-4543-a692-37e2c5d1c3c3	1462	Urseler Straße 67, 61348 Bad Homburg	300065773	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.215301	8.608097	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dcec73f3-b388-4b6e-bdfa-31be358968bf	1463	Quellenweg 1a, 61348 Bad Homburg	300065774	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.227835	8.631313	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dc6a892c-6bc9-4135-9368-f4586add3572	1461	Frölingstraße 67, 61348 Bad Homburg vor der Höhe	300065777	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.221686	8.609935	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3e466298-ecb6-40c1-b7db-b017e90a0b95	1410	Oberdorfstraße 25, 35117 Münchhausen	300066392	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.946656	8.702841	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-52ca2e0e-6561-464d-b849-91bd9a3596a6	1411	Diemelweg 12, 35274 Kirchhain	300066394	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.818874	8.851642	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1cbc1f97-5f1a-44a6-b803-e26ba5279de0	1412	An Der Ziegelei 4, 35085 Ebsdorfergrund	300066395	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.73744	8.80777	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b3fe29aa-104d-4798-8215-945f3aee41a1	1414	Sandweg 8, 35112 Fronhausen	300066396	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.693657	8.716265	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-281b5003-d713-494f-b2f5-b6f9333ee416	1415	Biegenstraße 8, 35112 Fronhausen	300066397	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.707397	8.70491	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eca0ad3f-8c1c-44a0-b3c5-388139ece29a	1416	Wasserwerk Wohratal 1, 35274 Kirchhain	300066398	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.84757	8.926747	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-aa2e669f-f7b1-4198-b3f7-50a352f507b5	1418	Emil-Rössler-Straße 10, 35279 Neustadt	300066400	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.841797	9.087694	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e63e038a-b95c-4271-bb93-a622ab13053d	1419	Försterweg 15, 35083 Wetter	300066401	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.92562	8.770603	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-11cdd1b6-332a-43f9-a825-0150de40c666	1420	Mühlbergweg 5, 35083 Wetter	300066402	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.90718	8.664738	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-66a6f885-ef46-4590-bb91-2231daac5aee	1422	Buchenauer Straße 1, 35232 Dautphetal	300066403	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.861786	8.610586	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e731ef30-9425-40b4-b369-5b3bba2f53eb	1423	Schelde-Lahn-Straße 70, 35236 Breidenbach	300066404	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.861156	8.47303	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-53d71c52-877c-4af6-ae8c-b8ad44a6466f	1425	Dilschhäuser Straße 13, 35075 Gladenbach	300066405	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.808907	8.632998	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-64c6f4d7-0109-4a4e-b421-ec0e0000d8fa	1426	Gladenbacher Straße 25, 35102 Lohra	300066406	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.737087	8.624935	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1f2910bb-d16b-419e-927d-fd9cbc395936	1427 M	Niederwalgerner Mühle 1, 35096 Weimar	300066407	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.739494	8.684207	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b1a6be0b-82a7-45db-bdbc-d8b1841a5bf3	1428 M	Fleckenbühl 6, 35091 Cölbe	300066408	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.88079	8.826204	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3d7c0688-81ef-4647-a646-266f4147652a	1460	Friedberger Straße 68, 61350 Bad Homburg vor der Höhe	300066721	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.247554	8.620444	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f09ad90a-44d3-4d6a-8c1e-ae0a70fcbe37	1680	Pfarrwiese 42b, 61118 Bad Vilbel	300066723	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.190571	8.748497	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0caa20a3-5762-43c9-869a-0194a7c9b044	1380	Stockstädter Straße, 64584 Biebesheim am Rhein	300066727	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.791083	8.470652	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fae5c2c8-aed1-4fce-8075-b0ccec1689e2	1381	Alter Mainzer Weg 3, 65428 Bischofsheim	300066728	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.973143	8.396446	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1cc6f51e-b5a9-49f7-9725-d748b7d29113	1382	A 67, 64572 Büttelborn	300066729	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.920027	8.504231	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ebd2f5a4-fb30-4cad-9257-246af844f054	1383	Bergstraße 11, 65451 Kelsterbach	300066730	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.066372	8.528382	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1c6a29ab-8f90-4bbf-94f1-4d4c02930295	1384	Ginsheimer Landstraße, 65474 Bischofsheim	300066731	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.982167	8.350083	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fd2e1b89-c007-4ef1-a6ef-a08a55e626c8	1385	Okrifteler Straße, 65451 Kelsterbach	300066732	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.046248	8.511247	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-642f724e-092b-4033-a23c-5dcb22568791	1386	Büttelborner Straße 39, 64521 Groß-Gerau	300066733	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.900869	8.490651	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a052aef4-a2da-4eee-8aa2-34400b6b71f6	1388	Stockheimer Weg 7, 64569 Nauheim	300066734	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.939653	8.454162	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f0d0f180-10cb-4d68-abc4-dce3b767a5af	1389		300066735	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.893709	8.480328	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-287a535f-0aa0-472d-ab0f-2c58255ad8e4	1390	Walter-Flex-Straße 88, 65428 Rüsselsheim am Main	300066736	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.995703	8.431374	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-15b73074-7581-4949-afd2-fbb55c4f024f	1391	Außerhalb 29, 65468 Trebur	300066737	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.917823	8.368272	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-518dc68b-d366-4b4b-9ff2-efb43b8b4960	1392	Am Lerchesberg 1, 64546 Mörfelden-Walldorf	300066738	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.986529	8.572802	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-62d7f31c-a1ce-4d7d-ab3e-cbd12d89b1c2	1393	Rüsselsheimer Straße 78, 64546 Mörfelden-Walldorf	300066739	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.973121	8.546428	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b332ef47-874f-42ff-9f83-37a14e8c3a9d	1395	Mörfelder Straße 25, 64546 Mörfelden-Walldorf	300066741	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.999812	8.570641	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5e370bab-429d-4db5-95db-e3f50abcd129	1396	Darmstädter Straße 45, 65428 Rüsselsheim	300066742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.990691	8.412475	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c25a9b29-0da2-491a-825f-1b4ffab612e6	1399 M	Weisenauer Straße 39, 65428 Rüsselsheim am Main	300066745	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992792	8.407855	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-42bd830e-229d-496b-a405-f07be074635e	1330	Willy-Brandt-Straße 8, 61440 Oberursel	300066801	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.208952	8.593424	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7c587a78-3894-42a6-b921-d163ced7ef8d	1331	Zeilweg 12, 61440 Oberursel	300066802	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.208821	8.603026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8d0e7028-24ef-4a09-ad82-d1cb51398b30	1332	Gattenhöferweg 43, 61440 Oberursel	300066803	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191202	8.583164	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-60a172cb-dd66-43f5-a1f3-7964ac0696c9	1333	Hohemarkstraße 190, 61440 Oberursel	300066804	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.214981	8.539191	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-80e2cc4f-a553-499d-9663-fd0d5dba2e54	1334	Lahnstraße 57, 61440 Oberursel	300066805	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.219036	8.578047	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c509eb34-ad5b-4f22-abd0-eca5ff882064	1335	Wallstraße 102, 61440 Oberursel	300066806	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.194527	8.605785	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-da77cd9d-c991-4390-890e-cdae45cc2a50	1397	Hans-Sachs-Straße 98a, 65428 Rüsselsheim am Main	300066819	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.988861	8.424007	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-47902102-cf99-47a9-9089-a99a2a4432be	1440	Rödermarkring 29, 63322 Rödermark	300067383	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992211	8.822872	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e43c75d6-4d92-4352-996f-68a5bfb0a7d3	1441	Rödermarkring 29, 63322 Rödermark	300067384	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992141	8.822575	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b19631f8-4864-4d32-b4e7-269a9462cd89	1443	Dieburger Straße 71a, 63303 Rödermark	300067385	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.978831	8.764224	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-277227ca-d7ca-4159-887d-0e3052e1e2f3	1444	Forsthausweg 4, 63322 Rödermark	300067386	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.964904	8.833094	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b38e864f-c27d-4b0b-8028-1b24d793fdfc	1446	Donaustraße 46a, 63322 Rödermark	300067387	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.976558	8.817451	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-761b1272-a9fa-4798-9412-fd06f5d43077	1540	Am Gradierwerk 10, 61231 Bad Nauheim	300067390	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.358586	8.751901	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3e406be2-43ef-4feb-a38c-34a52268b553	1541	Friedberger Straße 100, 61231 Bad Nauheim	300067391	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.350058	8.743573	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4d8becd3-4a7c-4f64-9fac-886745a5ec20	1544	Ludwigstraße 3, 61231 Bad Nauheim	300067393	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.365166	8.743807	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b0f65dfa-02de-4f04-94df-4e9158a72654	1300	Dammühlenweg 3, 65510 Idstein	300067401	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.223789	8.267836	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-38d095c7-81b3-4e3f-be28-1d47642b192b	1630	Leukertsweg 102, 63225 Langen	300067402	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.980279	8.658221	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-68b07f01-d38c-4f6c-867a-e295255cfaaa	1640	Dyckerhoffstraße 1, 65203 Wiesbaden	300067781	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0288728	8.2565807	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6a61de98-fff6-405f-b53f-27187b42aee8	1641	Rheinufer 10, 55252 Wiesbaden	300067782	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.008154	8.279928	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d30bd3b0-1a29-46b9-8ed2-478cd53f5087	1642	Sonnenberger Straße 3, 65193 Wiesbaden	300067783	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.085065	8.254723	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f44ed066-3e0b-4b53-8dd8-6c832db9deb4	1643	Steinern Straße, 55246 Wiesbaden	300067784	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0191403	8.3115487	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-29aa4409-7a54-4ce9-b4cd-4992801d186c	1645	Uferstraße 5, 65203 Wiesbaden	300067785	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.037871	8.228499	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d5841583-8e56-4ed0-83ef-97436d5207f0	1610 Richtung Frankfurt	Frankfurter Straße 151, 63067 Offenbach	300067966	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.101922	8.744597	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-53db4148-5d7c-4f6f-a506-16a44e8adac4	1610 Richtung Offenbach	Frankfurter Straße 144, 63067 Offenbach	300067967	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.101749	8.744721	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-34ac264a-b57b-4c05-8cf7-67eb7deb5254	1612	Lortzingstraße 8, 63069 Offenbach	300067968	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.093403	8.758437	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dc3a58d2-1531-460f-9906-ea74051203d8	1613	Seligenstädter Straße 73, 63073 Offenbach	300067969	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0851054	8.8140816	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-447e72b0-0b53-465e-af6e-9767ac48997e	1614	Senefelderstraße 35, 63069 Offenbach	300067970	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.096893	8.762923	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6839d882-8135-4cf5-9288-67a164459bcf	1615	Taunusstraße 38, 63067 Offenbach	300067971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.109375	8.753598	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1baca48c-b65e-488e-966b-39180dd00e4a	1616	Von-Behring-Straße 84, 63075 Offenbach	300067972	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.116093	8.785673	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ccc0ab7d-e142-4caf-bc7f-a2c253ab0fd7	1650	Spessartstraße 2, 65779 Kelkheim	300067973	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.143504	8.433294	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-aa90a4b6-8414-44b8-9a05-a7d53d634c2c	1651	Sodener Straße 120, 65779 Kelkheim	300067974	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.148511	8.436107	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8486baf1-e5f6-4daf-9245-78183f6ec8dc	1700	Philipp-Reis-Straße 17, 63128 Dietzenbach	300067975	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.016084	8.789891	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-81f542e9-ac53-4809-8231-40f6be00e8ad	1702	Offenthaler Straße 51, 63128 Dietzenbach	300067976	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.001438	8.773084	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0ad7e7ae-3ea1-4a31-b0b3-c673e8936152	1703	Offenbacher Straße 3, 63128 Dietzenbach	300067977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.014509	8.778663	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-91b67cfa-ebca-4569-b926-7685f87e6ae4	1704	Michelstädter Weg 3, 63128 Dietzenbach	300067978	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.014404	8.779065	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c6687f32-8b20-4d4e-8a43-f3c252766efb	1580	Dieburger Straße 255, 64287 Darmstadt	300067979	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.885035	8.687166	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e3aeb205-e198-4b41-a269-9a737c9f6afb	1581	Eschollbrücker Straße 200, 64295 Darmstadt	300067980	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.847274	8.616109	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6c16ca3c-b721-4d18-8ce4-527dcae6b809	1584	Otto-Röhm-Straße 85, 64293 Darmstadt	300067981	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.888814	8.631675	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6d33a5e3-737a-471b-903d-12a1c74a7a07	1587	Seeheimer Straße 99, 64297 Darmstadt	300067983	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.806544	8.645383	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-cd5d0ba3-0ee6-4b12-a438-7cf1082286a9	1591	Nieder-Ramstädter Straße 184, 64285 Darmstadt	300067985	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.854575	8.669506	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e821f0b5-fb65-479c-9129-9486cf7acbab	1592	Nasser Weg, 64293 Darmstadt	300067986	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.885555	8.617049	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c40144bf-9aa3-4bae-bd45-4f5557b85f43	1510	Ramsaystraße 5, 63450 Hanau	300067987	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.138485	8.916046	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-69edbdcf-1a5e-44c7-a16c-3afd29a8a664	1511 stadtauswärts	Aschaffenburger Straße 64, 63457 Hanau	300067988	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124785	8.948019	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-56ab2e0f-2b0d-4601-82df-246f8e83de1a	1511 stadteinwärts	Maria-Montessori-Allee 8, 63457 Hanau	300067989	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.125046	8.947751	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-72b0abca-9a22-42d1-b05e-098e3f6b02b3	1512	Philipp-August-Schleißner-Weg 2a, 63452 Hanau	300067990	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.135722	8.930461	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a002aafd-3df6-44e8-8518-1b4d1be36eb4	1590	Rheinstraße, 64295 Darmstadt	300067991	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.869134	8.625688	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-58fa0b3f-c60c-497a-9330-3cdafc8cb254	1351	Ludwigstraße 40, 63263 Neu-Isenburg	300067992	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.055758	8.694251	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-31a2e17c-ba58-45b5-bfa4-716daa463b4a	1354	Rheinstraße 90, 63263 Neu-Isenburg	300067993	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.054368	8.679211	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4eea9457-4ac1-4a12-84f7-5ed5f2c25b55	1355	Triebweg 188, 63263 Neu-Isenburg	300067994	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.055267	8.710026	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7e98c7d3-d0dd-459f-be21-5d4e28d66ff2	1471	Arndtstraße 16, 34123 Kassel	300068882	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3075038	9.5060745	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c5cb593d-8e62-40ce-a5c1-2af7306c6dad	1473	Salztorstraße 5, 34125 Kassel	300068883	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3164309	9.5107162	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1cde8b7e-4e31-405e-84a7-1942c202b5d8	1476	Christian-Reul-Straße 39, 34121 Kassel	300068884	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3031819	9.4545222	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-498e3059-fd88-45ee-ab57-7c81402192e3	1477	Neue Fahrt 11, 34117 Kassel	300068885	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3143068	9.4931761	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-71caa105-ecfa-4fd6-8a6c-69356eac6498	1478	Olebachweg 50a, 34123 Kassel	300068886	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3008995	9.5412794	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-64dcd97d-ed11-469b-95f6-ee1960213348	1479	Renthof 3, 34117 Kassel	300068887	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3147468	9.5039636	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-24e8f718-072d-47aa-add0-e299d2354214	1480	Schillerstraße 60-62, 34117 Kassel	300068888	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3206865	9.4811773	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-04e7a73c-b85e-4413-872a-b6cd6610949b	1481	Sternbergstraße 31c, 34121 Kassel	300068889	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3066935	9.4609602	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0efe9bcb-eff4-4530-bf6e-dbd1abf8eeac	1482	Sternstraße 19a, 34123 Kassel	300068890	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.311907	9.5051667	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-215fbdb5-5ed8-4866-8d46-beaf3fc9b7d0	1484	Wahlershäuser Straße 58, 34130 Kassel	300068891	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3200852	9.4442726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-39224feb-db47-42f7-9f92-61960a719594	1810	Hafenstraße 69, 34125 Kassel	300068892	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3170148	9.5191947	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-720fc59d-4c28-42b8-8862-e6c556c537a6	1340	In Den Schlangenäckern 9, 64395 Brensbach	300069071	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.753078	8.878057	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-273ec648-7592-4aa2-a1c8-241227668e6f	1341	Neustädter Straße 33a, 64747 Breuberg	300069072	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.815449	9.023055	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2991e48f-3922-4be2-8253-c985b311f646	1342	Neckarstraße 157, 64711 Erbach	300069073	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.639157	8.997476	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c1cb7485-2286-4d13-a9fd-06e2a3864ec1	1343	Untere Siegfriedstraße 10, 64756 Mossautal	300069074	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.620643	8.944041	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5456e193-6738-4007-bd8a-5845b86aa78b	1345	Höchster Straße 102, 64395 Brensbach	300069075	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.772377	8.889865	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c9b8329d-29b2-4fb5-a4a8-97ec202b6c7c	Zählstelle Sinntal Altengronau Rhönexpressradweg	Aspenweg 52, 36391 Sinntal	300069163	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.254807	9.636959	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-b2bd21d3-070a-4cae-a1fc-3946f7a096fa	Zählstelle Gelnhausen Höchst R3	Untere Schönau 13, 63571 Gelnhausen	300069164	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.204788	9.226091	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d688485f-8032-49f4-865b-dc31e69f282e	1690	Quellenstraße 5, 34537 Bad Wildungen	300069324	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.111181	9.090314	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-eb6a5241-40f7-41a1-9d0a-5537101c3690	1550	L 3199, 63619 Bad Orb	300069410	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.237935	9.303873	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-789e5f79-a263-43fa-9a2c-70bb9ff39965	1663	An Den Herrnäckern 30, 63150 Heusenstamm	300069417	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.053022	8.814157	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a8ae3e27-55ec-4113-b039-fb591ab3cd01	1662	Am Goldberg 34, 63150 Heusenstamm	300069418	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.061418	8.819416	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2dbd844d-0621-435a-8c6a-40877ecc3224	1661	Frankfurter Straße 19, 63150 Heusenstamm	300069419	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.059434	8.807676	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5e121c5d-d782-4a36-aca9-81c9c08068d9	1370	Altenfeldsweg 6, 35394 Gießen	300069438	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.578741	8.683931	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-a4d020f3-59a5-42ac-b2b8-1bf17d8790fc	1371	Leimenkauter Weg 63, 35398 Gießen	300069439	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596218	8.669114	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d0eb52a7-065c-47a4-9d05-dea611f407c6	1372	Goethestraße 52, 35390 Gießen	300069440	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.579672	8.677358	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d730c20b-aa6a-4a23-b67d-5cad4f5a9f52	1373	Gottlieb-Daimler-Straße 1, 35398 Gießen	300069441	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.586522	8.650516	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-66613d40-4d8b-4247-bdba-f9e1f25c36c2	1374	Lahnstraße 31, 35398 Gießen	300069442	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.584607	8.663103	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-7eb8d4d9-d8e4-4bdb-a296-4d2d23a459b1	1375	Taubenweg 8, 35396 Gießen	300069443	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596484	8.691651	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-06362c75-a98a-4649-8f68-d937cedffd8e	1376	Marktstraße 10, 35390 Gießen	300069444	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.585941	8.673337	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3d744ef9-c741-4496-a79f-50ac6276ed46	1490	Theodor-Stern-Kai 3, 60596 Frankfurt	300070104	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.095812	8.658578	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-deb86e6c-53a1-4c45-b29b-b486931b4d32	1493	Alte Mainzer Gasse 23, 60311 Frankfurt	300070106	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1087556	8.6803453	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e0f23b75-47f6-4b77-a171-6be7cac3efe2	1494	Gerbermühlstraße 105, 60594 Frankfurt	300070107	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1061185	8.7214845	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-d20dcd32-cb99-402d-a398-e6100c1a4775	1495	Gelastraße 117, 60388 Frankfurt	300070108	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.143361	8.736621	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fe17fd1a-b259-406d-8911-24353cd3a4de	1496 auswärts	Schloßstraße 95, 60486 Frankfurt	300070109	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.117673	8.645531	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ac2f9b07-ed0e-41f5-8256-e0a1407a7194	1496 einwärts	Schloßstraße 95, 60486 Frankfurt	300070110	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.117627	8.645436	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-00684a49-f0e3-4c73-bfa6-34557b20f674	1497	Oeder Weg 12, 60318 Frankfurt	300070111	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1188237	8.6797508	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-2107f64c-cab5-4b18-a500-f153dbd03809	1500	Vorm Wald 28, 65934 Frankfurt	300070113	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1123951	8.5819811	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5a0420c6-824c-4bef-b4a8-adb60a7996da	1017	Eisenacher Straße 17, 37293 Herleshausen	300048879	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0028574	10.1834362	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-307ea4a9-ad7b-4449-8f97-3ec8cabc73e2	1417	Ausbau Zur Radroute Geplant, 35279 Neustadt	300066399	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.860207	9.131354	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8c91ac5c-20e4-49ec-902a-790fa1bfc49d	1394	Am Wallgraben 3, 64546 Mörfelden-Walldorf	300066740	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.972621	8.571438	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c25de5be-2677-4ef4-b88c-e4c03d2e6db7	1660	Im Grund 4, 34317 Habichtswald	300068994	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3345592	9.3221639	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e5f36ff1-93f6-4285-a9c2-1d79abba8877	111	Ebersberger Straße 5, 64711 Erbach	300022577	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.615944	8.992066	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-607f0a07-7509-4517-955b-5cc3965269da	048	Bergstraße 48, 65795 Kriftel	300023310	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.075130727825126	8.47725570201874	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-57697b85-036e-4ef3-ab90-5209a8da0c77	108	B 455, 61169 Friedberg	300024240	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.316007636838584	8.708804057532689	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5bf44ff6-bf84-4f19-8da4-96c58bb6c03f	1492	Ginnheimer Landstraße 1b, 60487 Frankfurt	300070105	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.128344	8.640726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3367d029-929f-4829-806e-faa7db743a93	120	Egerländer Weg 8, 61476 Oberursel	300024708	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.185525	8.558612	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-e8c2107d-9f78-4bfa-8b4d-44a501889b2d	079	Am Brachthof 1, 35102 Lohra	300026787	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.728205	8.662766	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1d861365-568a-41e2-a530-e407177a15f1	089	L 3092, 35041 Marburg	300026824	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.8245442	8.7161966	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6f1a9f95-8589-4201-9c0c-663a7c65ab53	012	Auweg 6a, 35457 Lollar	300027971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.641062	8.696359	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-aa8ce371-9cc4-400d-a15b-f626bd79d51e	042	Jagdhaus Traiges 2, 36369 Lautertal	300028030	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.567416	9.255976	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-272f509d-3a21-48d0-a9fb-4fd32b63f1aa	341	Heidelberger Straße 133, 64625 Bensheim	300032872	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.66667996782354	8.629465699195864	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fbef8253-dee6-406c-9b76-06432e4d40c5	1078	L 3111, 68519 Viernheim	300043184	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.583399	8.589813	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0483a09e-7c1f-4917-b4f9-428329a53a1c	1010	Blumenstraße 17, 34466 Wolfhagen	300045393	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2876086	9.1508519	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3673b68a-0781-4ef3-8d62-cf3c544bd293	1499 a	Eschersheimer Landstraße 249, 60320 Frankfurt	300070112	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.135723	8.671253	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-9eec86e0-088b-4fef-a1c4-a2460dda73c7	1065	In Der Herborn 2, 65388 Schlangenbad	300046301	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.108727	8.094532	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-85cfeb5c-5b95-451d-93e7-81637a21ca09	1045	Hölderlinstraße 51, 65549 Limburg an der Lahn	300046901	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3760099	8.0762714	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4f1b11d7-d4a9-4cc5-9fe2-41114f770bd0	Erbprinzenstraße	Eco-Counter Zählerstandort (kumulierte Zählung)	100004165	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	49.0072864	8.4027153	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-971b7c56-ce35-42ea-9519-11f82b6b050d	Horstmannsteg Hennef	Eco-Counter Zählerstandort (kumulierte Zählung)	100063389	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	50.77557	7.29088	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-09a15e55-ad8f-4858-a439-9d83c32ee562	Radschnellweg Osnabrück Belm	Eco-Counter Zählerstandort (kumulierte Zählung)	100050631	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	52.27996540308624	8.0550560783977	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-d2a26e5c-5095-47c7-ba9d-6eec7aeddde3	Römerhofweg	Eco-Counter Zählerstandort (kumulierte Zählung)	100063376	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	48.25	11.6544	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	inactive
-7d5ec122-e120-4c61-86e0-02c04c0eece8	520	Sprudelstraße 8, 63683 Ortenberg	300032699	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.342086	9.035552	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-70fceaf7-ffa7-4ab5-910e-d42473357c12	730	Feuersteinweg, 61279 Grävenwiesbach	300032700	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.393952	8.511263	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-45ed3711-5c92-418d-9145-6aaefbaf4a79	472	Okrifteler Straße 38, 64546 Mörfelden-Walldorf	300032827	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.008198	8.566961	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-efc583eb-c693-4a3f-adaa-3e1050cd81db	542	Bahnhofstraße 18, 61191 Rosbach vor der Höhe	300032889	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.301619	8.694759	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4a8c4e47-0603-41b8-9dad-3daa35c08d6f	KÖ Steinstraße	Königsallee 52, 40212 Düsseldorf	100005014	b9145b59-ec36-52da-9343-bde7f49d6046	51.223255	6.779096	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-81858014-9313-42fe-8621-6035921166a3	Kirchfeldstraße	Kirchfeldstraße 4, 40217 Düsseldorf	100011631	b9145b59-ec36-52da-9343-bde7f49d6046	51.212435	6.770726	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bfee4987-778e-4c44-b537-298647c8a9a3	Lohauser Deich	Der Grüne Weg 80, 40474 Düsseldorf	100011632	b9145b59-ec36-52da-9343-bde7f49d6046	51.276819	6.714056	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-4d0ea272-e21f-441c-92d7-d4ba638ea38f	Christophstraße	Christophstraße 11, 40225 Düsseldorf	100011637	b9145b59-ec36-52da-9343-bde7f49d6046	51.195957	6.796619	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-47da2398-48f1-4253-a36a-18bd061109b1	Mannesmann Ufer	Mannesmannufer 1a, 40213 Düsseldorf	100016424	b9145b59-ec36-52da-9343-bde7f49d6046	51.220154	6.767121	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c41194fa-8368-4912-a812-800972e94601	Elisabethstraße	Elisabethstraße 16, 40217 Düsseldorf	100033660	b9145b59-ec36-52da-9343-bde7f49d6046	51.216641	6.775346	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-58781890-ffe1-41f7-ab09-d42488d6dd4a	Bilker Allee	Bilker Allee 92, 40217 Düsseldorf	100046689	b9145b59-ec36-52da-9343-bde7f49d6046	51.21074	6.771311	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-20ae5f4b-aca9-4138-90cb-ac5fdba3cfe6	Münchener/Ickeswarder Str	Fritz-Strassmann-Straße 11, 40591 Düsseldorf	100047053	b9145b59-ec36-52da-9343-bde7f49d6046	51.176601	6.809242	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-42b8d5c6-8350-4e66-8102-7a90b14446dd	Fleher Deich	Fleher Deich 49, 40223 Düsseldorf	100047054	b9145b59-ec36-52da-9343-bde7f49d6046	51.18775	6.77722	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0e24f71a-524c-445a-8d96-e62515d3fad4	Koblenzer Straße	Theodor-Litt-Straße 2a, 40593 Düsseldorf	100047279	b9145b59-ec36-52da-9343-bde7f49d6046	51.149015	6.886683	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5314c49d-8b06-46a9-b304-54746f4d04fb	Oberkasseler Brücke	Kaiser-Friedrich-Ring 1, 40545 Düsseldorf	100047280	b9145b59-ec36-52da-9343-bde7f49d6046	51.23166	6.7632	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-068ce86a-a56a-4671-a93b-dcded0535707	Fleher Deich Rampe	Bückerbergweg 28, 40223 Düsseldorf	100047281	b9145b59-ec36-52da-9343-bde7f49d6046	51.18834	6.77571	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-22700902-e04e-4e80-985b-ce37167560fa	Hofgartenrampe Oederallee	Fritz-Roeber-Straße 2, 40213 Düsseldorf	300029563	b9145b59-ec36-52da-9343-bde7f49d6046	51.231551	6.776191	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-08918099-a16a-41b0-bec2-da59c10ff291	08 Vorgebirgspark	Homburger Straße 14, 50969 Köln	100019755	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.913017	6.948681	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f2476936-0e82-4f29-9c8a-c3ce5d7ba3b9	09 Alphons-Silbermann-Weg	Zülpicher Wall 5, 50674 Köln	100019756	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.930084	6.930417	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-fca8e3b6-c2bc-4e44-8899-2b4b91fac44f	10 Stadtwald	Friedrich-Schmidt-Straße 60b, 50933 Köln	100019757	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.933098	6.8929157	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-88d66b97-8d33-454e-a864-6bdc56e2e93d	11 Niederländer Ufer	An Der Schanz 14, 50735 Köln	100019758	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.962322	6.986403	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-739d06f1-62bb-4588-880b-56ddd3e35a41	07 Alfred-Schütte-Allee	Alfred-Schütte-Allee 76, 51105 Köln	100021727	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.914497	6.9818854	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-af475dfb-d98c-4cef-a944-425ba8bd10a5	01 Bonner Straße Rad	Bonner Straße 41, 50677 Köln	100023269	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.9182	6.960489	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-0c117ffc-1629-49d4-b79b-91465c823cf8	02 Venloer Straße Rad	Venloer Straße 176, 50823 Köln	100023270	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.945816	6.9266076	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-62631d8f-fe79-4ab3-8b66-136dc56887c8	04 Hohenzollernbrücke	Kennedy-Ufer 2a, 50679 Köln	100029854	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94118	6.9701	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-bad75edf-3a8c-4662-9916-2a23aaefb76f	06 Neumarkt	Neumarkt 10, 50667 Köln	100030418	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93637257134968	6.947836756773378	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-15bc5909-d6e8-455f-843a-eb676e983281	05 Deutzer Brücke	Kennedy-Ufer 1, 50679 Köln	100044729	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93649	6.96658	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-5222df13-0f31-4715-9d3a-92d7a2d0b7a6	12 Vorgebirgswall	Vorgebirgswall 4-8, 50677 Köln	100045094	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.92054907885211	6.94476961008295	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-dc75e416-ff2b-4a71-bf69-810dcdc0dbb5	03 Zülpicher Straße	Zülpicher Straße 51, 50937 Köln	100057124	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.92719493078395	6.933329933685668	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-8ac19391-3911-486d-9c19-b486300325bb	13 Universitätsstr.	Universitätsstraße 75, 50931 Köln	100059340	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93311976074636	6.925021246105153	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-6bd3d8fd-af03-4083-a43e-bc6955862b4e	14 Rodenkirchener Brücke	Weidenweg 50, 51105 Köln	300014336	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.90295502231652	6.993484497070313	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-ff60ce3f-e746-415a-98cf-5cf35e499feb	15 Severinsbrücke	Im Zollhafen 5, 50678 Köln	300016603	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93071097591193	6.967520713806153	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-1402f916-a1d5-4660-8cc0-215791589d7e	16 Neusser Straße Rad	Neusser Straße 153, 50733 Köln	300021441	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95783433133611	6.955429364340324	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-f1472a11-b019-4113-94dd-712382ab2c8b	17 Hohe Pforte Rad	Hohe Pforte 19, 50676 Köln	300022210	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93375713622347	6.956292986869813	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-54511dfb-859f-4de2-8bf5-40b397472a6d	18 Gladbacher Straße	Gladbacher Straße 9, 50672 Köln	300028615	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94546997818451	6.940703988075257	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-c9f532db-275a-4654-844b-0d8398ad285b	19 Elisabeth-Schäfer-Weg	Herler Straße 92a, 51067 Köln	300037617	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95755663257499	7.024080455303193	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-296ae90a-7808-45be-aca8-d2497f46a919	21 Hohenzollernring Rad	Hohenzollernring 17, 50672 Köln	300041441	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93719185680222	6.939121484756471	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-274d6de4-301c-4b94-9489-c32bc58d2a72	20 Auenweg	Auenweg 185, 51063 Köln	300041859	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95320931360196	6.986403465270997	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-3c090d4a-f557-4bea-9fdb-4ac25a82a111	22 Maybachstraße	Maybachstraße 111, 50670 Köln	300049705	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94902	6.94953	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
-267e4d9c-8c3d-4e9c-85fd-4e62e77eaf70	23 Kalker Hauptstraße	Kalker Hauptstraße 56, 51103 Köln	300050064	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93728313036514	6.996134519577027	Europe/Berlin	dc0af10d-7f50-4763-9639-ab4a5a3f773c	\N	active
+2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße		100034978	a023b021-9754-56c7-8c4e-9c391069aff5	51.9715	7.6356	Europe/Berlin	\N	\N	active
+09f3dc59-40c7-4527-982c-86e42a7f4e8b	Bismarckallee		300038855	a023b021-9754-56c7-8c4e-9c391069aff5	51.956	7.6186	Europe/Berlin	\N	\N	active
+e58da4d9-b781-4873-9479-e67a97fe464e	Bohlweg		300037926	a023b021-9754-56c7-8c4e-9c391069aff5	51.9688	7.6435	Europe/Berlin	\N	\N	active
+85c48593-03a5-477a-8df0-fa3ba53bf6b2	Coesfelder Kreuz		300039328	a023b021-9754-56c7-8c4e-9c391069aff5	51.9659	7.6012	Europe/Berlin	\N	\N	active
+04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege		300037931	a023b021-9754-56c7-8c4e-9c391069aff5	51.9796	7.6065	Europe/Berlin	\N	\N	active
+9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße		300037925	a023b021-9754-56c7-8c4e-9c391069aff5	51.968	7.638	Europe/Berlin	\N	\N	active
+1866c3c6-02ff-4178-9afe-0871c9eb0302	Grevener Straße		300039331	a023b021-9754-56c7-8c4e-9c391069aff5	51.975	7.612	Europe/Berlin	\N	\N	active
+d1b2d952-5724-4b0f-b6cf-931828c03ec3	Hafenstraße		100031300	a023b021-9754-56c7-8c4e-9c391069aff5	51.9549	7.6289	Europe/Berlin	\N	\N	active
+10456344-748c-4ae6-9108-f986092d0e37	Hammer Straße		100034980	a023b021-9754-56c7-8c4e-9c391069aff5	51.9545	7.6263	Europe/Berlin	\N	\N	active
+86b93643-80ea-4ab9-abf5-c5f8c88363bd	Hüfferstraße		100034982	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6109	Europe/Berlin	\N	\N	active
+2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade Abschnitt 1 (Dingstiege)		300037544	a023b021-9754-56c7-8c4e-9c391069aff5	51.9795	7.6632	Europe/Berlin	\N	\N	active
+8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade Abschnitt 5		100053305	a023b021-9754-56c7-8c4e-9c391069aff5	51.9181	7.6497	Europe/Berlin	\N	\N	active
+2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade Abschnitt 6		300037936	a023b021-9754-56c7-8c4e-9c391069aff5	51.8895	7.65	Europe/Berlin	\N	\N	active
+7e23d159-5899-4c55-957a-d89963173fdc	Lütkenbecker Weg		300037920	a023b021-9754-56c7-8c4e-9c391069aff5	51.943	7.6485	Europe/Berlin	\N	\N	active
+6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor		100035541	a023b021-9754-56c7-8c4e-9c391069aff5	51.967	7.6154	Europe/Berlin	\N	\N	active
+c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade (nördlich Salzstraße)		100031297	a023b021-9754-56c7-8c4e-9c391069aff5	51.9606	7.634	Europe/Berlin	\N	\N	active
+75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westlicher Hals)		300037405	a023b021-9754-56c7-8c4e-9c391069aff5	51.9589	7.6195	Europe/Berlin	\N	\N	active
+2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße		300037932	a023b021-9754-56c7-8c4e-9c391069aff5	51.955	7.595	Europe/Berlin	\N	\N	active
+8bc74780-c0dd-4e71-97f0-e0ada75a0e41	Warendorfer Straße		100034983	a023b021-9754-56c7-8c4e-9c391069aff5	51.9619	7.6375	Europe/Berlin	\N	\N	active
+fed9ecfe-72ac-4098-b99d-a6597965fe90	Weißenburg Str.		300037933	a023b021-9754-56c7-8c4e-9c391069aff5	51.9475	7.6295	Europe/Berlin	\N	\N	active
+f7a545f1-4d17-49d0-9c19-e36d5340da49	Weseler Straße		100034981	a023b021-9754-56c7-8c4e-9c391069aff5	51.9506	7.6177	Europe/Berlin	\N	\N	active
+f2661888-fad4-4ffe-be44-a0e4ef7df0e0	Wolbecker Straße		100020113	a023b021-9754-56c7-8c4e-9c391069aff5	51.957	7.64	Europe/Berlin	\N	\N	active
+1d91486f-ed15-4eb1-811d-4f6779d760b0	BN - Brühler Straße		11	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.74042933	7.0695014145	Europe/Berlin	\N	\N	active
+b39332ac-f545-499f-a0e0-3a371a5a5839	BN - Nordbrücke (Südseite)		3	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.758688588	7.1042793525	Europe/Berlin	\N	\N	active
+edeef68f-2110-4648-ab10-12d181780847	BN - Wilhelm-Spiritus-Ufer		13	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.728124333	7.1120745095	Europe/Berlin	\N	\N	active
+2cc780a8-48b5-47dc-8492-0cc0dcc6e560	BN - Kennedybrücke (Nordseite)		1	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7390301848	7.1152570731	Europe/Berlin	\N	\N	active
+3c9e9903-f357-4569-a757-ee1b4177c8e3	BN - Nordbrücke (Nordseite)		4	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7590811376	7.1038102283	Europe/Berlin	\N	\N	active
+05717a4e-df8e-4a99-9f2e-a8a4f386030d	BN - Südbrücke (Südseite)		5	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7121532099	7.140091817	Europe/Berlin	\N	\N	active
+31e21830-145b-4c59-8199-37c8eb3c2f85	BN - Südbrücke (Nordseite)		6	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7199570855	7.1445975348	Europe/Berlin	\N	\N	active
+f8e36b25-2165-4a6d-afde-c13c67df65ac	BN - Von-Sandt-Ufer		8	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7008288026	7.1668880896	Europe/Berlin	\N	\N	active
+0867be14-2aca-4396-b4c6-dc6b554d715f	BN - Bröltalbahnweg		10	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7424892925	7.1134669781	Europe/Berlin	\N	\N	active
+3fe282f7-f725-4bfa-b534-2d53dd42431b	BN - Estermannufer		7	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7681019456	7.0688012735	Europe/Berlin	\N	\N	active
+c5b739c5-b831-47ba-9e6e-dcb6d012e8d2	BN - Hochwasserdamm Beuel		15	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7334176473	7.1150669195	Europe/Berlin	\N	\N	active
+625a6e6b-bd00-454d-9984-2cc674491219	BN - Rhenusallee		9	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7222859932	7.1336086832	Europe/Berlin	\N	\N	active
+1a9de3f3-9dca-4e84-8cb9-06f3ff5bb920	BN - Rheinweg		19	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7158900448	7.116439997	Europe/Berlin	\N	\N	active
+5198bd82-f11b-46ce-84a2-094e1a96da2b	BN - Joseph-Beuys-Allee		18	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7152400448	7.117649997	Europe/Berlin	\N	\N	active
+635e3ed1-65d0-47b5-952a-dffefdada546	MQ1.2	Messquerschnitt (Zählfeld-Gruppe) MQ1.2	MQ1.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559502	9.989767	Europe/Berlin	\N	\N	active
+fcae169d-de64-4d2d-a792-66a00423bdca	MQ1.3	Messquerschnitt (Zählfeld-Gruppe) MQ1.3	MQ1.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559542	9.990131	Europe/Berlin	\N	\N	active
+8a366bf2-f714-40c2-8a54-f8722d96400b	MQ10.1+10.2	Messquerschnitt (Zählfeld-Gruppe) MQ10.1+10.2	MQ10.1+10.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.528877	10.068003	Europe/Berlin	\N	\N	active
+d555d386-8664-4683-80b4-7c258912093d	MQ11.1	Messquerschnitt (Zählfeld-Gruppe) MQ11.1	MQ11.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5332298	10.0276723	Europe/Berlin	\N	\N	active
+998268eb-f5f5-4f45-83aa-60effb497175	MQ11.2	Messquerschnitt (Zählfeld-Gruppe) MQ11.2	MQ11.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.533474	10.027118	Europe/Berlin	\N	\N	active
+70482357-f2a6-44c9-ae8e-ac086840c50e	MQ13.1	Messquerschnitt (Zählfeld-Gruppe) MQ13.1	MQ13.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536659	10.028893	Europe/Berlin	\N	\N	active
+b3e125a6-f275-44a5-a493-9d9e0b96b352	MQ15.1	Messquerschnitt (Zählfeld-Gruppe) MQ15.1	MQ15.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534806	10.023657	Europe/Berlin	\N	\N	active
+0c9b5df9-a269-4096-8cce-181a09456e9a	MQ15.2	Messquerschnitt (Zählfeld-Gruppe) MQ15.2	MQ15.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.534968	10.024064	Europe/Berlin	\N	\N	active
+1bf368ed-790e-4565-8445-1721f2ba2060	MQ16.1	Messquerschnitt (Zählfeld-Gruppe) MQ16.1	MQ16.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491056	10.018815	Europe/Berlin	\N	\N	active
+eefa0525-6191-46ad-9c9a-fd5e0de84beb	MQ16.2	Messquerschnitt (Zählfeld-Gruppe) MQ16.2	MQ16.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490771	10.019263	Europe/Berlin	\N	\N	active
+7b161005-f138-4714-9ae8-5c093eb0e74b	MQ16.3	Messquerschnitt (Zählfeld-Gruppe) MQ16.3	MQ16.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.4915841	10.0187062	Europe/Berlin	\N	\N	active
+194dff83-9672-44cc-a3a9-d8069389a12c	MQ16.4	Messquerschnitt (Zählfeld-Gruppe) MQ16.4	MQ16.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491983	10.018692	Europe/Berlin	\N	\N	active
+35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str.		300037928	a023b021-9754-56c7-8c4e-9c391069aff5	51.979	7.621	Europe/Berlin	\N	\N	active
+baae3578-829f-4680-8d0b-ccced489e56e	MQ16.5	Messquerschnitt (Zählfeld-Gruppe) MQ16.5	MQ16.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492149	10.014794	Europe/Berlin	\N	\N	active
+1a5da770-5f21-459f-b497-ae3029f7523c	MQ16.6	Messquerschnitt (Zählfeld-Gruppe) MQ16.6	MQ16.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.492061	10.014586	Europe/Berlin	\N	\N	active
+5289f3b1-8ab3-400d-89a6-08cb0ee8b15e	MQ17.2	Messquerschnitt (Zählfeld-Gruppe) MQ17.2	MQ17.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.499384	9.999714	Europe/Berlin	\N	\N	active
+7a38034f-9bd5-44af-963e-26d9b736f6b1	MQ19.1	Messquerschnitt (Zählfeld-Gruppe) MQ19.1	MQ19.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555697	9.93429	Europe/Berlin	\N	\N	active
+15244802-0b50-4857-aac7-2cf9384541fa	MQ19.2	Messquerschnitt (Zählfeld-Gruppe) MQ19.2	MQ19.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555714	9.935825	Europe/Berlin	\N	\N	active
+26575ab9-f8c5-48f0-aedb-182be7e79fa3	MQ2.2	Messquerschnitt (Zählfeld-Gruppe) MQ2.2	MQ2.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557324	9.966427	Europe/Berlin	\N	\N	active
+668f312f-6960-4078-bc0c-36089af4a603	MQ2.3	Messquerschnitt (Zählfeld-Gruppe) MQ2.3	MQ2.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558287	9.967125	Europe/Berlin	\N	\N	active
+bf845988-3bdd-4511-b3bc-fb09bad70276	MQ2.4	Messquerschnitt (Zählfeld-Gruppe) MQ2.4	MQ2.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557423	9.96769	Europe/Berlin	\N	\N	active
+47f0cdec-2f2c-48f9-8e79-aca33f2bd17d	MQ2.5	Messquerschnitt (Zählfeld-Gruppe) MQ2.5	MQ2.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557282	9.96841	Europe/Berlin	\N	\N	active
+bbcb9757-aadc-4ab4-a2bd-cbece98bbfb9	MQ21.1	Messquerschnitt (Zählfeld-Gruppe) MQ21.1	MQ21.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550347	9.937152	Europe/Berlin	\N	\N	active
+e3267ba2-ec09-45ad-b31d-8dd0bbe62d2e	MQ21.2	Messquerschnitt (Zählfeld-Gruppe) MQ21.2	MQ21.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55015	9.936802	Europe/Berlin	\N	\N	active
+886cbc86-1788-4d99-afdd-dad68f1084f1	MQ21.3+21.4	Messquerschnitt (Zählfeld-Gruppe) MQ21.3+21.4	MQ21.3+21.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.550317	9.934094	Europe/Berlin	\N	\N	active
+9542c3c1-4436-4a36-99cf-d2dca965ed2b	MQ22.1	Messquerschnitt (Zählfeld-Gruppe) MQ22.1	MQ22.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5713729	9.8687564	Europe/Berlin	\N	\N	active
+0d19b786-27af-44aa-81a5-2d5657ef5f36	MQ22.2	Messquerschnitt (Zählfeld-Gruppe) MQ22.2	MQ22.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571228	9.867894	Europe/Berlin	\N	\N	active
+017bbf49-47d4-47dd-a252-6ba093fbeb22	MQ24.2	Messquerschnitt (Zählfeld-Gruppe) MQ24.2	MQ24.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5633	9.811997	Europe/Berlin	\N	\N	active
+e9bfc08e-8925-470a-adae-40c904e1fda9	MQ24.3	Messquerschnitt (Zählfeld-Gruppe) MQ24.3	MQ24.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.56323	9.811675	Europe/Berlin	\N	\N	active
+b7293c19-5c8c-4d5a-af06-a468ec299b62	MQ24.4	Messquerschnitt (Zählfeld-Gruppe) MQ24.4	MQ24.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563846	9.812288	Europe/Berlin	\N	\N	active
+cba14d7e-69bb-4443-b0aa-9c80c3d0cb3b	MQ24.5	Messquerschnitt (Zählfeld-Gruppe) MQ24.5	MQ24.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563695	9.812502	Europe/Berlin	\N	\N	active
+2d430191-5148-4000-9f38-9264de575911	MQ24.6	Messquerschnitt (Zählfeld-Gruppe) MQ24.6	MQ24.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.562749	9.81221	Europe/Berlin	\N	\N	active
+cc1b0068-f2f4-49da-b059-a4f9635f7f4b	MQ25.1	Messquerschnitt (Zählfeld-Gruppe) MQ25.1	MQ25.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.557633	9.998646	Europe/Berlin	\N	\N	active
+0c930397-8b1e-4e13-9455-82f70550833a	MQ25.2	Messquerschnitt (Zählfeld-Gruppe) MQ25.2	MQ25.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558098	9.996308	Europe/Berlin	\N	\N	active
+889f932a-cefc-4bdc-b4ff-9ff5630dafc8	MQ26.1	Messquerschnitt (Zählfeld-Gruppe) MQ26.1	MQ26.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5613056	9.9903889	Europe/Berlin	\N	\N	active
+a4f2be3d-95b0-4404-aeb0-3aedc8c07ecf	MQ26.2	Messquerschnitt (Zählfeld-Gruppe) MQ26.2	MQ26.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.561347	9.989535	Europe/Berlin	\N	\N	active
+595839f1-bfa3-4f94-8fc8-bbc23373eb19	MQ27.1	Messquerschnitt (Zählfeld-Gruppe) MQ27.1	MQ27.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5593836	9.99578881	Europe/Berlin	\N	\N	active
+e5c3ad5a-3d1e-4cd7-b657-72b26651132c	MQ27.2#1	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#1	MQ27.2#1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558178	9.993338	Europe/Berlin	\N	\N	active
+b1923170-7866-4a80-8487-c22850f6efe4	MQ27.2#2	Messquerschnitt (Zählfeld-Gruppe) MQ27.2#2	MQ27.2#2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558288	9.993451	Europe/Berlin	\N	\N	active
+afb35ef4-a641-4965-a717-730e782e2432	MQ27.3	Messquerschnitt (Zählfeld-Gruppe) MQ27.3	MQ27.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55835	9.993696	Europe/Berlin	\N	\N	active
+d00a5f81-88b4-450f-bf2f-e49d063d0d9d	MQ28.1	Messquerschnitt (Zählfeld-Gruppe) MQ28.1	MQ28.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567134	9.970557	Europe/Berlin	\N	\N	active
+12aff17e-afac-4cd3-8dff-1f94db662930	MQ28.6	Messquerschnitt (Zählfeld-Gruppe) MQ28.6	MQ28.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.567014	9.971653	Europe/Berlin	\N	\N	active
+ef44abd2-386a-4b47-99cf-4793ea1894bf	MQ29.1	Messquerschnitt (Zählfeld-Gruppe) MQ29.1	MQ29.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575746	9.970223	Europe/Berlin	\N	\N	active
+2b4a35f1-4983-41ec-8d42-acfac2a2935c	MQ29.2	Messquerschnitt (Zählfeld-Gruppe) MQ29.2	MQ29.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576193	9.970251	Europe/Berlin	\N	\N	active
+19fe5121-2590-4ff9-9ca8-6412a815fa19	MQ29.4	Messquerschnitt (Zählfeld-Gruppe) MQ29.4	MQ29.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576142	9.970148	Europe/Berlin	\N	\N	active
+1dfef925-989f-4786-85d9-5c91d2191d89	MQ3.1	Messquerschnitt (Zählfeld-Gruppe) MQ3.1	MQ3.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549739	9.974404	Europe/Berlin	\N	\N	active
+6c908933-50ab-4e93-86eb-be9a02ae26b0	MQ3.2	Messquerschnitt (Zählfeld-Gruppe) MQ3.2	MQ3.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549444	9.973766	Europe/Berlin	\N	\N	active
+68bd4cf2-b2ab-4e89-ba21-a764421789b2	MQ30.1+30.2	Messquerschnitt (Zählfeld-Gruppe) MQ30.1+30.2	MQ30.1+30.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580137	9.999324	Europe/Berlin	\N	\N	active
+66656cfe-7b46-463f-ab61-446975497073	MQ31.1	Messquerschnitt (Zählfeld-Gruppe) MQ31.1	MQ31.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582629	9.9714	Europe/Berlin	\N	\N	active
+c77b5fdb-f885-4874-bb07-68da0e4c0375	MQ31.2	Messquerschnitt (Zählfeld-Gruppe) MQ31.2	MQ31.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.582224	9.972698	Europe/Berlin	\N	\N	active
+b83ca7a6-8eca-4b97-bb21-4c03c7788138	MQ31.3	Messquerschnitt (Zählfeld-Gruppe) MQ31.3	MQ31.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58237	9.97116	Europe/Berlin	\N	\N	active
+7283419f-e56a-443a-bce7-7e6303e3c2aa	MQ31.4	Messquerschnitt (Zählfeld-Gruppe) MQ31.4	MQ31.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581422	9.970706	Europe/Berlin	\N	\N	active
+1096c768-e862-4248-ba0b-61271e1c36cf	MQ31.6	Messquerschnitt (Zählfeld-Gruppe) MQ31.6	MQ31.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581274	9.972468	Europe/Berlin	\N	\N	active
+dbfa3e2a-f2ed-4075-874a-a93941aac4d6	MQ32.1	Messquerschnitt (Zählfeld-Gruppe) MQ32.1	MQ32.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575775	9.953637	Europe/Berlin	\N	\N	active
+9a453733-19aa-4dc4-8764-5ab2027c268c	MQ32.2	Messquerschnitt (Zählfeld-Gruppe) MQ32.2	MQ32.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575613	9.954004	Europe/Berlin	\N	\N	active
+5ba4fc53-19a2-4071-ae02-55de1a0767fe	MQ33.1	Messquerschnitt (Zählfeld-Gruppe) MQ33.1	MQ33.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602845	9.891511	Europe/Berlin	\N	\N	active
+77e0772d-b481-4b1b-ab0f-0a2e8cd83138	MQ20.2	Messquerschnitt (Zählfeld-Gruppe) MQ20.2	MQ20.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551914	9.942567	Europe/Berlin	\N	\N	inactive
+0da1ed56-5073-4143-9da5-51b9364196f9	MQ33.2	Messquerschnitt (Zählfeld-Gruppe) MQ33.2	MQ33.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.60194	9.89026	Europe/Berlin	\N	\N	active
+016b5f5d-dd27-4ff8-a23f-ef8c85f25712	MQ34.1	Messquerschnitt (Zählfeld-Gruppe) MQ34.1	MQ34.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628653	9.93175	Europe/Berlin	\N	\N	active
+1d0e5994-72cf-4e57-8581-3b0c06fd9cda	MQ34.2	Messquerschnitt (Zählfeld-Gruppe) MQ34.2	MQ34.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.628498	9.932425	Europe/Berlin	\N	\N	active
+c2415aae-e97a-497f-9ad0-9b144214da82	MQ35.1	Messquerschnitt (Zählfeld-Gruppe) MQ35.1	MQ35.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6170439	9.9504622	Europe/Berlin	\N	\N	active
+510367da-29cc-4746-9ba2-349cebfeb44b	MQ35.2	Messquerschnitt (Zählfeld-Gruppe) MQ35.2	MQ35.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.616118	9.951241	Europe/Berlin	\N	\N	active
+1e515b7e-d856-4aaf-af8a-c7f4b7856af7	MQ36.1	Messquerschnitt (Zählfeld-Gruppe) MQ36.1	MQ36.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.580543499	9.999595627	Europe/Berlin	\N	\N	active
+8a93eb34-c409-4d76-bbb6-216b9f09ba32	MQ37.1	Messquerschnitt (Zählfeld-Gruppe) MQ37.1	MQ37.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564829	10.018398	Europe/Berlin	\N	\N	active
+bc3b7abc-681f-45d8-868e-20e5a2ad396e	MQ37.2	Messquerschnitt (Zählfeld-Gruppe) MQ37.2	MQ37.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564519	10.018337	Europe/Berlin	\N	\N	active
+0a83facf-5d95-46de-90af-b5d1e935d7ae	MQ37.3	Messquerschnitt (Zählfeld-Gruppe) MQ37.3	MQ37.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.566198	10.020138	Europe/Berlin	\N	\N	active
+bd1aa173-8048-4587-9b4e-d5544bd92772	MQ38.1	Messquerschnitt (Zählfeld-Gruppe) MQ38.1	MQ38.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.576818	10.010544	Europe/Berlin	\N	\N	active
+e3408d9a-b86b-4a7a-8c96-b4f8b4934aa6	MQ38.2	Messquerschnitt (Zählfeld-Gruppe) MQ38.2	MQ38.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.577056	10.010206	Europe/Berlin	\N	\N	active
+4fd23adf-e422-4f7d-9447-df6238bd7c72	MQ39.1	Messquerschnitt (Zählfeld-Gruppe) MQ39.1	MQ39.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575603	10.034868	Europe/Berlin	\N	\N	active
+f8b9cdeb-2edf-419a-88c8-6e68b4ec112f	MQ39.2	Messquerschnitt (Zählfeld-Gruppe) MQ39.2	MQ39.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575833	10.034069	Europe/Berlin	\N	\N	active
+562190bd-0d6a-40c7-9c5c-b6c78d6b7715	MQ39.3	Messquerschnitt (Zählfeld-Gruppe) MQ39.3	MQ39.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574726	10.034438	Europe/Berlin	\N	\N	active
+54faaa05-4f0c-44e9-af64-90d174521ac5	MQ39.4	Messquerschnitt (Zählfeld-Gruppe) MQ39.4	MQ39.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574555	10.035141	Europe/Berlin	\N	\N	active
+e578a68b-f9be-42d2-b1df-9034c9b8fc64	MQ39.5	Messquerschnitt (Zählfeld-Gruppe) MQ39.5	MQ39.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575758	10.036348	Europe/Berlin	\N	\N	active
+fbfac096-29f4-459b-ab4a-b26bc1d497b4	MQ39.6	Messquerschnitt (Zählfeld-Gruppe) MQ39.6	MQ39.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.575342	10.036291	Europe/Berlin	\N	\N	active
+b0c972c5-924f-4df8-909f-8f8024acd767	MQ39.7	Messquerschnitt (Zählfeld-Gruppe) MQ39.7	MQ39.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574753	10.036206	Europe/Berlin	\N	\N	active
+80f154b5-7f96-4abc-86ee-f611f460a3c8	MQ39.8	Messquerschnitt (Zählfeld-Gruppe) MQ39.8	MQ39.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.574649	10.035881	Europe/Berlin	\N	\N	active
+66fc0691-137b-4e1f-9de7-b61f67b20e9b	MQ4.1	Messquerschnitt (Zählfeld-Gruppe) MQ4.1	MQ4.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54552	9.971877	Europe/Berlin	\N	\N	active
+1c8ac7ea-e0a8-4434-a640-144319c45a72	MQ4.2	Messquerschnitt (Zählfeld-Gruppe) MQ4.2	MQ4.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545348	9.971869	Europe/Berlin	\N	\N	active
+977a27e6-f014-49a7-b9e3-3c60561492aa	MQ40.1+40.2	Messquerschnitt (Zählfeld-Gruppe) MQ40.1+40.2	MQ40.1+40.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598792	10.042896	Europe/Berlin	\N	\N	active
+029c0f2e-b221-4572-afea-d21b60b9de01	MQ40.4	Messquerschnitt (Zählfeld-Gruppe) MQ40.4	MQ40.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597921	10.042453	Europe/Berlin	\N	\N	active
+9f4ffa2b-f465-48cd-934a-ec33e649cfd2	MQ40.5	Messquerschnitt (Zählfeld-Gruppe) MQ40.5	MQ40.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59801	10.0421266	Europe/Berlin	\N	\N	active
+a2163a49-3d46-4158-a470-2c1fb73ff554	MQ40.6	Messquerschnitt (Zählfeld-Gruppe) MQ40.6	MQ40.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598353	10.040616	Europe/Berlin	\N	\N	active
+990a13e0-d11a-4154-83bf-b62b1e14a950	MQ40.7	Messquerschnitt (Zählfeld-Gruppe) MQ40.7	MQ40.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598456	10.040752	Europe/Berlin	\N	\N	active
+9abc559e-05e6-467b-a8b5-2de7c271e1f7	MQ40.8	Messquerschnitt (Zählfeld-Gruppe) MQ40.8	MQ40.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599466	10.041376	Europe/Berlin	\N	\N	active
+5e11aa77-b127-40f9-b2f1-4769b2febc13	MQ40.9	Messquerschnitt (Zählfeld-Gruppe) MQ40.9	MQ40.9	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.599749	10.041109	Europe/Berlin	\N	\N	active
+097fc8d1-a0fc-49fd-a345-1d1eb647b380	MQ41.1	Messquerschnitt (Zählfeld-Gruppe) MQ41.1	MQ41.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649518	10.017232	Europe/Berlin	\N	\N	active
+fc7c8417-2e38-400d-9ad0-2c69a4819a2d	MQ41.2	Messquerschnitt (Zählfeld-Gruppe) MQ41.2	MQ41.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649258	10.017161	Europe/Berlin	\N	\N	active
+125359db-d6f7-4ead-8489-d69e125f90fb	MQ41.3	Messquerschnitt (Zählfeld-Gruppe) MQ41.3	MQ41.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.648629	10.017824	Europe/Berlin	\N	\N	active
+c01ada55-c3fd-4b4e-b6b1-436f1107dfb1	MQ41.4	Messquerschnitt (Zählfeld-Gruppe) MQ41.4	MQ41.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649257	10.018631	Europe/Berlin	\N	\N	active
+f699f15d-c4f4-4f1e-ad30-059c7b1f0dfb	MQ41.5	Messquerschnitt (Zählfeld-Gruppe) MQ41.5	MQ41.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.649513	10.018663	Europe/Berlin	\N	\N	active
+3f02fea6-0595-4ee4-ae34-7b3444ab5079	MQ41.6	Messquerschnitt (Zählfeld-Gruppe) MQ41.6	MQ41.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650325	10.017771	Europe/Berlin	\N	\N	active
+7fd6b4d5-4508-4f7b-b610-5c1e476a4914	MQ41.7	Messquerschnitt (Zählfeld-Gruppe) MQ41.7	MQ41.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.650046	10.01798	Europe/Berlin	\N	\N	active
+69544b4a-f8a6-4c3a-a2de-7736634778a9	MQ42.1+42.2	Messquerschnitt (Zählfeld-Gruppe) MQ42.1+42.2	MQ42.1+42.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564546	10.045668	Europe/Berlin	\N	\N	active
+a5d2fb4b-011c-4cd7-8d45-ea18886bdfa0	MQ42.7+42.8	Messquerschnitt (Zählfeld-Gruppe) MQ42.7+42.8	MQ42.7+42.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563912	10.044655	Europe/Berlin	\N	\N	active
+0b429d14-66af-4826-bf8e-1b13b18e2887	MQ43.1	Messquerschnitt (Zählfeld-Gruppe) MQ43.1	MQ43.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571186	10.064556	Europe/Berlin	\N	\N	active
+3217aeed-e380-44d0-8b04-751701f97ba7	MQ43.2	Messquerschnitt (Zählfeld-Gruppe) MQ43.2	MQ43.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.571528	10.065005	Europe/Berlin	\N	\N	active
+a88bf1ba-0e9f-416d-bbea-b56e1863e3fd	MQ44.1+44.2	Messquerschnitt (Zählfeld-Gruppe) MQ44.1+44.2	MQ44.1+44.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.595287	10.146631	Europe/Berlin	\N	\N	active
+bbdcd18c-0585-4a1a-9ec9-b04a78113ca8	MQ44.3+44.4	Messquerschnitt (Zählfeld-Gruppe) MQ44.3+44.4	MQ44.3+44.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.594784	10.146565	Europe/Berlin	\N	\N	active
+b9f0c58c-3dcb-45ef-88e6-c163173e92df	MQ45.3	Messquerschnitt (Zählfeld-Gruppe) MQ45.3	MQ45.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605673	10.119519	Europe/Berlin	\N	\N	active
+2d1dbe5d-bc8d-47ab-916a-6a749245d101	MQ45.4	Messquerschnitt (Zählfeld-Gruppe) MQ45.4	MQ45.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.605632	10.119057	Europe/Berlin	\N	\N	active
+4f1662f1-d2a1-4d6f-8104-7a218b6ce83f	MQ46.1	Messquerschnitt (Zählfeld-Gruppe) MQ46.1	MQ46.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656396	10.094956	Europe/Berlin	\N	\N	active
+7214a2a3-f139-4ef6-aa6e-33e7194138ce	MQ46.2	Messquerschnitt (Zählfeld-Gruppe) MQ46.2	MQ46.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656217	10.094338	Europe/Berlin	\N	\N	active
+22d55dde-7d1f-4d1b-85fc-faf685542902	MQ46.3	Messquerschnitt (Zählfeld-Gruppe) MQ46.3	MQ46.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656607	10.094081	Europe/Berlin	\N	\N	active
+1b87db16-4286-48c1-968d-a13da1c7af32	021	L 3067, 34599 Neuental	300027319	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.979054	9.206268	Europe/Berlin	\N	\N	active
+9be76c54-7fbb-41e0-a0a6-c8a1d8bcfc3f	MQ46.4	Messquerschnitt (Zählfeld-Gruppe) MQ46.4	MQ46.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.657029	10.094174	Europe/Berlin	\N	\N	active
+e172eed9-9d6f-4ceb-91da-98e3f7170ecf	MQ46.5	Messquerschnitt (Zählfeld-Gruppe) MQ46.5	MQ46.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656398	10.092844	Europe/Berlin	\N	\N	active
+f6bfb17e-9e13-40aa-b243-97fcda01a0b6	MQ46.6	Messquerschnitt (Zählfeld-Gruppe) MQ46.6	MQ46.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.656126	10.093074	Europe/Berlin	\N	\N	active
+7e5beffd-8445-484d-ac51-2bd9d8e3a214	MQ46.7	Messquerschnitt (Zählfeld-Gruppe) MQ46.7	MQ46.7	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.65604	10.093221	Europe/Berlin	\N	\N	active
+88e21d93-2183-4a05-a2cf-3cc2d730a7d6	MQ46.8	Messquerschnitt (Zählfeld-Gruppe) MQ46.8	MQ46.8	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.6558936	10.0937151	Europe/Berlin	\N	\N	active
+d37b8931-e1ad-46e1-ac65-f6a593da61ca	MQ47.1	Messquerschnitt (Zählfeld-Gruppe) MQ47.1	MQ47.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.491224	10.207669	Europe/Berlin	\N	\N	active
+485b1f4e-86b4-4e61-bfaa-7040370aa893	MQ48.1	Messquerschnitt (Zählfeld-Gruppe) MQ48.1	MQ48.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489577	10.186242	Europe/Berlin	\N	\N	active
+9ad79121-31cd-4948-9914-08b385301e1f	MQ48.2	Messquerschnitt (Zählfeld-Gruppe) MQ48.2	MQ48.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.489552	10.18657	Europe/Berlin	\N	\N	active
+677127de-d3a9-4a33-8ecd-cf794f6fddec	MQ49.1	Messquerschnitt (Zählfeld-Gruppe) MQ49.1	MQ49.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.470913	9.993656	Europe/Berlin	\N	\N	active
+d0638c5e-db0f-4274-870c-2e3605e8355f	MQ50.1	Messquerschnitt (Zählfeld-Gruppe) MQ50.1	MQ50.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456969	9.985025	Europe/Berlin	\N	\N	active
+07d18993-983a-4d82-9217-5fdc93255953	MQ50.2	Messquerschnitt (Zählfeld-Gruppe) MQ50.2	MQ50.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456928	9.986936	Europe/Berlin	\N	\N	active
+4a905f69-f28d-4138-84c9-b5cbd29ed88d	MQ50.3	Messquerschnitt (Zählfeld-Gruppe) MQ50.3	MQ50.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456396	9.985592	Europe/Berlin	\N	\N	active
+e4b45ee8-cb4f-4947-9f3e-b1679a4aac8d	MQ50.4	Messquerschnitt (Zählfeld-Gruppe) MQ50.4	MQ50.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456908	9.985975	Europe/Berlin	\N	\N	active
+0d614c5c-5d5f-4d7f-8cb4-178765874647	MQ50.5	Messquerschnitt (Zählfeld-Gruppe) MQ50.5	MQ50.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.45644	9.985882	Europe/Berlin	\N	\N	active
+a9699225-3ee9-481c-a3cc-f156745238bb	MQ50.6	Messquerschnitt (Zählfeld-Gruppe) MQ50.6	MQ50.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.456992	9.984587	Europe/Berlin	\N	\N	active
+075d0a14-5e2a-4442-bce7-2a2fa84716c3	MQ52.1	Messquerschnitt (Zählfeld-Gruppe) MQ52.1	MQ52.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.461624	9.978958	Europe/Berlin	\N	\N	active
+2a74d2f5-ee45-48a5-b068-057be374fa8f	MQ53.2	Messquerschnitt (Zählfeld-Gruppe) MQ53.2	MQ53.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555794	9.949541	Europe/Berlin	\N	\N	active
+e9ae5f96-83ce-40db-99e5-04412eca1e43	MQ54.1	Messquerschnitt (Zählfeld-Gruppe) MQ54.1	MQ54.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.553388	9.897991	Europe/Berlin	\N	\N	active
+e5955033-155b-456b-b9e9-15ffc9dbc4c0	MQ55.2	Messquerschnitt (Zählfeld-Gruppe) MQ55.2	MQ55.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548809	9.947219	Europe/Berlin	\N	\N	active
+1cef93d5-3005-463d-b70f-cf3930c198f0	MQ55.3	Messquerschnitt (Zählfeld-Gruppe) MQ55.3	MQ55.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.548736	9.947563	Europe/Berlin	\N	\N	active
+e1486d48-8de6-4e8f-b13f-af0aa12cd6d2	MQ56.1	Messquerschnitt (Zählfeld-Gruppe) MQ56.1	MQ56.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.555075	9.999794	Europe/Berlin	\N	\N	active
+1e4f9fed-c71e-40c1-a9fc-d37894d1309a	MQ56.2	Messquerschnitt (Zählfeld-Gruppe) MQ56.2	MQ56.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.554296	9.998839	Europe/Berlin	\N	\N	active
+2e3b31a0-a308-45d5-af08-869155b0e488	MQ57.1	Messquerschnitt (Zählfeld-Gruppe) MQ57.1	MQ57.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549987	9.966551	Europe/Berlin	\N	\N	active
+bf1f01ae-eb8c-475f-8e21-959a012059ff	MQ57.2	Messquerschnitt (Zählfeld-Gruppe) MQ57.2	MQ57.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.549883	9.966789	Europe/Berlin	\N	\N	active
+df101039-59f6-46e5-a59f-05fb71d641ab	MQ58.2	Messquerschnitt (Zählfeld-Gruppe) MQ58.2	MQ58.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588565	10.074989	Europe/Berlin	\N	\N	active
+8757950c-caed-412c-ac99-ba176dd1acc4	MQ58.3	Messquerschnitt (Zählfeld-Gruppe) MQ58.3	MQ58.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.588683	10.075165	Europe/Berlin	\N	\N	active
+4b99f7f9-c9e5-40e4-b24c-39f64f87ecf4	MQ59.1	Messquerschnitt (Zählfeld-Gruppe) MQ59.1	MQ59.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579863	9.93956	Europe/Berlin	\N	\N	active
+7b7ec8b8-d426-4f2f-81c0-29265b2be2a4	MQ59.2	Messquerschnitt (Zählfeld-Gruppe) MQ59.2	MQ59.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.579671	9.939617	Europe/Berlin	\N	\N	active
+30d66148-696f-470a-9a96-1bad5ceec307	MQ6.1+6.2	Messquerschnitt (Zählfeld-Gruppe) MQ6.1+6.2	MQ6.1+6.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.541074	9.966599	Europe/Berlin	\N	\N	active
+6ec07dec-7c4f-463d-9bec-ba0ea26a3b9b	MQ60.1	Messquerschnitt (Zählfeld-Gruppe) MQ60.1	MQ60.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.63297	10.025849	Europe/Berlin	\N	\N	active
+c361a9a8-ca59-42f1-a1f8-138cfda05b67	MQ61.1	Messquerschnitt (Zählfeld-Gruppe) MQ61.1	MQ61.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55437	10.013955	Europe/Berlin	\N	\N	active
+3ed49c63-e1d3-4e3a-a1ed-0b99fc99c71d	MQ61.2	Messquerschnitt (Zählfeld-Gruppe) MQ61.2	MQ61.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55423	10.014049	Europe/Berlin	\N	\N	active
+61768a1d-0367-48f6-b87b-1c2b90e7fa99	MQ62.1	Messquerschnitt (Zählfeld-Gruppe) MQ62.1	MQ62.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.490752	10.158439	Europe/Berlin	\N	\N	active
+ac4b360d-5cb1-4558-adac-e1a0f6b17611	MQ63.1	Messquerschnitt (Zählfeld-Gruppe) MQ63.1	MQ63.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.570707	9.958068	Europe/Berlin	\N	\N	active
+9b2bdd44-3c3d-4dec-a10f-62f4b5d292d8	MQ64.1	Messquerschnitt (Zählfeld-Gruppe) MQ64.1	MQ64.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.466293	9.986074	Europe/Berlin	\N	\N	active
+23615cb6-5a28-470a-9569-60d7a2a8b5c5	MQ65.1	Messquerschnitt (Zählfeld-Gruppe) MQ65.1	MQ65.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460342	9.975723	Europe/Berlin	\N	\N	active
+b8306794-1a8e-4d6e-baf2-6c7c4b5c0ebb	MQ65.2	Messquerschnitt (Zählfeld-Gruppe) MQ65.2	MQ65.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.460248	9.975731	Europe/Berlin	\N	\N	active
+9f26a8b2-7ce6-4f36-b4eb-f6d7a20355f5	MQ66.1	Messquerschnitt (Zählfeld-Gruppe) MQ66.1	MQ66.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558882	9.962624	Europe/Berlin	\N	\N	active
+97aea76f-ba6b-4dc3-a6dc-0fd2eb0bc397	MQ66.2	Messquerschnitt (Zählfeld-Gruppe) MQ66.2	MQ66.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.558984	9.961814	Europe/Berlin	\N	\N	active
+d904a6f0-5dcc-46e9-8573-433a619089d0	MQ68.1	Messquerschnitt (Zählfeld-Gruppe) MQ68.1	MQ68.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494852	10.20662	Europe/Berlin	\N	\N	active
+7234e762-c5a0-41a6-8904-35e44cb69087	MQ68.2	Messquerschnitt (Zählfeld-Gruppe) MQ68.2	MQ68.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.494705	10.206855	Europe/Berlin	\N	\N	active
+6178eab3-5231-427c-a4e0-57b310f6c077	MQ69.1	Messquerschnitt (Zählfeld-Gruppe) MQ69.1	MQ69.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5222	10.015052	Europe/Berlin	\N	\N	active
+bebc1a3b-74e2-470e-9a96-c1ca970551a3	MQ69.2	Messquerschnitt (Zählfeld-Gruppe) MQ69.2	MQ69.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.521604	10.014901	Europe/Berlin	\N	\N	active
+820f3c6f-e838-469c-873d-f0e833a9ccc1	MQ70.1	Messquerschnitt (Zählfeld-Gruppe) MQ70.1	MQ70.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.602904	10.029791	Europe/Berlin	\N	\N	active
+8ae8f801-9ab1-4ee3-9973-15a07f67d284	MQ71.1	Messquerschnitt (Zählfeld-Gruppe) MQ71.1	MQ71.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.54532	9.99732	Europe/Berlin	\N	\N	active
+8921abf3-401e-49d0-a83f-bb8d92e02628	MQ71.2	Messquerschnitt (Zählfeld-Gruppe) MQ71.2	MQ71.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.545308	9.997238	Europe/Berlin	\N	\N	active
+4121befc-c0a0-43e6-8a42-5cb5fc0843ae	MQ72.1	Messquerschnitt (Zählfeld-Gruppe) MQ72.1	MQ72.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569591	9.97361	Europe/Berlin	\N	\N	active
+0bbe8772-a504-49ca-9649-a52c65678163	MQ72.2	Messquerschnitt (Zählfeld-Gruppe) MQ72.2	MQ72.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.569716	9.973282	Europe/Berlin	\N	\N	active
+a80f6806-8443-4013-bbd5-e4b5ff013828	MQ73.1+73.2	Messquerschnitt (Zählfeld-Gruppe) MQ73.1+73.2	MQ73.1+73.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.631293	9.950951	Europe/Berlin	\N	\N	active
+7772ed13-90d1-40d2-80d7-715ea9b31079	MQ74.1	Messquerschnitt (Zählfeld-Gruppe) MQ74.1	MQ74.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.597476	9.932351	Europe/Berlin	\N	\N	active
+176b8e62-a6d7-4404-ad52-828bbc765756	MQ74.2	Messquerschnitt (Zählfeld-Gruppe) MQ74.2	MQ74.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59698	9.932577	Europe/Berlin	\N	\N	active
+7bd84b64-46d2-4959-bdad-730b0c013003	MQ76.1	Messquerschnitt (Zählfeld-Gruppe) MQ76.1	MQ76.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.59838	9.958425	Europe/Berlin	\N	\N	active
+d83d6097-875b-4617-9999-17fd8546c386	MQ77.1	Messquerschnitt (Zählfeld-Gruppe) MQ77.1	MQ77.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598286	9.941963	Europe/Berlin	\N	\N	active
+c8d71786-655f-4ebd-9bc3-15f182c38821	MQ78.1	Messquerschnitt (Zählfeld-Gruppe) MQ78.1	MQ78.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563392	9.976375	Europe/Berlin	\N	\N	active
+52d1d96d-6d99-4faa-9cbd-be7bd2823b3c	MQ78.2	Messquerschnitt (Zählfeld-Gruppe) MQ78.2	MQ78.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.563345	9.976814	Europe/Berlin	\N	\N	active
+8ddcaec5-e00a-4e80-b320-65569bd7408b	MQ79.1	Messquerschnitt (Zählfeld-Gruppe) MQ79.1	MQ79.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.564579	9.986991	Europe/Berlin	\N	\N	active
+9c1522e1-b6ef-4239-a463-afba09fc6ec3	MQ8.1	Messquerschnitt (Zählfeld-Gruppe) MQ8.1	MQ8.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.55561	10.038192	Europe/Berlin	\N	\N	active
+94f61afd-3a3a-4edb-b125-3fe4db4e9481	MQ80.1	Messquerschnitt (Zählfeld-Gruppe) MQ80.1	MQ80.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.583661	9.995193	Europe/Berlin	\N	\N	active
+00d8fa50-0192-4866-89db-a3f5ef364d2a	MQ80.2	Messquerschnitt (Zählfeld-Gruppe) MQ80.2	MQ80.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.995601	Europe/Berlin	\N	\N	active
+2e02b374-63ec-450b-8fa6-52d146fcc3ed	MQ81.1	Messquerschnitt (Zählfeld-Gruppe) MQ81.1	MQ81.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.58369	9.932026	Europe/Berlin	\N	\N	active
+077157be-fbf1-4ab0-9c00-ba5d12ee9686	MQ85.1	Messquerschnitt (Zählfeld-Gruppe) MQ85.1	MQ85.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598475	9.965094	Europe/Berlin	\N	\N	active
+7455f858-9703-4527-8693-73b4c624763d	MQ85.2	Messquerschnitt (Zählfeld-Gruppe) MQ85.2	MQ85.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.598244	9.965587	Europe/Berlin	\N	\N	active
+1999951b-d0d5-4605-82a5-99948d2faab1	MQ86.1	Messquerschnitt (Zählfeld-Gruppe) MQ86.1	MQ86.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.559758	10.010613	Europe/Berlin	\N	\N	active
+07907880-9dfc-4349-aa5e-fc9a40aa0db5	MQ87.1	Messquerschnitt (Zählfeld-Gruppe) MQ87.1	MQ87.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.560293	9.912201	Europe/Berlin	\N	\N	active
+04979100-9e64-4ed6-95c3-bec20ab22d09	MQ9.1	Messquerschnitt (Zählfeld-Gruppe) MQ9.1	MQ9.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.53762575	10.107728436	Europe/Berlin	\N	\N	active
+4552ab93-28e4-42a2-af8c-46d5790a950f	MQ9.2	Messquerschnitt (Zählfeld-Gruppe) MQ9.2	MQ9.2	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537557	10.107269	Europe/Berlin	\N	\N	active
+79601896-2c58-40ff-9e28-7ce12aee9d41	MQ9.3	Messquerschnitt (Zählfeld-Gruppe) MQ9.3	MQ9.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537886	10.108873	Europe/Berlin	\N	\N	active
+e663e3be-f262-4f4e-9c4a-efd8444b4f9f	MQ9.4	Messquerschnitt (Zählfeld-Gruppe) MQ9.4	MQ9.4	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.538032	10.109565	Europe/Berlin	\N	\N	active
+ede561df-d84e-4e80-88d9-7d7406622cbd	MQ9.5	Messquerschnitt (Zählfeld-Gruppe) MQ9.5	MQ9.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.537127	10.108677	Europe/Berlin	\N	\N	active
+8ddae2e9-8035-42e4-b152-91e380bc828d	MQ9.6	Messquerschnitt (Zählfeld-Gruppe) MQ9.6	MQ9.6	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.536605	10.109432	Europe/Berlin	\N	\N	active
+18077a4e-dc01-43b6-b408-ecb321d2f5d9	BN - John-J.-McCloy-Ufer		14	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.6710361979	7.187889234	Europe/Berlin	\N	\N	inactive
+743e7c29-0940-4011-bf2a-3f5e44446a28	BN - Straßburger Weg		12	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7193231194	7.1134228228	Europe/Berlin	\N	\N	inactive
+f6ce388b-6401-4fb6-a2ba-a71124ba7ad4	Stadt Stein Nürnberger Straße	Eco-Counter Zählerstandort (kumulierte Zählung)	100063085	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	49.4163	11.0188	Europe/Berlin	\N	\N	active
+13c3c641-e1f7-4ded-8a8f-dc2c1904ca6a	MQ20.1	Messquerschnitt (Zählfeld-Gruppe) MQ20.1	MQ20.1	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.551849	9.942183	Europe/Berlin	\N	\N	inactive
+5f127565-6b7f-42ee-9155-913a0db396cd	MQ20.3	Messquerschnitt (Zählfeld-Gruppe) MQ20.3	MQ20.3	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.5518	9.942182	Europe/Berlin	\N	\N	inactive
+7d624589-fc5a-422b-a35f-28380acfff14	MQ31.5	Messquerschnitt (Zählfeld-Gruppe) MQ31.5	MQ31.5	48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	53.581576	9.972654	Europe/Berlin	\N	\N	inactive
+d7059ec7-b7c1-4a15-9eef-97ea35a69180	064b	Im Mundklingen 2, 64342 Seeheim-Jugenheim	300022489	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.780459	8.648295	Europe/Berlin	\N	\N	active
+25f34d59-8798-409c-b5d2-124cb3b41b2f	121	K 31, 64653 Lorsch	300022501	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.661562	8.576529	Europe/Berlin	\N	\N	active
+7844e667-8569-4814-9235-f37b6f7f3196	122	In Den Langen Ruten 10, 64653 Lorsch	300022502	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.651834	8.588048	Europe/Berlin	\N	\N	active
+4dc4be7d-38b3-423b-89ce-b2b05665cbd5	BN - Kennedybrücke (Südseite)		2	10f34f2e-5b11-5314-81b3-159d0e3a0556	50.7374853528	7.1059408371	Europe/Berlin	\N	\N	active
+b7721b6b-b7c0-45b6-be6e-d4719bb9950d	123	Am Sportplatz 1, 68642 Bürstadt	300022506	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.648463	8.505124	Europe/Berlin	\N	\N	active
+13ae5275-9622-4811-9a80-f52faae01aef	051	Darmstädter Straße 75, 64572 Büttelborn	300022516	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.904475	8.536846	Europe/Berlin	\N	\N	active
+934465bc-9c04-41c7-8f0c-d46daac3309c	028	Hahner Straße 4, 64372 Ober-Ramstadt	300022578	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.82076694459276	8.750551342964174	Europe/Berlin	\N	\N	active
+caa7e16c-6946-4974-adf0-47360c0a12b9	059	Rheinstraße 2, 65391 Lorch	300022608	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.040216	7.811698	Europe/Berlin	\N	\N	active
+1f9e5140-ae97-4750-90c7-d40526933c78	084	Aarstraße 5, 65232 Taunusstein	300022633	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.13081	8.11911	Europe/Berlin	\N	\N	active
+796c56e7-6305-4187-824f-45b9a4a2b84c	085	Mainzer Straße 2, 65205 Wiesbaden	300022664	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.052994	8.277912	Europe/Berlin	\N	\N	active
+57a6db75-7f2c-4c91-aa49-6c02ad7fa599	086	Auweg 4, 65347 Eltville am Rhein	300022666	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.012307	8.064773	Europe/Berlin	\N	\N	active
+4c963be6-8d7d-4d9b-86fd-150c29a8ad43	117	Am Schwarzen Berg 9a, 64521 Groß-Gerau	300022699	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.867808	8.487299	Europe/Berlin	\N	\N	active
+8de4f3e1-fcdc-4035-a487-8d7d77c9786e	043	Lenzenbergstraße 118a, 65931 Frankfurt	300022870	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10407	8.50174	Europe/Berlin	\N	\N	active
+fdcdf742-8f49-4a06-a149-c5c847e35f75	044	Schmalkaldener Straße 19, 65929 Frankfurt	300022899	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10444400452868	8.504185080528261	Europe/Berlin	\N	\N	active
+f9a81a12-8ca8-424a-85d3-a426328b2679	137a	K 705, 65527 Niedernhausen	300023017	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17381296360336	8.294790387153627	Europe/Berlin	\N	\N	active
+6f4e996d-56f7-4483-8f88-e196e6b3ceb0	137b	K 705, 65527 Niedernhausen	300023018	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17370989251206	8.294683098793032	Europe/Berlin	\N	\N	active
+8771705f-a9f8-434e-8037-634f400379e8	138a	Lochmühle 2, 65527 Niedernhausen	300023019	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17702179903081	8.298384547233583	Europe/Berlin	\N	\N	active
+79a0c451-96f8-4b86-be8b-62e671609c44	138b	Lochmühle 2, 65527 Niedernhausen	300023020	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17706989556704	8.29848110675812	Europe/Berlin	\N	\N	active
+7e615aa8-638e-4f96-9815-e5fef24ecd0c	063	Am Höllberg 41, 64625 Bensheim	300023021	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.714285	8.615094	Europe/Berlin	\N	\N	active
+abeb1c53-849e-4d18-8586-0cc059e3f019	047	Schneiderstraße 9, 65931 Frankfurt	300023023	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.088241	8.513669	Europe/Berlin	\N	\N	active
+c4e8d7ba-9f65-40c4-840e-545c840f0d5a	135a	Bensheimer Straße 2, 65428 Rüsselsheim	300023024	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968742	8.441705	Europe/Berlin	\N	\N	active
+3f13f2e0-90f0-4da9-9d7b-0a299c0ad8d8	135b	Bensheimer Straße 2, 65428 Rüsselsheim	300023025	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968707	8.441448	Europe/Berlin	\N	\N	active
+8a4b1fb7-85d7-4e25-b109-47d46f15d97c	135c	Bensheimer Straße 2, 65428 Rüsselsheim	300023027	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.968777	8.441926	Europe/Berlin	\N	\N	active
+fdb5eff6-eda0-4655-a219-b0d2bdbffec3	087b	Im Lorsbachtal 52, 65719 Hofheim am Taunus	300023094	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124062	8.417656	Europe/Berlin	\N	\N	active
+4abb336c-6515-4ad5-92bd-01703f648a7c	087a	Im Lorsbachtal 52, 65719 Hofheim am Taunus	300023095	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124074	8.417782	Europe/Berlin	\N	\N	active
+782a65c3-1e76-4abe-b7e1-a4f5823a7b4b	045	Rudolfstraße 2, 65830 Kriftel	300023096	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.093464	8.473581	Europe/Berlin	\N	\N	active
+0b6edea7-60cd-4f59-9c74-682400ed2fcf	052	Heusenstammer Schneise, 63069 Offenbach	300023219	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.071312	8.735104	Europe/Berlin	\N	\N	active
+c20ad583-505c-4583-9e4c-c38a44d2bcd8	054	Bornwaldweg 8, 63303 Dreieich	300023225	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.027194	8.721126	Europe/Berlin	\N	\N	active
+bbfef302-d937-4691-ab38-a4c97de02951	071a	Pfungstädter Straße 191, 64297 Darmstadt	300023417	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.814585	8.622561	Europe/Berlin	\N	\N	active
+e93bf808-4d5b-4b0c-b403-f873263ec6d1	071c	Pfungstädter Straße 180, 64297 Darmstadt	300023418	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.81438786508744	8.622631430625917	Europe/Berlin	\N	\N	active
+eeb7b2a3-5c2b-4d15-b723-799f9d7e2724	073	Schwimmbadstraße 33, 64732 Bad König	300023481	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.74447792954899	8.996660113334658	Europe/Berlin	\N	\N	active
+6fa44868-6158-4e3e-9240-26858c048c0a	056	An Der Lettkaut 46, 63303 Dreieich	300023562	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00804	8.674593	Europe/Berlin	\N	\N	active
+161bfaa5-18ea-404f-be68-fec3721a4bd0	032	Schleusenweg 18, 65549 Limburg an der Lahn	300023574	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.38997378228848	8.08198928833008	Europe/Berlin	\N	\N	active
+fbcbfc0b-78b0-4c30-9710-a0007a3a4853	055b	An Der Lettkaut 2, 63303 Dreieich	300023583	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00555525756325	8.685740767032259	Europe/Berlin	\N	\N	active
+4a3447cd-bdfb-42e1-82ba-07d3b8d5a993	033	L 3020, 65549 Limburg an der Lahn	300023585	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.38841417645314	8.082085847854616	Europe/Berlin	\N	\N	active
+f2e308d2-9524-491e-8d11-3a07967becb2	026	Erzgebirgstraße 42, 65520 Bad Camberg	300023603	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.287158	8.269894	Europe/Berlin	\N	\N	active
+1925bd59-8561-4605-accc-2faed4ae6aa2	055a	An Der Lettkaut 2, 63303 Dreieich	300023605	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00540836271789	8.685679435729982	Europe/Berlin	\N	\N	active
+d027dc36-5870-41e6-a42c-02354bbdce8b	034	Bahnhofstraße 9, 65594 Runkel	300023608	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.40388141892312	8.160535097122194	Europe/Berlin	\N	\N	active
+d29b3154-26bb-410c-8a55-caa390c632d7	005	Sodener Weg 80, 36396 Steinau an der Straße	300023629	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.304011	9.426305	Europe/Berlin	\N	\N	active
+4f9db2b0-9704-4693-bcbb-1c851e326075	110	L 3121, 63110 Rodgau	300023639	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.020005	8.927682	Europe/Berlin	\N	\N	active
+f74a886d-6448-4779-90d7-66081b84eb53	049b	Neckarstraße 46, 64569 Nauheim	300023654	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.94133705545538	8.444877459114652	Europe/Berlin	\N	\N	active
+756966a0-54b5-4459-8735-0609d0668f9b	049a	Mainzer Landstraße 18, 64569 Nauheim	300023655	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.94128419433152	8.444802962985706	Europe/Berlin	\N	\N	active
+f0b46c81-a7e3-452c-98d8-8f17305983c8	128	Rumpenheimer Straße 73a, 63165 Mühlheim am Main	300023661	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.131972	8.820444	Europe/Berlin	\N	\N	active
+3afd2de3-2038-4db3-9235-ecb82220698e	062	A 66, 63526 Erlensee	300023683	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.144837332681874	8.959830295352733	Europe/Berlin	\N	\N	active
+d50a62fd-6302-4be8-9ca6-4297b63b276b	127	Pfaffenbrunnenweg 149, 63165 Mühlheim am Main	300023706	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.120881	8.878231	Europe/Berlin	\N	\N	active
+1e37e863-47e8-42f2-ae27-30a22c383916	119a	Friedberger Landstraße 427a, 60389 Frankfurt	300023733	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.14907	8.70976	Europe/Berlin	\N	\N	active
+50d37bd3-9056-4f98-aca5-da6f72ae2631	027	Rheinufer 10, 55252 Wiesbaden	300023897	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.007881	8.280194	Europe/Berlin	\N	\N	active
+c37ad5b6-96d1-4b24-90f7-ddfadcfee16d	107c	Pionierweg, 61381 Friedrichsdorf	300023972	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.279968	8.612589	Europe/Berlin	\N	\N	active
+7264ec8f-e8a5-4be7-96ee-784531b362fa	093	B 252, 34477 Twistetal	300023989	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3229507	8.9213161	Europe/Berlin	\N	\N	active
+1183b62d-0ee9-4c8d-a059-331090e34eaf	142	Am Keseberg 1, 34516 Vöhl	300024019	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.13044714725219	8.877794265681588	Europe/Berlin	\N	\N	active
+081f3be1-74d3-4b26-bb63-79a3660bf382	008	Kasseler Straße 22, 34388 Trendelburg	300024063	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.559219	9.415306	Europe/Berlin	\N	\N	active
+f26b5aaf-8465-4068-94c4-7fbc82308aed	018	Landgraf-Carl-Weg 7, 34388 Trendelburg	300024065	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.559182	9.411189	Europe/Berlin	\N	\N	active
+0331cf1c-3903-43f0-8bfb-49e660b7030c	126b	Wittmarstraße 25, 34414 Volkmarsen	300024072	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.44414927256679	9.120879649854034	Europe/Berlin	\N	\N	active
+f0faa72b-9a9e-46c6-951f-8653f57fabe9	124	Hochsauerlandstraße 32, 34508 Willingen	300024079	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2786086	8.6380424	Europe/Berlin	\N	\N	active
+271a52cc-c5ed-4813-a5f3-9166632a05ce	097	Birkenallee 32, 34225 Baunatal	300024100	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.260135	9.421791	Europe/Berlin	\N	\N	active
+55dcc8ed-54b9-44b7-898c-9f52063499dd	098	Kasseler Straße 79, 34281 Gudensberg	300024108	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.186396	9.393864	Europe/Berlin	\N	\N	active
+d2eff03a-ca6b-426b-ad25-e4814ca86760	107a	Köpperner Tal, 61381 Friedrichsdorf	300024124	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.281251	8.614871	Europe/Berlin	\N	\N	active
+4784c44d-a5b9-4c08-8620-bf77f6dc968e	107b	Köpperner Tal, 61381 Friedrichsdorf	300024125	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.281159	8.614847	Europe/Berlin	\N	\N	active
+e1c69e99-ca4d-4e25-9ebb-70b758051537	126a	Wittmarstraße 25, 34414 Volkmarsen	300024689	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.444184	9.121025	Europe/Berlin	\N	\N	active
+342bec76-2274-4aff-8adc-5cbd1d29c14b	074	Lindenstraße 31, 61279 Grävenwiesbach	300024729	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.397502	8.460949	Europe/Berlin	\N	\N	active
+c214516b-6dd3-466d-aa29-5d6e49ac8553	130	Mühlenweg 19, 61239 Ober-Mörlen	300024746	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.363008	8.64232	Europe/Berlin	\N	\N	active
+759ee2f4-f637-481e-b1b7-a0980e5f0ca6	134	Bürgerhausstraße 10, 35410 Hungen	300024832	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.43989	8.925089	Europe/Berlin	\N	\N	active
+118364d6-c428-40cc-a82f-142ba1c6a888	023	Mühlweg 5, 35633 Lahnau	300024956	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.575041	8.562544	Europe/Berlin	\N	\N	active
+8157d17e-d128-4b79-bccb-3d1cbb40dfae	115	Alte Straße 5, 35578 Wetzlar	300024971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.550363	8.46732	Europe/Berlin	\N	\N	active
+e28ad6d1-52d1-4cb9-8d12-b2ece9ff1049	076	B 277, 35614 Aßlar	300025055	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.59437	8.43609	Europe/Berlin	\N	\N	active
+eb54aed8-a4f1-4109-83cc-04e5e6562a77	099	Alte Frankfurter Straße 29, 34281 Gudensberg	300025106	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.164951	9.318208	Europe/Berlin	\N	\N	active
+78fb239c-0b0c-4767-b194-0f1d19f27025	031a	Berghof 1, 34399 Wesertal	300025131	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.5975583	9.5836931	Europe/Berlin	\N	\N	active
+48a6f365-e128-4451-8f98-0e79b238548e	029a	B 80, 34399 Wesertal	300025144	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.5914917	9.5753041	Europe/Berlin	\N	\N	active
+e2d8ba1b-05a0-4f7b-8448-836adb7a0f12	125	Krugweg 1, 34454 Bad Arolsen	300025166	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.435057	8.958232	Europe/Berlin	\N	\N	active
+c5afe716-1b14-4620-a6a2-93af08c414eb	094	Rocklinghausen 2, 34477 Twistetal	300025186	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3210971	8.9448834	Europe/Berlin	\N	\N	active
+ac575611-f0ca-40ef-8f7f-4435a5288e29	141	Orketalstraße 2, 34516 Vöhl	300025203	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.131306	8.874157	Europe/Berlin	\N	\N	active
+28ba9852-1bbf-442c-82cb-6aff4a4688e6	092	Am Bahnhof 1, 35108 Allendorf	300025221	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.032988	8.72721	Europe/Berlin	\N	\N	active
+9ac55f32-c40f-4ba1-bef4-cc109d36e8d4	091	Siegener Straße 62, 35066 Frankenberg	300025228	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.043818	8.766338	Europe/Berlin	\N	\N	active
+99594c91-6d9c-4cb7-b503-ccda852b69d0	102	B 253, 34560 Fritzlar	300025264	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.124106	9.235686	Europe/Berlin	\N	\N	active
+077fdccb-9e09-4dff-a781-112eb64e69cc	131	B 253, 34560 Fritzlar	300025274	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.124212	9.235291	Europe/Berlin	\N	\N	active
+193b5dfd-987f-4c86-a559-cb51f91ab0dc	039	B 455, 63667 Nidda	300025305	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45092	9.04229	Europe/Berlin	\N	\N	active
+ef9ecef1-bf1c-4245-8b4b-8c666dc813c5	040	Schlaggasse 44, 63667 Nidda	300025313	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.449481	9.048017	Europe/Berlin	\N	\N	active
+9e6c84dd-5d5e-4f57-acd3-e5086317536d	104	Hain-Gründauer Straße 64, 63584 Gründau	300025339	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2414095	9.1197638	Europe/Berlin	\N	\N	active
+59c3fdc7-dbad-4187-82d2-e7cba8780a7a	069	B 276, 35321 Laubach	300025387	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.519292	9.09324	Europe/Berlin	\N	\N	active
+2aaf8f27-2f36-4815-aa48-52c7dbade718	106	L 3184, 63667 Nidda	300025483	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3853577	9.0281281	Europe/Berlin	\N	\N	active
+26bba575-ba30-423e-ab03-788e8d9e097f	038	B 455, 63667 Nidda	300025528	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45188	9.043449	Europe/Berlin	\N	\N	active
+fef8f50d-9038-4455-9cbc-e0ce167ab1dc	119b	Friedberger Landstraße 427a, 60389 Frankfurt	300025551	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.149228	8.709188	Europe/Berlin	\N	\N	active
+879afcc0-2021-451b-88f6-5915ed4515f1	041	B 455, 63667 Nidda	300025604	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.45188	9.043449	Europe/Berlin	\N	\N	active
+24fc07d9-7cf5-4958-b0e0-bf5feb72a85f	024	Hof Niederfeld 1, 35428 Langgöns	300025661	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.509734	8.654937	Europe/Berlin	\N	\N	active
+ddfe16ff-ea93-4c6c-a31e-6d87a9cd67c3	075	Sportplatzstraße 20, 61279 Grävenwiesbach	300025675	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.383807	8.406892	Europe/Berlin	\N	\N	active
+075fe118-01da-4288-a18c-7aac09e7ac61	025	Greizer Straße 18, 35447 Reiskirchen	300025725	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.595277	8.854319	Europe/Berlin	\N	\N	active
+d0ba0a5a-9c7f-494b-9133-d25a85f2e8ec	133	Hochwarte 11, 35394 Gießen	300025734	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.564968	8.7405	Europe/Berlin	\N	\N	active
+e1a3fb2e-0771-4bdb-9c46-dfc742a75f5d	095	Junkerhofstraße 9, 34466 Wolfhagen	300025773	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.358935	9.12251	Europe/Berlin	\N	\N	active
+0fd17977-7290-4db6-85d5-f0e94db2f360	096	B 83, 34393 Grebenstein	300025779	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.413788	9.440625	Europe/Berlin	\N	\N	active
+3bfa3b48-d4af-41fd-b6c5-67c956651627	100	Kasseler Straße 59, 37217 Witzenhausen	300025902	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.326411	9.774644	Europe/Berlin	\N	\N	active
+53655ed8-bd96-4cf6-9999-f130618c1f4d	078	B 255, 35649 Bischoffen	300025977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.713592	8.499111	Europe/Berlin	\N	\N	active
+82173b64-2595-4da7-9a97-10157ec9b2ef	083	Lange Wiese 7, 35708 Haiger	300025986	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.740632	8.239213	Europe/Berlin	\N	\N	active
+3ffa50b8-02b9-467a-88bf-0fe91ac0a143	081	Berliner Straße 17, 35683 Dillenburg	300026004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.729255	8.292364	Europe/Berlin	\N	\N	active
+2209b58a-91a1-47c8-96a1-26d430155d83	088	Hüttenstraße 1, 35232 Biedenkopf	300026028	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.867733	8.558567	Europe/Berlin	\N	\N	active
+098be9c2-70dd-4b98-a854-3eac4eead362	058	Bert-Brecht-Straße 66, 64291 Darmstadt	300026735	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.932738	8.659898	Europe/Berlin	\N	\N	active
+daa443fe-2238-4527-ab43-c1ddde3e4cac	057	Erzhäuser Straße 77, 64291 Darmstadt	300026742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.938147856440935	8.649208221759183	Europe/Berlin	\N	\N	active
+b5673c88-f075-453c-a9f2-004b53184f37	066	Gut Plausdorf 1, 35287 Amöneburg	300026763	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.808167	8.970818	Europe/Berlin	\N	\N	active
+52b8ea39-3fe5-4b96-b0ff-64f1a521c05c	090	Hauptstraße 2, 35083 Wetter	300026859	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.918268	8.708246	Europe/Berlin	\N	\N	active
+429a3aa7-f4b7-4158-9dfc-4f5556a5bd73	013	Zimmerplatzweg 14, 35043 Marburg	300026914	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.77422495646949	8.75800146794063	Europe/Berlin	\N	\N	active
+c0f7f1b7-1870-40b3-b862-7a7fbac7f24b	082	Hauptstraße 1, 35083 Wetter	300026964	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.9189428	8.7050098	Europe/Berlin	\N	\N	active
+314c33ac-46e5-4f30-a11c-5651895f4fbf	068	Lauterbacher Straße 30, 34628 Willingshausen	300027016	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.863937	9.192529	Europe/Berlin	\N	\N	active
+25ddd35a-cd0b-48b0-a36c-30482ee2166d	009	Zu Den Auewiesen 2, 34613 Schwalmstadt	300027026	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.895875	9.160975	Europe/Berlin	\N	\N	active
+f6b4ce13-5cd9-4092-868c-a21a73b4e356	112	Kasseler Straße 2, 34621 Frielendorf	300027095	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.939551	9.274604	Europe/Berlin	\N	\N	active
+8fcbb132-0f3d-4942-b70f-f73f66de834a	015	An Der Schleuse 14, 35606 Solms	300027135	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549419	8.427021	Europe/Berlin	\N	\N	active
+61c3d671-61d2-4cab-90b9-3e5372bf8b4d	077	Im Brühl 1, 35614 Aßlar	300027143	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.592154	8.436444	Europe/Berlin	\N	\N	active
+d67115ab-896f-4d77-85ec-1089b9dc4245	020	Landgrafenstraße 5a, 34326 Morschen	300027303	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.064514	9.619295	Europe/Berlin	\N	\N	active
+a64d09d6-1cba-46f4-a9a7-5483004b9673	060	Am Hopfenberg 24, 36286 Neuenstein	300027341	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.907589	9.515396	Europe/Berlin	\N	\N	active
+1cabb1ab-8470-48dc-b491-0b58f4fbe334	065	Zollstockerweg 12, 36304 Alsfeld	300027385	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.757205	9.241374	Europe/Berlin	\N	\N	active
+64a353b8-d6ca-4a2a-b8e8-7f56b6938458	007	Brückenstraße 8b, 36341 Lauterbach	300027418	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.644775	9.363825	Europe/Berlin	\N	\N	active
+d052f3c3-b84c-42e8-a15c-ca87fe9419aa	067	Schrecksbacher Straße 14, 34637 Schrecksbach	300027432	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.847818	9.291475	Europe/Berlin	\N	\N	active
+d3190914-3961-499e-9ee2-f03da3551018	006	Am Bahnhof 5, 36318 Schwalmtal	300027443	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.703938	9.306125	Europe/Berlin	\N	\N	active
+340a803e-adf9-420a-9b58-708ea667d33e	070	Grünberger Straße 20, 36325 Feldatal	300027451	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.64527	9.13058	Europe/Berlin	\N	\N	active
+81e0ead9-e0fc-4065-b099-59ea9bfce61a	143	Milseburg 9, 36115 Hilders	300027562	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.559557	9.910363	Europe/Berlin	\N	\N	active
+c52f849a-cd11-4128-80ab-02f4b4576188	035	Brunnenstraße 21, 36282 Hauneck	300027601	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.820718	9.727752	Europe/Berlin	\N	\N	active
+75103e2c-ec5e-4872-b676-bd702b2a71f7	036	Oberhauner Straße 26, 36282 Hauneck	300027638	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.821562	9.73528	Europe/Berlin	\N	\N	active
+bd7c41c0-afe2-4e41-a75c-55ebdcae8428	002	Akazienweg 6, 36269 Philippsthal	300027672	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.858373	9.977205	Europe/Berlin	\N	\N	active
+d6392ba3-e17c-4c4e-bffc-ae4199656617	001	Hof Lämmerthal 1, 36277 Schenklengsfeld	300027685	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.857235	9.805901	Europe/Berlin	\N	\N	active
+3e38fe42-08fb-4a52-8fb7-ab3ce4a1c45a	150	Eichenweg 8, 35794 Mengerskirchen	300027925	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.54305	8.14732	Europe/Berlin	\N	\N	active
+3f85a534-dfe6-4f91-8719-8428d98abab2	016	Weilburger Straße 9, 35792 Weilburg	300027948	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.506557	8.271959	Europe/Berlin	\N	\N	active
+73d70c47-8545-485c-a8dd-7f1625942f5b	003	An Der Aspe 7, 36137 Großenlüder	300028013	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.583187	9.551504	Europe/Berlin	\N	\N	active
+284a09a7-4ef2-44a8-9ee2-f2b019aa7e87	061	An Der Wasserscheide 6, 36280 Oberaula	300028438	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.852587	9.434167	Europe/Berlin	\N	\N	active
+ebe20483-b252-4c93-aa3a-383e336c4983	101	Waldecker Straße 31, 35110 Frankenau	300028442	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.089396	8.950159	Europe/Berlin	\N	\N	active
+8ac25f47-06ab-4a3d-a847-c3e8cb680cbf	010	Am Graben 5, 34582 Borken	300028467	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.035235	9.250291	Europe/Berlin	\N	\N	active
+0da6914c-20bf-43c7-a5ef-48a0f975cbec	072	Höchster Straße 14, 64853 Otzberg	300028469	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.806852	8.948973	Europe/Berlin	\N	\N	active
+40d2c002-e610-4292-87e1-9c9f1a964720	139	Am Holzweg 28, 65830 Kriftel	300028473	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.077970945397595	8.480629920959474	Europe/Berlin	\N	\N	active
+b8b96451-3a42-423a-8c40-43d45e3532db	103	Landstraße 86, 37284 Waldkappel	300028665	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.145373	9.920657	Europe/Berlin	\N	\N	active
+e9eedbb7-9059-4638-8da6-cf1ea21c6d6b	113	Alter Graben 16, 36205 Sontra	300028667	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.103591	9.960599	Europe/Berlin	\N	\N	active
+26c69280-47ba-43ce-8fc3-9f96825c1431	105	Am Berg 16, 63683 Ortenberg	300029624	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.333868	9.038855	Europe/Berlin	\N	\N	active
+5bfef0d0-3194-41e8-aefe-e50103d8f5a3	129	Butzbacher Straße 110a, 35510 Butzbach	300029628	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.424771	8.678182	Europe/Berlin	\N	\N	active
+0e88cc14-8959-4eba-868d-dbad16975bad	011	Zum Steinkreuz 8, 34466 Wolfhagen	300029976	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.334768	9.252955	Europe/Berlin	\N	\N	active
+7fb24229-4ea3-440a-b390-ced97da8f01e	Leipziger Straße	Industriestraße 26, 34260 Kaufungen	300032693	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.285710416300944	9.583924012622449	Europe/Berlin	\N	\N	active
+1186af82-2dc4-484d-85ae-cac8c44a4715	800	Auf Der Mainspitze 21, 65462 Ginsheim-Gustavsburg	300032707	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99376	8.30474	Europe/Berlin	\N	\N	active
+71a454c9-df1f-420c-89a1-bfb6a709ebb0	801	Mainzer Straße 153, 65428 Rüsselsheim	300032708	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99700880391229	8.385154008865358	Europe/Berlin	\N	\N	active
+8dbb2929-d6eb-4f8a-82d7-8e669fb42219	802	Mönchhofallee 20, 65479 Raunheim	300032709	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.03636646906296	8.475088477134706	Europe/Berlin	\N	\N	active
+2de3773a-a4ca-4f9e-b42b-77bcc9eadd0f	804	Hauptstraße 65, 65462 Ginsheim-Gustavsburg	300032710	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.962412	8.346344	Europe/Berlin	\N	\N	active
+7e411607-8937-48de-aae0-5517c41b7ad2	808	Mönchbruchallee, 65428 Rüsselsheim	300032711	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.99927434669023	8.514758348464968	Europe/Berlin	\N	\N	active
+45fd5f40-fa54-4afd-baa0-96e81265b6a4	810		300032712	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.767857	8.4789693	Europe/Berlin	\N	\N	active
+a3999497-2430-499b-ba0b-9a1b0404e637	850	Im Espen 1, 35091 Cölbe	300032713	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.856805	8.788355	Europe/Berlin	\N	\N	active
+36382e5b-68d2-4ee5-ac30-4eb7f5df8448	851	Alsfelder Straße 102, 35274 Kirchhain	300032714	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.807566	8.937352	Europe/Berlin	\N	\N	active
+e0c822b4-7c9b-4a54-ac82-f6435150653e	852	Falkenweg 24, 35260 Stadtallendorf	300032715	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.82699	9.040242	Europe/Berlin	\N	\N	active
+7ac4d911-9233-4d17-90db-cf0346f7d386	853	Mühlweg 7, 35274 Kirchhain	300032716	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.842431	8.868084	Europe/Berlin	\N	\N	active
+ef36ec74-1471-4ecc-820f-8fc8bdb96539	854	Perfstraße 4, 35216 Biedenkopf	300032717	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.9090387	8.4621254	Europe/Berlin	\N	\N	active
+197e7b14-8636-4f6c-8d1c-2567e124564d	855	Alter Kirchhainer Weg 16, 35039 Marburg	300032718	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.805601	8.784028	Europe/Berlin	\N	\N	active
+35534dc0-809d-44c5-8752-7b327be0f389	856	Auf Dem Krummacker 8, 35216 Biedenkopf	300032719	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.922005	8.460612	Europe/Berlin	\N	\N	active
+b6df7f36-f989-4916-a85c-48ff93ea64b3	857	Binge 40, 35083 Wetter	300032720	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.908797	8.718868	Europe/Berlin	\N	\N	active
+a94169f3-6926-4dec-b192-98806f763629	858	Auestraße 35, 35288 Wohratal	300032721	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.915813	8.942747	Europe/Berlin	\N	\N	active
+ab69519b-4fd0-4f81-874e-04e048097333	859	Mühlstraße 68a, 35075 Gladenbach	300032722	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7526626	8.527576	Europe/Berlin	\N	\N	active
+a815e643-3839-4f96-9d31-60e4c9e2609c	860	Hüttenmühlweg 14, 35075 Gladenbach	300032723	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7513449	8.589884	Europe/Berlin	\N	\N	active
+aaab1011-193f-411f-b9ef-89dc1198bdf2	861	Strassmühle 2, 35085 Ebsdorfergrund	300032724	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.714012	8.777644	Europe/Berlin	\N	\N	active
+fdae896e-279a-4618-9518-b47639ad7306	862	Gießener Landstraße 27, 35102 Lohra	300032725	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.68537	8.606149	Europe/Berlin	\N	\N	active
+e649f59f-9485-4ef0-af86-2449d890e558	863	Kälbachtalbrücke, 35279 Neustadt	300032726	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.87421275347331	9.1214969658904	Europe/Berlin	\N	\N	active
+143cf41a-37da-4afc-ac5c-dd88079cc981	864	Am Hopfen 3, 35096 Weimar	300032727	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.725780541659766	8.716765426215717	Europe/Berlin	\N	\N	active
+98559781-5c10-464d-9b24-b4fb2f46a625	865	Auf Dem Kreuz 1, 35719 Angelburg	300032728	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.832451	8.453297	Europe/Berlin	\N	\N	active
+8fb7692d-ed75-42ba-a024-1ee3547bbf3f	880	Frankfurter Straße 129, 61231 Bad Nauheim	300032729	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.375038	8.740434	Europe/Berlin	\N	\N	active
+d3815963-6d88-4b57-ae56-ee8e8e936443	881	Elsegrund 6, 63654 Büdingen	300032730	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.292119	9.03581	Europe/Berlin	\N	\N	active
+1e847f8c-bcd7-494c-8107-38866b5e1d4e	883	Parkweg 3, 61197 Florstadt	300032731	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.332634988227554	8.907256070233418	Europe/Berlin	\N	\N	active
+53210d4c-46a3-4da1-87bd-bb0b35863f72	884	Frankfurter Straße 35, 61169 Friedberg	300032732	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.320836	8.746944	Europe/Berlin	\N	\N	active
+9702a0f3-824f-4f19-ac24-6ccb3f9852e8	885		300032733	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.413406	9.223973	Europe/Berlin	\N	\N	active
+bd3eb677-3935-4d36-8e04-4e991338c9b8	886	Schlinkenweg 14, 61184 Karben	300032734	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.236573	8.71221	Europe/Berlin	\N	\N	active
+8e7fe179-070b-43af-860b-be4321671d27	887	Dieselstraße 32, 61184 Karben	300032735	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.221151	8.763435	Europe/Berlin	\N	\N	active
+3521269a-1c90-483c-8122-d1759d67acc8	888	Max-Planck-Straße 40, 61184 Karben	300032736	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.220821	8.767392	Europe/Berlin	\N	\N	active
+4008f308-ae2e-426a-bc3c-879a97320bb9	889	Seewiese 17, 63667 Nidda	300032737	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.407297	9.009599	Europe/Berlin	\N	\N	active
+985da359-a693-495f-8f9a-5ad74a13ddda	834	Außerhalb 1, 64859 Eppertshausen	300032739	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.950067	8.827531	Europe/Berlin	\N	\N	active
+b33acdea-ecb9-430d-9c25-eb144c879068	830	Jenaer Straße 21, 64372 Ober-Ramstadt	300032740	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.838404	8.763913	Europe/Berlin	\N	\N	active
+84e3396d-c706-4891-abae-01586e3bda37	832	Waldstraße 79n, 64846 Dieburg	300032742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.887503	8.8201899	Europe/Berlin	\N	\N	active
+fc3ffc5f-8deb-414d-893a-fccc15226677	833	Ober-Beerbacher Straße, 64342 Seeheim-Jugenheim	300032743	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.762613	8.660226	Europe/Berlin	\N	\N	active
+4242120d-b46c-47a5-9b8b-afcfd8c4d891	831	Eichelsweg 16, 64367 Mühltal	300032744	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.790314	8.702873	Europe/Berlin	\N	\N	active
+9f361fef-1f79-4a02-ac7d-2e9f6ad04dfd	420	Frankfurter Straße 115a, 65779 Kelkheim	300032745	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12953	8.45905	Europe/Berlin	\N	\N	active
+8d792d28-ad29-4d52-993e-cfccd041e0ef	430	Wallstraße 20, 61462 Königstein im Taunus	300032747	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17556	8.453883	Europe/Berlin	\N	\N	active
+00931e5f-904e-4f73-b26c-a90e1a101aac	807	Am Hegbachsee 46, 64569 Nauheim	300032748	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.945796	8.468996	Europe/Berlin	\N	\N	active
+21f7b47e-73af-419d-8dda-f6e311d44bd5	780	Obere Schulstraße 7, 61273 Wehrheim	300032749	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.27779	8.549736	Europe/Berlin	\N	\N	active
+f6de9763-bbf4-479a-a54a-0efcc36fda33	771	Bahnstraße 79, 65843 Sulzbach	300032751	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.126039753149776	8.521517515182497	Europe/Berlin	\N	\N	active
+7a26ef5b-65c7-451a-8760-6a35f2b12995	772	Oberliederbacher Weg 44, 65843 Sulzbach	300032752	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1316	8.51419	Europe/Berlin	\N	\N	active
+1eff667a-c829-4c29-adfb-e23823ef1a7e	770	Dunantring 71, 65936 Sulzbach	300032753	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12323	8.55277	Europe/Berlin	\N	\N	active
+ab276087-f730-4f40-8f09-0de2d4d26cb1	740	Gut Bodenhausen 11, 34317 Habichtswald	300032802	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.33162	9.30741	Europe/Berlin	\N	\N	active
+92f1c023-e93e-45d5-9518-a55b910ad7b6	390	Massenheimer Landstraße 15, 65239 Hochheim am Main	300032803	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.02751	8.36506	Europe/Berlin	\N	\N	active
+d2e011c8-32aa-483f-9322-e9bca76d15e2	391	Rheinstraße 43, 65239 Hochheim am Main	300032804	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.00241213676519	8.35916340351105	Europe/Berlin	\N	\N	active
+eec2579d-08b4-4efc-b68e-7f0519e05d78	410	Königstor 50, 34117 Kassel	300032805	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.313523	9.48088	Europe/Berlin	\N	\N	active
+6d79294e-899a-44a0-998d-9b9452e0e699	411	Fiedlerstraße 5, 34127 Kassel	300032806	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.328154	9.503701	Europe/Berlin	\N	\N	active
+5fb124c9-b76d-44e6-a8a7-455243ce6d1a	412	Menzelstraße 46, 34121 Kassel	300032807	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.301025	9.483848	Europe/Berlin	\N	\N	active
+9c81b688-1bf6-440b-8190-f856f3290105	413	Brüder-Grimm-Straße 139, 34134 Kassel	300032808	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.292278	9.460877	Europe/Berlin	\N	\N	active
+cf3b3dcd-e679-4bef-9434-0ffbf1f85142	414	Landaustraße 1a, 34121 Kassel	300032809	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.307063	9.49073	Europe/Berlin	\N	\N	active
+5d902fba-b94c-4146-851c-55998c1f3d43	510a	Berliner Straße 76, 63065 Offenbach	300032810	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.105873	8.763238	Europe/Berlin	\N	\N	active
+d57cc522-1d78-436e-9190-4349c026c6f8	510b	Berliner Straße 80, 63065 Offenbach	300032811	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.106109	8.762816	Europe/Berlin	\N	\N	active
+e03dfcd6-0f0d-4b0c-8bbd-2c5e4c187979	511	Richard-Wagner-Straße 71, 63069 Offenbach	300032812	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.087803	8.752807	Europe/Berlin	\N	\N	active
+492955b5-8598-4c87-b52e-2c608766200e	512	Lämmerspieler Weg 27, 63071 Offenbach	300032813	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.102226	8.781639	Europe/Berlin	\N	\N	active
+263b3e10-8c17-49b6-bb12-e2b2e05ea10b	513	Luisenstraße 78, 63067 Offenbach	300032814	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.105046	8.756004	Europe/Berlin	\N	\N	active
+0cf28682-c7cf-47b1-8239-8590e290bd4f	514a	Mühlheimer Straße 425, 63075 Offenbach	300032815	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.114905	8.809187	Europe/Berlin	\N	\N	active
+7fd02962-8534-412d-b9fe-61b6558f17f6	514b		300032816	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115142	8.809067	Europe/Berlin	\N	\N	active
+eb473a51-db8a-49c5-b5ae-21e76bb73bf9	515	Rumpenheimer Straße 143, 63075 Offenbach	300032817	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12573	8.792634	Europe/Berlin	\N	\N	active
+559ea59f-3341-4b8f-9982-977725e4d2b8	514	Mühlheimer Straße 425, 63075 Offenbach	300032818	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115009182002304	8.80908250808716	Europe/Berlin	\N	\N	active
+fdde778a-cd52-45e7-bad0-6abda459ab8e	370		300032820	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.55862	9.66381	Europe/Berlin	\N	\N	active
+f810fd04-d5bf-44f4-a905-5a06a92f7b3b	371	Karl-Storch-Straße 4, 36041 Fulda	300032821	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.534088	9.668252	Europe/Berlin	\N	\N	active
+bb7d740c-9838-48d3-963a-b7e56f4a950b	372	Wasserkuppenstraße 29-31, 36043 Fulda	300032822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.535947	9.698615	Europe/Berlin	\N	\N	active
+f826f524-00f0-47bc-9c22-3d7f89a456b8	373	Gallasiniring 20a, 36043 Fulda	300032823	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549972	9.699978	Europe/Berlin	\N	\N	active
+6510a11b-da9b-41e8-a728-afc07440c110	374	Birkenallee 8, 36037 Fulda	300032824	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.559141	9.693172	Europe/Berlin	\N	\N	active
+488e07cb-e8d1-4325-a4bc-2a9d5f3fd80c	470	Frankfurter Landstraße 1, 64546 Mörfelden-Walldorf	300032825	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.999922610215464	8.588443994522097	Europe/Berlin	\N	\N	active
+348c4cb5-9761-431f-aeea-c1ddbc6847b4	471	Elisabeth-Selbert-Straße 8, 64546 Mörfelden-Walldorf	300032826	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.98228879729856	8.564963936805727	Europe/Berlin	\N	\N	active
+0416cc06-15b3-4ddb-83b8-afb8eb3d6c72	500	Frankfurter Landstraße 72, 61440 Oberursel	300032829	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.192623149347774	8.594720363616945	Europe/Berlin	\N	\N	active
+21f57f27-9176-4242-bd4c-43e25c60174a	501	Gattenhöferweg 43, 61440 Oberursel	300032830	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191307776477046	8.583487272262575	Europe/Berlin	\N	\N	active
+2f25395e-709c-4356-8f42-fd17d2fcaee5	502	Herzbergstraße 11, 61440 Oberursel	300032831	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.204332835198606	8.585793972015383	Europe/Berlin	\N	\N	active
+8ecdaa56-5a74-4901-ae02-ca35f4a4e7dd	574	Volpertshäuser Straße 38, 35578 Wetzlar	300032833	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.540046	8.525261	Europe/Berlin	\N	\N	active
+9f0527f3-90b3-4e55-84de-7d92fe8691e7	573	Solmserstraße 75, 35578 Wetzlar	300032834	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.54537	8.501787	Europe/Berlin	\N	\N	active
+4886f3f3-b5b7-4de7-a1e2-6fad21f72748	572	Wolfgang-Kühle-Straße 10, 35576 Wetzlar	300032835	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5659731	8.5106459	Europe/Berlin	\N	\N	active
+8c1534d3-a284-4ce9-af50-3fb6a9e683d1	570	Dillufer 40, 35576 Wetzlar	300032836	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5548821	8.49048	Europe/Berlin	\N	\N	active
+882b463f-9fe7-41e5-af22-0a415d680ca4	533	Kreisquerverbindung, 63110 Rodgau	300032839	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.01519	8.851267	Europe/Berlin	\N	\N	active
+40fbce8a-ce5e-4c73-b4a8-4a439b0f95d5	532	Nieuwpoorter Straße, 63110 Rodgau	300032840	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.015754	8.890968	Europe/Berlin	\N	\N	active
+28669ad8-c16b-4b41-8615-d10f2ad220fd	531		300032841	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.012575791017355	8.883588910102846	Europe/Berlin	\N	\N	active
+2ca366da-df86-4c9d-b6c9-e5ba936a0e34	530	Hauptstraße 50a, 63110 Rodgau	300032842	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.04992	8.87793	Europe/Berlin	\N	\N	active
+142f7b13-5976-4800-8e72-def0d120c2ac	360	Rheinstraße 72, 63303 Dreieich	300032867	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9910717	8.736355	Europe/Berlin	\N	\N	active
+486dc72b-4eca-40c7-b490-7e81cbeecb18	361	Kurt-Schumacher-Ring 110, 63303 Dreieich	300032868	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.036387	8.695243	Europe/Berlin	\N	\N	active
+d1616daf-7293-4afc-b884-21a20be748f6	362	Liebknechtstraße 144, 63303 Dreieich	300032869	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.020415	8.674265	Europe/Berlin	\N	\N	active
+64e285cb-9662-49ce-9082-920e2a3ad871	340	Fehlheimer Straße 9, 64625 Bensheim	300032871	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.683512925332494	8.619681000709535	Europe/Berlin	\N	\N	active
+69e8c71b-b528-47e8-8e62-4a033703cb4f	400	Niederhofheimer Straße 60a, 65719 Hofheim am Taunus	300032873	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.09562	8.46079	Europe/Berlin	\N	\N	active
+0a80f571-5d67-4ca4-9e12-1f3bed5b8826	401		300032874	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.08021	8.43859	Europe/Berlin	\N	\N	active
+bea5a6ba-e4af-422b-ac00-ee736242742b	402	Zeilsheimer Straße 20, 65719 Hofheim am Taunus	300032875	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.08837675341379	8.452633023262026	Europe/Berlin	\N	\N	active
+f26659eb-b0e7-4d23-ada1-b58b168489ed	403	Casteller Straße 97g, 65719 Hofheim am Taunus	300032876	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.05614	8.4052	Europe/Berlin	\N	\N	active
+346bd82a-12da-4895-8c65-a59bdd2f8d52	404	Oberer Haingraben 28a, 65719 Hofheim am Taunus	300032877	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0627882	8.4202249	Europe/Berlin	\N	\N	active
+6680a00f-f351-4c8d-b756-baaa595a8448	440	Frankenberger Landstraße 11, 34497 Korbach	300032878	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.263137	8.884441	Europe/Berlin	\N	\N	active
+6c30218a-29e9-492a-aff3-9afa96cb6f95	450	Frankfurter Straße 93, 61476 Kronberg	300032879	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17262419684514	8.525733947753908	Europe/Berlin	\N	\N	active
+89250ae5-c973-49ce-9e30-a41a4ca6968d	451	Im Haak 6, 61476 Kronberg	300032880	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.18692866314112	8.493794202804567	Europe/Berlin	\N	\N	active
+77051cde-02cb-4ae8-8d3c-de983e29d717	452	Sodener Straße 36, 61476 Kronberg	300032881	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1802	8.53783	Europe/Berlin	\N	\N	active
+c2ed6976-b494-4f88-97f1-7cbe6d8cdd72	490	Leipziger Straße 35, 63179 Obertshausen	300032884	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.07737	8.852167	Europe/Berlin	\N	\N	active
+413e7ccb-9ac8-4656-beba-dc8cee58add0	310a	Zum Niddersteg 2, 63674 Altenstadt	300032885	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.283053	8.940106	Europe/Berlin	\N	\N	active
+7eaa7e60-7f54-4393-8f82-05e4adba14af	310b	Zum Niddersteg 7, 63674 Altenstadt	300032886	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.282786	8.940033	Europe/Berlin	\N	\N	active
+393d0c78-6ddb-4790-a653-14dd75c494cb	540		300032887	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.307169	8.732088	Europe/Berlin	\N	\N	active
+bea85abc-4b1e-4930-a1b1-d1183c2a5e04	541	Gutenbergstraße 8b, 61191 Rosbach vor der Höhe	300032888	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.271702	8.705564	Europe/Berlin	\N	\N	active
+adb56df9-b34f-4fa2-838b-8dbaadca98ca	550	Ascheröder Straße 57, 34613 Schwalmstadt	300032890	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.909912	9.203595	Europe/Berlin	\N	\N	active
+c9c440de-5192-4642-940e-bf8cc6289e03	551	Festungsstraße 6, 34613 Schwalmstadt	300032891	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.908842	9.234421	Europe/Berlin	\N	\N	active
+9c77af6b-6be4-4fc0-8871-c396fb801b84	553	Zwalmstraße 2, 34613 Schwalmstadt	300032892	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.914943	9.19679	Europe/Berlin	\N	\N	active
+081c6056-3426-437b-ae55-a4f7ce96cb74	900		300032993	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.112920247359	8.75178334164736	Europe/Berlin	\N	\N	active
+8df9fed0-10b8-4276-a298-d998d529262d	910	Einsteinstraße 1, 64285 Darmstadt	300032994	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.84743	8.64602	Europe/Berlin	\N	\N	active
+de472b6f-4390-4396-8f74-41e9fd533251	710	Eichenhang 18, 34277 Fuldabrück	300032995	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.257009	9.503334	Europe/Berlin	\N	\N	active
+981302af-cf0d-49d3-ba1d-e5cd029dfa97	701	Am Heegbach 16, 63329 Egelsbach	300032996	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.954739	8.651637	Europe/Berlin	\N	\N	active
+f740bb4a-b8b0-40f8-a9b7-47c161d0106a	554	Ludwig-Jahn-Straße 2, 34626 Neukirchen	300032997	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.866981	9.339741	Europe/Berlin	\N	\N	active
+d9f3f8ae-9cf0-42d1-a1b8-b4d9b43fe13c	560	Kreuzstraße 72, 64331 Weiterstadt	300032998	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9079428	8.5864387	Europe/Berlin	\N	\N	active
+a203ddf1-c984-4797-b070-2698b4ef398e	561	Rudolf-Diesel-Straße 26a, 64331 Weiterstadt	300032999	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.903192	8.609398	Europe/Berlin	\N	\N	active
+ec164ceb-70fd-498d-b4c3-65c0db14124b	562	Münchweg 1a, 64331 Weiterstadt	300033000	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.91302	8.61726	Europe/Berlin	\N	\N	active
+5e60daa2-74cf-48b0-b1d1-a339c65fdf94	590	Frankfurter Straße 215, 61118 Bad Vilbel	300033002	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.171578	8.731607	Europe/Berlin	\N	\N	active
+3da51535-6f23-47d1-9199-1799bc62d90c	591	Hermann-Gmeiner-Str. 3, 61118 Bad Vilbel	300033003	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.171462	8.731707	Europe/Berlin	\N	\N	active
+07db0e94-867a-42a7-ac73-7b63ddd7672b	592	Huizener Straße 76, 61118 Bad Vilbel	300033004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.17991	8.72212	Europe/Berlin	\N	\N	active
+97fdaf1e-1b05-48c9-813b-bf977dae3830	320	Berliner Straße 3, 34537 Bad Wildungen	300033005	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.121158	9.137177	Europe/Berlin	\N	\N	active
+b6e2e9b0-b57c-4391-a3df-127c008cd5b1	330	Auhammer 7, 35088 Battenberg	300033006	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.03617906279141	8.61930656439654	Europe/Berlin	\N	\N	active
+f5f366ef-ce91-447a-a2fa-cba1c3057608	380	Darmstädter Straße 102, 64646 Heppenheim	300033007	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6591501	8.630257	Europe/Berlin	\N	\N	active
+cf2f327e-de7d-4d3a-bd5b-81a6e5b22003	381	Ernst-Schneider-Straße 17, 64646 Heppenheim	300033008	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.640949	8.635017	Europe/Berlin	\N	\N	active
+0a244517-d4eb-4d2d-b636-be5235768d1e	300a	Bockenheimer Landstraße 3, 60325 Frankfurt	300033286	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115535	8.67047	Europe/Berlin	\N	\N	active
+753900ab-ed80-49d2-bbe3-b8bab3b3a5b1	300b	Bockenheimer Landstraße 3, 60325 Frankfurt	300033287	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115455	8.670261	Europe/Berlin	\N	\N	active
+c65fb70c-edc1-4664-83e0-a0f5eb6d275b	301a	Friedberger Landstraße 115, 60318 Frankfurt	300033288	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12671	8.6919	Europe/Berlin	\N	\N	active
+568d041f-1adb-45b3-9ecf-b5883c247e60	301b	Friedberger Landstraße 121, 60318 Frankfurt	300033289	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12712	8.69183	Europe/Berlin	\N	\N	active
+87b4cb20-bc3a-4662-b8e1-a862985f00fa	302a	Schaumainkai 50, 60596 Frankfurt	300033290	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.104972	8.675413	Europe/Berlin	\N	\N	active
+3215fd5d-c2ac-446b-8f40-ae9abce612d0	302b	Schaumainkai 55, 60596 Frankfurt	300033291	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.104585	8.674973	Europe/Berlin	\N	\N	active
+5d1d6a40-c106-4177-8762-8acd3fbce53b	303	Alexander-Riese-Weg 2, 60439 Frankfurt	300033292	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.162759	8.652591	Europe/Berlin	\N	\N	active
+7f68b240-043a-4d4a-9462-fe6253aad0a9	304	Ziegelhüttenweg 333, 60598 Frankfurt	300033293	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.079886	8.672052	Europe/Berlin	\N	\N	active
+9140b93b-70d2-4901-8324-97c1629d0143	350	Weidenweg 1, 64289 Darmstadt	300033295	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8950573	8.6654254	Europe/Berlin	\N	\N	active
+6c27897d-e045-4156-a1f5-b0050fd55d50	351	Havelstraße 1, 64295 Darmstadt	300033296	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8678561642216	8.64139833043737	Europe/Berlin	\N	\N	active
+29e54d5d-bf3f-4adc-97f0-b1bf7136c5ad	352		300033297	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.874005	8.672037	Europe/Berlin	\N	\N	active
+9938d090-3a96-4cef-b300-090928648899	353	Rheinstraße 24, 64283 Darmstadt	300033298	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.872126	8.646659	Europe/Berlin	\N	\N	active
+f013bf27-c3af-48c3-90a0-17f20c787f45	354	Robert-Bosch-Straße 14, 64293 Darmstadt	300033299	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.869377	8.623713	Europe/Berlin	\N	\N	active
+01ce127c-b117-4e88-9658-42b9eb9902f6	Steinbacher Straße		300034327	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.161369	8.55826	Europe/Berlin	\N	\N	active
+2a79a816-b05f-4cb8-99d8-0d3618f085d9	920	Grabenstraße 36, 65428 Rüsselsheim	300039700	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9928	8.41684	Europe/Berlin	\N	\N	active
+b7d1a05b-d34c-4068-af62-36ad89766001	921	Oppenheimer Straße 2, 65428 Rüsselsheim	300039701	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9816	8.40201	Europe/Berlin	\N	\N	active
+5268b5ed-d4d6-4189-9cc0-7d333f2d9a35	922	Burggrafenlacher Weg 35, 65428 Rüsselsheim	300039702	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.98741354697087	8.416708856821062	Europe/Berlin	\N	\N	active
+a4275e6d-27b3-4f19-8fae-1b30be1d5749	923	Robert-Bunsen-Straße 49, 65428 Rüsselsheim	300039703	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.97728252024877	8.437306618411899	Europe/Berlin	\N	\N	active
+f123b162-cc38-417e-8d5c-beabe52f419e	924	Lucas-Cranach-Straße 2, 65428 Rüsselsheim	300039704	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9873	8.44169	Europe/Berlin	\N	\N	active
+df337c62-c1d6-4953-b7fe-663c20c4005b	1072 R	Ober-Rodener Straße 60, 63322 Rödermark	300042071	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.977368	8.806373	Europe/Berlin	\N	\N	active
+7c47ff8d-c0e0-4d7b-8e00-46a7a30919d8	1072 M	Ober-Rodener Straße 60, 63322 Rödermark	300042697	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.977462	8.806311	Europe/Berlin	\N	\N	active
+4bf69ec2-4d4d-42ee-ba92-e47dceb1b267	1083	Waldhaus 1, 64397 Modautal	300042698	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.764273	8.726217	Europe/Berlin	\N	\N	active
+5b5a1a4a-b0ce-4dda-8e8b-2ab89fd12494	1084	Im Betzel 18, 64401 Groß-Bieberau	300042699	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.78502	8.81122	Europe/Berlin	\N	\N	active
+5a3e4ac5-73f4-40bc-b6e3-f3a6a32f24e2	1073 R	Seestraße 13, 63533 Mainhausen	300043174	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.01769	9.017761	Europe/Berlin	\N	\N	active
+f369ccf1-aea0-4240-9c3c-50b5f40b48c3	1085	Beethovenweg 21, 64823 Groß-Umstadt	300043176	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.88877	8.935672	Europe/Berlin	\N	\N	active
+44e32424-17bd-4bcb-882f-b0f8884c8b08	1086	Viehtrieb 16, 64832 Babenhausen	300043177	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.972973	8.942131	Europe/Berlin	\N	\N	active
+fdf6593f-e2b8-4d65-9bcd-9e8b75eb9670	1066 M	Nassgewann 7, 65329 Hohenstein	300043179	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191193	8.120215	Europe/Berlin	\N	\N	active
+622e27ec-9817-455e-943e-d244e7b359f0	1065 M	Bärstadter Straße 4b, 65388 Schlangenbad	300043180	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.10889	8.096001	Europe/Berlin	\N	\N	active
+f086f768-5b37-40ff-bd93-664d6c10ddd6	1081	Birkenhöhe 29, 64760 Oberzent	300043185	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.556911	8.955133	Europe/Berlin	\N	\N	active
+31cece4a-42d7-4841-b885-6eef726d9f78	1079 M	Birkenauer Talstraße 101, 69469 Weinheim	300043186	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.561631	8.691441	Europe/Berlin	\N	\N	active
+58039960-e562-44ed-b4ed-b12ec2fe13a5	1079 R	Birkenauer Talstraße 101, 69469 Weinheim	300043189	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.561573	8.691438	Europe/Berlin	\N	\N	active
+46eb79ca-43ff-4b12-8919-230e107f2db2	1001	Hainaer Straße 20, 35066 Frankenberg	300043196	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.050865	8.853943	Europe/Berlin	\N	\N	active
+2c924bc8-d4ad-4d85-a9b3-c9b74755c0af	1029	Industriestraße 1, 35716 Dietzhölztal	300043260	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.835304	8.329263	Europe/Berlin	\N	\N	active
+6d451a4b-e73a-441a-9c46-db840bbe2010	1006	Hof Hammer 1, 35119 Rosenthal	300043408	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.957336	8.900755	Europe/Berlin	\N	\N	active
+64acad4b-d5ab-477a-a7aa-be74d5d41704	1067 M	Am Hümes 2, 65510 Hünstetten	300043450	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.246001	8.185778	Europe/Berlin	\N	\N	active
+ba05a758-e30f-4fb1-84ac-cd42dfd66349	1067 R	Am Hümes 2, 65510 Hünstetten	300043465	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.246032	8.185663	Europe/Berlin	\N	\N	active
+04fd952a-6b96-42d3-bf74-f7fb3b9b67ea	1031	L 3289, 35085 Ebsdorfergrund	300043646	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.779588	8.853643	Europe/Berlin	\N	\N	active
+560b3f1d-0ada-4193-ae7e-9f5a0f373c23	1032	Cyriaxstraße 1, 35043 Marburg	300043720	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.77278	8.713625	Europe/Berlin	\N	\N	active
+4800e341-8609-4338-b1a7-538ab1841694	1047	Siemensstraße 2, 35041 Marburg	300043825	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.837503	8.773578	Europe/Berlin	\N	\N	active
+060c32ed-609d-48d7-a9e2-b18c763ffe21	563	Am Rotböll 4b, 64331 Weiterstadt	300044983	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.93068494682793	8.62157464027405	Europe/Berlin	\N	\N	active
+4750596f-d1d2-4625-bea9-d52ae8ac41c9	1004	Südring 8, 34497 Korbach	300045290	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2696309	8.8490651	Europe/Berlin	\N	\N	active
+9a85dfc4-65f4-47d3-9db8-1eb41ecf9216	1013	Teichweg 19a, 34376 Immenhausen	300045358	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.44898	9.4854412	Europe/Berlin	\N	\N	active
+2325905d-0f46-45ca-9cf3-1d4d4b6acd30	1005	Randstraße, 34513 Waldeck	300045415	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1960138	9.006177	Europe/Berlin	\N	\N	active
+5b75249f-495f-4c4d-afa2-b477f4e08ba7	1520	Alte Dieburger Straße 56, 64380 Roßdorf	300045452	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.867939	8.766951	Europe/Berlin	\N	\N	active
+dbdb54a6-4710-4aaf-a8bd-714ec8a96d82	1028M	L 2304, 36148 Kalbach	300045851	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3669907	9.718062	Europe/Berlin	\N	\N	active
+cfc2c527-22f8-4fa2-91bc-d4f88aace631	1051	Am Kirchenpfad 8, 36323 Grebenau	300045880	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7469662	9.4809148	Europe/Berlin	\N	\N	active
+fbfcf59e-3f33-42b6-99bf-aef50360580c	1024	Am Hasenberg 12, 36088 Hünfeld	300045892	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6653403	9.6518163	Europe/Berlin	\N	\N	active
+3273d796-bdbb-40ff-870a-18334287ed10	1026 M	Frankfurter Straße 1, 36154 Hosenfeld	300045912	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5045628	9.4793628	Europe/Berlin	\N	\N	active
+3575d69e-c445-4df0-9031-ab1f1287ca15	1027	Frankfurter Straße 45, 36119 Neuhof	300045940	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.446158	9.608311	Europe/Berlin	\N	\N	active
+cccd371e-dade-4b81-b53e-7f23471a2ef9	1055	Distelrasen 7, 36381 Schlüchtern	300045960	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.383832	9.5306774	Europe/Berlin	\N	\N	active
+bc27f81e-01d6-4fb3-86d5-8277dcb48de4	1063 M	Am Hoherodskopf 8, 63679 Schotten	300046000	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5124652	9.2332783	Europe/Berlin	\N	\N	active
+04203c32-5c18-40f4-8fb9-4df501bf7731	1670	Untermühle 2, 63526 Erlensee	300046031	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1795324	8.9873495	Europe/Berlin	\N	\N	active
+8450c032-b732-4266-b08b-8be6ed665289	1009	Flugplatzstraße 33, 34379 Calden	300046345	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4068852	9.3891604	Europe/Berlin	\N	\N	active
+be718cec-e0d2-41b2-9b47-41419c6a1c25	1076	L 3096, 64560 Riedstadt	300046413	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8559893	8.4733123	Europe/Berlin	\N	\N	active
+51370ed8-84d6-455c-a17d-8ca59b7af7d0	1035	Erlesbergstraße 20, 35423 Lich	300046505	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5361605	8.8815571	Europe/Berlin	\N	\N	active
+d38d9082-d64b-4087-bc46-2471ff937886	1050	Am Kaiserberg 11, 35396 Gießen	300046591	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6156271	8.7035822	Europe/Berlin	\N	\N	active
+663810df-e777-4e54-8484-1beb883f8ba9	1049	Tannenweg 58c, 35440 Linden	300046658	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5440017	8.6762582	Europe/Berlin	\N	\N	active
+502480bf-b57e-479c-bae6-dbcc05c30b18	1037	Gießener Pforte 41, 35440 Linden	300046664	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.544131	8.6497596	Europe/Berlin	\N	\N	active
+180a354d-ba4c-4f05-a993-4b97642d326b	1038	Gießener Straße, 35444 Biebertal	300046693	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6076676	8.6206634	Europe/Berlin	\N	\N	active
+e7eefdd5-6777-41a5-aa83-427c519f1ab2	1064	Windhäuser Straße, 36325 Feldatal	300046809	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6569914	9.2261222	Europe/Berlin	\N	\N	active
+e87be3c1-9e5c-4e2b-9c63-8165d58415ff	1058	Gartenstraße 3a, 63571 Gelnhausen	300046815	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2070403	9.1548104	Europe/Berlin	\N	\N	active
+2b6de37d-cd2a-4429-a11c-d09022e8cf3f	1061	Jahnstraße 23a, 63589 Gelnhausen	300046822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1722912	9.1830578	Europe/Berlin	\N	\N	active
+da51b1b3-24fe-4908-8872-d0c541f43eda	1062	Aschaffenburger Straße 121, 63457 Hanau	300046860	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1134429	8.9705378	Europe/Berlin	\N	\N	active
+cdf208fe-e5b7-4cd5-b18a-a4314c25283c	1044	Auf Der Grenz 2, 65589 Hadamar	300046894	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4281841	8.0348989	Europe/Berlin	\N	\N	active
+4a257926-6bbd-4e0e-b29d-ec213f9e0c6b	1041	Weilstraße 12, 35781 Weilburg	300046946	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4723611	8.2690121	Europe/Berlin	\N	\N	active
+0a717821-fd97-4420-8f06-3d270f24c225	1043	Flachsberg 2, 35789 Weilmünster	300046977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4109948	8.3471293	Europe/Berlin	\N	\N	active
+1a7e4e9a-bd73-464e-b102-d9e91933a05e	1039	A 45 111, 35630 Ehringshausen	300046979	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.616234	8.3886198	Europe/Berlin	\N	\N	active
+5b0020cc-bbe8-43c6-9652-0204f473ef0e	1048	Otto-Wels-Straße 32, 35586 Wetzlar	300046981	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5822636	8.4838097	Europe/Berlin	\N	\N	active
+3d04aaf8-eb8e-4c66-bbbc-ac07fcc220ed	1053 M	Ringstraße 19, 36399 Freiensteinau	300047012	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4197343	9.4182513	Europe/Berlin	\N	\N	active
+fc6f992f-3c19-4467-a5e2-f45d1b1e4920	1056 M	Wehrtbornstraße 62, 63654 Büdingen	300047050	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3376612	9.2043842	Europe/Berlin	\N	\N	active
+eea62949-40ec-4c69-ab85-f5404da37d3d	1060	Kilianstädter Straße 10, 63454 Hanau	300047104	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1823803	8.8857316	Europe/Berlin	\N	\N	active
+e2f64428-f162-4cb7-8aea-a4aa0f18bac0	1054 M	L 3053, 35510 Butzbach	300047138	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4347481	8.6091302	Europe/Berlin	\N	\N	active
+f257865a-5d02-4993-b7d3-52fa4a9112ba	1046	Wermertshäuser Straße 36, 35466 Ebsdorfergrund	300047631	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6930378	8.9093913	Europe/Berlin	\N	\N	active
+6c8690b9-896f-439f-9258-859e5858fcc2	1052	Heegstraße 40, 35325 Mücke	300047639	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6308459	9.0284824	Europe/Berlin	\N	\N	active
+5b67acca-e623-4f68-a465-e547a2b53287	1057	Herrnhuter Straße 2, 63654 Büdingen	300047688	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2784293	9.097436	Europe/Berlin	\N	\N	active
+bdfab3e3-8764-4123-afef-08a7f1d6e6bb	1033	Rehmühle 1, 35745 Herborn	300047741	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6596793	8.30679	Europe/Berlin	\N	\N	active
+e55fda14-11e2-4310-ad9c-df5965eb06a6	1040	Beilsteiner Straße 29, 35753 Greifenstein	300047754	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596431	8.2766605	Europe/Berlin	\N	\N	active
+397fb59f-6cd0-410c-9cc3-a3c8dc9ff536	1042	Unterer Grimms 27a, 35647 Waldsolms	300047800	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.435542	8.4852309	Europe/Berlin	\N	\N	active
+d0ec96b1-cd67-4c96-ba2c-0428c46aa11d	1034	Großgasse 28, 35460 Staufenberg	300047875	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6546273	8.7366839	Europe/Berlin	\N	\N	active
+264029da-1d87-459f-9a6a-541831d25000	1020 M	Untersuhler Straße 14, 36208 Wildeck	300047923	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.970553	10.019531	Europe/Berlin	\N	\N	active
+5a7496a9-b320-41a5-85d4-0dd3c1969666	1016 M	Hunsrückstraße 4, 36199 Rotenburg an der Fulda	300047959	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.026477	9.771942	Europe/Berlin	\N	\N	active
+a61e0e32-dda7-4779-a471-5599c33c9024	1019	Zum Lichtloch 3, 36214 Nentershausen	300048048	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.991452	9.941334	Europe/Berlin	\N	\N	active
+9fb67f9c-04ca-43a6-b57a-908e741d2ea7	1023	L 3258, 36088 Hünfeld	300048049	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6970542	9.841369	Europe/Berlin	\N	\N	active
+a5c5d587-456e-44be-817c-695f8fe1a2a5	1022	L 3170, 36132 Eiterfeld	300048067	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7445495	9.8402852	Europe/Berlin	\N	\N	active
+bd09e3c6-67e8-4ef6-b421-06dc4f3157f1	1015 R	Alte Zeche 7, 37247 Großalmerode	300048093	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.222618	9.805446	Europe/Berlin	\N	\N	active
+34e8579b-0383-43ac-8673-cbb884e27071	1069 R	Keltenstraße 2, 65439 Flörsheim am Main	300048125	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.048272	8.438446	Europe/Berlin	\N	\N	active
+426f79f3-4260-410f-adfa-3e3efa7c6edc	140	Keltenstraße 2, 65439 Flörsheim am Main	300048131	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.048047	8.438127	Europe/Berlin	\N	\N	active
+ceb6a1cc-1441-4f26-bb2b-ad4b624607b6	1059	L 3008 2, 61118 Bad Vilbel	300048159	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1913567	8.7630219	Europe/Berlin	\N	\N	active
+64a4eba6-505b-4c3b-bd84-bc2f9cee1be3	1077	L 3112, 64579 Gernsheim	300048181	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.7463615	8.537532	Europe/Berlin	\N	\N	active
+a98c3528-8477-4275-9339-a9c240607a95	1014 M	L 3422, 37242 Bad Sooden-Allendorf	300048844	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.268037	9.9316068	Europe/Berlin	\N	\N	active
+67da6191-3145-4d21-bd75-bac2b16e124f	1530	Hauptstraße 19, 34302 Guxhagen	300048857	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1784143	9.4812236	Europe/Berlin	\N	\N	active
+165d9c3d-f053-4cb2-9159-b95c14814c7f	1025	Am Tannenküppel 9, 36100 Petersberg	300049446	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5641667	9.7412746	Europe/Berlin	\N	\N	active
+bd4dd5f4-da1b-4685-a187-88233322d0c1	Woogsweg	Scharounweg 6, 64289 Darmstadt	300049541	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.90125858055004	8.672665357589723	Europe/Berlin	\N	\N	active
+84356a1a-3188-4d0b-9d3e-47a772a6f519	Arheilger Straße	Schreberweg 15, 64289 Darmstadt	300049542	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.89192848119509	8.661609292030336	Europe/Berlin	\N	\N	active
+51f3633f-538d-4fd2-9f95-fb71432a1ae7	1150	Auf Der Binn 7, 64658 Fürth	300052661	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.644122	8.7513688	Europe/Berlin	\N	\N	active
+cddd862d-28e2-4e79-82fb-c0b6d6b7622e	1146	Nibelungenstraße 81, 68623 Lampertheim	300052686	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6360971	8.4026784	Europe/Berlin	\N	\N	active
+8dc071b8-32ee-4b22-af7c-bf619a4b94d7	1151	In Den Schadenhecken 51, 64747 Breuberg	300052811	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8243325	9.0449247	Europe/Berlin	\N	\N	active
+1c1e6bef-4561-471d-bdc3-0a48ac296997	1154	Industriestraße 23, 69239 Neckarsteinach	300052836	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.4012076	8.8588234	Europe/Berlin	\N	\N	active
+7f7a7c5d-1d59-4a18-8441-508bba210d14	1145	Außerhalb 26, 68642 Bürstadt	300052874	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6732395	8.4515298	Europe/Berlin	\N	\N	active
+27a68e7e-8d3c-4689-b559-3fa2609c3be1	1124	B 253, 35684 Dillenburg	300052977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.768008	8.289006	Europe/Berlin	\N	\N	active
+7c33ab21-a589-4e03-ad02-dd1cea60e6ec	1135	Im Langen Garten 1, 36304 Alsfeld	300053004	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.7236569	9.2311169	Europe/Berlin	\N	\N	active
+d5af3a5a-357b-4cd6-93ef-77f9ada20d40	1125	Alsfelder Straße 55, 35305 Grünberg	300053036	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.5913799	8.971904	Europe/Berlin	\N	\N	active
+8dcdf93b-4dd8-4033-93f4-9cf4bd596df8	1140 M	B 8, 61479 Glashütten	300053092	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2102686	8.4136294	Europe/Berlin	\N	\N	active
+dfa75be7-c7b0-498e-80d8-d39c7c341cf4	1138 M	Im Aartal 18e, 65326 Aarbergen	300053153	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2393581	8.0599672	Europe/Berlin	\N	\N	active
+95d240aa-3810-4d06-a499-d412c5503e45	1138 R	Im Aartal 18e, 65326 Aarbergen	300053166	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.2393713	8.0599427	Europe/Berlin	\N	\N	active
+69f05caa-d4a6-45f6-95eb-8e0b1d0dd076	1111	Ahornstraße 2, 34513 Waldeck	300053210	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2452541	9.0105512	Europe/Berlin	\N	\N	active
+980babb8-2d01-4754-b730-cb555e3df28b	1106	Ziegelhütte 4, 34497 Korbach	300053236	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2877975	8.8330129	Europe/Berlin	\N	\N	active
+22045a05-2bd9-4d0f-831b-6ea99642c42a	1107	Helser Höhe 1, 34454 Bad Arolsen	300053298	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4028351	9.015716	Europe/Berlin	\N	\N	active
+ba68375e-89aa-4dfd-afec-f14ffca9411f	1112	Mündener Straße 49, 34385 Gutsbezirk Reinhardswald	300053300	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.6504128	9.4632616	Europe/Berlin	\N	\N	active
+78791f43-f7e1-485e-bc82-9a65f02a6f2f	1105	Alte Wiesen 2, 35108 Allendorf	300053370	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0701175	8.6354442	Europe/Berlin	\N	\N	active
+457ba19e-53c6-41d5-a0e1-3f448ef5a5f4	1102	Mündener Straße 37, 34233 Fuldatal	300053371	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4014742	9.5922985	Europe/Berlin	\N	\N	active
+4ecffbbc-58b6-45cc-acbe-d4cd95061334	1108	Hüttenstraße 5, 34516 Vöhl	300053372	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2167541	8.896405	Europe/Berlin	\N	\N	active
+13ea6ed7-4a2b-4b23-9f15-5b10dd71d4b7	1101	B 3, 34582 Borken	300053424	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.065443	9.228901	Europe/Berlin	\N	\N	active
+6f5c6317-9eeb-4bb7-8e53-3fc784f8da76	1153	Außerhalb 11 2, 64354 Reinheim	300054607	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8534114	8.7963936	Europe/Berlin	\N	\N	active
+9fec7562-1e76-42b1-ac4b-b669bc1703a3	1903	Kloster-Eberbach-Straße 2, 65346 Eltville am Rhein	300054692	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0374333	8.0670528	Europe/Berlin	\N	\N	active
+d9ed2d48-26d2-4e1d-9ad6-bc013d942bc0	1143	Außerhalb 4, 64347 Riedstadt	300054880	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.8563673	8.516892	Europe/Berlin	\N	\N	active
+5cfc6ce4-db1f-46e8-89b2-a7a7eb02e6e8	1920	B 276, 63633 Birstein	300054912	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4129382	9.3214125	Europe/Berlin	\N	\N	active
+db86eeb1-d0c3-4041-a08c-13eed593bf07	1129	Bahnhofstraße 6, 63633 Birstein	300054923	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3503293	9.3100846	Europe/Berlin	\N	\N	active
+7edfe95e-1710-48d7-b7cd-12f0c3a2782f	1130	B 275, 61197 Florstadt	300055208	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.328914	8.8956174	Europe/Berlin	\N	\N	active
+2b5071c1-dd2c-4f25-8cb5-d14c72faa730	1132	Insterburger Straße 19a, 63486 Bruchköbel	300055231	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1629616	8.9119185	Europe/Berlin	\N	\N	active
+3ed89acb-c255-4bc7-ae2b-86f922f4a382	1139	New-York-Straße 101, 65191 Wiesbaden	300060310	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.07965482737	8.2737	Europe/Berlin	\N	\N	active
+5c5c5243-b316-4ed2-9e54-5a3b857e9121	1148	Forstrat Louis-Weg, 64720 Michelstadt	300060329	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.6767389	9.0704308	Europe/Berlin	\N	\N	active
+0bb2534d-861a-4e62-8fc4-f2cfd98c80e5	1142	B 44, 64521 Groß-Gerau	300060338	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9581907	8.5424752	Europe/Berlin	\N	\N	active
+1f1e152e-9125-4ac4-a01b-dfb621d09208	1144	Frankenfelder Weg 21, 64579 Gernsheim	300060374	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.7773437	8.5110391	Europe/Berlin	\N	\N	active
+8bcdeba0-2c91-4fb5-a932-49148fbdd069	1133	Röhrig 26, 63599 Biebergemünd	300060380	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1594649	9.3492116	Europe/Berlin	\N	\N	active
+9261b9d9-0a9f-44ea-bec9-8b09811174a4	1134	Lohrer Straße 29, 63639 Flörsbachtal	300060402	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0942454	9.4634822	Europe/Berlin	\N	\N	active
+6afe008a-70c4-4840-916a-a8e29865f187	1137 R	Taunusstraße 8, 65344 Eltville am Rhein	300060406	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0566449	8.119155	Europe/Berlin	\N	\N	active
+d25cd5bd-668b-45c6-aa1b-b1aad34b984c	1122	Wartburgstraße 1, 36142 Tann	300060439	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6556745	10.0064162	Europe/Berlin	\N	\N	active
+919cc4d5-8153-4a4d-b048-8b512a8ccc7a	1119	Lingeloh 1, 36088 Hünfeld	300060452	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6560985	9.7530218	Europe/Berlin	\N	\N	active
+27fb06be-30f6-4d40-abe4-252e44000682	1121	Rodenbach 29, 36129 Gersfeld	300060521	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.421611	9.9374113	Europe/Berlin	\N	\N	active
+6efe9dd8-ca6f-4848-90a8-2410db91c428	1141	Köhlerweg, 60528 Frankfurt	300060609	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0559836	8.6434042	Europe/Berlin	\N	\N	active
+918d4b32-24db-43bd-ae12-aa9e91fdcd1b	1900	Rückerweg 6, 34477 Twistetal	300060779	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.315806	9.0077939	Europe/Berlin	\N	\N	active
+468e4279-0d6b-4cc4-a28a-e40003d29600	1117	Riedmühle 1, 36205 Sontra	300060818	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.029858	10.0105993	Europe/Berlin	\N	\N	active
+8511587b-ab47-421d-83f5-061c47aea6c3	1115	Leipziger Straße 203, 37235 Hessisch Lichtenau	300060826	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.19874	9.7467875	Europe/Berlin	\N	\N	active
+7e20214f-273e-450b-9a3e-4975f9810764	1116 R	Am Ehrenmal 16, 36205 Sontra	300060851	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1148754	9.9786473	Europe/Berlin	\N	\N	active
+c0e6d3ed-e0b0-420f-b03e-d29996f289eb	1114	An Der Werra 10, 37215 Witzenhausen	300060887	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3235832	9.886529	Europe/Berlin	\N	\N	active
+1dea2b3a-703a-4991-98a9-86b7c0e3dbb3	1104	Lindenstraße 21, 34212 Melsungen	300060909	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1521169	9.5575865	Europe/Berlin	\N	\N	active
+29f70e83-1a58-47b6-ba90-965bdd5888b7	1109	Efzestraße 17, 34590 Wabern	300060917	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0895638	9.371461	Europe/Berlin	\N	\N	active
+9f611dac-4773-4484-a857-3f67260152c5	1136	B 42, 65385 Rüdesheim am Rhein	300061600	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.9741312	7.8932671	Europe/Berlin	\N	\N	active
+fe9a2858-06d2-444e-b8ce-b1f1c925c5e0	1942	Königsteiner Straße 32, 61440 Oberursel	300061632	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.199621	8.557802	Europe/Berlin	\N	\N	active
+7bd6d89a-9261-484c-8a33-21de136f0dd6	R4 Trendelburg	Wülmersen 1, 34388 Trendelburg	300062314	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.60741678757214	9.432481527328491	Europe/Berlin	\N	\N	active
+3aee6ba5-9b4d-4c59-9f2a-324080a609e0	099b	Alte Frankfurter Straße 29, 34281 Gudensberg	300062584	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.1646495	9.317688	Europe/Berlin	\N	\N	active
+b293d516-7909-4cd9-90de-8d6dae9a0788	1118	Kleine Industriestraße 13, 36251 Bad Hersfeld	300062610	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.8645267	9.7206717	Europe/Berlin	\N	\N	active
+c0e4575e-0efb-499f-bb44-bbcc8a9a696e	1128	Fuldaer Straße 20, 36341 Wartenberg	300062791	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.6398137	9.4209329	Europe/Berlin	\N	\N	active
+2c42b70e-7a09-4b74-b0b7-4172a7b7be6c	1126	Friedberger Straße 22, 35410 Hungen	300062795	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.4664142	8.8967438	Europe/Berlin	\N	\N	active
+2173a048-3955-4ef2-8d3f-4c37fe4913eb	1800	Billinghäuser Weg 5, 34474 Diemelstadt	300065669	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.4989115	8.9528855	Europe/Berlin	\N	\N	active
+9dc2df7d-e57d-4510-adba-f0f63bcf9f69	1801	K 50, 34497 Korbach	300065670	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2238049	8.8436617	Europe/Berlin	\N	\N	active
+c8a1be71-35a1-494b-917a-b6d4ff9250c8	1802	An Der Kolbenmühle 2, 34537 Bad Wildungen	300065671	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0461045	9.0683097	Europe/Berlin	\N	\N	active
+1223c95a-2f57-40c8-b9b2-4865ad65dc3b	1803	K 8 1, 34454 Bad Arolsen	300065672	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3417778	9.0096503	Europe/Berlin	\N	\N	active
+9cd67a8f-37b7-44b8-bd08-25e50f25e3a9	1804	Am Steuken 6, 34497 Korbach	300065673	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3173682	8.8686745	Europe/Berlin	\N	\N	active
+d04eb60b-ae5f-411d-ab30-284216ea92c4	1805	Heuweg, 34513 Waldeck	300065674	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2574511	9.0536248	Europe/Berlin	\N	\N	active
+13e3f962-e20f-4472-a854-0913831ff39a	1320	Düsseldorfer Straße 5, 65760 Eschborn	300065682	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.129511	8.565771	Europe/Berlin	\N	\N	active
+7b52ae18-b1bd-4fa0-a872-3f44576d618e	1321	Kronberger Straße 66, 65760 Eschborn	300065683	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.163802	8.536151	Europe/Berlin	\N	\N	active
+82cd99ac-68e3-4c2f-a0f8-e8c40982d446	1322	Ludwig-Erhard-Straße 12, 65760 Eschborn	300065684	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.144913	8.552011	Europe/Berlin	\N	\N	active
+fbb9239b-79ed-4f0d-9e47-93aa6888dd7a	1450	Griedeler Straße 1, 35510 Butzbach	300065765	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.437014	8.691392	Europe/Berlin	\N	\N	active
+a89ba726-1ac9-4ba5-aec1-568b2cc89d70	1451	C.-Schneider-Straße 27, 35510 Butzbach	300065766	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.426777	8.6624685	Europe/Berlin	\N	\N	active
+820281be-b2b6-4718-980e-559f6888fd45	1452	L 3056, 35510 Butzbach	300065767	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.392349	8.640951	Europe/Berlin	\N	\N	active
+76a3f889-0d69-44ee-b751-020d35efb007	1453	Windhofstraße 46, 35510 Butzbach	300065768	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.451948	8.657641	Europe/Berlin	\N	\N	active
+d6be3320-95d4-4543-a692-37e2c5d1c3c3	1462	Urseler Straße 67, 61348 Bad Homburg	300065773	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.215301	8.608097	Europe/Berlin	\N	\N	active
+dcec73f3-b388-4b6e-bdfa-31be358968bf	1463	Quellenweg 1a, 61348 Bad Homburg	300065774	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.227835	8.631313	Europe/Berlin	\N	\N	active
+dc6a892c-6bc9-4135-9368-f4586add3572	1461	Frölingstraße 67, 61348 Bad Homburg vor der Höhe	300065777	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.221686	8.609935	Europe/Berlin	\N	\N	active
+3e466298-ecb6-40c1-b7db-b017e90a0b95	1410	Oberdorfstraße 25, 35117 Münchhausen	300066392	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.946656	8.702841	Europe/Berlin	\N	\N	active
+52ca2e0e-6561-464d-b849-91bd9a3596a6	1411	Diemelweg 12, 35274 Kirchhain	300066394	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.818874	8.851642	Europe/Berlin	\N	\N	active
+1cbc1f97-5f1a-44a6-b803-e26ba5279de0	1412	An Der Ziegelei 4, 35085 Ebsdorfergrund	300066395	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.73744	8.80777	Europe/Berlin	\N	\N	active
+b3fe29aa-104d-4798-8215-945f3aee41a1	1414	Sandweg 8, 35112 Fronhausen	300066396	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.693657	8.716265	Europe/Berlin	\N	\N	active
+281b5003-d713-494f-b2f5-b6f9333ee416	1415	Biegenstraße 8, 35112 Fronhausen	300066397	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.707397	8.70491	Europe/Berlin	\N	\N	active
+eca0ad3f-8c1c-44a0-b3c5-388139ece29a	1416	Wasserwerk Wohratal 1, 35274 Kirchhain	300066398	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.84757	8.926747	Europe/Berlin	\N	\N	active
+aa2e669f-f7b1-4198-b3f7-50a352f507b5	1418	Emil-Rössler-Straße 10, 35279 Neustadt	300066400	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.841797	9.087694	Europe/Berlin	\N	\N	active
+e63e038a-b95c-4271-bb93-a622ab13053d	1419	Försterweg 15, 35083 Wetter	300066401	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.92562	8.770603	Europe/Berlin	\N	\N	active
+11cdd1b6-332a-43f9-a825-0150de40c666	1420	Mühlbergweg 5, 35083 Wetter	300066402	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.90718	8.664738	Europe/Berlin	\N	\N	active
+66a6f885-ef46-4590-bb91-2231daac5aee	1422	Buchenauer Straße 1, 35232 Dautphetal	300066403	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.861786	8.610586	Europe/Berlin	\N	\N	active
+e731ef30-9425-40b4-b369-5b3bba2f53eb	1423	Schelde-Lahn-Straße 70, 35236 Breidenbach	300066404	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.861156	8.47303	Europe/Berlin	\N	\N	active
+53d71c52-877c-4af6-ae8c-b8ad44a6466f	1425	Dilschhäuser Straße 13, 35075 Gladenbach	300066405	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.808907	8.632998	Europe/Berlin	\N	\N	active
+64c6f4d7-0109-4a4e-b421-ec0e0000d8fa	1426	Gladenbacher Straße 25, 35102 Lohra	300066406	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.737087	8.624935	Europe/Berlin	\N	\N	active
+1f2910bb-d16b-419e-927d-fd9cbc395936	1427 M	Niederwalgerner Mühle 1, 35096 Weimar	300066407	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.739494	8.684207	Europe/Berlin	\N	\N	active
+b1a6be0b-82a7-45db-bdbc-d8b1841a5bf3	1428 M	Fleckenbühl 6, 35091 Cölbe	300066408	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.88079	8.826204	Europe/Berlin	\N	\N	active
+3d7c0688-81ef-4647-a646-266f4147652a	1460	Friedberger Straße 68, 61350 Bad Homburg vor der Höhe	300066721	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.247554	8.620444	Europe/Berlin	\N	\N	active
+f09ad90a-44d3-4d6a-8c1e-ae0a70fcbe37	1680	Pfarrwiese 42b, 61118 Bad Vilbel	300066723	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.190571	8.748497	Europe/Berlin	\N	\N	active
+0caa20a3-5762-43c9-869a-0194a7c9b044	1380	Stockstädter Straße, 64584 Biebesheim am Rhein	300066727	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.791083	8.470652	Europe/Berlin	\N	\N	active
+fae5c2c8-aed1-4fce-8075-b0ccec1689e2	1381	Alter Mainzer Weg 3, 65428 Bischofsheim	300066728	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.973143	8.396446	Europe/Berlin	\N	\N	active
+1cc6f51e-b5a9-49f7-9725-d748b7d29113	1382	A 67, 64572 Büttelborn	300066729	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.920027	8.504231	Europe/Berlin	\N	\N	active
+ebd2f5a4-fb30-4cad-9257-246af844f054	1383	Bergstraße 11, 65451 Kelsterbach	300066730	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.066372	8.528382	Europe/Berlin	\N	\N	active
+1c6a29ab-8f90-4bbf-94f1-4d4c02930295	1384	Ginsheimer Landstraße, 65474 Bischofsheim	300066731	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.982167	8.350083	Europe/Berlin	\N	\N	active
+fd2e1b89-c007-4ef1-a6ef-a08a55e626c8	1385	Okrifteler Straße, 65451 Kelsterbach	300066732	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.046248	8.511247	Europe/Berlin	\N	\N	active
+642f724e-092b-4033-a23c-5dcb22568791	1386	Büttelborner Straße 39, 64521 Groß-Gerau	300066733	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.900869	8.490651	Europe/Berlin	\N	\N	active
+a052aef4-a2da-4eee-8aa2-34400b6b71f6	1388	Stockheimer Weg 7, 64569 Nauheim	300066734	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.939653	8.454162	Europe/Berlin	\N	\N	active
+f0d0f180-10cb-4d68-abc4-dce3b767a5af	1389		300066735	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.893709	8.480328	Europe/Berlin	\N	\N	active
+287a535f-0aa0-472d-ab0f-2c58255ad8e4	1390	Walter-Flex-Straße 88, 65428 Rüsselsheim am Main	300066736	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.995703	8.431374	Europe/Berlin	\N	\N	active
+15b73074-7581-4949-afd2-fbb55c4f024f	1391	Außerhalb 29, 65468 Trebur	300066737	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.917823	8.368272	Europe/Berlin	\N	\N	active
+518dc68b-d366-4b4b-9ff2-efb43b8b4960	1392	Am Lerchesberg 1, 64546 Mörfelden-Walldorf	300066738	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.986529	8.572802	Europe/Berlin	\N	\N	active
+62d7f31c-a1ce-4d7d-ab3e-cbd12d89b1c2	1393	Rüsselsheimer Straße 78, 64546 Mörfelden-Walldorf	300066739	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.973121	8.546428	Europe/Berlin	\N	\N	active
+b332ef47-874f-42ff-9f83-37a14e8c3a9d	1395	Mörfelder Straße 25, 64546 Mörfelden-Walldorf	300066741	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.999812	8.570641	Europe/Berlin	\N	\N	active
+5e370bab-429d-4db5-95db-e3f50abcd129	1396	Darmstädter Straße 45, 65428 Rüsselsheim	300066742	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.990691	8.412475	Europe/Berlin	\N	\N	active
+c25a9b29-0da2-491a-825f-1b4ffab612e6	1399 M	Weisenauer Straße 39, 65428 Rüsselsheim am Main	300066745	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992792	8.407855	Europe/Berlin	\N	\N	active
+42bd830e-229d-496b-a405-f07be074635e	1330	Willy-Brandt-Straße 8, 61440 Oberursel	300066801	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.208952	8.593424	Europe/Berlin	\N	\N	active
+7c587a78-3894-42a6-b921-d163ced7ef8d	1331	Zeilweg 12, 61440 Oberursel	300066802	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.208821	8.603026	Europe/Berlin	\N	\N	active
+8d0e7028-24ef-4a09-ad82-d1cb51398b30	1332	Gattenhöferweg 43, 61440 Oberursel	300066803	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.191202	8.583164	Europe/Berlin	\N	\N	active
+60a172cb-dd66-43f5-a1f3-7964ac0696c9	1333	Hohemarkstraße 190, 61440 Oberursel	300066804	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.214981	8.539191	Europe/Berlin	\N	\N	active
+80e2cc4f-a553-499d-9663-fd0d5dba2e54	1334	Lahnstraße 57, 61440 Oberursel	300066805	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.219036	8.578047	Europe/Berlin	\N	\N	active
+c509eb34-ad5b-4f22-abd0-eca5ff882064	1335	Wallstraße 102, 61440 Oberursel	300066806	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.194527	8.605785	Europe/Berlin	\N	\N	active
+da77cd9d-c991-4390-890e-cdae45cc2a50	1397	Hans-Sachs-Straße 98a, 65428 Rüsselsheim am Main	300066819	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.988861	8.424007	Europe/Berlin	\N	\N	active
+47902102-cf99-47a9-9089-a99a2a4432be	1440	Rödermarkring 29, 63322 Rödermark	300067383	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992211	8.822872	Europe/Berlin	\N	\N	active
+e43c75d6-4d92-4352-996f-68a5bfb0a7d3	1441	Rödermarkring 29, 63322 Rödermark	300067384	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.992141	8.822575	Europe/Berlin	\N	\N	active
+b19631f8-4864-4d32-b4e7-269a9462cd89	1443	Dieburger Straße 71a, 63303 Rödermark	300067385	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.978831	8.764224	Europe/Berlin	\N	\N	active
+277227ca-d7ca-4159-887d-0e3052e1e2f3	1444	Forsthausweg 4, 63322 Rödermark	300067386	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.964904	8.833094	Europe/Berlin	\N	\N	active
+b38e864f-c27d-4b0b-8028-1b24d793fdfc	1446	Donaustraße 46a, 63322 Rödermark	300067387	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.976558	8.817451	Europe/Berlin	\N	\N	active
+761b1272-a9fa-4798-9412-fd06f5d43077	1540	Am Gradierwerk 10, 61231 Bad Nauheim	300067390	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.358586	8.751901	Europe/Berlin	\N	\N	active
+3e406be2-43ef-4feb-a38c-34a52268b553	1541	Friedberger Straße 100, 61231 Bad Nauheim	300067391	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.350058	8.743573	Europe/Berlin	\N	\N	active
+4d8becd3-4a7c-4f64-9fac-886745a5ec20	1544	Ludwigstraße 3, 61231 Bad Nauheim	300067393	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.365166	8.743807	Europe/Berlin	\N	\N	active
+b0f65dfa-02de-4f04-94df-4e9158a72654	1300	Dammühlenweg 3, 65510 Idstein	300067401	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.223789	8.267836	Europe/Berlin	\N	\N	active
+38d095c7-81b3-4e3f-be28-1d47642b192b	1630	Leukertsweg 102, 63225 Langen	300067402	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.980279	8.658221	Europe/Berlin	\N	\N	active
+68b07f01-d38c-4f6c-867a-e295255cfaaa	1640	Dyckerhoffstraße 1, 65203 Wiesbaden	300067781	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0288728	8.2565807	Europe/Berlin	\N	\N	active
+6a61de98-fff6-405f-b53f-27187b42aee8	1641	Rheinufer 10, 55252 Wiesbaden	300067782	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.008154	8.279928	Europe/Berlin	\N	\N	active
+d30bd3b0-1a29-46b9-8ed2-478cd53f5087	1642	Sonnenberger Straße 3, 65193 Wiesbaden	300067783	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.085065	8.254723	Europe/Berlin	\N	\N	active
+f44ed066-3e0b-4b53-8dd8-6c832db9deb4	1643	Steinern Straße, 55246 Wiesbaden	300067784	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0191403	8.3115487	Europe/Berlin	\N	\N	active
+29aa4409-7a54-4ce9-b4cd-4992801d186c	1645	Uferstraße 5, 65203 Wiesbaden	300067785	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.037871	8.228499	Europe/Berlin	\N	\N	active
+d5841583-8e56-4ed0-83ef-97436d5207f0	1610 Richtung Frankfurt	Frankfurter Straße 151, 63067 Offenbach	300067966	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.101922	8.744597	Europe/Berlin	\N	\N	active
+53db4148-5d7c-4f6f-a506-16a44e8adac4	1610 Richtung Offenbach	Frankfurter Straße 144, 63067 Offenbach	300067967	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.101749	8.744721	Europe/Berlin	\N	\N	active
+34ac264a-b57b-4c05-8cf7-67eb7deb5254	1612	Lortzingstraße 8, 63069 Offenbach	300067968	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.093403	8.758437	Europe/Berlin	\N	\N	active
+dc3a58d2-1531-460f-9906-ea74051203d8	1613	Seligenstädter Straße 73, 63073 Offenbach	300067969	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.0851054	8.8140816	Europe/Berlin	\N	\N	active
+447e72b0-0b53-465e-af6e-9767ac48997e	1614	Senefelderstraße 35, 63069 Offenbach	300067970	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.096893	8.762923	Europe/Berlin	\N	\N	active
+6839d882-8135-4cf5-9288-67a164459bcf	1615	Taunusstraße 38, 63067 Offenbach	300067971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.109375	8.753598	Europe/Berlin	\N	\N	active
+1baca48c-b65e-488e-966b-39180dd00e4a	1616	Von-Behring-Straße 84, 63075 Offenbach	300067972	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.116093	8.785673	Europe/Berlin	\N	\N	active
+ccc0ab7d-e142-4caf-bc7f-a2c253ab0fd7	1650	Spessartstraße 2, 65779 Kelkheim	300067973	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.143504	8.433294	Europe/Berlin	\N	\N	active
+aa90a4b6-8414-44b8-9a05-a7d53d634c2c	1651	Sodener Straße 120, 65779 Kelkheim	300067974	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.148511	8.436107	Europe/Berlin	\N	\N	active
+8486baf1-e5f6-4daf-9245-78183f6ec8dc	1700	Philipp-Reis-Straße 17, 63128 Dietzenbach	300067975	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.016084	8.789891	Europe/Berlin	\N	\N	active
+81f542e9-ac53-4809-8231-40f6be00e8ad	1702	Offenthaler Straße 51, 63128 Dietzenbach	300067976	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.001438	8.773084	Europe/Berlin	\N	\N	active
+0ad7e7ae-3ea1-4a31-b0b3-c673e8936152	1703	Offenbacher Straße 3, 63128 Dietzenbach	300067977	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.014509	8.778663	Europe/Berlin	\N	\N	active
+91b67cfa-ebca-4569-b926-7685f87e6ae4	1704	Michelstädter Weg 3, 63128 Dietzenbach	300067978	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.014404	8.779065	Europe/Berlin	\N	\N	active
+c6687f32-8b20-4d4e-8a43-f3c252766efb	1580	Dieburger Straße 255, 64287 Darmstadt	300067979	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.885035	8.687166	Europe/Berlin	\N	\N	active
+e3aeb205-e198-4b41-a269-9a737c9f6afb	1581	Eschollbrücker Straße 200, 64295 Darmstadt	300067980	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.847274	8.616109	Europe/Berlin	\N	\N	active
+6c16ca3c-b721-4d18-8ce4-527dcae6b809	1584	Otto-Röhm-Straße 85, 64293 Darmstadt	300067981	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.888814	8.631675	Europe/Berlin	\N	\N	active
+6d33a5e3-737a-471b-903d-12a1c74a7a07	1587	Seeheimer Straße 99, 64297 Darmstadt	300067983	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.806544	8.645383	Europe/Berlin	\N	\N	active
+cd5d0ba3-0ee6-4b12-a438-7cf1082286a9	1591	Nieder-Ramstädter Straße 184, 64285 Darmstadt	300067985	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.854575	8.669506	Europe/Berlin	\N	\N	active
+e821f0b5-fb65-479c-9129-9486cf7acbab	1592	Nasser Weg, 64293 Darmstadt	300067986	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.885555	8.617049	Europe/Berlin	\N	\N	active
+c40144bf-9aa3-4bae-bd45-4f5557b85f43	1510	Ramsaystraße 5, 63450 Hanau	300067987	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.138485	8.916046	Europe/Berlin	\N	\N	active
+69edbdcf-1a5e-44c7-a16c-3afd29a8a664	1511 stadtauswärts	Aschaffenburger Straße 64, 63457 Hanau	300067988	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.124785	8.948019	Europe/Berlin	\N	\N	active
+56ab2e0f-2b0d-4601-82df-246f8e83de1a	1511 stadteinwärts	Maria-Montessori-Allee 8, 63457 Hanau	300067989	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.125046	8.947751	Europe/Berlin	\N	\N	active
+72b0abca-9a22-42d1-b05e-098e3f6b02b3	1512	Philipp-August-Schleißner-Weg 2a, 63452 Hanau	300067990	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.135722	8.930461	Europe/Berlin	\N	\N	active
+a002aafd-3df6-44e8-8518-1b4d1be36eb4	1590	Rheinstraße, 64295 Darmstadt	300067991	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.869134	8.625688	Europe/Berlin	\N	\N	active
+58fa0b3f-c60c-497a-9330-3cdafc8cb254	1351	Ludwigstraße 40, 63263 Neu-Isenburg	300067992	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.055758	8.694251	Europe/Berlin	\N	\N	active
+31a2e17c-ba58-45b5-bfa4-716daa463b4a	1354	Rheinstraße 90, 63263 Neu-Isenburg	300067993	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.054368	8.679211	Europe/Berlin	\N	\N	active
+4eea9457-4ac1-4a12-84f7-5ed5f2c25b55	1355	Triebweg 188, 63263 Neu-Isenburg	300067994	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.055267	8.710026	Europe/Berlin	\N	\N	active
+7e98c7d3-d0dd-459f-be21-5d4e28d66ff2	1471	Arndtstraße 16, 34123 Kassel	300068882	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3075038	9.5060745	Europe/Berlin	\N	\N	active
+c5cb593d-8e62-40ce-a5c1-2af7306c6dad	1473	Salztorstraße 5, 34125 Kassel	300068883	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3164309	9.5107162	Europe/Berlin	\N	\N	active
+1cde8b7e-4e31-405e-84a7-1942c202b5d8	1476	Christian-Reul-Straße 39, 34121 Kassel	300068884	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3031819	9.4545222	Europe/Berlin	\N	\N	active
+498e3059-fd88-45ee-ab57-7c81402192e3	1477	Neue Fahrt 11, 34117 Kassel	300068885	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3143068	9.4931761	Europe/Berlin	\N	\N	active
+71caa105-ecfa-4fd6-8a6c-69356eac6498	1478	Olebachweg 50a, 34123 Kassel	300068886	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3008995	9.5412794	Europe/Berlin	\N	\N	active
+64dcd97d-ed11-469b-95f6-ee1960213348	1479	Renthof 3, 34117 Kassel	300068887	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3147468	9.5039636	Europe/Berlin	\N	\N	active
+24e8f718-072d-47aa-add0-e299d2354214	1480	Schillerstraße 60-62, 34117 Kassel	300068888	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3206865	9.4811773	Europe/Berlin	\N	\N	active
+04e7a73c-b85e-4413-872a-b6cd6610949b	1481	Sternbergstraße 31c, 34121 Kassel	300068889	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3066935	9.4609602	Europe/Berlin	\N	\N	active
+0efe9bcb-eff4-4530-bf6e-dbd1abf8eeac	1482	Sternstraße 19a, 34123 Kassel	300068890	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.311907	9.5051667	Europe/Berlin	\N	\N	active
+215fbdb5-5ed8-4866-8d46-beaf3fc9b7d0	1484	Wahlershäuser Straße 58, 34130 Kassel	300068891	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3200852	9.4442726	Europe/Berlin	\N	\N	active
+39224feb-db47-42f7-9f92-61960a719594	1810	Hafenstraße 69, 34125 Kassel	300068892	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3170148	9.5191947	Europe/Berlin	\N	\N	active
+720fc59d-4c28-42b8-8862-e6c556c537a6	1340	In Den Schlangenäckern 9, 64395 Brensbach	300069071	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.753078	8.878057	Europe/Berlin	\N	\N	active
+273ec648-7592-4aa2-a1c8-241227668e6f	1341	Neustädter Straße 33a, 64747 Breuberg	300069072	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.815449	9.023055	Europe/Berlin	\N	\N	active
+2991e48f-3922-4be2-8253-c985b311f646	1342	Neckarstraße 157, 64711 Erbach	300069073	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.639157	8.997476	Europe/Berlin	\N	\N	active
+c1cb7485-2286-4d13-a9fd-06e2a3864ec1	1343	Untere Siegfriedstraße 10, 64756 Mossautal	300069074	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.620643	8.944041	Europe/Berlin	\N	\N	active
+5456e193-6738-4007-bd8a-5845b86aa78b	1345	Höchster Straße 102, 64395 Brensbach	300069075	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.772377	8.889865	Europe/Berlin	\N	\N	active
+c9b8329d-29b2-4fb5-a4a8-97ec202b6c7c	Zählstelle Sinntal Altengronau Rhönexpressradweg	Aspenweg 52, 36391 Sinntal	300069163	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.254807	9.636959	Europe/Berlin	\N	\N	active
+b2bd21d3-070a-4cae-a1fc-3946f7a096fa	Zählstelle Gelnhausen Höchst R3	Untere Schönau 13, 63571 Gelnhausen	300069164	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.204788	9.226091	Europe/Berlin	\N	\N	active
+d688485f-8032-49f4-865b-dc31e69f282e	1690	Quellenstraße 5, 34537 Bad Wildungen	300069324	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.111181	9.090314	Europe/Berlin	\N	\N	active
+eb6a5241-40f7-41a1-9d0a-5537101c3690	1550	L 3199, 63619 Bad Orb	300069410	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.237935	9.303873	Europe/Berlin	\N	\N	active
+789e5f79-a263-43fa-9a2c-70bb9ff39965	1663	An Den Herrnäckern 30, 63150 Heusenstamm	300069417	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.053022	8.814157	Europe/Berlin	\N	\N	active
+a8ae3e27-55ec-4113-b039-fb591ab3cd01	1662	Am Goldberg 34, 63150 Heusenstamm	300069418	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.061418	8.819416	Europe/Berlin	\N	\N	active
+2dbd844d-0621-435a-8c6a-40877ecc3224	1661	Frankfurter Straße 19, 63150 Heusenstamm	300069419	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.059434	8.807676	Europe/Berlin	\N	\N	active
+5e121c5d-d782-4a36-aca9-81c9c08068d9	1370	Altenfeldsweg 6, 35394 Gießen	300069438	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.578741	8.683931	Europe/Berlin	\N	\N	active
+a4d020f3-59a5-42ac-b2b8-1bf17d8790fc	1371	Leimenkauter Weg 63, 35398 Gießen	300069439	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596218	8.669114	Europe/Berlin	\N	\N	active
+d0eb52a7-065c-47a4-9d05-dea611f407c6	1372	Goethestraße 52, 35390 Gießen	300069440	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.579672	8.677358	Europe/Berlin	\N	\N	active
+d730c20b-aa6a-4a23-b67d-5cad4f5a9f52	1373	Gottlieb-Daimler-Straße 1, 35398 Gießen	300069441	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.586522	8.650516	Europe/Berlin	\N	\N	active
+66613d40-4d8b-4247-bdba-f9e1f25c36c2	1374	Lahnstraße 31, 35398 Gießen	300069442	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.584607	8.663103	Europe/Berlin	\N	\N	active
+7eb8d4d9-d8e4-4bdb-a296-4d2d23a459b1	1375	Taubenweg 8, 35396 Gießen	300069443	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.596484	8.691651	Europe/Berlin	\N	\N	active
+06362c75-a98a-4649-8f68-d937cedffd8e	1376	Marktstraße 10, 35390 Gießen	300069444	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.585941	8.673337	Europe/Berlin	\N	\N	active
+3d744ef9-c741-4496-a79f-50ac6276ed46	1490	Theodor-Stern-Kai 3, 60596 Frankfurt	300070104	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.095812	8.658578	Europe/Berlin	\N	\N	active
+deb86e6c-53a1-4c45-b29b-b486931b4d32	1493	Alte Mainzer Gasse 23, 60311 Frankfurt	300070106	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1087556	8.6803453	Europe/Berlin	\N	\N	active
+e0f23b75-47f6-4b77-a171-6be7cac3efe2	1494	Gerbermühlstraße 105, 60594 Frankfurt	300070107	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1061185	8.7214845	Europe/Berlin	\N	\N	active
+d20dcd32-cb99-402d-a398-e6100c1a4775	1495	Gelastraße 117, 60388 Frankfurt	300070108	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.143361	8.736621	Europe/Berlin	\N	\N	active
+fe17fd1a-b259-406d-8911-24353cd3a4de	1496 auswärts	Schloßstraße 95, 60486 Frankfurt	300070109	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.117673	8.645531	Europe/Berlin	\N	\N	active
+ac2f9b07-ed0e-41f5-8256-e0a1407a7194	1496 einwärts	Schloßstraße 95, 60486 Frankfurt	300070110	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.117627	8.645436	Europe/Berlin	\N	\N	active
+00684a49-f0e3-4c73-bfa6-34557b20f674	1497	Oeder Weg 12, 60318 Frankfurt	300070111	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1188237	8.6797508	Europe/Berlin	\N	\N	active
+2107f64c-cab5-4b18-a500-f153dbd03809	1500	Vorm Wald 28, 65934 Frankfurt	300070113	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.1123951	8.5819811	Europe/Berlin	\N	\N	active
+5a0420c6-824c-4bef-b4a8-adb60a7996da	1017	Eisenacher Straße 17, 37293 Herleshausen	300048879	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.0028574	10.1834362	Europe/Berlin	\N	\N	active
+307ea4a9-ad7b-4449-8f97-3ec8cabc73e2	1417	Ausbau Zur Radroute Geplant, 35279 Neustadt	300066399	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.860207	9.131354	Europe/Berlin	\N	\N	active
+8c91ac5c-20e4-49ec-902a-790fa1bfc49d	1394	Am Wallgraben 3, 64546 Mörfelden-Walldorf	300066740	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.972621	8.571438	Europe/Berlin	\N	\N	active
+c25de5be-2677-4ef4-b88c-e4c03d2e6db7	1660	Im Grund 4, 34317 Habichtswald	300068994	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.3345592	9.3221639	Europe/Berlin	\N	\N	active
+e5f36ff1-93f6-4285-a9c2-1d79abba8877	111	Ebersberger Straße 5, 64711 Erbach	300022577	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.615944	8.992066	Europe/Berlin	\N	\N	active
+607f0a07-7509-4517-955b-5cc3965269da	048	Bergstraße 48, 65795 Kriftel	300023310	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.075130727825126	8.47725570201874	Europe/Berlin	\N	\N	active
+57697b85-036e-4ef3-ab90-5209a8da0c77	108	B 455, 61169 Friedberg	300024240	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.316007636838584	8.708804057532689	Europe/Berlin	\N	\N	active
+5bf44ff6-bf84-4f19-8da4-96c58bb6c03f	1492	Ginnheimer Landstraße 1b, 60487 Frankfurt	300070105	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.128344	8.640726	Europe/Berlin	\N	\N	active
+3367d029-929f-4829-806e-faa7db743a93	120	Egerländer Weg 8, 61476 Oberursel	300024708	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.185525	8.558612	Europe/Berlin	\N	\N	active
+e8c2107d-9f78-4bfa-8b4d-44a501889b2d	079	Am Brachthof 1, 35102 Lohra	300026787	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.728205	8.662766	Europe/Berlin	\N	\N	active
+1d861365-568a-41e2-a530-e407177a15f1	089	L 3092, 35041 Marburg	300026824	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.8245442	8.7161966	Europe/Berlin	\N	\N	active
+6f1a9f95-8589-4201-9c0c-663a7c65ab53	012	Auweg 6a, 35457 Lollar	300027971	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.641062	8.696359	Europe/Berlin	\N	\N	active
+aa8ce371-9cc4-400d-a15b-f626bd79d51e	042	Jagdhaus Traiges 2, 36369 Lautertal	300028030	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.567416	9.255976	Europe/Berlin	\N	\N	active
+272f509d-3a21-48d0-a9fb-4fd32b63f1aa	341	Heidelberger Straße 133, 64625 Bensheim	300032872	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.66667996782354	8.629465699195864	Europe/Berlin	\N	\N	active
+fbef8253-dee6-406c-9b76-06432e4d40c5	1078	L 3111, 68519 Viernheim	300043184	2750a682-90bd-5d2c-8b86-c9038c228d9c	49.583399	8.589813	Europe/Berlin	\N	\N	active
+0483a09e-7c1f-4917-b4f9-428329a53a1c	1010	Blumenstraße 17, 34466 Wolfhagen	300045393	2750a682-90bd-5d2c-8b86-c9038c228d9c	51.2876086	9.1508519	Europe/Berlin	\N	\N	active
+3673b68a-0781-4ef3-8d62-cf3c544bd293	1499 a	Eschersheimer Landstraße 249, 60320 Frankfurt	300070112	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.135723	8.671253	Europe/Berlin	\N	\N	active
+9eec86e0-088b-4fef-a1c4-a2460dda73c7	1065	In Der Herborn 2, 65388 Schlangenbad	300046301	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.108727	8.094532	Europe/Berlin	\N	\N	active
+85cfeb5c-5b95-451d-93e7-81637a21ca09	1045	Hölderlinstraße 51, 65549 Limburg an der Lahn	300046901	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.3760099	8.0762714	Europe/Berlin	\N	\N	active
+4f1b11d7-d4a9-4cc5-9fe2-41114f770bd0	Erbprinzenstraße	Eco-Counter Zählerstandort (kumulierte Zählung)	100004165	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	49.0072864	8.4027153	Europe/Berlin	\N	\N	inactive
+971b7c56-ce35-42ea-9519-11f82b6b050d	Horstmannsteg Hennef	Eco-Counter Zählerstandort (kumulierte Zählung)	100063389	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	50.77557	7.29088	Europe/Berlin	\N	\N	inactive
+09a15e55-ad8f-4858-a439-9d83c32ee562	Radschnellweg Osnabrück Belm	Eco-Counter Zählerstandort (kumulierte Zählung)	100050631	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	52.27996540308624	8.0550560783977	Europe/Berlin	\N	\N	inactive
+d2a26e5c-5095-47c7-ba9d-6eec7aeddde3	Römerhofweg	Eco-Counter Zählerstandort (kumulierte Zählung)	100063376	81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	48.25	11.6544	Europe/Berlin	\N	\N	inactive
+7d5ec122-e120-4c61-86e0-02c04c0eece8	520	Sprudelstraße 8, 63683 Ortenberg	300032699	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.342086	9.035552	Europe/Berlin	\N	\N	active
+70fceaf7-ffa7-4ab5-910e-d42473357c12	730	Feuersteinweg, 61279 Grävenwiesbach	300032700	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.393952	8.511263	Europe/Berlin	\N	\N	active
+45ed3711-5c92-418d-9145-6aaefbaf4a79	472	Okrifteler Straße 38, 64546 Mörfelden-Walldorf	300032827	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.008198	8.566961	Europe/Berlin	\N	\N	active
+efc583eb-c693-4a3f-adaa-3e1050cd81db	542	Bahnhofstraße 18, 61191 Rosbach vor der Höhe	300032889	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.301619	8.694759	Europe/Berlin	\N	\N	active
+4a8c4e47-0603-41b8-9dad-3daa35c08d6f	KÖ Steinstraße	Königsallee 52, 40212 Düsseldorf	100005014	b9145b59-ec36-52da-9343-bde7f49d6046	51.223255	6.779096	Europe/Berlin	\N	\N	active
+81858014-9313-42fe-8621-6035921166a3	Kirchfeldstraße	Kirchfeldstraße 4, 40217 Düsseldorf	100011631	b9145b59-ec36-52da-9343-bde7f49d6046	51.212435	6.770726	Europe/Berlin	\N	\N	active
+bfee4987-778e-4c44-b537-298647c8a9a3	Lohauser Deich	Der Grüne Weg 80, 40474 Düsseldorf	100011632	b9145b59-ec36-52da-9343-bde7f49d6046	51.276819	6.714056	Europe/Berlin	\N	\N	active
+4d0ea272-e21f-441c-92d7-d4ba638ea38f	Christophstraße	Christophstraße 11, 40225 Düsseldorf	100011637	b9145b59-ec36-52da-9343-bde7f49d6046	51.195957	6.796619	Europe/Berlin	\N	\N	active
+47da2398-48f1-4253-a36a-18bd061109b1	Mannesmann Ufer	Mannesmannufer 1a, 40213 Düsseldorf	100016424	b9145b59-ec36-52da-9343-bde7f49d6046	51.220154	6.767121	Europe/Berlin	\N	\N	active
+c41194fa-8368-4912-a812-800972e94601	Elisabethstraße	Elisabethstraße 16, 40217 Düsseldorf	100033660	b9145b59-ec36-52da-9343-bde7f49d6046	51.216641	6.775346	Europe/Berlin	\N	\N	active
+58781890-ffe1-41f7-ab09-d42488d6dd4a	Bilker Allee	Bilker Allee 92, 40217 Düsseldorf	100046689	b9145b59-ec36-52da-9343-bde7f49d6046	51.21074	6.771311	Europe/Berlin	\N	\N	active
+20ae5f4b-aca9-4138-90cb-ac5fdba3cfe6	Münchener/Ickeswarder Str	Fritz-Strassmann-Straße 11, 40591 Düsseldorf	100047053	b9145b59-ec36-52da-9343-bde7f49d6046	51.176601	6.809242	Europe/Berlin	\N	\N	active
+42b8d5c6-8350-4e66-8102-7a90b14446dd	Fleher Deich	Fleher Deich 49, 40223 Düsseldorf	100047054	b9145b59-ec36-52da-9343-bde7f49d6046	51.18775	6.77722	Europe/Berlin	\N	\N	active
+0e24f71a-524c-445a-8d96-e62515d3fad4	Koblenzer Straße	Theodor-Litt-Straße 2a, 40593 Düsseldorf	100047279	b9145b59-ec36-52da-9343-bde7f49d6046	51.149015	6.886683	Europe/Berlin	\N	\N	active
+5314c49d-8b06-46a9-b304-54746f4d04fb	Oberkasseler Brücke	Kaiser-Friedrich-Ring 1, 40545 Düsseldorf	100047280	b9145b59-ec36-52da-9343-bde7f49d6046	51.23166	6.7632	Europe/Berlin	\N	\N	active
+068ce86a-a56a-4671-a93b-dcded0535707	Fleher Deich Rampe	Bückerbergweg 28, 40223 Düsseldorf	100047281	b9145b59-ec36-52da-9343-bde7f49d6046	51.18834	6.77571	Europe/Berlin	\N	\N	active
+22700902-e04e-4e80-985b-ce37167560fa	Hofgartenrampe Oederallee	Fritz-Roeber-Straße 2, 40213 Düsseldorf	300029563	b9145b59-ec36-52da-9343-bde7f49d6046	51.231551	6.776191	Europe/Berlin	\N	\N	active
+08918099-a16a-41b0-bec2-da59c10ff291	08 Vorgebirgspark	Homburger Straße 14, 50969 Köln	100019755	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.913017	6.948681	Europe/Berlin	\N	\N	active
+f2476936-0e82-4f29-9c8a-c3ce5d7ba3b9	09 Alphons-Silbermann-Weg	Zülpicher Wall 5, 50674 Köln	100019756	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.930084	6.930417	Europe/Berlin	\N	\N	active
+fca8e3b6-c2bc-4e44-8899-2b4b91fac44f	10 Stadtwald	Friedrich-Schmidt-Straße 60b, 50933 Köln	100019757	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.933098	6.8929157	Europe/Berlin	\N	\N	active
+88d66b97-8d33-454e-a864-6bdc56e2e93d	11 Niederländer Ufer	An Der Schanz 14, 50735 Köln	100019758	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.962322	6.986403	Europe/Berlin	\N	\N	active
+739d06f1-62bb-4588-880b-56ddd3e35a41	07 Alfred-Schütte-Allee	Alfred-Schütte-Allee 76, 51105 Köln	100021727	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.914497	6.9818854	Europe/Berlin	\N	\N	active
+af475dfb-d98c-4cef-a944-425ba8bd10a5	01 Bonner Straße Rad	Bonner Straße 41, 50677 Köln	100023269	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.9182	6.960489	Europe/Berlin	\N	\N	active
+0c117ffc-1629-49d4-b79b-91465c823cf8	02 Venloer Straße Rad	Venloer Straße 176, 50823 Köln	100023270	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.945816	6.9266076	Europe/Berlin	\N	\N	active
+62631d8f-fe79-4ab3-8b66-136dc56887c8	04 Hohenzollernbrücke	Kennedy-Ufer 2a, 50679 Köln	100029854	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94118	6.9701	Europe/Berlin	\N	\N	active
+bad75edf-3a8c-4662-9916-2a23aaefb76f	06 Neumarkt	Neumarkt 10, 50667 Köln	100030418	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93637257134968	6.947836756773378	Europe/Berlin	\N	\N	active
+15bc5909-d6e8-455f-843a-eb676e983281	05 Deutzer Brücke	Kennedy-Ufer 1, 50679 Köln	100044729	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93649	6.96658	Europe/Berlin	\N	\N	active
+5222df13-0f31-4715-9d3a-92d7a2d0b7a6	12 Vorgebirgswall	Vorgebirgswall 4-8, 50677 Köln	100045094	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.92054907885211	6.94476961008295	Europe/Berlin	\N	\N	active
+dc75e416-ff2b-4a71-bf69-810dcdc0dbb5	03 Zülpicher Straße	Zülpicher Straße 51, 50937 Köln	100057124	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.92719493078395	6.933329933685668	Europe/Berlin	\N	\N	active
+8ac19391-3911-486d-9c19-b486300325bb	13 Universitätsstr.	Universitätsstraße 75, 50931 Köln	100059340	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93311976074636	6.925021246105153	Europe/Berlin	\N	\N	active
+6bd3d8fd-af03-4083-a43e-bc6955862b4e	14 Rodenkirchener Brücke	Weidenweg 50, 51105 Köln	300014336	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.90295502231652	6.993484497070313	Europe/Berlin	\N	\N	active
+ff60ce3f-e746-415a-98cf-5cf35e499feb	15 Severinsbrücke	Im Zollhafen 5, 50678 Köln	300016603	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93071097591193	6.967520713806153	Europe/Berlin	\N	\N	active
+1402f916-a1d5-4660-8cc0-215791589d7e	16 Neusser Straße Rad	Neusser Straße 153, 50733 Köln	300021441	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95783433133611	6.955429364340324	Europe/Berlin	\N	\N	active
+f1472a11-b019-4113-94dd-712382ab2c8b	17 Hohe Pforte Rad	Hohe Pforte 19, 50676 Köln	300022210	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93375713622347	6.956292986869813	Europe/Berlin	\N	\N	active
+54511dfb-859f-4de2-8bf5-40b397472a6d	18 Gladbacher Straße	Gladbacher Straße 9, 50672 Köln	300028615	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94546997818451	6.940703988075257	Europe/Berlin	\N	\N	active
+c9f532db-275a-4654-844b-0d8398ad285b	19 Elisabeth-Schäfer-Weg	Herler Straße 92a, 51067 Köln	300037617	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95755663257499	7.024080455303193	Europe/Berlin	\N	\N	active
+296ae90a-7808-45be-aca8-d2497f46a919	21 Hohenzollernring Rad	Hohenzollernring 17, 50672 Köln	300041441	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93719185680222	6.939121484756471	Europe/Berlin	\N	\N	active
+274d6de4-301c-4b94-9489-c32bc58d2a72	20 Auenweg	Auenweg 185, 51063 Köln	300041859	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.95320931360196	6.986403465270997	Europe/Berlin	\N	\N	active
+3c090d4a-f557-4bea-9fdb-4ac25a82a111	22 Maybachstraße	Maybachstraße 111, 50670 Köln	300049705	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.94902	6.94953	Europe/Berlin	\N	\N	active
+267e4d9c-8c3d-4e9c-85fd-4e62e77eaf70	23 Kalker Hauptstraße	Kalker Hauptstraße 56, 51103 Köln	300050064	eb62ba16-1a38-54c3-bfd4-81c271d10874	50.93728313036514	6.996134519577027	Europe/Berlin	\N	\N	active
 \.
 
 
@@ -1563,13 +1767,13 @@ c9f532db-275a-4654-844b-0d8398ad285b	19 Elisabeth-Schäfer-Weg	Herler Straße 92
 -- PostgreSQL database dump complete
 --
 
-\unrestrict shC33G8ioC42U8BZeocahstpgag1GvMfV4UECDi1WVUHbp36PVTJ8Ji1if0j1Z1
+\unrestrict NTbCfZK5B1QwinwezwU7bsaW3tvMbn06FgWyImMEzH2hKRtKETpjrnUvV2DMTBV
 
 --
 -- PostgreSQL database dump
 --
 
-\restrict 3aEAfnA4Wf74luLjNBNZFbUZ9qlw0SPxLXsdI5rgKfp6JFhL65scofTmAMYIoQ7
+\restrict yYduAjPxlzRO2MavtVg2t7edKfYYIgEFBNGd6F7hsDD1upkXCLQMUefYSG0NhZj
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -1601,10 +1805,6 @@ f276f68e-5be0-4e8f-8372-1ce680ffce18	2b410a8a-3474-4ab3-9fa4-d88b92256bee	Garten
 b91a2075-6cb3-4916-819b-a5d6841e15ad	2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße auswärts		102034978
 85b580c0-5c58-44c4-9cb5-19c795342c71	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts		353413846
 529a4d47-7cdc-4112-85f3-287991080a39	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts		353413847
-b2bdc20e-840d-45c7-9749-1f915594104b	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts (353426663)		353426663
-80cf42f7-9d29-4c7d-9959-261046b6cb61	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts (353426665)		353426665
-8e9846e3-3eea-40ed-baf7-1bb8f4c31da0	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts (353426666)		353426666
-131e02b4-c40d-4f0c-ad84-ff9c92bde321	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts (353426668)		353426668
 df8c8cf1-8ff9-404a-b35f-540b38026c8e	9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße [Bike Stadteinwärts]		353413828
 e75569cd-1245-412a-87d5-ce1fdb81c9d9	9bd6ac58-3123-4520-a024-38905c5e34e8	Goldstraße [Bike Stadtauswärts]		353413829
 51eb8c7b-0860-4119-ab5a-4d65ee007be4	1866c3c6-02ff-4178-9afe-0871c9eb0302	Grevener Straße Formel - Fahrräder Stadteinwärts		353425091
@@ -1618,21 +1818,13 @@ aab04e16-d888-4cce-a808-3c0edff72c59	1866c3c6-02ff-4178-9afe-0871c9eb0302	Greven
 a7ea311d-88fc-4e62-9753-cdd28dc9b441	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) Fahrräder IN		353410966
 38f4cb02-012a-48f2-9d2e-54bad2266e05	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) Fahrräder OUT		353410967
 02600f64-00ef-4f4f-be73-59306fecc22b	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN]		353426657
-5a7244fb-344f-48de-9324-d2ab0fdd1fdf	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN] (353426659)		353426659
 a8c5f6f5-6235-4e81-8bc8-b33480a70912	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT]		353426660
-41619846-0a8b-49f6-99c9-b807d8fa9b75	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT] (353426662)		353426662
 1e9e1dac-aaad-4721-986a-9382e54d9850	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor		101053305
 cbe482f2-8df6-431f-b9a2-455383c3c0a6	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum		102053305
-b0ee317f-e4f9-4322-8c29-b137e4c32e5b	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor (103053305)		103053305
-ccab0a33-0541-4bbd-997b-988d59fb53fd	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum (104053305)		104053305
-f7e29d23-6c9f-4e7b-b929-08c79602535b	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor (353306596)		353306596
-c39b7383-ad01-4da5-b02d-81fae7a87c69	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum (353306597)		353306597
 2bcb9993-a9c0-4eb0-8819-8a6eec8a8437	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 Fahrräder Richtung Münster		353413873
 56eedb14-93f7-4a98-8de0-899320fe332e	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 Fahrräder Richtung Weg von Münster		353413874
 3a343039-12ce-4c14-8e26-1c32f51e1866	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike IN]		353426355
-f4b89999-3e89-4351-a0e4-9a96f40e28a9	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike IN] (353426357)		353426357
 2301321c-ab04-4474-b6b6-d56fb4250240	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike OUT]		353426358
-d2374e30-80fd-4b3b-bfa6-4c6b75018116	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike OUT] (353426360)		353426360
 c70b1769-62af-4946-8822-5cefb23ed4ed	35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str. [Bike Stadteinwärts]		353413835
 53cb8ae6-e7b8-4e0a-b9ad-6b1cafd2b9f5	35392395-751b-4fc2-8777-9eab829ae5e6	Kinderhauser Str. [Bike Stadtauswärts]		353413836
 2257e569-7230-4556-a27f-c970e55c164d	7e23d159-5899-4c55-957a-d89963173fdc	Lütkenbecker Str. [Bike Stadteinwärts]		353413813
@@ -1641,16 +1833,10 @@ aeedc9f3-8547-4e51-99b7-bfe42359f5bf	6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor
 53bf8707-9cd7-4cb4-8c47-e05ead1abdab	6141fa72-5aa2-4f5b-9433-42680c83b318	Neutor stadtauswärts		102035541
 47d4a5f5-8c9f-4ece-9f58-39f58c194ad0	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor		101031297
 97807e66-cd00-4864-88bf-aaa435d48164	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße		102031297
-76b3210e-accb-4c3d-ad07-43ecdc972913	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor (103031297)		103031297
-b485ab9f-d6af-46b6-83bb-409450c09fc4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße (104031297)		104031297
-931804ab-4ab1-4ddf-8e6d-a2694ab025a4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor (105031297)		105031297
-4f527927-83c9-47b8-860b-410cb45f973e	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße (106031297)		106031297
 3496425b-13f1-43c0-998f-d137be08d289	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) Fahrräder IN		353409612
 d312e793-cf1c-48be-b570-4d7b38db5e16	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) Fahrräder OUT		353409613
 39a96dfd-c8c2-47b5-90bb-60bf42e09790	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike IN]		353426710
-3a928a85-07a0-4487-a695-ef5cde0988d1	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike IN] (353426712)		353426712
 4c377b02-47c7-4b8c-a203-ad2c486da71f	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike OUT]		353426713
-27140f8a-54c8-42d2-9ab4-a6693b726445	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike OUT] (353426715)		353426715
 4d6ad5d9-ad9b-4811-a2f1-8729a2fd1adc	2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße [Bike Stadteinwärts]		353413849
 610ca780-ba78-4b46-9c13-bad974ba89ee	2580e7fb-748d-4690-8579-3d3a31d997e7	Schmeddingstraße [Bike Stadtauswärts]		353413850
 0ae003ad-c910-413f-88ea-333537ce35f8	8bc74780-c0dd-4e71-97f0-e0ada75a0e41	Warendorfer Straße stadteinwärts		101034983
@@ -2570,6 +2756,24 @@ b18e1ba0-a522-4c7f-8c40-e27790b076f1	1402f916-a1d5-4660-8cc0-215791589d7e	16 Neu
 839d242d-731f-4178-89da-8b7a8924ec16	274d6de4-301c-4b94-9489-c32bc58d2a72	20 Auenweg		300041859
 73032164-0fed-49f0-96ae-67bee842e60e	3c090d4a-f557-4bea-9fdb-4ac25a82a111	22 Maybachstraße		300049705
 4dbad389-5646-44f6-a136-6ac79c99003e	267e4d9c-8c3d-4e9c-85fd-4e62e77eaf70	23 Kalker Hauptstraße		300050064
+b2bdc20e-840d-45c7-9749-1f915594104b	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts		353426663
+80cf42f7-9d29-4c7d-9959-261046b6cb61	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadteinwärts		353426665
+8e9846e3-3eea-40ed-baf7-1bb8f4c31da0	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts		353426666
+131e02b4-c40d-4f0c-ad84-ff9c92bde321	04f14edd-8f7e-45b7-91c6-6c451e39dd22	Gasselstiege Fahrräder Stadtauswärts		353426668
+5a7244fb-344f-48de-9324-d2ab0fdd1fdf	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike IN]		353426659
+41619846-0a8b-49f6-99c9-b807d8fa9b75	2a63c1d6-6777-4f42-9f69-9c90ca5d23bf	Kanalpromenade, Abschnitt 1 (Dingstiege) [Bike OUT]		353426662
+b0ee317f-e4f9-4322-8c29-b137e4c32e5b	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor		103053305
+ccab0a33-0541-4bbd-997b-988d59fb53fd	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum		104053305
+f7e29d23-6c9f-4e7b-b929-08c79602535b	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Osttor		353306596
+c39b7383-ad01-4da5-b02d-81fae7a87c69	8e057626-7860-4b07-9e94-1b72de468d1f	Kanalpromenade, Abschnitt 5 Fahrräder Richtung Zentrum		353306597
+f4b89999-3e89-4351-a0e4-9a96f40e28a9	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike IN]		353426357
+d2374e30-80fd-4b3b-bfa6-4c6b75018116	2be87108-7175-4206-b06b-36cbd7010ff9	Kanalpromenade, Abschnitt 6 [Bike OUT]		353426360
+76b3210e-accb-4c3d-ad07-43ecdc972913	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor		103031297
+b485ab9f-d6af-46b6-83bb-409450c09fc4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße		104031297
+931804ab-4ab1-4ddf-8e6d-a2694ab025a4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Mauritztor		105031297
+4f527927-83c9-47b8-860b-410cb45f973e	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promenade Radfahrer FR Salzstraße		106031297
+3a928a85-07a0-4487-a695-ef5cde0988d1	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike IN]		353426712
+27140f8a-54c8-42d2-9ab4-a6693b726445	75779dd2-ce4c-4193-8385-2efdcefc3480	Promenade (westl. Hals) [Bike OUT]		353426715
 \.
 
 
@@ -2577,7 +2781,7 @@ b18e1ba0-a522-4c7f-8c40-e27790b076f1	1402f916-a1d5-4660-8cc0-215791589d7e	16 Neu
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 3aEAfnA4Wf74luLjNBNZFbUZ9qlw0SPxLXsdI5rgKfp6JFhL65scofTmAMYIoQ7
+\unrestrict yYduAjPxlzRO2MavtVg2t7edKfYYIgEFBNGd6F7hsDD1upkXCLQMUefYSG0NhZj
 
 
 -- Persistent state + provider messages (usually empty).
@@ -2586,7 +2790,7 @@ b18e1ba0-a522-4c7f-8c40-e27790b076f1	1402f916-a1d5-4660-8cc0-215791589d7e	16 Neu
 -- PostgreSQL database dump
 --
 
-\restrict hGzLhaVPPrHRQJeHLUyASe0hABAQBDxVZQbYfDFWIqMgk66NkOqa2J7ieZVFuAY
+\restrict W50EbgRAjUDcNxjfnyMkPmNkyVF9kQWq3z1E8ieRoiVf9KfdGGcYtIfvj7lqTkp
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -2626,13 +2830,13 @@ f4644e3b-07b0-4e2c-9e2a-b51bab897924	a023b021-9754-56c7-8c4e-9c391069aff5	archiv
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hGzLhaVPPrHRQJeHLUyASe0hABAQBDxVZQbYfDFWIqMgk66NkOqa2J7ieZVFuAY
+\unrestrict W50EbgRAjUDcNxjfnyMkPmNkyVF9kQWq3z1E8ieRoiVf9KfdGGcYtIfvj7lqTkp
 
 --
 -- PostgreSQL database dump
 --
 
-\restrict kGGmKukop34zfzfDHdG2rN5g620Kle50UP0tTQp1H0QGEkHMLexXcrkTUTadDRc
+\restrict JlHfj4vaiPOLSAh93pleBDThgPnJ2qWSCVh6RfGbNIUy5QKr0XfwVtxeZYz28A7
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -2661,7 +2865,7 @@ COPY public.data_source_provider_messages (id, data_source_id, severity, message
 -- PostgreSQL database dump complete
 --
 
-\unrestrict kGGmKukop34zfzfDHdG2rN5g620Kle50UP0tTQp1H0QGEkHMLexXcrkTUTadDRc
+\unrestrict JlHfj4vaiPOLSAh93pleBDThgPnJ2qWSCVh6RfGbNIUy5QKr0XfwVtxeZYz28A7
 
 
 -- Restore the default search_path (the dump above set it to ''), so the

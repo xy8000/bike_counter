@@ -92,10 +92,12 @@ import_days_back = "365"
 
 ## Notes / limitations
 
-- **Station-name uniqueness.** A tenant may publish the same short code for two
-  sites (Hessen has two `1394`). The database requires a unique
-  `(data_source_id, name)`, so such stations are renamed `"{name} ({external_id})"`
-  at parse time — stable across runs, since the external id is stable.
+- **Station names are not unique.** A tenant may publish the same short code for
+  two sites (Hessen has two `1394`). Names are display data; the identity is the
+  row `id` (UUID) and the provider key is `external_datasource_id` (unique, see
+  [`V2`](../../../../migrations/V2__add_data_sources.sql:13)). The parser stores
+  the published name **verbatim** and never renames a station — a name collision
+  must never fail an import (plan 165 / issue #47).
 - A tenant whose Flight stream deduplicates site entries into `"$"` reference
   strings (instead of inlining every object) would need reference resolution;
   Hessen inlines all 554 sites.

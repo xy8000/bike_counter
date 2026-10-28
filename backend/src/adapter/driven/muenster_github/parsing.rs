@@ -1,7 +1,6 @@
 //! Parsers for the Münster archive: `site_min.json` and the per-station
 //! monthly CSVs, plus small timezone/url helpers.
 
-use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
 
@@ -32,14 +31,11 @@ struct RawSite {
 /// Parses the site index into station and channel records, skipping the station
 /// aggregate entry (`id == directory`).
 ///
-/// Naming invariants are enforced here so imported data never violates them,
-/// even when the upstream source does (true for Münster):
-///
-/// - channel names must be unique within their counting station, and
-/// - counting-station names must be unique within the archive (one data source).
-///
-/// When the source data is not already unique, the external id is appended to
-/// the name (e.g. `Bohlweg Fahrräder Stadteinwärts (353484923)`).
+/// Station and channel names are copied **verbatim** from the archive. Names are
+/// display data, not identity: Münster really repeats channel names inside one
+/// station (`Bohlweg Fahrräder Stadteinwärts` appears four times), and the
+/// external id already provides the unique key. The parser must therefore never
+/// rewrite a name.
 pub fn parse_site_index(
     json: &str,
 ) -> Result<(Vec<CountingStationRecord>, Vec<ChannelRecord>), ProviderError> {
@@ -48,19 +44,14 @@ pub fn parse_site_index(
 
     let mut stations = Vec::with_capacity(sites.len());
     let mut channels = Vec::new();
-    // Station names must be unique across the whole archive.
-    let mut station_names = HashSet::new();
     for site in sites {
         let station_external_id = site.directory.clone();
-        // Channel names must be unique within this counting station.
-        let mut channel_names = HashSet::new();
         for (id, name) in site.channels {
             let id = id.to_string();
             if id == station_external_id {
                 // Station aggregate column: redundant with the sum of channels.
                 continue;
             }
-            let name = unique_name(&name, &id, &mut channel_names);
             channels.push(ChannelRecord {
                 external_id: id,
                 counting_station_external_id: station_external_id.clone(),
@@ -68,10 +59,9 @@ pub fn parse_site_index(
                 description: String::new(),
             });
         }
-        let station_name = unique_name(&site.name, &station_external_id, &mut station_names);
         stations.push(CountingStationRecord {
             external_id: station_external_id,
-            name: station_name,
+            name: site.name,
             description: String::new(),
             latitude: None,
             longitude: None,
@@ -82,22 +72,6 @@ pub fn parse_site_index(
         });
     }
     Ok((stations, channels))
-}
-
-/// Returns `name` unchanged when it is not yet in `used`, otherwise appends
-/// `external_id` (falling back to a numbered suffix on the extremely unlikely
-/// case of a further collision) so every returned name is unique.
-fn unique_name(name: &str, external_id: &str, used: &mut HashSet<String>) -> String {
-    if used.insert(name.to_string()) {
-        return name.to_string();
-    }
-    let mut candidate = format!("{name} ({external_id})");
-    let mut n = 2;
-    while !used.insert(candidate.clone()) {
-        candidate = format!("{name} ({external_id}#{n})");
-        n += 1;
-    }
-    candidate
 }
 
 /// Parses the `YYYY-MM` filename of a monthly CSV into its `[start, end)`

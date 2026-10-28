@@ -1,6 +1,12 @@
 # 19 - Unique counting-station and channel names plan
 
-Status: implemented
+Status: superseded
+
+> Superseded by [`165`](165_name_collisions_must_not_fail_imports_plan.md): the
+> name-uniqueness requirement introduced here turned legitimate provider data into
+> import failures (issues #37 and #47). The two name indexes are dropped by
+> [`V28`](../backend/migrations/V28__drop_name_uniqueness.sql:1); names are display
+> data, the row `id` is the identity. Kept as the historical record.
 
 ## Problem
 

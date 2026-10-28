@@ -37,8 +37,10 @@ itself, not index access.
 
 Everything else on the page is already cheap and indexed:
 
-- stations by data source: 2.9 ms (unique index
-  [`idx_counting_stations_data_source_id_name`](../backend/migrations/V8__add_counting_station_and_channel_name_uniqueness.sql:42))
+- stations by data source: 2.9 ms (index
+  `idx_counting_stations_data_source_id_name` — since
+  [`V28`](../backend/migrations/V28__drop_name_uniqueness.sql:1) the same index
+  exists as a **non-unique** index, so the query plan is unchanged)
 - channel ids by data source: 2.5 ms
 - per-month `has_measurements_in_windows` coverage probes: ~1–12 ms each (9 of them)
 - last import run: indexed
