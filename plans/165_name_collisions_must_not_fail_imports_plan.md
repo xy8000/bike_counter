@@ -224,3 +224,15 @@ list/marker regression is expected. Two spots need attention:
 - The two `make test-playwright` runs that failed during development failed at
   the backend healthcheck while the machine was building/loading; both passed
   once the build settled (`76 passed`, `e2e-playwright: OK`).
+- Follow-up review findings:
+  - Sonar flagged the empty-string guard as a `NULL` comparison; `V28` now uses
+    `length(external_datasource_id) > 0`.
+  - `V28` is idempotent (`DROP INDEX IF EXISTS` / `CREATE INDEX IF NOT EXISTS`),
+    so the one-time repair can be re-applied while the PR is still open — the
+    checksum was refreshed in the dev database and in the committed fixture.
+  - Codecov patch coverage: the repository doubles' duplicate-provider-key guards
+    are now covered by
+    [`the_repository_double_rejects_a_duplicate_provider_key`](backend/src/core/application/data_import_service.rs:1566)
+    and its channel counterpart, and the new tests avoid multi-line `assert!`
+    message arguments (unexecuted on success), so the patch has no uncovered
+    added lines.

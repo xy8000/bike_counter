@@ -1461,22 +1461,16 @@ mod tests {
         };
 
         for run in 1..=2 {
-            service
-                .update_data_source(&runtime(provider()), None, None, |_, _, _| Ok(()))
-                .unwrap_or_else(|error| {
-                    panic!("sync run {run} must not fail on a shared name: {error:?}")
-                });
+            let result =
+                service.update_data_source(&runtime(provider()), None, None, |_, _, _| Ok(()));
+            assert!(result.is_ok(), "sync run {run} failed: {result:?}");
         }
 
         let stations = station_repo.stations.lock().unwrap();
         assert_eq!(stations.len(), 2, "no station is dropped or duplicated");
         assert!(
             stations.iter().all(|station| station.name.0 == "1530"),
-            "both stations keep the provider's name: {:?}",
-            stations
-                .iter()
-                .map(|station| station.name.0.clone())
-                .collect::<Vec<_>>()
+            "both stations keep the provider's name"
         );
     }
 
@@ -1519,11 +1513,7 @@ mod tests {
         assert_eq!(stations.len(), 2);
         assert!(
             stations.iter().all(|station| station.name.0 == "2"),
-            "the rename is written verbatim: {:?}",
-            stations
-                .iter()
-                .map(|station| station.name.0.clone())
-                .collect::<Vec<_>>()
+            "the rename is written verbatim"
         );
     }
 
@@ -1561,6 +1551,61 @@ mod tests {
         let channels = channel_repo.channels.lock().unwrap();
         assert_eq!(channels.len(), 2);
         assert!(channels.iter().all(|channel| channel.name.0 == shared_name));
+    }
+
+    #[test]
+    fn the_repository_double_rejects_a_duplicate_provider_key() {
+        // The double enforces the only identity invariant the database really
+        // has. Keeping it faithful is what let the name-collision regression
+        // surface at all, so the guard itself is covered here.
+        let source_id = DataSource::id_from_name("Münster");
+        let repo = MockCountingStationRepository {
+            stations: Mutex::new(Vec::new()),
+        };
+        let first = named_station("shared-id", "first", source_id);
+        repo.save(first.clone()).unwrap();
+
+        // A second station re-using the provider key under a *different* name is
+        // rejected exactly like `idx_counting_stations_external_datasource_id`.
+        let duplicate = named_station("shared-id", "second", source_id);
+        assert!(
+            repo.save(duplicate).is_err(),
+            "a duplicate provider key must be rejected"
+        );
+
+        // An update that would move another row's provider key onto this row
+        // fails too.
+        let other = named_station("other-id", "third", source_id);
+        repo.save(other.clone()).unwrap();
+        let mut stealing = other;
+        stealing.external_datasource_id =
+            Some(station_vo::ExternalDatasourceId("shared-id".to_string()));
+        assert!(
+            repo.update(stealing).is_err(),
+            "stealing a provider key must be rejected"
+        );
+    }
+
+    #[test]
+    fn the_channel_repository_double_rejects_a_duplicate_provider_key() {
+        let repo = MockChannelRepository {
+            channels: Mutex::new(Vec::new()),
+        };
+        repo.save(channel("shared-id")).unwrap();
+        assert!(
+            repo.save(channel("shared-id")).is_err(),
+            "a duplicate channel provider key must be rejected"
+        );
+
+        let other = channel("other-id");
+        repo.save(other.clone()).unwrap();
+        let mut stealing = other;
+        stealing.external_datasource_id =
+            Some(channel_vo::ExternalDatasourceId("shared-id".to_string()));
+        assert!(
+            repo.update(stealing).is_err(),
+            "stealing a channel provider key must be rejected"
+        );
     }
 
     #[test]

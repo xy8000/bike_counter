@@ -17,14 +17,15 @@
 -- 1. Remove the name-uniqueness indexes introduced in V8 and re-create them
 --    **non-unique**: the lookups they served (stations/channels of one parent,
 --    ordered by name) stay indexed, but duplicate names are now allowed.
+--    (Idempotent so the repair below can be re-run safely.)
 DROP INDEX IF EXISTS idx_counting_stations_data_source_id_name;
 DROP INDEX IF EXISTS idx_channels_counting_station_id_name;
 
-CREATE INDEX idx_counting_stations_data_source_id_name
+CREATE INDEX IF NOT EXISTS idx_counting_stations_data_source_id_name
     ON counting_stations (data_source_id, name)
     WHERE data_source_id IS NOT NULL;
 
-CREATE INDEX idx_channels_counting_station_id_name
+CREATE INDEX IF NOT EXISTS idx_channels_counting_station_id_name
     ON channels (counting_station_id, name);
 
 -- 2. One-time repair: strip the suffix the old import code generated
@@ -37,13 +38,13 @@ CREATE INDEX idx_channels_counting_station_id_name
 UPDATE counting_stations
 SET name = left(name, length(name) - length(' (' || external_datasource_id || ')'))
 WHERE external_datasource_id IS NOT NULL
-  AND external_datasource_id <> ''
+  AND length(external_datasource_id) > 0
   AND right(name, length(' (' || external_datasource_id || ')')) =
       ' (' || external_datasource_id || ')';
 
 UPDATE channels
 SET name = left(name, length(name) - length(' (' || external_datasource_id || ')'))
 WHERE external_datasource_id IS NOT NULL
-  AND external_datasource_id <> ''
+  AND length(external_datasource_id) > 0
   AND right(name, length(' (' || external_datasource_id || ')')) =
       ' (' || external_datasource_id || ')';

@@ -7,7 +7,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict wc4Zm1Q5PUcMI5kNkOPLMXwjCgDqZu8h1ZAcdFgty0WbDbS0hqEQDMjETwrLoz4
+\restrict DdVePQIfBxCaTdfJKIJ3WEeZff5HJqxz1uLx2vsq4ZhUlsbcJklEbxadphAugvX
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -775,7 +775,7 @@ ALTER TABLE ONLY public.measurements
 -- PostgreSQL database dump complete
 --
 
-\unrestrict wc4Zm1Q5PUcMI5kNkOPLMXwjCgDqZu8h1ZAcdFgty0WbDbS0hqEQDMjETwrLoz4
+\unrestrict DdVePQIfBxCaTdfJKIJ3WEeZff5HJqxz1uLx2vsq4ZhUlsbcJklEbxadphAugvX
 
 
 -- Refinery migration history (all migrations already applied, so
@@ -784,7 +784,7 @@ ALTER TABLE ONLY public.measurements
 -- PostgreSQL database dump
 --
 
-\restrict ZjYmSD3SEIFjDleNPaGeyzdTZlBNNENDuSaMjU7B4s4zQHYPcfquAP6TeLDGfiE
+\restrict uZWPDcySE1qeE7gjIlfsR92Wgo3MDPdZuPfucpVVJAFMV3l1kUdgpCYEpJhtEqh
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -833,7 +833,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 25	add_measurement_channel_bounds	2026-10-28T18:40:40.385942672Z	2876333344832181217
 26	add_rollup_read_indexes	2026-10-28T18:40:40.385943904Z	8186839327827891249
 27	add_import_run_facts	2026-10-28T18:40:40.38594713Z	12207297312188217504
-28	drop_name_uniqueness	2026-10-28T18:40:40.385948342Z	5414587629527988699
+28	drop_name_uniqueness	2026-10-28T21:17:18.027373043Z	106325020515072396
 \.
 
 
@@ -841,7 +841,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ZjYmSD3SEIFjDleNPaGeyzdTZlBNNENDuSaMjU7B4s4zQHYPcfquAP6TeLDGfiE
+\unrestrict uZWPDcySE1qeE7gjIlfsR92Wgo3MDPdZuPfucpVVJAFMV3l1kUdgpCYEpJhtEqh
 
 
 -- Data sources (ids are deterministic UUIDv5 of the config names).
@@ -849,7 +849,7 @@ COPY public.refinery_schema_history (version, name, applied_on, checksum) FROM s
 -- PostgreSQL database dump
 --
 
-\restrict uEBva3EBSyIZPPibNibrcVbD0EtQkBU0AhbQhEPqKrdaIBix93bka8d1sr86ScA
+\restrict 0eF0d3gxwedehMOdFxkKuWa3wPAjHwLfIIp2mqA3k6tGaGqNm3LQd023iHRXIdp
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -871,13 +871,13 @@ SET row_security = off;
 --
 
 COPY public.data_sources (id, name, provider_type, imported_until, last_updated_at, logo_asset_id, logo_sha256, first_measurement_at, last_measurement_at) FROM stdin;
-a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:48.565951+00	\N	\N	2018-12-31 23:00:00+00	2026-09-04 21:45:00+00
-10f34f2e-5b11-5314-81b3-159d0e3a0556	Bonn	bonn_opendata_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:40.273133+00	\N	\N	2022-12-31 23:00:00+00	2026-09-04 21:00:00+00
-48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	Hamburg	hamburg_sta_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:56.405592+00	\N	\N	2020-04-23 12:05:00+00	2026-09-05 15:50:00+00
-81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	Eco-Counter	eco_counter_v1_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:00:42.365398+00	\N	\N	2025-09-05 01:00:00+00	2026-09-05 16:00:00+00
-2750a682-90bd-5d2c-8b86-c9038c228d9c	Hessen Mobil	eco_counter_web_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 14:14:10.167406+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
-b9145b59-ec36-52da-9343-bde7f49d6046	Landeshauptstadt Düsseldorf | Dauerzählstellen Radverkehr	eco_counter_web_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:01:39.195426+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
-eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2026-10-28 18:40:39.826804+00	2026-09-05 16:02:15.388129+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+a023b021-9754-56c7-8c4e-9c391069aff5	Münster	münster_opendata_github_provider	2026-10-28 21:17:17.684854+00	2026-09-05 16:00:48.565951+00	\N	\N	2018-12-31 23:00:00+00	2026-09-04 21:45:00+00
+10f34f2e-5b11-5314-81b3-159d0e3a0556	Bonn	bonn_opendata_http_provider	2026-10-28 21:17:17.684854+00	2026-09-05 16:00:40.273133+00	\N	\N	2022-12-31 23:00:00+00	2026-09-04 21:00:00+00
+48c6f5c7-8c8d-559f-b568-ad7e7e52e4d3	Hamburg	hamburg_sta_http_provider	2026-10-28 21:17:17.684854+00	2026-09-05 16:00:56.405592+00	\N	\N	2020-04-23 12:05:00+00	2026-09-05 15:50:00+00
+81d0ae73-3fc2-5fdd-9f1b-7bb47fd5a52c	Eco-Counter	eco_counter_v1_http_provider	2026-10-28 21:17:17.684854+00	2026-09-05 16:00:42.365398+00	\N	\N	2025-09-05 01:00:00+00	2026-09-05 16:00:00+00
+2750a682-90bd-5d2c-8b86-c9038c228d9c	Hessen Mobil	eco_counter_web_http_provider	2026-10-28 21:17:17.684854+00	2026-09-05 14:14:10.167406+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+b9145b59-ec36-52da-9343-bde7f49d6046	Landeshauptstadt Düsseldorf | Dauerzählstellen Radverkehr	eco_counter_web_http_provider	2026-10-28 21:17:17.684854+00	2026-09-05 16:01:39.195426+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
+eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2026-10-28 21:17:17.684854+00	2026-09-05 16:02:15.388129+00	\N	\N	2025-09-05 22:00:00+00	2026-09-03 22:00:00+00
 \.
 
 
@@ -885,7 +885,7 @@ eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2
 -- PostgreSQL database dump complete
 --
 
-\unrestrict uEBva3EBSyIZPPibNibrcVbD0EtQkBU0AhbQhEPqKrdaIBix93bka8d1sr86ScA
+\unrestrict 0eF0d3gxwedehMOdFxkKuWa3wPAjHwLfIIp2mqA3k6tGaGqNm3LQd023iHRXIdp
 
 
 -- Assets (metadata only; provider objects are not synced into the e2e
@@ -895,7 +895,7 @@ eb62ba16-1a38-54c3-bfd4-81c271d10874	Stadt Köln	eco_counter_web_http_provider	2
 -- PostgreSQL database dump
 --
 
-\restrict necuGN1LRBATRve1BeyaQ5aYijXc74BXLqZYcN1cDxIbsYwr1mqYTFh4AQ0HfIp
+\restrict oVyGw8gDRHh7Jo4SyDD9ruzQCoyhjrt7bzoGbuSdn85fDenYZlp6h18BSOcl0kX
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -925,7 +925,7 @@ dc0af10d-7f50-4763-9639-ab4a5a3f773c	builtin/bike-icon-black-transparent.svg	ima
 -- PostgreSQL database dump complete
 --
 
-\unrestrict necuGN1LRBATRve1BeyaQ5aYijXc74BXLqZYcN1cDxIbsYwr1mqYTFh4AQ0HfIp
+\unrestrict oVyGw8gDRHh7Jo4SyDD9ruzQCoyhjrt7bzoGbuSdn85fDenYZlp6h18BSOcl0kX
 
 
 -- Counting stations and channels (all).
@@ -933,7 +933,7 @@ dc0af10d-7f50-4763-9639-ab4a5a3f773c	builtin/bike-icon-black-transparent.svg	ima
 -- PostgreSQL database dump
 --
 
-\restrict NTbCfZK5B1QwinwezwU7bsaW3tvMbn06FgWyImMEzH2hKRtKETpjrnUvV2DMTBV
+\restrict bi2daEppSQZTOSBdcoY7SVD55hfgWjhNIgfdxIe4sBbhdgTM8aQwmEgjS9VzUo6
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -955,6 +955,7 @@ SET row_security = off;
 --
 
 COPY public.counting_stations (id, name, description, external_datasource_id, data_source_id, latitude, longitude, timezone, image_asset_id, image_sha256, status) FROM stdin;
+fdde778a-cd52-45e7-bad0-6abda459ab8e	370		300032820	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.55862	9.66381	Europe/Berlin	\N	\N	active
 2b410a8a-3474-4ab3-9fa4-d88b92256bee	Gartenstraße		100034978	a023b021-9754-56c7-8c4e-9c391069aff5	51.9715	7.6356	Europe/Berlin	\N	\N	active
 09f3dc59-40c7-4527-982c-86e42a7f4e8b	Bismarckallee		300038855	a023b021-9754-56c7-8c4e-9c391069aff5	51.956	7.6186	Europe/Berlin	\N	\N	active
 e58da4d9-b781-4873-9479-e67a97fe464e	Bohlweg		300037926	a023b021-9754-56c7-8c4e-9c391069aff5	51.9688	7.6435	Europe/Berlin	\N	\N	active
@@ -1362,7 +1363,6 @@ e03dfcd6-0f0d-4b0c-8bbd-2c5e4c187979	511	Richard-Wagner-Straße 71, 63069 Offenb
 7fd02962-8534-412d-b9fe-61b6558f17f6	514b		300032816	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115142	8.809067	Europe/Berlin	\N	\N	active
 eb473a51-db8a-49c5-b5ae-21e76bb73bf9	515	Rumpenheimer Straße 143, 63075 Offenbach	300032817	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.12573	8.792634	Europe/Berlin	\N	\N	active
 559ea59f-3341-4b8f-9982-977725e4d2b8	514	Mühlheimer Straße 425, 63075 Offenbach	300032818	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.115009182002304	8.80908250808716	Europe/Berlin	\N	\N	active
-fdde778a-cd52-45e7-bad0-6abda459ab8e	370		300032820	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.55862	9.66381	Europe/Berlin	\N	\N	active
 f810fd04-d5bf-44f4-a905-5a06a92f7b3b	371	Karl-Storch-Straße 4, 36041 Fulda	300032821	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.534088	9.668252	Europe/Berlin	\N	\N	active
 bb7d740c-9838-48d3-963a-b7e56f4a950b	372	Wasserkuppenstraße 29-31, 36043 Fulda	300032822	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.535947	9.698615	Europe/Berlin	\N	\N	active
 f826f524-00f0-47bc-9c22-3d7f89a456b8	373	Gallasiniring 20a, 36043 Fulda	300032823	2750a682-90bd-5d2c-8b86-c9038c228d9c	50.549972	9.699978	Europe/Berlin	\N	\N	active
@@ -1767,13 +1767,13 @@ c9f532db-275a-4654-844b-0d8398ad285b	19 Elisabeth-Schäfer-Weg	Herler Straße 92
 -- PostgreSQL database dump complete
 --
 
-\unrestrict NTbCfZK5B1QwinwezwU7bsaW3tvMbn06FgWyImMEzH2hKRtKETpjrnUvV2DMTBV
+\unrestrict bi2daEppSQZTOSBdcoY7SVD55hfgWjhNIgfdxIe4sBbhdgTM8aQwmEgjS9VzUo6
 
 --
 -- PostgreSQL database dump
 --
 
-\restrict yYduAjPxlzRO2MavtVg2t7edKfYYIgEFBNGd6F7hsDD1upkXCLQMUefYSG0NhZj
+\restrict k9jgYJjDlkiHrcg86jeNSFYOHBZhlKQcKVR3JDae4MJhlzXfe0CbfyxShF6cOpX
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -2781,7 +2781,7 @@ b485ab9f-d6af-46b6-83bb-409450c09fc4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promen
 -- PostgreSQL database dump complete
 --
 
-\unrestrict yYduAjPxlzRO2MavtVg2t7edKfYYIgEFBNGd6F7hsDD1upkXCLQMUefYSG0NhZj
+\unrestrict k9jgYJjDlkiHrcg86jeNSFYOHBZhlKQcKVR3JDae4MJhlzXfe0CbfyxShF6cOpX
 
 
 -- Persistent state + provider messages (usually empty).
@@ -2790,7 +2790,7 @@ b485ab9f-d6af-46b6-83bb-409450c09fc4	c084d72f-ba7e-45bb-9ee0-22d9aad009ed	Promen
 -- PostgreSQL database dump
 --
 
-\restrict W50EbgRAjUDcNxjfnyMkPmNkyVF9kQWq3z1E8ieRoiVf9KfdGGcYtIfvj7lqTkp
+\restrict Lgz26FeNodddE6ciT0bOFpDoyDRq6ZsAyeffbKad8yIdk26bGNl2sbwRzdjteJ9
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -2830,13 +2830,13 @@ f4644e3b-07b0-4e2c-9e2a-b51bab897924	a023b021-9754-56c7-8c4e-9c391069aff5	archiv
 -- PostgreSQL database dump complete
 --
 
-\unrestrict W50EbgRAjUDcNxjfnyMkPmNkyVF9kQWq3z1E8ieRoiVf9KfdGGcYtIfvj7lqTkp
+\unrestrict Lgz26FeNodddE6ciT0bOFpDoyDRq6ZsAyeffbKad8yIdk26bGNl2sbwRzdjteJ9
 
 --
 -- PostgreSQL database dump
 --
 
-\restrict JlHfj4vaiPOLSAh93pleBDThgPnJ2qWSCVh6RfGbNIUy5QKr0XfwVtxeZYz28A7
+\restrict sqWN3VozVNkHQGUUCXaz0XA2gyJEgeRfGMehZ9tBiPqs05hr9OQ7MeiZzKJIFeY
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -2865,7 +2865,7 @@ COPY public.data_source_provider_messages (id, data_source_id, severity, message
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JlHfj4vaiPOLSAh93pleBDThgPnJ2qWSCVh6RfGbNIUy5QKr0XfwVtxeZYz28A7
+\unrestrict sqWN3VozVNkHQGUUCXaz0XA2gyJEgeRfGMehZ9tBiPqs05hr9OQ7MeiZzKJIFeY
 
 
 -- Restore the default search_path (the dump above set it to ''), so the
