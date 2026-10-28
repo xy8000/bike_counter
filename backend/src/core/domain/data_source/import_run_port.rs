@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use super::data_source::value_objects::Id as DataSourceId;
-use super::import_run::{DataImportRun, ImportRunFacts};
+use super::import_run::{DataImportRun, ImportRunFacts, ImportRunPage, ImportRunStatus};
 use crate::core::domain::error::DomainError;
 
 /// Persistence port for per-data-source import runs. Implemented by the
@@ -62,6 +62,35 @@ pub trait DataImportRunRepository: Send + Sync {
             .latest_by_data_source(data_source_id)?
             .into_iter()
             .collect())
+    }
+
+    /// One newest-first page of a data source's runs plus the total count and
+    /// the average duration over all finished runs. The default slices
+    /// [`Self::list_by_data_source`] so in-memory test doubles keep compiling;
+    /// the Postgres adapter pushes the window into SQL.
+    fn list_page_by_data_source(
+        &self,
+        data_source_id: DataSourceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ImportRunPage, DomainError> {
+        let all = self.list_by_data_source(data_source_id)?;
+        let total = all.len() as u64;
+        let finished_durations: Vec<i64> = all
+            .iter()
+            .filter(|run| run.status == ImportRunStatus::Finished)
+            .filter_map(DataImportRun::duration_seconds)
+            .collect();
+        let average_duration_seconds = if finished_durations.is_empty() {
+            None
+        } else {
+            Some(finished_durations.iter().sum::<i64>() / finished_durations.len() as i64)
+        };
+        Ok(ImportRunPage {
+            items: all.into_iter().skip(offset).take(limit).collect(),
+            total,
+            average_duration_seconds,
+        })
     }
 
     /// Finalizes RUNNING import runs that can no longer be owned by a live

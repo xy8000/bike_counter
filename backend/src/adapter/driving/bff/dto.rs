@@ -839,15 +839,88 @@ pub struct BffDataSourceImportDto {
     pub added_stations: i64,
 }
 
+/// Query parameters of the paginated import-run history: `offset` (default 0)
+/// and `limit` (default 50) over the newest-first history.
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+pub struct BffDataSourceImportsQueryParams {
+    /// Number of newest runs to skip. Defaults to 0.
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// Maximum number of runs in the page. Defaults to 50; values above the
+    /// server cap are clamped.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 /// The per-data-source import-run history (`GET /api/bff/data-sources/{id}/imports`).
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq)]
 pub struct BffDataSourceImportsDto {
     /// Runs newest first.
     pub items: Vec<BffDataSourceImportDto>,
-    /// Average duration (whole seconds) over the finished runs, or `None` when
-    /// no run has finished yet.
+    /// Total number of runs of the data source, independent of the page window.
+    #[schema(example = 55)]
+    pub total: u64,
+    #[schema(example = 0)]
+    pub offset: usize,
+    #[schema(example = 50)]
+    pub limit: usize,
+    /// Average duration (whole seconds) over **all** finished runs, not just the
+    /// visible page, or `None` when no run has finished yet.
     #[schema(example = 3600)]
     pub average_duration_seconds: Option<i64>,
+    #[serde(rename = "_links")]
+    pub links: HashMap<String, LinkDto>,
+}
+
+impl BffDataSourceImportsDto {
+    /// Builds the paginated history DTO with self/prev/next/root HATEOAS links.
+    pub fn new(
+        data_source_id: Uuid,
+        items: Vec<BffDataSourceImportDto>,
+        total: u64,
+        offset: usize,
+        limit: usize,
+        average_duration_seconds: Option<i64>,
+    ) -> Self {
+        let links = import_page_links(data_source_id, offset, limit, items.len(), total);
+        Self {
+            items,
+            total,
+            offset,
+            limit,
+            average_duration_seconds,
+            links,
+        }
+    }
+}
+
+/// HATEOAS links of one import-history page. `next` appears while the page is
+/// not the last one; `prev` appears once the caller has paged forward.
+fn import_page_links(
+    data_source_id: Uuid,
+    offset: usize,
+    limit: usize,
+    returned: usize,
+    total: u64,
+) -> HashMap<String, LinkDto> {
+    let base = format!("/api/bff/data-sources/{data_source_id}/imports");
+    let page_size = limit.max(1);
+    let page_link =
+        |page_offset: usize| LinkDto::new(format!("{base}?offset={page_offset}&limit={page_size}"));
+
+    let mut links = HashMap::new();
+    links.insert("self".to_string(), page_link(offset));
+    if offset > 0 {
+        links.insert(
+            "prev".to_string(),
+            page_link(offset.saturating_sub(page_size)),
+        );
+    }
+    if (offset as u64).saturating_add(returned as u64) < total {
+        links.insert("next".to_string(), page_link(offset + page_size));
+    }
+    links.insert("root".to_string(), LinkDto::new("/api/v1"));
+    links
 }
 
 /// The detail payload of one data source (`GET /api/bff/data-sources/{id}`).

@@ -106,6 +106,17 @@ impl DataImportRun {
     }
 }
 
+/// One newest-first page of a data source's import history plus the aggregates
+/// the Import jobs table needs.
+#[derive(Debug, Clone, Default)]
+pub struct ImportRunPage {
+    pub items: Vec<DataImportRun>,
+    /// Total number of runs of the data source, independent of the page window.
+    pub total: u64,
+    /// Average duration over all finished runs, not just the visible page.
+    pub average_duration_seconds: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

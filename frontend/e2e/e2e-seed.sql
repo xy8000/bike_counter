@@ -2674,6 +2674,23 @@ SET search_path = public;
 UPDATE counting_stations SET image_asset_id = NULL, image_sha256 = NULL;
 UPDATE data_sources SET logo_asset_id = NULL, logo_sha256 = NULL;
 
+-- Synthesized import-run history: 55 finished runs for Münster so the Import
+-- jobs table exercises its default 50-run page and the Previous/Next footer.
+-- Only the base columns are inserted here; the fact counters are added by a
+-- later migration with defaults.
+INSERT INTO data_source_imports
+    (id, data_source_id, job_id, started_at, finished_at, status, failure_message)
+SELECT gen_random_uuid(),
+       d.id,
+       NULL,
+       now() - make_interval(mins => 10 * g),
+       now() - make_interval(mins => 10 * g) + interval '30 seconds',
+       'FINISHED',
+       NULL
+FROM data_sources d
+CROSS JOIN generate_series(1, 55) AS g
+WHERE d.name = 'Münster';
+
 -- Synthesized recent measurements for the alphabetically-first stations of each
 -- city (real station/channel structure from the DB; generated values keep the
 -- fixture small and the timestamps relative to load time). The resolutions

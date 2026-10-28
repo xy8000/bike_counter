@@ -14,7 +14,7 @@ use crate::core::domain::assets::asset::value_objects::AssetId;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::data_source::data_source::DataSource;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
-use crate::core::domain::data_source::import_run::DataImportRun;
+use crate::core::domain::data_source::import_run::{DataImportRun, ImportRunPage};
 use crate::core::domain::error::DomainError;
 
 /// One row of the data-sources overview: the persisted data source plus its
@@ -70,6 +70,12 @@ pub trait DataSourceAnalyticsServicePort: Send + Sync {
     fn overview(&self) -> Result<Vec<DataSourceOverview>, DomainError>;
     fn detail(&self, id: DataSourceId) -> Result<DataSourceDetail, DomainError>;
 
-    /// All per-source import runs, newest first, for the jobs overview.
-    fn imports(&self, id: DataSourceId) -> Result<Vec<DataImportRun>, DomainError>;
+    /// One newest-first page of a source's import runs plus the total count and
+    /// the average duration over all finished runs.
+    fn imports_page(
+        &self,
+        id: DataSourceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ImportRunPage, DomainError>;
 }

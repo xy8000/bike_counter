@@ -479,10 +479,41 @@ async fn openapi_contains_bff_paths_schemas_and_tag() {
         "BffDataSourceDetailDto",
         "BffDataSourceImportDto",
         "BffDataSourceImportsDto",
+        "BffDataSourceImportsQueryParams",
     ] {
         assert!(
             schemas.contains_key(schema),
             "OpenAPI document should contain schema {schema}"
+        );
+    }
+
+    // The paginated import history documents its offset/limit query parameters
+    // and the page metadata in the response schema.
+    let imports_parameters =
+        body["paths"]["/api/bff/data-sources/{id}/imports"]["get"]["parameters"]
+            .as_array()
+            .expect("the imports path should document its parameters");
+    for name in ["offset", "limit"] {
+        assert!(
+            imports_parameters
+                .iter()
+                .any(|parameter| parameter["name"] == name && parameter["in"] == "query"),
+            "the imports path should document the {name} query parameter"
+        );
+    }
+    for field in [
+        "items",
+        "total",
+        "offset",
+        "limit",
+        "average_duration_seconds",
+        "_links",
+    ] {
+        assert!(
+            schemas["BffDataSourceImportsDto"]["properties"]
+                .get(field)
+                .is_some(),
+            "BffDataSourceImportsDto should expose the {field} field"
         );
     }
 
@@ -1417,26 +1448,107 @@ async fn data_source_detail_unknown_source_is_not_found() {
 }
 
 #[tokio::test]
-async fn data_source_imports_returns_history_and_average_duration() {
+async fn data_source_imports_defaults_to_the_last_50_runs() {
     let app = TestApp::new();
+    let id = Uuid::new_v4();
     let (status, body) = app
-        .get_json(&format!("/api/bff/data-sources/{}/imports", Uuid::new_v4()))
+        .get_json(&format!("/api/bff/data-sources/{id}/imports"))
         .await;
 
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().expect("items must be an array");
-    assert_eq!(items.len(), 2, "the history lists every run");
-    // Newest first: the finished run precedes the failed one.
-    assert_eq!(items[0]["status"], "FINISHED");
-    assert_eq!(items[0]["successful"], true);
-    assert_eq!(items[0]["duration_seconds"], 60);
-    assert_eq!(items[0]["added_measurements"], 10);
-    assert_eq!(items[0]["added_stations"], 2);
-    assert_eq!(items[0]["warning_count"], 1);
-    assert_eq!(items[1]["status"], "FAILED");
-    assert_eq!(items[1]["successful"], false);
-    assert_eq!(items[1]["failure_message"], "provider unreachable");
-    assert_eq!(items[1]["error_count"], 2);
-    // The average only counts the finished run (60s); the failed one is excluded.
+    assert_eq!(items.len(), 50, "the default page renders the last 50 runs");
+    assert_eq!(body["total"], 55);
+    assert_eq!(body["offset"], 0);
+    assert_eq!(body["limit"], 50);
+    // The average covers all 54 finished runs (60s each); the failed one is
+    // excluded even though it is on the visible page.
     assert_eq!(body["average_duration_seconds"], 60);
+
+    // Newest first: the failed run precedes the finished ones.
+    assert_eq!(items[0]["status"], "FAILED");
+    assert_eq!(items[0]["successful"], false);
+    assert_eq!(items[0]["failure_message"], "provider unreachable");
+    assert_eq!(items[0]["error_count"], 2);
+    assert_eq!(items[1]["status"], "FINISHED");
+    assert_eq!(items[1]["successful"], true);
+    assert_eq!(items[1]["duration_seconds"], 60);
+    assert_eq!(items[1]["added_measurements"], 10);
+    assert_eq!(items[1]["added_stations"], 2);
+    assert_eq!(items[1]["warning_count"], 1);
+
+    assert_eq!(
+        body["_links"]["self"]["href"],
+        format!("/api/bff/data-sources/{id}/imports?offset=0&limit=50")
+    );
+    assert_eq!(
+        body["_links"]["next"]["href"],
+        format!("/api/bff/data-sources/{id}/imports?offset=50&limit=50")
+    );
+    assert_eq!(
+        body["_links"]["prev"],
+        serde_json::Value::Null,
+        "the first page has no previous link"
+    );
+    assert_eq!(body["_links"]["root"]["href"], "/api/v1");
+}
+
+#[tokio::test]
+async fn data_source_imports_pages_forward_and_back() {
+    let app = TestApp::new();
+    let id = Uuid::new_v4();
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/data-sources/{id}/imports?offset=50&limit=50"
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items must be an array");
+    assert_eq!(items.len(), 5, "the second page holds the remaining 5 runs");
+    assert_eq!(body["total"], 55);
+    assert_eq!(body["offset"], 50);
+    assert_eq!(body["limit"], 50);
+    assert_eq!(body["average_duration_seconds"], 60);
+    assert_eq!(
+        body["_links"]["prev"]["href"],
+        format!("/api/bff/data-sources/{id}/imports?offset=0&limit=50")
+    );
+    assert_eq!(
+        body["_links"]["next"],
+        serde_json::Value::Null,
+        "the last page has no next link"
+    );
+}
+
+#[tokio::test]
+async fn data_source_imports_honors_a_custom_limit_and_clamps_zero() {
+    let app = TestApp::new();
+    let id = Uuid::new_v4();
+
+    let (status, body) = app
+        .get_json(&format!(
+            "/api/bff/data-sources/{id}/imports?offset=10&limit=5"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items must be an array");
+    assert_eq!(items.len(), 5);
+    assert_eq!(body["offset"], 10);
+    assert_eq!(body["limit"], 5);
+    assert_eq!(
+        body["_links"]["prev"]["href"],
+        format!("/api/bff/data-sources/{id}/imports?offset=5&limit=5")
+    );
+    assert_eq!(
+        body["_links"]["next"]["href"],
+        format!("/api/bff/data-sources/{id}/imports?offset=15&limit=5")
+    );
+
+    let (status, body) = app
+        .get_json(&format!("/api/bff/data-sources/{id}/imports?limit=0"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["limit"], 1, "a zero limit is clamped to one row");
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(1));
 }

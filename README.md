@@ -169,6 +169,11 @@ Machine consumers get two HTTP surfaces plus a bulk export:
   rollup tables** maintained by the `measurement_rollup` job and refreshed right
   after each import, instead of scanning the raw measurement history; only the
   5-minute day graph and sub-hourly custom ranges read the raw measurements.
+  The per-data-source **import-run history**
+  (`/api/bff/data-sources/{id}/imports`) is paginated with `offset`/`limit`
+  (newest 50 runs by default) and returns the `total` count plus HATEOAS
+  `next`/`prev` links, so the **Import jobs** table never loads an unbounded
+  list.
 
 The complete endpoint reference (parameters, schemas, examples) is served by
 Swagger-UI at <http://localhost:8080/swagger-ui/>.

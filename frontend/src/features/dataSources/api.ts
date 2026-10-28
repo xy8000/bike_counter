@@ -12,7 +12,16 @@ export async function fetchDataSourceDetail(id: string): Promise<DataSourceDetai
   return getJson<DataSourceDetail>(`/api/bff/data-sources/${id}`)
 }
 
-/// The import-run history + average duration of one data source.
-export async function fetchDataSourceImports(id: string): Promise<DataSourceImports> {
-  return getJson<DataSourceImports>(`/api/bff/data-sources/${id}/imports`)
+/// Default page size of the import-run history (issue #48: the last 50 jobs).
+export const IMPORT_PAGE_SIZE = 50
+
+/// One page of the import-run history of a data source, newest first, plus the
+/// total count and the average duration over all finished runs.
+export async function fetchDataSourceImports(
+  id: string,
+  offset = 0,
+  limit = IMPORT_PAGE_SIZE,
+): Promise<DataSourceImports> {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+  return getJson<DataSourceImports>(`/api/bff/data-sources/${id}/imports?${params.toString()}`)
 }

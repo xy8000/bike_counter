@@ -76,22 +76,44 @@ describe('dataSources api', () => {
   })
 
   describe('fetchDataSourceImports', () => {
-    it('fetches the import-run history for the data-source id', async () => {
-      const payload: DataSourceImports = { items: [], average_duration_seconds: 60 }
+    it('fetches the first import-run page with the default 0/50 window', async () => {
+      const payload: DataSourceImports = {
+        items: [],
+        total: 0,
+        offset: 0,
+        limit: 50,
+        average_duration_seconds: 60,
+      }
       const fetchMock = vi.fn().mockResolvedValue(ok(payload))
       vi.stubGlobal('fetch', fetchMock)
 
       const imports = await fetchDataSourceImports('ms')
 
-      expect(fetchMock).toHaveBeenCalledWith('/api/bff/data-sources/ms/imports')
+      expect(fetchMock).toHaveBeenCalledWith('/api/bff/data-sources/ms/imports?offset=0&limit=50')
       expect(imports).toEqual(payload)
+    })
+
+    it('sends an explicit offset and limit', async () => {
+      const payload: DataSourceImports = {
+        items: [],
+        total: 120,
+        offset: 100,
+        limit: 10,
+        average_duration_seconds: null,
+      }
+      const fetchMock = vi.fn().mockResolvedValue(ok(payload))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await fetchDataSourceImports('ms', 100, 10)
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/bff/data-sources/ms/imports?offset=100&limit=10')
     })
 
     it('rejects when the history responds with a non-ok status', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
 
       await expect(fetchDataSourceImports('ms')).rejects.toThrow(
-        '/api/bff/data-sources/ms/imports responded with 500',
+        '/api/bff/data-sources/ms/imports?offset=0&limit=50 responded with 500',
       )
     })
   })

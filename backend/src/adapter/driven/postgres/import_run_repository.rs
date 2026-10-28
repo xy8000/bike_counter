@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
 use crate::core::domain::data_source::import_run::{
-    DataImportRun, ImportRunFacts, ImportRunStatus,
+    DataImportRun, ImportRunFacts, ImportRunPage, ImportRunStatus,
 };
 use crate::core::domain::data_source::import_run_port::DataImportRunRepository;
 use crate::core::domain::error::DomainError;
@@ -222,11 +222,64 @@ impl DataImportRunRepository for PostgresImportRunRepository {
                         added_measurements, added_stations, warning_count, error_count \
                  FROM data_source_imports \
                  WHERE data_source_id = $1 \
-                 ORDER BY started_at DESC",
+                 ORDER BY started_at DESC, id DESC",
                 &[&data_source_id.0],
             )
             .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         rows.iter().map(Self::map_row).collect()
+    }
+
+    fn list_page_by_data_source(
+        &self,
+        data_source_id: DataSourceId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ImportRunPage, DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let offset = i64::try_from(offset).map_err(|_| {
+            DomainError::InvalidQuery("offset is too large for the database".to_string())
+        })?;
+        let limit = i64::try_from(limit).map_err(|_| {
+            DomainError::InvalidQuery("limit is too large for the database".to_string())
+        })?;
+
+        let aggregates = client
+            .query_one(
+                "SELECT COUNT(*) AS total, \
+                        AVG(CASE WHEN status = 'FINISHED' AND finished_at IS NOT NULL \
+                                 THEN EXTRACT(EPOCH FROM (finished_at - started_at)) END)::bigint \
+                            AS average_duration \
+                 FROM data_source_imports \
+                 WHERE data_source_id = $1",
+                &[&data_source_id.0],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let total: i64 = aggregates.get("total");
+        let average_duration_seconds: Option<i64> = aggregates.get("average_duration");
+
+        let rows = client
+            .query(
+                "SELECT id, data_source_id, job_id, started_at, finished_at, status, failure_message, \
+                        added_measurements, added_stations, warning_count, error_count \
+                 FROM data_source_imports \
+                 WHERE data_source_id = $1 \
+                 ORDER BY started_at DESC, id DESC \
+                 LIMIT $2 OFFSET $3",
+                &[&data_source_id.0, &limit, &offset],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let items = rows
+            .iter()
+            .map(Self::map_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ImportRunPage {
+            items,
+            total: total.max(0) as u64,
+            average_duration_seconds,
+        })
     }
 
     fn finalize_orphaned_running(&self, older_than: DateTime<Utc>) -> Result<u64, DomainError> {
@@ -538,6 +591,70 @@ mod tests {
         assert_eq!(runs[0].id, second.id, "newest run first");
         assert_eq!(runs[1].id, first.id);
         assert_eq!(runs[1].facts, first_facts);
+    }
+
+    #[test]
+    fn list_page_by_data_source_returns_window_total_and_average() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Münster");
+        let base = DateTime::parse_from_rfc3339("2024-01-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // Three finished runs of 10s, 20s and 30s at increasing start times.
+        let mut finished_ids = Vec::new();
+        for (step, duration_seconds) in [(1, 10), (2, 20), (3, 30)] {
+            let started_at = base + Duration::minutes(step);
+            let run = DataImportRun::start(Uuid::new_v4(), data_source_id, None, started_at);
+            db.repository.insert(&run).unwrap();
+            db.repository
+                .finish(run.id, started_at + Duration::seconds(duration_seconds))
+                .unwrap();
+            finished_ids.push(run.id);
+        }
+
+        // A newer failed run must appear first but stay out of the average.
+        let failed_started_at = base + Duration::minutes(4);
+        let failed = DataImportRun::start(Uuid::new_v4(), data_source_id, None, failed_started_at);
+        db.repository.insert(&failed).unwrap();
+        db.repository
+            .fail(
+                failed.id,
+                failed_started_at + Duration::seconds(5),
+                "provider unreachable",
+            )
+            .unwrap();
+
+        let first_page = db
+            .repository
+            .list_page_by_data_source(data_source_id, 0, 2)
+            .unwrap();
+        assert_eq!(first_page.total, 4);
+        assert_eq!(first_page.items.len(), 2);
+        assert_eq!(first_page.items[0].id, failed.id, "newest run first");
+        assert_eq!(first_page.items[1].id, finished_ids[2]);
+        assert_eq!(
+            first_page.average_duration_seconds,
+            Some(20),
+            "average covers the finished 10s/20s/30s runs only"
+        );
+
+        let second_page = db
+            .repository
+            .list_page_by_data_source(data_source_id, 2, 2)
+            .unwrap();
+        assert_eq!(second_page.total, 4);
+        assert_eq!(second_page.items.len(), 2);
+        assert_eq!(second_page.items[0].id, finished_ids[1]);
+        assert_eq!(second_page.items[1].id, finished_ids[0]);
+
+        let beyond_end = db
+            .repository
+            .list_page_by_data_source(data_source_id, 10, 2)
+            .unwrap();
+        assert_eq!(beyond_end.total, 4);
+        assert!(beyond_end.items.is_empty());
+        assert_eq!(beyond_end.average_duration_seconds, Some(20));
     }
 
     #[test]

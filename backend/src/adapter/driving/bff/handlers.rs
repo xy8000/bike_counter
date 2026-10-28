@@ -24,12 +24,13 @@ use uuid::Uuid;
 use crate::adapter::driving::bff::cache::{CachePolicy, cached_json};
 use crate::adapter::driving::bff::dto::{
     ActionDto, AsOfQueryParams, BffDataSourceDetailDto, BffDataSourceImportDto,
-    BffDataSourceImportsDto, BffDataSourceListDto, BffDataSourceListItemDto, BffStationQueryParams,
-    BffStationSummaryQueryParams, ChannelRefDto, GlobalSummaryDto, GlobalSummaryQueryParams,
-    MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto, SidebarStationDto, SidebarStatsDto,
-    StationDetailPageDto, StationMapDto, StationMapListDto, StationOverviewDto,
-    StationOverviewStatsDto, StationSearchDto, StationStatusDto, StationSummaryDto,
-    StationsSummaryOverviewDto, StationsSummaryPageDto, SummaryPeriodGraphsDto, VersionDto,
+    BffDataSourceImportsDto, BffDataSourceImportsQueryParams, BffDataSourceListDto,
+    BffDataSourceListItemDto, BffStationQueryParams, BffStationSummaryQueryParams, ChannelRefDto,
+    GlobalSummaryDto, GlobalSummaryQueryParams, MonthlyTotalsDto, PeriodGraphsDto, SidebarShellDto,
+    SidebarStationDto, SidebarStatsDto, StationDetailPageDto, StationMapDto, StationMapListDto,
+    StationOverviewDto, StationOverviewStatsDto, StationSearchDto, StationStatusDto,
+    StationSummaryDto, StationsSummaryOverviewDto, StationsSummaryPageDto, SummaryPeriodGraphsDto,
+    VersionDto,
 };
 use crate::adapter::driving::rest::dto::{ErrorResponseDto, LinkDto};
 use crate::adapter::driving::rest::handlers::{AppState, blocking, map_domain_error};
@@ -1387,18 +1388,25 @@ pub async fn get_bff_data_source_detail(
     Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
 
-/// The per-data-source import-run history plus the average run duration
-/// (`GET /api/bff/data-sources/{id}/imports`). Runs are newest first; the
-/// average is computed over the finished runs only.
+/// Default page size of the import-run history (issue #48: the last 50 jobs).
+const DEFAULT_IMPORT_PAGE_LIMIT: usize = 50;
+/// Upper bound so a caller cannot request an unbounded history.
+const MAX_IMPORT_PAGE_LIMIT: usize = 500;
+
+/// The per-data-source import-run history (`GET /api/bff/data-sources/{id}/imports`).
+/// Runs are newest first and paginated with `offset`/`limit` (default 0/50); the
+/// average duration is computed server-side over **all** finished runs, not only
+/// the visible page.
 #[utoipa::path(
     get,
     path = "/api/bff/data-sources/{id}/imports",
     tag = "BFF API",
     params(
-        ("id" = Uuid, Path, description = "Data source UUID")
+        ("id" = Uuid, Path, description = "Data source UUID"),
+        BffDataSourceImportsQueryParams
     ),
     responses(
-        (status = 200, description = "Import-run history (newest first) and average duration", body = BffDataSourceImportsDto,
+        (status = 200, description = "One newest-first page of the import-run history plus total and average duration", body = BffDataSourceImportsDto,
             headers(
                 ("Cache-Control" = String, description = "no-store (live response, must not be cached)"),
                 ("ETag" = String, description = "Strong ETag (SHA-256 of the serialized body)")
@@ -1412,34 +1420,34 @@ pub async fn get_bff_data_source_imports(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
     State(state): State<AppState>,
+    Query(params): Query<BffDataSourceImportsQueryParams>,
 ) -> Result<Response, (StatusCode, Json<ErrorResponseDto>)> {
+    let offset = params.offset.unwrap_or(0);
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_IMPORT_PAGE_LIMIT)
+        .clamp(1, MAX_IMPORT_PAGE_LIMIT);
+
     let service = state.data_source_analytics_service.clone();
     let data_source_id = data_source_vo::Id(id);
-    let runs = blocking(move || service.imports(data_source_id))
+    let page = blocking(move || service.imports_page(data_source_id, offset, limit))
         .await
         .map_err(map_domain_error)?;
 
-    let mut items = Vec::with_capacity(runs.len());
-    for run in runs {
+    let mut items = Vec::with_capacity(page.items.len());
+    for run in page.items {
         let warnings = run.facts.warning_count;
         let errors = run.facts.error_count;
         items.push(import_run_dto(run, warnings, errors));
     }
 
-    let finished_durations: Vec<i64> = items
-        .iter()
-        .filter(|item| item.successful)
-        .filter_map(|item| item.duration_seconds)
-        .collect();
-    let average_duration_seconds = if finished_durations.is_empty() {
-        None
-    } else {
-        Some(finished_durations.iter().sum::<i64>() / finished_durations.len() as i64)
-    };
-
-    let dto = BffDataSourceImportsDto {
+    let dto = BffDataSourceImportsDto::new(
+        id,
         items,
-        average_duration_seconds,
-    };
+        page.total,
+        offset,
+        limit,
+        page.average_duration_seconds,
+    );
     Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
 }
