@@ -248,7 +248,7 @@ fn parse_site_index_skips_the_aggregate_entry() {
 }
 
 #[test]
-fn parse_site_index_deduplicates_channel_names_within_a_station() {
+fn parse_site_index_keeps_duplicate_channel_names_within_a_station() {
     let json = r#"[
         {
             "name": "Bohlweg",
@@ -277,16 +277,16 @@ fn parse_site_index_deduplicates_channel_names_within_a_station() {
         names,
         vec![
             "Bohlweg Fahrräder Stadteinwärts",
-            "Bohlweg Fahrräder Stadteinwärts (353484923)",
-            "Bohlweg Fahrräder Stadteinwärts (353484927)"
-        ]
+            "Bohlweg Fahrräder Stadteinwärts",
+            "Bohlweg Fahrräder Stadteinwärts"
+        ],
+        "names are display data and are stored verbatim"
     );
 }
 
 #[test]
 fn parse_site_index_keeps_identical_channel_names_in_different_stations() {
-    // Channel-name uniqueness is scoped per counting station: the same name in
-    // two different stations must NOT be renamed.
+    // The same channel name in two different stations is kept verbatim.
     let json = r#"[
         {
             "name": "Bohlweg",
@@ -324,7 +324,7 @@ fn parse_site_index_keeps_identical_channel_names_in_different_stations() {
 }
 
 #[test]
-fn parse_site_index_deduplicates_station_names_across_the_archive() {
+fn parse_site_index_keeps_duplicate_station_names_across_the_archive() {
     let json = r#"[
         {
             "name": "Promenade",
@@ -344,7 +344,10 @@ fn parse_site_index_deduplicates_station_names_across_the_archive() {
 
     assert_eq!(stations.len(), 2);
     assert_eq!(stations[0].name, "Promenade");
-    assert_eq!(stations[1].name, "Promenade (300037405)");
+    assert_eq!(
+        stations[1].name, "Promenade",
+        "the station name is stored verbatim; the directory is the identity"
+    );
 }
 
 #[test]

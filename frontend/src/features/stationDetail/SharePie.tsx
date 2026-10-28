@@ -55,7 +55,9 @@ export function SharePie({
               isAnimationActive={false}
             >
               {data.map((entry, index) => (
-                <Cell key={entry.name} fill={seriesColor(index)} />
+                // Two series may share a display name (Münster publishes
+                // duplicate channel names), so the key must not be the name alone.
+                <Cell key={`${entry.name}-${index}`} fill={seriesColor(index)} />
               ))}
             </Pie>
           </PieChart>
@@ -63,7 +65,7 @@ export function SharePie({
         <ul className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
           {data.map((entry, index) => (
             <li
-              key={entry.name}
+              key={`${entry.name}-${index}`}
               className="flex items-center gap-1.5 text-xs text-muted-foreground"
             >
               <span

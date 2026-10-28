@@ -128,24 +128,15 @@ impl DataImportService {
         self
     }
 
-    /// Reserves a unique station name for `base` against `used` by appending the
-    /// stable external id (and, if needed, a numeric suffix). Mirrors the
-    /// scraping adapter's within-batch rename so a provider that re-uses a name
-    /// under a *new* external id cannot violate the unique
-    /// `(data_source_id, name)` index.
-    fn unique_station_name(base: &str, external_id: &str, used: &mut HashSet<String>) -> String {
-        let mut candidate = format!("{base} ({external_id})");
-        let mut suffix = 2;
-        while !used.insert(candidate.clone()) {
-            candidate = format!("{base} ({external_id}) #{suffix}");
-            suffix += 1;
-        }
-        candidate
-    }
-
     /// Saves new counting stations and returns a map of `external_id -> station
     /// UUID` so channels can be linked to their station. The core owns all
     /// entity identity: every new station gets a fresh `Uuid::new_v4()`.
+    ///
+    /// Names are stored **verbatim** from the provider. A name is display data,
+    /// not an identity: providers legitimately publish the same name for several
+    /// stations (Hessen re-uses a short code), so a name collision must never
+    /// abort an import and is never "repaired" by renaming a row. The identity is
+    /// the station `id`, the provider key is `external_datasource_id`.
     fn sync_counting_stations(
         &self,
         runtime: &DataSourceRuntime,
@@ -161,18 +152,6 @@ impl DataImportService {
             Some(service) => Some(service.default_asset()?),
             None => None,
         };
-
-        // The DB enforces a unique `(data_source_id, name)` index. Seed the set
-        // of used names from the stations already persisted for this source so a
-        // provider that re-uses a name under a *new* external id gets a stable
-        // disambiguated name instead of failing the INSERT with a duplicate-key
-        // error (e.g. Hessen re-issuing a short code under a new site id).
-        let mut used_names: HashSet<String> = self
-            .counting_station_repository
-            .find_by_data_source_id(station_vo::DataSourceId(runtime.data_source_id.0))?
-            .into_iter()
-            .map(|station| station.name.0)
-            .collect();
 
         let mut external_to_id = HashMap::with_capacity(stations.len());
         let mut added_stations = 0u64;
@@ -230,18 +209,9 @@ impl DataImportService {
                     updated
                 }
                 None => {
-                    let name = if used_names.insert(record.name.clone()) {
-                        record.name.clone()
-                    } else {
-                        Self::unique_station_name(
-                            &record.name,
-                            &record.external_id,
-                            &mut used_names,
-                        )
-                    };
                     let mut station = CountingStation {
                         id: station_vo::Id(Uuid::new_v4()),
-                        name: station_vo::Name(name),
+                        name: station_vo::Name(record.name.clone()),
                         description: station_vo::Description(record.description.clone()),
                         external_datasource_id: Some(external_id),
                         data_source_id: Some(station_vo::DataSourceId(runtime.data_source_id.0)),
@@ -713,9 +683,13 @@ mod tests {
     }
 
     fn station_record(external_id: &str) -> CountingStationRecord {
+        named_station_record(external_id, &format!("Station {external_id}"))
+    }
+
+    fn named_station_record(external_id: &str, name: &str) -> CountingStationRecord {
         CountingStationRecord {
             external_id: external_id.to_string(),
-            name: format!("Station {external_id}"),
+            name: name.to_string(),
             description: "desc".to_string(),
             latitude: None,
             longitude: None,
@@ -724,11 +698,39 @@ mod tests {
         }
     }
 
+    /// A persisted station with explicit `external id` and display `name`.
+    fn named_station(external_id: &str, name: &str, source_id: Uuid) -> CountingStation {
+        CountingStation {
+            id: station_vo::Id(Uuid::new_v4()),
+            name: station_vo::Name(name.to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId(external_id.to_string())),
+            data_source_id: Some(station_vo::DataSourceId(source_id)),
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        }
+    }
+
     fn channel_record(external_id: &str, station_external_id: &str) -> ChannelRecord {
+        named_channel_record(
+            external_id,
+            station_external_id,
+            &format!("Channel {external_id}"),
+        )
+    }
+
+    fn named_channel_record(
+        external_id: &str,
+        station_external_id: &str,
+        name: &str,
+    ) -> ChannelRecord {
         ChannelRecord {
             external_id: external_id.to_string(),
             counting_station_external_id: station_external_id.to_string(),
-            name: format!("Channel {external_id}"),
+            name: name.to_string(),
             description: "desc".to_string(),
         }
     }
@@ -922,18 +924,51 @@ mod tests {
         })
     }
 
+    /// The database error Postgres raises for a unique-index violation, shaped
+    /// like [`db_error`](crate::adapter::driven::postgres::pool) renders it.
+    fn duplicate_key_error(constraint: &str) -> DomainError {
+        DomainError::Database(format!(
+            "duplicate key value violates unique constraint \"{constraint}\" (SQLSTATE 23505)"
+        ))
+    }
+
+    /// True when `station`'s provider key is already owned by a *different* row.
+    fn has_duplicate_external_id(stations: &[CountingStation], station: &CountingStation) -> bool {
+        station.external_datasource_id.as_ref().is_some_and(|id| {
+            stations.iter().any(|other| {
+                other.id != station.id && other.external_datasource_id.as_ref() == Some(id)
+            })
+        })
+    }
+
     struct MockCountingStationRepository {
         stations: Mutex<Vec<CountingStation>>,
     }
 
     impl CountingStationRepository for MockCountingStationRepository {
         fn save(&self, station: CountingStation) -> Result<(), DomainError> {
-            self.stations.lock().unwrap().push(station);
+            let mut stations = self.stations.lock().unwrap();
+            // Only the invariants the database really enforces are mirrored here:
+            // the provider key `external_datasource_id` is globally unique
+            // (`idx_counting_stations_external_datasource_id`). Names are NOT
+            // unique, so a name collision must never surface as an error — that is
+            // exactly the regression this double has to be able to expose.
+            if has_duplicate_external_id(&stations, &station) {
+                return Err(duplicate_key_error(
+                    "idx_counting_stations_external_datasource_id",
+                ));
+            }
+            stations.push(station);
             Ok(())
         }
 
         fn update(&self, station: CountingStation) -> Result<(), DomainError> {
             let mut stations = self.stations.lock().unwrap();
+            if has_duplicate_external_id(&stations, &station) {
+                return Err(duplicate_key_error(
+                    "idx_counting_stations_external_datasource_id",
+                ));
+            }
             if let Some(existing) = stations.iter_mut().find(|s| s.id == station.id) {
                 *existing = station;
             }
@@ -989,12 +1024,32 @@ mod tests {
 
     impl ChannelRepository for MockChannelRepository {
         fn save(&self, channel: Channel) -> Result<(), DomainError> {
-            self.channels.lock().unwrap().push(channel);
+            let mut channels = self.channels.lock().unwrap();
+            // See the station double: only the provider-key uniqueness of
+            // `idx_channels_external_datasource_id` is real. Two channels of the
+            // same station may share a name.
+            let duplicate_key = channel.external_datasource_id.as_ref().is_some_and(|id| {
+                channels
+                    .iter()
+                    .any(|other| other.external_datasource_id.as_ref() == Some(id))
+            });
+            if duplicate_key {
+                return Err(duplicate_key_error("idx_channels_external_datasource_id"));
+            }
+            channels.push(channel);
             Ok(())
         }
 
         fn update(&self, channel: Channel) -> Result<(), DomainError> {
             let mut channels = self.channels.lock().unwrap();
+            let duplicate_key = channel.external_datasource_id.as_ref().is_some_and(|id| {
+                channels.iter().any(|other| {
+                    other.id != channel.id && other.external_datasource_id.as_ref() == Some(id)
+                })
+            });
+            if duplicate_key {
+                return Err(duplicate_key_error("idx_channels_external_datasource_id"));
+            }
             let slot = channels
                 .iter_mut()
                 .find(|c| c.id == channel.id)
@@ -1364,42 +1419,19 @@ mod tests {
     }
 
     #[test]
-    fn reuses_a_name_under_a_new_external_id_without_colliding() {
-        // The Hessen provider re-issued short code "1530" under a new external
-        // id, so the previously persisted "1530" (old id) and the fresh "1530"
-        // (new id) would collide on the unique (data_source_id, name) index. The
-        // new station must be inserted under a stable disambiguated name instead
-        // of failing the import with a duplicate-key error.
+    fn a_shared_station_name_does_not_fail_consecutive_syncs() {
+        // Regression for issue #47 (Hessen, image v0.0.9). The provider re-issued
+        // the short code "1530" under a new external id, so the previous fix had
+        // persisted the new station as "1530 (new-1530)" and then wrote the raw
+        // name "1530" back on the next run — colliding with the older "1530" row
+        // and aborting the entire source import with SQLSTATE 23505. Names are not
+        // unique any more, so both runs must simply succeed.
         let source_id = DataSource::id_from_name("Münster");
-        let existing = CountingStation {
-            id: station_vo::Id(Uuid::from_u128(0x61)),
-            name: station_vo::Name("1530".to_string()),
-            description: station_vo::Description("desc".to_string()),
-            external_datasource_id: Some(station_vo::ExternalDatasourceId("old-1530".to_string())),
-            data_source_id: Some(station_vo::DataSourceId(source_id)),
-            coordinates: None,
-            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
-            image_asset_id: None,
-            image_sha256: None,
-            status: station_vo::Status::Active,
-        };
         let station_repo = Arc::new(MockCountingStationRepository {
-            stations: Mutex::new(vec![existing]),
-        });
-        let provider = Arc::new(SourceMockProvider {
-            stations: vec![CountingStationRecord {
-                external_id: "new-1530".to_string(),
-                name: "1530".to_string(),
-                description: "desc".to_string(),
-                latitude: None,
-                longitude: None,
-                timezone: "Europe/Berlin".to_string(),
-                image_sha256: None,
-            }],
-            channels: Vec::new(),
-            batches: Mutex::new(VecDeque::from([source_batch(Vec::new(), None, false)])),
-            recorded_from: Mutex::new(Vec::new()),
-            batch_size: 500,
+            stations: Mutex::new(vec![
+                named_station("old-1530", "1530", source_id),
+                named_station("new-1530", "1530 (new-1530)", source_id),
+            ]),
         });
         let service = DataImportService::new(
             station_repo.clone(),
@@ -1410,18 +1442,125 @@ mod tests {
                 measurements: Mutex::new(Vec::new()),
             }),
         );
+        let provider = || {
+            Arc::new(SourceMockProvider {
+                stations: vec![CountingStationRecord {
+                    external_id: "new-1530".to_string(),
+                    name: "1530".to_string(),
+                    description: "desc".to_string(),
+                    latitude: None,
+                    longitude: None,
+                    timezone: "Europe/Berlin".to_string(),
+                    image_sha256: None,
+                }],
+                channels: Vec::new(),
+                batches: Mutex::new(VecDeque::from([source_batch(Vec::new(), None, false)])),
+                recorded_from: Mutex::new(Vec::new()),
+                batch_size: 500,
+            })
+        };
+
+        for run in 1..=2 {
+            service
+                .update_data_source(&runtime(provider()), None, None, |_, _, _| Ok(()))
+                .unwrap_or_else(|error| {
+                    panic!("sync run {run} must not fail on a shared name: {error:?}")
+                });
+        }
+
+        let stations = station_repo.stations.lock().unwrap();
+        assert_eq!(stations.len(), 2, "no station is dropped or duplicated");
+        assert!(
+            stations.iter().all(|station| station.name.0 == "1530"),
+            "both stations keep the provider's name: {:?}",
+            stations
+                .iter()
+                .map(|station| station.name.0.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_rename_onto_a_name_another_station_uses_is_stored_as_is() {
+        // The provider may rename a station to a name another station of the same
+        // source already carries; the write must not be rejected.
+        let source_id = DataSource::id_from_name("Münster");
+        let station_repo = Arc::new(MockCountingStationRepository {
+            stations: Mutex::new(vec![
+                named_station("a", "1", source_id),
+                named_station("b", "2", source_id),
+            ]),
+        });
+        let service = DataImportService::new(
+            station_repo.clone(),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+        );
+        let provider = Arc::new(SourceMockProvider {
+            stations: vec![
+                named_station_record("a", "2"),
+                named_station_record("b", "2"),
+            ],
+            channels: Vec::new(),
+            batches: Mutex::new(VecDeque::from([source_batch(Vec::new(), None, false)])),
+            recorded_from: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
 
         service
-            .update_data_source(&runtime(provider.clone()), None, None, |_, _, _| Ok(()))
-            .expect("update should succeed");
+            .update_data_source(&runtime(provider), None, None, |_, _, _| Ok(()))
+            .expect("a colliding rename must not fail the import");
 
         let stations = station_repo.stations.lock().unwrap();
         assert_eq!(stations.len(), 2);
-        let fresh = stations
-            .iter()
-            .find(|s| s.external_datasource_id.as_ref().map(|e| e.0.as_str()) == Some("new-1530"))
-            .expect("the re-issued station should be inserted");
-        assert_eq!(fresh.name.0, "1530 (new-1530)");
+        assert!(
+            stations.iter().all(|station| station.name.0 == "2"),
+            "the rename is written verbatim: {:?}",
+            stations
+                .iter()
+                .map(|station| station.name.0.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn two_channels_of_one_station_may_share_a_name() {
+        // Münster really publishes duplicate channel names within one station.
+        let station_repo = empty_repos().0;
+        let channel_repo = Arc::new(MockChannelRepository {
+            channels: Mutex::new(Vec::new()),
+        });
+        let shared_name = "Bohlweg Fahrräder Stadteinwärts".to_string();
+        let provider = Arc::new(SourceMockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![
+                named_channel_record("channel-1", "station-1", &shared_name),
+                named_channel_record("channel-2", "station-1", &shared_name),
+            ],
+            batches: Mutex::new(VecDeque::from([source_batch(Vec::new(), None, false)])),
+            recorded_from: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+
+        let service = DataImportService::new(
+            station_repo,
+            channel_repo.clone(),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+        );
+
+        service
+            .update_data_source(&runtime(provider), None, None, |_, _, _| Ok(()))
+            .expect("duplicate channel names must not fail the import");
+
+        let channels = channel_repo.channels.lock().unwrap();
+        assert_eq!(channels.len(), 2);
+        assert!(channels.iter().all(|channel| channel.name.0 == shared_name));
     }
 
     #[test]

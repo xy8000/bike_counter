@@ -271,8 +271,12 @@ mod tests {
     use testcontainers_modules::postgres::Postgres;
 
     use super::PostgresCountingStationRepository;
+    use crate::adapter::driven::postgres::PostgresChannelRepository;
     use crate::adapter::driven::postgres::PostgresDataSourceRepository;
     use crate::adapter::driven::postgres::create_pool;
+    use crate::core::domain::channels::channel::Channel;
+    use crate::core::domain::channels::channel::value_objects as channel_vo;
+    use crate::core::domain::channels::repository_port::ChannelRepository;
     use crate::core::domain::configuration::configuration::value_objects::DatabaseConfiguration;
     use crate::core::domain::counting_stations::counting_station::CountingStation;
     use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
@@ -282,11 +286,12 @@ mod tests {
     use crate::core::domain::data_source::repository_port::DataSourceRepository;
     use uuid::Uuid;
 
-    /// A running Postgres test instance plus the counting-station repository,
-    /// plus a data-source repository so the `data_source_id` NOT NULL FK can be
-    /// satisfied.
+    /// A running Postgres test instance plus the counting-station and channel
+    /// repositories, plus a data-source repository so the `data_source_id` NOT
+    /// NULL FK can be satisfied.
     struct TestDb {
         repository: PostgresCountingStationRepository,
+        channels: PostgresChannelRepository,
         data_source_repository: PostgresDataSourceRepository,
         // Keep the container handle alive for the lifetime of the test:
         // dropping it would stop the container and close the connection.
@@ -319,6 +324,7 @@ mod tests {
             let pool = create_pool(&configuration).unwrap();
             Self {
                 repository: PostgresCountingStationRepository::new(&pool),
+                channels: PostgresChannelRepository::new(&pool),
                 data_source_repository: PostgresDataSourceRepository::new(&pool),
                 _container: container,
             }
@@ -335,6 +341,95 @@ mod tests {
                 .unwrap();
             data_source.id
         }
+    }
+
+    #[test]
+    fn allows_two_stations_of_one_source_to_share_a_name() {
+        // Names are display data, not identity (issue #47): Hessen publishes the
+        // same short code for several sites. The V8 unique
+        // `(data_source_id, name)` index is dropped by V28, so both rows persist.
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Hessen");
+        let station = |external_id: &str, name: &str| CountingStation {
+            id: station_vo::Id(Uuid::new_v4()),
+            name: station_vo::Name(name.to_string()),
+            description: station_vo::Description("desc".to_string()),
+            external_datasource_id: Some(station_vo::ExternalDatasourceId(external_id.to_string())),
+            data_source_id: Some(station_vo::DataSourceId(data_source_id.0)),
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: None,
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        };
+
+        db.repository
+            .save(station("old-1530", "1530"))
+            .expect("the first station is inserted");
+        db.repository
+            .save(station("new-1530", "1530"))
+            .expect("a second station of the same source may carry the same name");
+        // A rename onto a name another station already uses must be accepted too.
+        let mut renamed = station("third", "1530");
+        renamed.name = station_vo::Name("1530".to_string());
+        db.repository
+            .save(renamed)
+            .expect("duplicate names are allowed");
+
+        let stored = db
+            .repository
+            .find_by_data_source_id(station_vo::DataSourceId(data_source_id.0))
+            .unwrap();
+        assert_eq!(stored.len(), 3);
+        assert!(stored.iter().all(|station| station.name.0 == "1530"));
+    }
+
+    #[test]
+    fn allows_two_channels_of_one_station_to_share_a_name() {
+        // Münster repeats channel names inside a station; the V8 unique
+        // `(counting_station_id, name)` index is dropped by V28.
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Münster");
+        let station_id = Uuid::new_v4();
+        db.repository
+            .save(CountingStation {
+                id: station_vo::Id(station_id),
+                name: station_vo::Name("Bohlweg".to_string()),
+                description: station_vo::Description(String::new()),
+                external_datasource_id: Some(station_vo::ExternalDatasourceId(
+                    "300037926".to_string(),
+                )),
+                data_source_id: Some(station_vo::DataSourceId(data_source_id.0)),
+                coordinates: None,
+                timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+                image_asset_id: None,
+                image_sha256: None,
+                status: station_vo::Status::Active,
+            })
+            .unwrap();
+
+        let channel = |external_id: &str| Channel {
+            id: channel_vo::Id(Uuid::new_v4()),
+            counting_station_id: channel_vo::CountingStationId(station_id),
+            name: channel_vo::Name("Bohlweg Fahrräder Stadteinwärts".to_string()),
+            description: channel_vo::Description(String::new()),
+            external_datasource_id: Some(channel_vo::ExternalDatasourceId(external_id.to_string())),
+        };
+        db.channels.save(channel("353413831")).unwrap();
+        db.channels
+            .save(channel("353484923"))
+            .expect("a second channel of the same station may carry the same name");
+
+        let stored = db
+            .channels
+            .find_by_counting_station_id(channel_vo::CountingStationId(station_id))
+            .unwrap();
+        assert_eq!(stored.len(), 2);
+        assert!(
+            stored
+                .iter()
+                .all(|channel| channel.name.0 == "Bohlweg Fahrräder Stadteinwärts")
+        );
     }
 
     #[test]
