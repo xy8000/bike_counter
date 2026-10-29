@@ -127,7 +127,10 @@ flowchart TD
      with an **empty** informational set (keeps
      [`mocks.rs`](backend/src/adapter/driving/rest/tests/mocks.rs:613) and the
      service's own tests source-compatible).
-   - Add `HealthService::with_informational(critical, informational)`.
+   - Replace the old single-set constructor with
+     `HealthService::new(critical, informational)` (a single always-used
+     constructor; a test-only `new(critical)` would be dead code in the binary
+     target and fail `clippy -D warnings`).
    - `check()` runs **critical only**, `check_details()` runs **informational
      only**; both keep the existing per-indicator ordering.
    - Update the module doc comment; add unit tests: critical-only selection,
@@ -187,7 +190,7 @@ flowchart TD
 8. **Wiring**
    ([`main.rs`](backend/src/main.rs:227))
    - Build the service as
-     `HealthService::with_informational(vec![Arc::new(PostgresHealthCheck::new(pool.clone()))], provider_health_indicators)`
+     `HealthService::new(vec![Arc::new(PostgresHealthCheck::new(pool.clone()))], provider_health_indicators)`
      and update the comment to state that readiness is critical-only while
      provider reachability is reported by `/health/providers`.
 
@@ -195,7 +198,7 @@ flowchart TD
    - [`tests/mocks.rs`](backend/src/adapter/driving/rest/tests/mocks.rs:613):
      keep `mock_health_service(status)` (critical-only) and add
      `mock_health_service_with_providers(postgres: HealthStatus, providers:
-     Vec<(&str, HealthStatus)>)` built with `HealthService::with_informational`.
+     Vec<(&str, HealthStatus)>)` built with `HealthService::new`.
    - [`tests/health.rs`](backend/src/adapter/driving/rest/tests/health.rs:18):
      - readiness ignores providers: critical `Up` + informational `Down` =>
        `200`, `status = ready`, `components` contains only `postgres`;

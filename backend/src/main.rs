@@ -229,7 +229,7 @@ fn main() {
     // `/health/providers` only.
     let critical_indicators: Vec<Arc<dyn ServiceHealthIndicator>> =
         vec![Arc::new(PostgresHealthCheck::new(pool.clone()))];
-    let health_service = Arc::new(HealthService::with_informational(
+    let health_service = Arc::new(HealthService::new(
         critical_indicators,
         provider_health_indicators,
     ));

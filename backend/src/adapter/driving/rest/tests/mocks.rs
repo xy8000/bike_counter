@@ -631,12 +631,13 @@ impl ServiceHealthIndicator for MockServiceHealthIndicator {
 /// A [`HealthService`] backed by a single mock PostgreSQL indicator, used by
 /// the REST tests to exercise the readiness endpoint without a database.
 pub fn mock_health_service(status: HealthStatus) -> Arc<HealthService> {
-    Arc::new(HealthService::new(vec![Arc::new(
-        MockServiceHealthIndicator {
+    Arc::new(HealthService::new(
+        vec![Arc::new(MockServiceHealthIndicator {
             name: "postgres".to_string(),
             status,
-        },
-    )]))
+        })],
+        Vec::new(),
+    ))
 }
 
 /// A [`HealthService`] with a critical PostgreSQL indicator plus one
@@ -656,7 +657,7 @@ pub fn mock_health_service_with_providers(
             }) as Arc<dyn ServiceHealthIndicator>
         })
         .collect();
-    Arc::new(HealthService::with_informational(
+    Arc::new(HealthService::new(
         vec![Arc::new(MockServiceHealthIndicator {
             name: "postgres".to_string(),
             status: postgres,
