@@ -39,7 +39,7 @@ use crate::core::domain::assets::asset::value_objects::AssetId;
 use crate::core::domain::counting_stations::counting_station::CountingStation;
 use crate::core::domain::counting_stations::counting_station::value_objects::Id;
 use crate::core::domain::data_source::data_source::value_objects as data_source_vo;
-use crate::core::domain::data_source::import_run::{DataImportRun, ImportRunStatus};
+use crate::core::domain::data_source::import_run::DataImportRun;
 use crate::core::domain::error::DomainError;
 use crate::core::domain::station_analytics::{GeoBounds, GraphResolution, GraphTimeframe};
 
@@ -1257,7 +1257,6 @@ async fn data_source_image_url(
 fn import_run_dto(run: DataImportRun, warnings: i64, errors: i64) -> BffDataSourceImportDto {
     BffDataSourceImportDto {
         status: run.status.as_str().to_string(),
-        successful: run.status == ImportRunStatus::Finished,
         started_at: run.started_at,
         finished_at: run.finished_at,
         duration_seconds: run.duration_seconds(),

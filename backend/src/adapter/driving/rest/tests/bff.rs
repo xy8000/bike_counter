@@ -1467,11 +1467,9 @@ async fn data_source_imports_defaults_to_the_last_50_runs() {
 
     // Newest first: the failed run precedes the finished ones.
     assert_eq!(items[0]["status"], "FAILED");
-    assert_eq!(items[0]["successful"], false);
     assert_eq!(items[0]["failure_message"], "provider unreachable");
     assert_eq!(items[0]["error_count"], 2);
     assert_eq!(items[1]["status"], "FINISHED");
-    assert_eq!(items[1]["successful"], true);
     assert_eq!(items[1]["duration_seconds"], 60);
     assert_eq!(items[1]["added_measurements"], 10);
     assert_eq!(items[1]["added_stations"], 2);

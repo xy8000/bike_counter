@@ -59,6 +59,15 @@ pub struct DataSourceUpdate {
     pub completed: bool,
 }
 
+/// In-flight counters of a running source import. Reported through the optional
+/// progress callback so the caller can persist a live per-source import-run row
+/// before the run finishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataSourceImportProgress {
+    pub added_measurements: u64,
+    pub added_stations: u64,
+}
+
 /// The import phase a data source is currently in. The parallel job runner
 /// persists it under the job metadata key `{data_source_id}_status` so a caller
 /// can observe each source's progress while all sources import at once.
@@ -411,20 +420,50 @@ impl DataImportService {
     /// import phase through `on_phase` (the parallel job runner uses it to persist
     /// the per-data-source `{data_source_id}_status` metadata). `update_data_source`
     /// delegates here with a no-op phase reporter, so existing callers and tests
-    /// are unaffected.
+    /// are unaffected. It also delegates to
+    /// [`Self::update_data_source_with_live_progress`] with a no-op progress
+    /// reporter. Test-only convenience wrapper; production uses the live variant.
+    #[cfg(test)]
     pub fn update_data_source_with_progress(
         &self,
         runtime: &DataSourceRuntime,
         from: Option<DateTime<Utc>>,
         deadline: Option<DateTime<Utc>>,
         on_batch: impl Fn(usize, u64, Option<DateTime<Utc>>) -> Result<(), DomainError>,
+        on_phase: impl FnMut(DataSourceImportPhase) -> Result<(), DomainError>,
+    ) -> Result<DataSourceUpdate, DomainError> {
+        self.update_data_source_with_live_progress(
+            runtime,
+            from,
+            deadline,
+            on_batch,
+            on_phase,
+            |_| Ok(()),
+        )
+    }
+
+    /// [`Self::update_data_source_with_progress`] variant that additionally
+    /// reports the in-flight counters through `on_progress`: once right after the
+    /// station sync (so newly created stations are visible immediately) and after
+    /// every processed measurement batch.
+    pub fn update_data_source_with_live_progress(
+        &self,
+        runtime: &DataSourceRuntime,
+        from: Option<DateTime<Utc>>,
+        deadline: Option<DateTime<Utc>>,
+        on_batch: impl Fn(usize, u64, Option<DateTime<Utc>>) -> Result<(), DomainError>,
         mut on_phase: impl FnMut(DataSourceImportPhase) -> Result<(), DomainError>,
+        mut on_progress: impl FnMut(DataSourceImportProgress) -> Result<(), DomainError>,
     ) -> Result<DataSourceUpdate, DomainError> {
         on_phase(DataSourceImportPhase::Starting)?;
         let (station_ids, added_stations) = {
             on_phase(DataSourceImportPhase::SyncingStations)?;
             self.sync_counting_stations(runtime)?
         };
+        on_progress(DataSourceImportProgress {
+            added_measurements: 0,
+            added_stations,
+        })?;
         let channels = {
             on_phase(DataSourceImportPhase::SyncingChannels)?;
             self.sync_channels(runtime, &station_ids)?
@@ -497,6 +536,10 @@ impl DataImportService {
                 watermark = batch.next_from;
             }
             on_batch(processed, added, batch.next_from)?;
+            on_progress(DataSourceImportProgress {
+                added_measurements: added,
+                added_stations,
+            })?;
 
             tracing::debug!(
                 "data source {:?} batch: processed={processed} added={added} \
@@ -2174,6 +2217,78 @@ mod tests {
         assert!(
             recorded.iter().all(|from| *from == Some(last_updated)),
             "the run must resume from the persisted imported_until"
+        );
+    }
+
+    #[test]
+    fn live_progress_reports_stations_and_each_batch() {
+        let t1 = timestamp("2024-01-01T10:00:00Z");
+        let provider = Arc::new(SourceMockProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            batches: Mutex::new(VecDeque::from([
+                source_batch(
+                    vec![
+                        ("channel-1", measurement_record(1, t1)),
+                        ("channel-1", measurement_record(1, t1)),
+                    ],
+                    Some(t1),
+                    true,
+                ),
+                source_batch(
+                    vec![("channel-1", measurement_record(1, t1))],
+                    Some(t1),
+                    false,
+                ),
+            ])),
+            recorded_from: Mutex::new(Vec::new()),
+            batch_size: 500,
+        });
+        let service = DataImportService::new(
+            Arc::new(MockCountingStationRepository {
+                stations: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockChannelRepository {
+                channels: Mutex::new(Vec::new()),
+            }),
+            Arc::new(MockMeasurementRepository {
+                measurements: Mutex::new(Vec::new()),
+            }),
+        );
+
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let progress_for_closure = progress.clone();
+        service
+            .update_data_source_with_live_progress(
+                &runtime(provider),
+                None,
+                None,
+                |_, _, _| Ok(()),
+                |_| Ok(()),
+                |progress| {
+                    progress_for_closure.lock().unwrap().push(progress);
+                    Ok(())
+                },
+            )
+            .expect("update should succeed");
+
+        assert_eq!(
+            *progress.lock().unwrap(),
+            vec![
+                DataSourceImportProgress {
+                    added_measurements: 0,
+                    added_stations: 1,
+                },
+                DataSourceImportProgress {
+                    added_measurements: 2,
+                    added_stations: 1,
+                },
+                DataSourceImportProgress {
+                    added_measurements: 3,
+                    added_stations: 1,
+                },
+            ],
+            "the station sync and every batch report their live counters"
         );
     }
 

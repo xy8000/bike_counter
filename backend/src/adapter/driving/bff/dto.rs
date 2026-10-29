@@ -814,9 +814,6 @@ pub struct BffDataSourceImportDto {
     /// `RUNNING` | `FINISHED` | `FAILED`.
     #[schema(example = "FINISHED")]
     pub status: String,
-    /// `true` when the run finished successfully (`status == FINISHED`).
-    #[schema(example = true)]
-    pub successful: bool,
     #[schema(example = "2026-09-03T07:00:00Z")]
     pub started_at: DateTime<Utc>,
     #[schema(example = "2026-09-03T08:00:00Z")]

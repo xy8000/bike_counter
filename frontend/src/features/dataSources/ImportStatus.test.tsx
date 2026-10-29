@@ -77,7 +77,6 @@ describe('ImportStatus', () => {
       <ImportStatus
         import={{
           status: 'RUNNING',
-          successful: false,
           started_at: startedAt,
           finished_at: null,
           duration_seconds: null,
@@ -98,7 +97,6 @@ describe('ImportStatus', () => {
       <ImportStatus
         import={{
           status: 'FAILED',
-          successful: false,
           started_at: '2026-01-01T10:00:00Z',
           finished_at: '2026-01-01T10:01:00Z',
           duration_seconds: 60,
@@ -113,12 +111,11 @@ describe('ImportStatus', () => {
     expect(screen.getByText('Failed')).toBeInTheDocument()
   })
 
-  it('shows a succeeded badge', () => {
+  it('shows a finished badge', () => {
     render(
       <ImportStatus
         import={{
           status: 'FINISHED',
-          successful: true,
           started_at: '2026-01-01T10:00:00Z',
           finished_at: '2026-01-01T10:00:30Z',
           duration_seconds: 30,
@@ -130,7 +127,7 @@ describe('ImportStatus', () => {
         }}
       />,
     )
-    expect(screen.getByText('Succeeded')).toBeInTheDocument()
+    expect(screen.getByText('Finished')).toBeInTheDocument()
   })
 })
 

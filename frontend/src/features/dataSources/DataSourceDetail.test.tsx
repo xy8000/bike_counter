@@ -34,7 +34,6 @@ function detail(overrides: Partial<DataSourceDetailType>): DataSourceDetailType 
     has_full_current_year: false,
     last_import: {
       status: 'FINISHED',
-      successful: true,
       started_at: '2026-01-02T10:00:00Z',
       finished_at: '2026-01-02T11:02:05Z',
       duration_seconds: 3725,
@@ -147,7 +146,7 @@ describe('DataSourceDetail', () => {
     expect(screen.getByText('Errors (last import)')).toBeInTheDocument()
 
     // Last import status + the formatted duration (3725s = 1h 2m).
-    expect(screen.getByText('Succeeded')).toBeInTheDocument()
+    expect(screen.getByText('Finished')).toBeInTheDocument()
     expect(screen.getByText('1h 2m')).toBeInTheDocument()
   })
 
@@ -156,7 +155,6 @@ describe('DataSourceDetail', () => {
       payload: detail({
         last_import: {
           status: 'FAILED',
-          successful: false,
           started_at: '2026-01-02T10:00:00Z',
           finished_at: '2026-01-02T10:01:00Z',
           duration_seconds: 60,
@@ -181,7 +179,6 @@ describe('DataSourceDetail', () => {
       payload: detail({
         last_import: {
           status: 'RUNNING',
-          successful: false,
           started_at: new Date(Date.now() - 5_000).toISOString(),
           finished_at: null,
           duration_seconds: null,

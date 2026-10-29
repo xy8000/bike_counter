@@ -24,7 +24,6 @@ const ITEMS: DataSourceSummary[] = [
     image_url: '/logos/ms.png',
     last_import: {
       status: 'FINISHED',
-      successful: true,
       started_at: '2026-01-02T10:00:00Z',
       finished_at: '2026-01-02T10:01:00Z',
       duration_seconds: 60,
@@ -131,7 +130,7 @@ describe('DataSourcesList', () => {
     expect(screen.getAllByText('Bonn').length).toBeGreaterThan(0)
 
     // Import status for the last import of each source.
-    expect(screen.getAllByText('Succeeded').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Finished').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Never imported').length).toBeGreaterThan(0)
 
     // Counts rendered for both rows.

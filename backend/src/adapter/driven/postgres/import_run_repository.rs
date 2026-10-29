@@ -77,6 +77,30 @@ impl DataImportRunRepository for PostgresImportRunRepository {
         Ok(())
     }
 
+    fn update_progress(&self, id: Uuid, facts: ImportRunFacts) -> Result<(), DomainError> {
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        // Only the RUNNING row may be updated: a late progress report must never
+        // overwrite the final snapshot written by finish/fail.
+        client
+            .execute(
+                "UPDATE data_source_imports SET added_measurements = $2, added_stations = $3, \
+                 warning_count = $4, error_count = $5 \
+                 WHERE id = $1 AND status = 'RUNNING'",
+                &[
+                    &id,
+                    &facts.added_measurements,
+                    &facts.added_stations,
+                    &facts.warning_count,
+                    &facts.error_count,
+                ],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        Ok(())
+    }
+
     fn finish(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError> {
         let mut client = self
             .pool
@@ -517,6 +541,54 @@ mod tests {
             .unwrap();
         assert_eq!(latest.status.as_str(), "FINISHED");
         assert_eq!(latest.facts, facts);
+    }
+
+    #[test]
+    fn update_progress_updates_running_runs_and_ignores_late_reports() {
+        let db = TestDb::new();
+        let data_source_id = db.create_data_source("Leipzig");
+        let now = DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let run = DataImportRun::start(Uuid::new_v4(), data_source_id, None, now);
+        db.repository.insert(&run).unwrap();
+
+        let progress = ImportRunFacts {
+            added_measurements: 120,
+            added_stations: 2,
+            warning_count: 3,
+            error_count: 1,
+        };
+        db.repository.update_progress(run.id, progress).unwrap();
+
+        let latest = db
+            .repository
+            .latest_by_data_source(data_source_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.status.as_str(), "RUNNING");
+        assert_eq!(latest.facts, progress);
+
+        // A late progress report after the final snapshot must not overwrite it.
+        let final_facts = ImportRunFacts {
+            added_measurements: 500,
+            added_stations: 4,
+            warning_count: 5,
+            error_count: 2,
+        };
+        db.repository
+            .finish_with_facts(run.id, now + Duration::seconds(60), final_facts)
+            .unwrap();
+        db.repository.update_progress(run.id, progress).unwrap();
+
+        let latest = db
+            .repository
+            .latest_by_data_source(data_source_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.status.as_str(), "FINISHED");
+        assert_eq!(latest.facts, final_facts);
     }
 
     #[test]

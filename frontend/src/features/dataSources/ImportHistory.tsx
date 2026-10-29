@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
+import { CircleCheck, CircleX, Loader2 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp } from '../../lib/format'
-import { fetchDataSourceImports, IMPORT_PAGE_SIZE } from './api'
-import { formatSeconds } from './ImportStatus'
+import { fetchDataSourceImports, IMPORT_PAGE_SIZE, IMPORT_POLL_INTERVAL_MS } from './api'
+import { RunningDuration, formatSeconds } from './ImportStatus'
 import type { DataSourceImport, DataSourceImports } from './types'
 
 /// The paginated import-run history table of a data source plus the average run
 /// duration (calculated server-side over all finished runs). Each run is one
-/// row: start time, duration, success, warnings, errors, new measurements and
-/// new stations. The newest 50 runs are shown by default; Previous/Next page
-/// through the rest.
+/// row: start time, duration, status, warnings, errors, new measurements and
+/// new stations. While any visible run is RUNNING the page is polled so those
+/// counters update live. The newest 50 runs are shown by default; Previous/Next
+/// page through the rest.
 export function ImportHistory({ dataSourceId }: Readonly<{ dataSourceId: string }>) {
   const [imports, setImports] = useState<DataSourceImports | null>(null)
   const [error, setError] = useState(false)
@@ -40,6 +43,28 @@ export function ImportHistory({ dataSourceId }: Readonly<{ dataSourceId: string 
       cancelled = true
     }
   }, [dataSourceId, offset])
+
+  // Keep the live counters fresh while a run is running. The initial load and
+  // explicit paging keep their skeleton/error handling; a failed background
+  // refresh silently keeps the last successful page.
+  const anyRunning = imports?.items.some((run) => run.status === 'RUNNING') ?? false
+  useEffect(() => {
+    if (!anyRunning) return
+    let cancelled = false
+    const interval = window.setInterval(() => {
+      fetchDataSourceImports(dataSourceId, offset, IMPORT_PAGE_SIZE)
+        .then((data) => {
+          if (!cancelled) setImports(data)
+        })
+        .catch(() => {
+          // Keep the last successful page visible; the next tick retries.
+        })
+    }, IMPORT_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [anyRunning, dataSourceId, offset])
 
   return (
     <section aria-label="Import history">
@@ -77,7 +102,7 @@ export function ImportHistory({ dataSourceId }: Readonly<{ dataSourceId: string 
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Start time</th>
                   <th className="px-3 py-2 font-medium">Duration</th>
-                  <th className="px-3 py-2 font-medium">Successful</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 text-right font-medium">Warnings</th>
                   <th className="px-3 py-2 text-right font-medium">Errors</th>
                   <th className="px-3 py-2 text-right font-medium">New measurements</th>
@@ -144,13 +169,47 @@ function ImportPagination({
   )
 }
 
+function ImportRunStatusBadge({ status }: Readonly<{ status: DataSourceImport['status'] }>) {
+  if (status === 'RUNNING') {
+    return (
+      <Badge variant="secondary">
+        <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
+        RUNNING
+      </Badge>
+    )
+  }
+  if (status === 'FAILED') {
+    return (
+      <Badge variant="destructive">
+        <CircleX aria-hidden="true" className="h-3 w-3" />
+        FAILED
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">
+      <CircleCheck aria-hidden="true" className="h-3 w-3" />
+      FINISHED
+    </Badge>
+  )
+}
+
 function RunRow({ run }: Readonly<{ run: DataSourceImport }>) {
-  const duration = run.duration_seconds !== null ? formatSeconds(run.duration_seconds) : 'Unknown'
+  const duration =
+    run.duration_seconds !== null ? (
+      formatSeconds(run.duration_seconds)
+    ) : run.status === 'RUNNING' ? (
+      <RunningDuration startedAt={run.started_at} />
+    ) : (
+      'Unknown'
+    )
   return (
     <tr data-testid="import-run-row" className="border-b last:border-b-0">
       <td className="px-3 py-2 whitespace-nowrap">{formatTimestamp(run.started_at)}</td>
       <td className="px-3 py-2 whitespace-nowrap">{duration}</td>
-      <td className="px-3 py-2 whitespace-nowrap">{run.successful ? 'Yes' : 'No'}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        <ImportRunStatusBadge status={run.status} />
+      </td>
       <td className="px-3 py-2 text-right tabular-nums">{run.warning_count}</td>
       <td className="px-3 py-2 text-right tabular-nums">{run.error_count}</td>
       <td className="px-3 py-2 text-right tabular-nums">{run.added_measurements}</td>

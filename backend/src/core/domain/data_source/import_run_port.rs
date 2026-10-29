@@ -15,6 +15,14 @@ pub trait DataImportRunRepository: Send + Sync {
     /// Persists a new (RUNNING) run.
     fn insert(&self, run: &DataImportRun) -> Result<(), DomainError>;
 
+    /// Updates the in-flight outcome counters of a RUNNING run. A run that is
+    /// already terminal is left untouched, so late progress reports can never
+    /// overwrite the final snapshot. The default is a no-op so in-memory test
+    /// doubles keep compiling.
+    fn update_progress(&self, _id: Uuid, _facts: ImportRunFacts) -> Result<(), DomainError> {
+        Ok(())
+    }
+
     /// Moves a RUNNING run to FINISHED at `finished_at`.
     fn finish(&self, id: Uuid, finished_at: DateTime<Utc>) -> Result<(), DomainError>;
 

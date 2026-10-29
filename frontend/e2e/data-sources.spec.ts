@@ -60,12 +60,19 @@ test('the Import jobs table paginates the seeded runs', async ({ page }) => {
   await expect(page.getByText('Showing 1-50 of 55 import jobs')).toBeVisible()
   await expect(page.getByText('Page 1 of 2')).toBeVisible()
 
+  // The old "Successful" column is replaced by the canonical status.
+  await expect(page.getByRole('columnheader', { name: 'Status' })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Successful' })).toHaveCount(0)
+  await expect(rows.first().getByText('FINISHED')).toBeVisible()
+
   const payload = await (await firstPageResponse).json()
   expect(payload.total).toBe(55)
   expect(payload.items).toHaveLength(50)
   expect(payload.offset).toBe(0)
   expect(payload.limit).toBe(50)
   expect(payload.average_duration_seconds).toBe(30)
+  expect(payload.items[0].status).toBe('FINISHED')
+  expect(payload.items[0]).not.toHaveProperty('successful')
 
   const previous = page.getByRole('button', { name: 'Previous' })
   const next = page.getByRole('button', { name: 'Next' })

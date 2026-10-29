@@ -15,6 +15,9 @@ export async function fetchDataSourceDetail(id: string): Promise<DataSourceDetai
 /// Default page size of the import-run history (issue #48: the last 50 jobs).
 export const IMPORT_PAGE_SIZE = 50
 
+/// How often a running import is polled for its live status and counters.
+export const IMPORT_POLL_INTERVAL_MS = 5000
+
 /// One page of the import-run history of a data source, newest first, plus the
 /// total count and the average duration over all finished runs.
 export async function fetchDataSourceImports(

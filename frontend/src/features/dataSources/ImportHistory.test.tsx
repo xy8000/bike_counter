@@ -1,6 +1,7 @@
 import { ok } from '@/test-utils/http'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { IMPORT_POLL_INTERVAL_MS } from './api'
 import { ImportHistory } from './ImportHistory'
 import type { DataSourceImport, DataSourceImports } from './types'
 
@@ -11,7 +12,6 @@ const RUNS: DataSourceImports = {
   items: [
     {
       status: 'FINISHED',
-      successful: true,
       started_at: '2026-01-02T10:00:00Z',
       finished_at: '2026-01-02T11:00:00Z',
       duration_seconds: 3600,
@@ -23,7 +23,6 @@ const RUNS: DataSourceImports = {
     },
     {
       status: 'FAILED',
-      successful: false,
       started_at: '2026-01-01T10:00:00Z',
       finished_at: '2026-01-01T10:01:00Z',
       duration_seconds: 60,
@@ -38,6 +37,7 @@ const RUNS: DataSourceImports = {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -58,7 +58,7 @@ describe('ImportHistory', () => {
     for (const header of [
       'Start time',
       'Duration',
-      'Successful',
+      'Status',
       'Warnings',
       'Errors',
       'New measurements',
@@ -69,10 +69,64 @@ describe('ImportHistory', () => {
 
     // Row values.
     expect(screen.getByText('1h 0m')).toBeInTheDocument()
-    expect(screen.getAllByText('Yes').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('No').length).toBeGreaterThan(0)
+    expect(screen.getByText('FINISHED')).toBeInTheDocument()
+    expect(screen.getByText('FAILED')).toBeInTheDocument()
     expect(screen.getByText('120')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('polls a running run and updates its live counters until it finishes', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const running: DataSourceImport = {
+      status: 'RUNNING',
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      duration_seconds: null,
+      failure_message: null,
+      warning_count: 1,
+      error_count: 2,
+      added_measurements: 3,
+      added_stations: 4,
+    }
+    const finished: DataSourceImport = {
+      ...running,
+      status: 'FINISHED',
+      finished_at: new Date().toISOString(),
+      duration_seconds: 30,
+      warning_count: 5,
+      error_count: 6,
+      added_measurements: 7,
+      added_stations: 8,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        ok({ items: [running], total: 1, offset: 0, limit: 50, average_duration_seconds: null }),
+      )
+      .mockResolvedValueOnce(
+        ok({ items: [finished], total: 1, offset: 0, limit: 50, average_duration_seconds: 30 }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ImportHistory dataSourceId="ms" />)
+
+    expect(await screen.findByText('RUNNING')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('4')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(IMPORT_POLL_INTERVAL_MS)
+    })
+
+    expect(await screen.findByText('FINISHED')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText('8')).toBeInTheDocument()
+
+    // Once no run is RUNNING the interval is cleared and no further poll happens.
+    await act(async () => {
+      vi.advanceTimersByTime(IMPORT_POLL_INTERVAL_MS)
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('shows the empty state when there are no runs yet', async () => {
@@ -162,7 +216,6 @@ function page(offset: number, count: number, total: number): DataSourceImports {
     const minute = String(index).padStart(2, '0')
     return {
       status: 'FINISHED',
-      successful: true,
       started_at: `2026-01-01T00:${minute}:00Z`,
       finished_at: `2026-01-01T01:${minute}:00Z`,
       duration_seconds: 3600,
