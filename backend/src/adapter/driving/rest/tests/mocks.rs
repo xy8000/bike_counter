@@ -619,6 +619,32 @@ pub fn mock_health_service(status: HealthStatus) -> Arc<HealthService> {
     )]))
 }
 
+/// A [`HealthService`] with a critical PostgreSQL indicator plus one
+/// informational indicator per `(name, status)` pair. Used by the REST tests to
+/// exercise `/health/providers` and to prove that readiness ignores the
+/// informational (external provider) indicators.
+pub fn mock_health_service_with_providers(
+    postgres: HealthStatus,
+    providers: Vec<(&str, HealthStatus)>,
+) -> Arc<HealthService> {
+    let informational: Vec<Arc<dyn ServiceHealthIndicator>> = providers
+        .into_iter()
+        .map(|(name, status)| {
+            Arc::new(MockServiceHealthIndicator {
+                name: name.to_string(),
+                status,
+            }) as Arc<dyn ServiceHealthIndicator>
+        })
+        .collect();
+    Arc::new(HealthService::with_informational(
+        vec![Arc::new(MockServiceHealthIndicator {
+            name: "postgres".to_string(),
+            status: postgres,
+        })],
+        informational,
+    ))
+}
+
 /// In-memory job repository standing in for the real database. Mutex-backed so
 /// the status-transition methods mutate state (the REST cancel tests observe
 /// the resulting status through `JobService`).

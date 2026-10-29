@@ -224,12 +224,17 @@ fn main() {
         startup.data_source_runtimes.len()
     );
 
-    // Build the health service used by the readiness endpoint. It combines the
-    // PostgreSQL probe with one indicator per configured data source.
-    let mut indicators: Vec<Arc<dyn ServiceHealthIndicator>> =
+    // Build the health service used by the health endpoints. Readiness is
+    // critical-only: it probes PostgreSQL and never an external provider URL, so
+    // an unreachable open-data host can no longer mark the stack unhealthy. The
+    // per-data-source indicators are informational and are reported by
+    // `/health/providers` only.
+    let critical_indicators: Vec<Arc<dyn ServiceHealthIndicator>> =
         vec![Arc::new(PostgresHealthCheck::new(pool.clone()))];
-    indicators.extend(provider_health_indicators);
-    let health_service = Arc::new(HealthService::new(indicators));
+    let health_service = Arc::new(HealthService::with_informational(
+        critical_indicators,
+        provider_health_indicators,
+    ));
 
     // Assets: S3-compatible object storage (Garage) + metadata repository +
     // service. The bucket is created and the built-in images synced idempotently

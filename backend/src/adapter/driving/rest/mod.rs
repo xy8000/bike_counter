@@ -26,19 +26,19 @@ pub use crate::adapter::driving::rest::handlers::AppState;
 use crate::adapter::driving::rest::handlers::{
     cancel_job, clear_persistent_state, delete_persistent_state_entry, get_api_root,
     get_channel_by_id, get_counting_station_by_id, get_data_source_by_id, get_health_live,
-    get_health_ready, get_job_by_id, get_measurement_by_id, get_opendata_global_daily_file,
-    get_opendata_global_daily_index, get_opendata_global_daily_year,
-    get_opendata_global_monthly_file, get_opendata_global_monthly_index,
-    get_opendata_global_monthly_period, get_opendata_measurements,
-    get_opendata_measurements_metadata, get_opendata_metadata, get_opendata_root,
-    get_opendata_station, get_opendata_station_daily_file, get_opendata_station_daily_index,
-    get_opendata_station_daily_year, get_opendata_station_measurements,
-    get_opendata_station_measurements_metadata, get_opendata_station_monthly_file,
-    get_opendata_station_monthly_index, get_opendata_station_monthly_period, get_persistent_state,
-    list_channels, list_counting_stations, list_data_sources, list_jobs, list_measurements,
-    list_measurements_raw, list_opendata_stations, list_opendata_stations_geojson,
-    list_provider_messages, patch_counting_station, put_persistent_state_entry,
-    reset_imported_until,
+    get_health_providers, get_health_ready, get_job_by_id, get_measurement_by_id,
+    get_opendata_global_daily_file, get_opendata_global_daily_index,
+    get_opendata_global_daily_year, get_opendata_global_monthly_file,
+    get_opendata_global_monthly_index, get_opendata_global_monthly_period,
+    get_opendata_measurements, get_opendata_measurements_metadata, get_opendata_metadata,
+    get_opendata_root, get_opendata_station, get_opendata_station_daily_file,
+    get_opendata_station_daily_index, get_opendata_station_daily_year,
+    get_opendata_station_measurements, get_opendata_station_measurements_metadata,
+    get_opendata_station_monthly_file, get_opendata_station_monthly_index,
+    get_opendata_station_monthly_period, get_persistent_state, list_channels,
+    list_counting_stations, list_data_sources, list_jobs, list_measurements, list_measurements_raw,
+    list_opendata_stations, list_opendata_stations_geojson, list_provider_messages,
+    patch_counting_station, put_persistent_state_entry, reset_imported_until,
 };
 use crate::adapter::driving::rest::openapi::ApiDoc;
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
@@ -274,6 +274,7 @@ impl RestApiAdapter {
             )
             .route("/health/live", get(get_health_live))
             .route("/health/ready", get(get_health_ready))
+            .route("/health/providers", get(get_health_providers))
             .with_state(app_state)
     }
 

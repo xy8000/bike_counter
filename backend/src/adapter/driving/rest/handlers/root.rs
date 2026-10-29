@@ -24,6 +24,7 @@ use crate::adapter::driving::rest::dto::ApiRootDto;
                     "opendata": { "href": "/api/v1/opendata" },
                     "health-live": { "href": "/health/live" },
                     "health-ready": { "href": "/health/ready" },
+                    "health-providers": { "href": "/health/providers" },
                     "swagger-ui": { "href": "/swagger-ui/" }
                 }
             })

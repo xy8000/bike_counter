@@ -2,6 +2,12 @@
 
 Status: implemented
 
+> **Note (superseded in part):** the provider part of readiness is superseded by
+> [163 - Decouple readiness from external provider URLs](163_readiness_provider_decoupling_plan.md).
+> `/health/ready` now probes PostgreSQL only; provider reachability is reported
+> by the informational `/health/providers` endpoint. The liveness/readiness
+> design below otherwise still applies.
+
 ## Overview
 Add operational health endpoints to the bike-counter REST service:
 - `GET /health/live` — liveness: always `200` while the backend process is running.

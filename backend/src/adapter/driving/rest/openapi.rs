@@ -30,19 +30,20 @@ use crate::adapter::driving::rest::dto::{
 use crate::adapter::driving::rest::handlers::{
     __path_cancel_job, __path_clear_persistent_state, __path_delete_persistent_state_entry,
     __path_get_api_root, __path_get_channel_by_id, __path_get_counting_station_by_id,
-    __path_get_data_source_by_id, __path_get_health_live, __path_get_health_ready,
-    __path_get_job_by_id, __path_get_measurement_by_id, __path_get_opendata_global_daily_file,
-    __path_get_opendata_global_daily_index, __path_get_opendata_global_daily_year,
-    __path_get_opendata_global_monthly_file, __path_get_opendata_global_monthly_index,
-    __path_get_opendata_global_monthly_period, __path_get_opendata_measurements,
-    __path_get_opendata_measurements_metadata, __path_get_opendata_metadata,
-    __path_get_opendata_root, __path_get_opendata_station, __path_get_opendata_station_daily_file,
-    __path_get_opendata_station_daily_index, __path_get_opendata_station_daily_year,
-    __path_get_opendata_station_measurements, __path_get_opendata_station_measurements_metadata,
-    __path_get_opendata_station_monthly_file, __path_get_opendata_station_monthly_index,
-    __path_get_opendata_station_monthly_period, __path_get_persistent_state, __path_list_channels,
-    __path_list_counting_stations, __path_list_data_sources, __path_list_jobs,
-    __path_list_measurements, __path_list_measurements_raw, __path_list_opendata_stations,
+    __path_get_data_source_by_id, __path_get_health_live, __path_get_health_providers,
+    __path_get_health_ready, __path_get_job_by_id, __path_get_measurement_by_id,
+    __path_get_opendata_global_daily_file, __path_get_opendata_global_daily_index,
+    __path_get_opendata_global_daily_year, __path_get_opendata_global_monthly_file,
+    __path_get_opendata_global_monthly_index, __path_get_opendata_global_monthly_period,
+    __path_get_opendata_measurements, __path_get_opendata_measurements_metadata,
+    __path_get_opendata_metadata, __path_get_opendata_root, __path_get_opendata_station,
+    __path_get_opendata_station_daily_file, __path_get_opendata_station_daily_index,
+    __path_get_opendata_station_daily_year, __path_get_opendata_station_measurements,
+    __path_get_opendata_station_measurements_metadata, __path_get_opendata_station_monthly_file,
+    __path_get_opendata_station_monthly_index, __path_get_opendata_station_monthly_period,
+    __path_get_persistent_state, __path_list_channels, __path_list_counting_stations,
+    __path_list_data_sources, __path_list_jobs, __path_list_measurements,
+    __path_list_measurements_raw, __path_list_opendata_stations,
     __path_list_opendata_stations_geojson, __path_list_provider_messages,
     __path_patch_counting_station, __path_put_persistent_state_entry, __path_reset_imported_until,
 };
@@ -113,6 +114,7 @@ use crate::adapter::driving::rest::handlers::{
         get_opendata_station_monthly_file,
         get_health_live,
         get_health_ready,
+        get_health_providers,
     ),
     components(
         schemas(
@@ -189,12 +191,12 @@ use crate::adapter::driving::rest::handlers::{
         (name = "Data Sources", description = "External data sources"),
         (name = "Jobs", description = "Generic tracked jobs"),
         (name = "OpenData", description = "Public, immutable OpenData measurement files (parquet / csv.gz / json) and their indices"),
-        (name = "Health", description = "Operational health checks (liveness/readiness)"),
+        (name = "Health", description = "Operational health checks (liveness/readiness and informational provider reachability)"),
     ),
     info(
         title = "Bike Counter API",
         version = "1.0.0",
-        description = "HTTP API of the Bike Counter backend.\n\n- The **BFF API** (`/api/bff`) is consumed by the React frontend only.\n- The **REST API** (`/api/v1`) is the public interface for backend-to-backend integrations. It includes the **OpenData tree** (`/api/v1/opendata`) publishing immutable daily/monthly measurement files (parquet / csv.gz / json) with their metadata and JSON schemata.\n- `/health/live` and `/health/ready` are operational checks used by the Docker healthcheck.\n\nCacheable BFF JSON responses carry a `Cache-Control` freshness policy and a strong `ETag` (a SHA-256 of the body) and honor `If-None-Match` with `304 Not Modified`."
+        description = "HTTP API of the Bike Counter backend.\n\n- The **BFF API** (`/api/bff`) is consumed by the React frontend only.\n- The **REST API** (`/api/v1`) is the public interface for backend-to-backend integrations. It includes the **OpenData tree** (`/api/v1/opendata`) publishing immutable daily/monthly measurement files (parquet / csv.gz / json) with their metadata and JSON schemata.\n- `/health/live` and `/health/ready` are operational checks used by the Docker healthcheck; `/health/ready` probes internal dependencies (PostgreSQL) only and never external provider URLs, while `/health/providers` reports external data-source reachability informationally and always returns `200`.\n\nCacheable BFF JSON responses carry a `Cache-Control` freshness policy and a strong `ETag` (a SHA-256 of the body) and honor `If-None-Match` with `304 Not Modified`."
     )
 )]
 pub struct ApiDoc;
