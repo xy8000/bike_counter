@@ -25,8 +25,6 @@ export interface DataSourceMapStation {
 
 export interface DataSourceImport {
   status: 'RUNNING' | 'FINISHED' | 'FAILED'
-  /// `true` when the run finished successfully (`status === FINISHED`).
-  successful: boolean
   started_at: string
   finished_at: string | null
   duration_seconds: number | null

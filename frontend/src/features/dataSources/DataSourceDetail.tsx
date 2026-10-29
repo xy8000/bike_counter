@@ -5,7 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { StationPage } from '../../components/StationPage'
 import { formatNumber, formatTimestamp } from '../../lib/format'
 import { ErrorBoundary } from '../../lib/ErrorBoundary'
-import { fetchDataSourceDetail } from './api'
+import { fetchDataSourceDetail, IMPORT_POLL_INTERVAL_MS } from './api'
 import { DataSourceMap } from './DataSourceMap'
 import { dataSourceImageUrl } from './DataSourcesList'
 import { ImportHistory } from './ImportHistory'
@@ -70,6 +70,28 @@ export function DataSourceDetail() {
       cancelled = true
     }
   }, [dataSourceId])
+
+  // While the last import is running, refresh the detail so its status,
+  // duration, warnings and errors stay in sync. A failed background refresh
+  // silently keeps the last successful payload visible.
+  const running = detail?.last_import?.status === 'RUNNING'
+  useEffect(() => {
+    if (!dataSourceId || !running) return
+    let cancelled = false
+    const interval = window.setInterval(() => {
+      fetchDataSourceDetail(dataSourceId)
+        .then((data) => {
+          if (!cancelled) setDetail(data)
+        })
+        .catch(() => {
+          // Keep the last successful detail visible; the next tick retries.
+        })
+    }, IMPORT_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [dataSourceId, running])
 
   return (
     <StationPage

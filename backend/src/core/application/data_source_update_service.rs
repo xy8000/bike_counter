@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::job_heartbeat::JobHeartbeat;
 use crate::core::application::data_import_service::{
-    DataImportService, DataSourceImportPhase, DataSourceRuntime,
+    DataImportService, DataSourceImportPhase, DataSourceImportProgress, DataSourceRuntime,
 };
 use crate::core::domain::configuration::configuration::Configuration;
 use crate::core::domain::data_source::data_source::value_objects::Id as DataSourceId;
@@ -54,6 +54,11 @@ pub fn added_measurements_key(data_source_id: DataSourceId) -> String {
 pub fn status_key(data_source_id: DataSourceId) -> String {
     format!("{}_status", data_source_id.0)
 }
+
+/// Minimum interval between live import-run progress writes. It matches the
+/// frontend's import-history poll interval, so the table never lags behind and
+/// a large import does not issue one write per provider batch.
+const IMPORT_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub struct DataSourceUpdateService {
     job_repository: Arc<dyn JobRepository + Send + Sync>,
@@ -371,12 +376,60 @@ impl DataSourceUpdateService {
         }
     }
 
+    /// Persists a running import's live counters, throttled to
+    /// [`IMPORT_PROGRESS_INTERVAL`]. Bookkeeping failures are logged only: a
+    /// progress write must never abort the import itself.
+    fn record_live_progress(
+        &self,
+        run_id: Uuid,
+        data_source_id: DataSourceId,
+        started_at: DateTime<Utc>,
+        progress: DataSourceImportProgress,
+        last_progress_at: &mut Option<std::time::Instant>,
+    ) {
+        if last_progress_at.is_some_and(|last| last.elapsed() < IMPORT_PROGRESS_INTERVAL) {
+            return;
+        }
+        *last_progress_at = Some(std::time::Instant::now());
+
+        let (warning_count, error_count) = match &self.provider_message_store {
+            Some(store) => match (
+                store.count_since(data_source_id, ProviderMessageSeverity::Warning, started_at),
+                store.count_since(data_source_id, ProviderMessageSeverity::Error, started_at),
+            ) {
+                (Ok(warnings), Ok(errors)) => (warnings, errors),
+                (warnings, errors) => {
+                    tracing::error!(
+                        "Failed to count provider messages for import run {run_id}: \
+                         {warnings:?}/{errors:?}"
+                    );
+                    return;
+                }
+            },
+            None => (0, 0),
+        };
+
+        let facts = ImportRunFacts {
+            added_measurements: progress.added_measurements as i64,
+            added_stations: progress.added_stations as i64,
+            warning_count,
+            error_count,
+        };
+        if let Err(error) = self.import_run_repository.update_progress(run_id, facts) {
+            tracing::error!("Failed to update progress for import run {run_id}: {error:?}");
+        }
+    }
+
     /// Updates a single data source (one parallel worker): reads its
     /// `imported_until` anchor, records a per-source RUNNING [`DataImportRun`],
-    /// pages through [`DataImportService::update_data_source_with_progress`] and
-    /// finalizes the source (watermark/bounds/`last_updated_at`, import-run and
-    /// per-source job-metadata status). Any error is returned so the aggregate
-    /// job fails while the other sources still finish.
+    /// pages through
+    /// [`DataImportService::update_data_source_with_live_progress`] and finalizes
+    /// the source (watermark/bounds/`last_updated_at`, import-run and per-source
+    /// job-metadata status). While the run is in flight, its counters are
+    /// persisted at most once per [`IMPORT_PROGRESS_INTERVAL`] so the Import jobs
+    /// table can show live warnings, errors, new measurements and new stations.
+    /// Any error is returned so the aggregate job fails while the other sources
+    /// still finish.
     fn update_one_source(
         &self,
         job_id: Uuid,
@@ -402,40 +455,53 @@ impl DataSourceUpdateService {
             tracing::error!("Failed to record import run {run_id}: {error:?}");
         }
 
-        let result = self.data_import_service.update_data_source_with_progress(
-            runtime,
-            from,
-            None,
-            |processed, added, watermark| {
-                self.job_repository.update_metadata(
-                    job_id,
-                    &processed_measurements_key(data_source_id),
-                    json!(processed),
-                )?;
-                self.job_repository.update_metadata(
-                    job_id,
-                    &added_measurements_key(data_source_id),
-                    json!(added),
-                )?;
-                // Checkpoint the safe watermark after every batch: an
-                // interrupted run resumes from here.
-                if let Some(watermark) = watermark {
-                    self.data_source_repository
-                        .update_imported_until(data_source_id, watermark)?;
-                }
-                // Heartbeat + cancellation check at the sub-task boundary (after
-                // every batch) so a requested cancellation stops the run
-                // gracefully with its watermark already checkpointed.
-                self.check_cancellation(job_id)
-            },
-            |phase| {
-                self.job_repository.update_metadata(
-                    job_id,
-                    &status_key(data_source_id),
-                    json!(phase.as_str()),
-                )
-            },
-        );
+        let mut last_progress_at: Option<std::time::Instant> = None;
+        let result = self
+            .data_import_service
+            .update_data_source_with_live_progress(
+                runtime,
+                from,
+                None,
+                |processed, added, watermark| {
+                    self.job_repository.update_metadata(
+                        job_id,
+                        &processed_measurements_key(data_source_id),
+                        json!(processed),
+                    )?;
+                    self.job_repository.update_metadata(
+                        job_id,
+                        &added_measurements_key(data_source_id),
+                        json!(added),
+                    )?;
+                    // Checkpoint the safe watermark after every batch: an
+                    // interrupted run resumes from here.
+                    if let Some(watermark) = watermark {
+                        self.data_source_repository
+                            .update_imported_until(data_source_id, watermark)?;
+                    }
+                    // Heartbeat + cancellation check at the sub-task boundary (after
+                    // every batch) so a requested cancellation stops the run
+                    // gracefully with its watermark already checkpointed.
+                    self.check_cancellation(job_id)
+                },
+                |phase| {
+                    self.job_repository.update_metadata(
+                        job_id,
+                        &status_key(data_source_id),
+                        json!(phase.as_str()),
+                    )
+                },
+                |progress| {
+                    self.record_live_progress(
+                        run_id,
+                        data_source_id,
+                        started_at,
+                        progress,
+                        &mut last_progress_at,
+                    );
+                    Ok(())
+                },
+            );
 
         // Snapshot the run's warning/error counters before finalizing so the
         // jobs overview can show them without re-deriving from provider
@@ -1477,6 +1543,8 @@ mod tests {
         finished_facts: Mutex<Vec<ImportRunFacts>>,
         /// Facts recorded by `fail_with_facts` (one entry per failed run).
         failed_facts: Mutex<Vec<ImportRunFacts>>,
+        /// Facts recorded by `update_progress` (one entry per live write).
+        progress_facts: Mutex<Vec<ImportRunFacts>>,
     }
 
     impl MemoryImportRunRepository {
@@ -1499,6 +1567,11 @@ mod tests {
                 return Err(DomainError::Database("insert run failed".to_string()));
             }
             self.runs.lock().unwrap().push(run.clone());
+            Ok(())
+        }
+
+        fn update_progress(&self, _id: Uuid, facts: ImportRunFacts) -> Result<(), DomainError> {
+            self.progress_facts.lock().unwrap().push(facts);
             Ok(())
         }
 
@@ -1996,6 +2069,59 @@ mod tests {
             "warning count is snapshotted from the provider-message store"
         );
         assert_eq!(facts[0].error_count, 1);
+    }
+
+    #[test]
+    fn records_live_import_progress_before_the_run_finishes() {
+        let t0 = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let provider: Arc<dyn DataProvider> = Arc::new(ScriptedProvider {
+            stations: vec![station_record("station-1")],
+            channels: vec![channel_record("channel-1", "station-1")],
+            batches: Mutex::new(VecDeque::from([SourceMeasurementBatch {
+                measurements: vec![SourceMeasurement {
+                    channel_external_id: "channel-1".to_string(),
+                    record: measurement_record(1, t0),
+                }],
+                next_from: Some(t0),
+                more: false,
+            }])),
+        });
+
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(vec![data_source()]));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        let service = service_with_import_runs(
+            job_repo.clone(),
+            data_source_repo,
+            import_runs.clone(),
+            vec![runtime(provider)],
+        )
+        .with_provider_message_store(Arc::new(RecordingProviderMessageStore {
+            warnings: 2,
+            errors: 1,
+        }));
+
+        service.run_if_due();
+
+        let progress = import_runs.progress_facts.lock().unwrap().clone();
+        assert_eq!(
+            progress.len(),
+            1,
+            "the station sync writes one live progress snapshot"
+        );
+        assert_eq!(progress[0].added_stations, 1);
+        assert_eq!(progress[0].added_measurements, 0);
+        assert_eq!(progress[0].warning_count, 2);
+        assert_eq!(progress[0].error_count, 1);
+
+        let final_facts = import_runs.finished_facts.lock().unwrap().clone();
+        assert_eq!(final_facts[0].added_measurements, 1);
+        assert_eq!(
+            final_facts[0].added_stations, progress[0].added_stations,
+            "the final snapshot replaces the live counters"
+        );
     }
 
     #[test]

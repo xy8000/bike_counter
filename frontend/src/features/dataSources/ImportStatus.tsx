@@ -49,7 +49,7 @@ export function ImportStatus({ import: run }: Readonly<{ import: DataSourceImpor
   }
   return (
     <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">
-      <CircleCheck aria-hidden="true" className="h-3 w-3" /> Succeeded
+      <CircleCheck aria-hidden="true" className="h-3 w-3" /> Finished
     </Badge>
   )
 }

@@ -173,7 +173,10 @@ Machine consumers get two HTTP surfaces plus a bulk export:
   (`/api/bff/data-sources/{id}/imports`) is paginated with `offset`/`limit`
   (newest 50 runs by default) and returns the `total` count plus HATEOAS
   `next`/`prev` links, so the **Import jobs** table never loads an unbounded
-  list.
+  list. Each row carries the canonical `RUNNING` / `FINISHED` / `FAILED` status,
+  and a running import's warnings, errors, new measurements and new stations
+  are updated live while the job runs; the page polls every 5 seconds until the
+  run finishes.
 
 The complete endpoint reference (parameters, schemas, examples) is served by
 Swagger-UI at <http://localhost:8080/swagger-ui/>.
