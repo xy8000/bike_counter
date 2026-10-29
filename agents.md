@@ -134,7 +134,9 @@ offline**: the scheduled background jobs are disabled via
 `scheduled_jobs_enabled = false` in the temporary config the orchestrator writes
 (so the backend can never start a data-import, asset-cleanup or tiles job), no
 Protomaps/tile download is needed, and the backend healthcheck is overridden to
-`/health/live` so readiness never pings the providers. The specs live in
+`/health/live` so the boot wait needs neither the PostgreSQL readiness probe nor
+the external providers (readiness itself is provider-free; provider reachability
+is informational on `/health/providers`). The specs live in
 [`frontend/e2e/`](frontend/e2e) with the config in
 [`frontend/playwright.config.ts`](frontend/playwright.config.ts); the
 [`scripts/e2e-playwright.sh`](scripts/e2e-playwright.sh) orchestrator boots the

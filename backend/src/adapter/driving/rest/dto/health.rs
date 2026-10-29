@@ -26,7 +26,11 @@ impl From<HealthComponent> for HealthComponentDto {
     }
 }
 
-/// Overall health report returned by the liveness/readiness endpoints.
+/// Overall health report returned by the health endpoints.
+///
+/// `components` carries the **critical** set on `/health/ready` (the readiness
+/// verdict) and the **informational** provider-reachability set on
+/// `/health/providers` (diagnostics only, never a verdict).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HealthDto {
     pub status: String,

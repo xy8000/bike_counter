@@ -4,11 +4,14 @@
 #
 #   * mounts the committed SQL fixture (./e2e-seed.sql) so the database is seeded
 #     on its fresh volume (Postgres runs it from docker-entrypoint-initdb.d),
-#   * points the backend healthcheck at `/health/live` so readiness never pings
-#     the data providers — the e2e run is fully offline (data comes from the seed;
-#     the scheduled background jobs are disabled via `scheduled_jobs_enabled =
-#     false` in the temporary config written by ../scripts/e2e-playwright.sh; the
-#     HTTP server only binds after migrations + tiles + startup sync, so a healthy
+#   * points the backend healthcheck at `/health/live` so the boot wait needs
+#     neither the PostgreSQL readiness probe nor the external providers.
+#     `/health/ready` is critical-only (PostgreSQL, no provider pings), so the
+#     override is no longer required for offline operation, but it keeps the e2e
+#     boot check independent of the database (data comes from the seed; the
+#     scheduled background jobs are disabled via `scheduled_jobs_enabled = false`
+#     in the temporary config written by ../scripts/e2e-playwright.sh; the HTTP
+#     server only binds after migrations + tiles + startup sync, so a healthy
 #     `/health/live` already implies those are done).
 #
 # The e2e run is isolated from the development data: `db` and `garage` use the

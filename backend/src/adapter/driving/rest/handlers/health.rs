@@ -56,3 +56,33 @@ pub async fn get_health_ready(
         ))
     }
 }
+
+#[utoipa::path(
+    get,
+    path = "/health/providers",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Informational reachability report for every configured external data source. Never gates readiness, so it always returns 200 even when providers are down", body = HealthDto)
+    )
+)]
+pub async fn get_health_providers(State(state): State<AppState>) -> Json<HealthDto> {
+    // The provider probes are synchronous TCP connects, so they run on the
+    // blocking pool instead of a tokio worker thread. Unlike readiness, the
+    // result is diagnostics only and never changes the HTTP status.
+    let health_service = state.health_service.clone();
+    let components = tokio::task::spawn_blocking(move || health_service.check_details())
+        .await
+        .unwrap_or_else(|join_error| {
+            vec![HealthComponent {
+                name: "backend".to_string(),
+                status: HealthStatus::Down(format!("Health check task failed: {join_error}")),
+            }]
+        });
+
+    let status = if components.iter().all(|component| component.status.is_up()) {
+        "up"
+    } else {
+        "degraded"
+    };
+    Json(HealthDto::with_components(status, components))
+}

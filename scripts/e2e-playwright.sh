@@ -11,9 +11,11 @@
 # `scheduled_jobs_enabled = false` in the temporary config below (and the seed
 # carries pre-finished jobs as well), so the backend never starts a data-import,
 # asset-cleanup or tiles job — the run is fully offline w.r.t. the open-data
-# providers. The backend healthcheck is overridden to /health/live so readiness
-# never pings the providers either, and the committed tiles/map.pmtiles archive
-# means no Protomaps download is needed.
+# providers. The backend healthcheck is overridden to /health/live so the boot
+# wait does not depend on the PostgreSQL readiness probe either (readiness is
+# already provider-free: external reachability is informational on
+# /health/providers), and the committed tiles/map.pmtiles archive means no
+# Protomaps download is needed.
 #
 # NOTE: the e2e is fully isolated from development data. It uses the dedicated
 # `postgres_data_e2e`/`garage_meta_e2e`/`garage_data_e2e` volumes (see
@@ -186,7 +188,8 @@ echo "--- Stack built."
 # The db container seeds the fixture on its fresh e2e volume
 # (docker-entrypoint-initdb.d) and the backend healthcheck (overridden in
 # frontend/e2e/docker-compose.e2e.yml) is /health/live, so this wait never
-# touches the data providers. Allow up to 5 minutes.
+# touches the database readiness probe or the data providers. Allow up to
+# 5 minutes.
 echo "--- Waiting for ${APP_URL}/health/live"
 READY=0
 for _ in $(seq 1 60); do

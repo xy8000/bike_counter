@@ -115,8 +115,19 @@ Once running, the stack exposes:
 | Public REST API | <http://localhost:8080/api/v1> |
 | BFF API (used by the web app only) | <http://localhost:8080/api/bff> |
 
-Operational health endpoints: `GET /health/live` (liveness) and
-`GET /health/ready` (readiness).
+Operational health endpoints:
+
+- `GET /health/live` — liveness: `200` while the backend process is running.
+- `GET /health/ready` — readiness: `200` when the **internal** dependencies
+  (PostgreSQL) are up, `503` otherwise. It performs **no external network I/O**,
+  so an unreachable open-data provider never marks the stack unhealthy. This is
+  also the Docker healthcheck target.
+- `GET /health/providers` — informational reachability of every configured
+  external data source. It **always** returns `200` with one component per
+  provider (`status` `up`/`down` plus the `error` when down) and an overall
+  `status` of `up` or `degraded`; the result never gates readiness. The probe
+  opens a TCP connection per provider, so the call can take as long as the OS
+  connect timeout when a host is unreachable.
 
 ## Configuration
 

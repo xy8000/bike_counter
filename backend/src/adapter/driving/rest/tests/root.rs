@@ -29,6 +29,7 @@ async fn root_returns_hateoas_links() {
     assert_eq!(links["opendata"]["href"], "/api/v1/opendata");
     assert_eq!(links["health-live"]["href"], "/health/live");
     assert_eq!(links["health-ready"]["href"], "/health/ready");
+    assert_eq!(links["health-providers"]["href"], "/health/providers");
     assert_eq!(links["swagger-ui"]["href"], "/swagger-ui/");
 }
 
