@@ -194,19 +194,25 @@ function ImportRunStatusBadge({ status }: Readonly<{ status: DataSourceImport['s
   )
 }
 
+/// The duration cell content: the final duration, the live elapsed time of a
+/// running run, or "Unknown" for a terminal run without a duration.
+function RunDuration({ run }: Readonly<{ run: DataSourceImport }>) {
+  if (run.duration_seconds !== null) {
+    return <>{formatSeconds(run.duration_seconds)}</>
+  }
+  if (run.status === 'RUNNING') {
+    return <RunningDuration startedAt={run.started_at} />
+  }
+  return <>Unknown</>
+}
+
 function RunRow({ run }: Readonly<{ run: DataSourceImport }>) {
-  const duration =
-    run.duration_seconds !== null ? (
-      formatSeconds(run.duration_seconds)
-    ) : run.status === 'RUNNING' ? (
-      <RunningDuration startedAt={run.started_at} />
-    ) : (
-      'Unknown'
-    )
   return (
     <tr data-testid="import-run-row" className="border-b last:border-b-0">
       <td className="px-3 py-2 whitespace-nowrap">{formatTimestamp(run.started_at)}</td>
-      <td className="px-3 py-2 whitespace-nowrap">{duration}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        <RunDuration run={run} />
+      </td>
       <td className="px-3 py-2 whitespace-nowrap">
         <ImportRunStatusBadge status={run.status} />
       </td>

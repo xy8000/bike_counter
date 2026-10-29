@@ -114,6 +114,10 @@ export default function MapPage() {
   const selectStation = ({ id, latitude, longitude }: StationLocation) => {
     const map = mapRef.current
     if (map && latitude !== null && longitude !== null) {
+      // Mark the camera as moving before starting the flight: MapLibre emits
+      // `movestart` asynchronously, so a test waiting immediately after the
+      // marker click could otherwise observe the previous `moving = false`.
+      map.getContainer().dataset.mapMoving = 'true'
       map.flyTo({ center: [longitude, latitude], zoom: 16 })
     }
     setSelectedStationId(id)

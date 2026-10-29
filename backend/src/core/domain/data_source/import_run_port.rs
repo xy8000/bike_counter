@@ -161,6 +161,16 @@ mod tests {
     }
 
     #[test]
+    fn update_progress_default_is_a_no_op() {
+        let repo = Recording {
+            finished: Mutex::new(Vec::new()),
+            failed: Mutex::new(Vec::new()),
+        };
+        repo.update_progress(Uuid::new_v4(), ImportRunFacts::default())
+            .unwrap();
+    }
+
+    #[test]
     fn finish_with_facts_delegates_to_finish() {
         let repo = Recording {
             finished: Mutex::new(Vec::new()),

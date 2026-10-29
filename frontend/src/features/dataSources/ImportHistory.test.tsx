@@ -129,6 +129,65 @@ describe('ImportHistory', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('shows Unknown when a terminal run has no duration', async () => {
+    const run: DataSourceImport = {
+      ...RUNS.items[1],
+      duration_seconds: null,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          ok({ items: [run], total: 1, offset: 0, limit: 50, average_duration_seconds: null }),
+        ),
+    )
+    render(<ImportHistory dataSourceId="ms" />)
+
+    expect(await screen.findByText('Unknown')).toBeInTheDocument()
+    expect(screen.getByText('FAILED')).toBeInTheDocument()
+  })
+
+  it('ignores a late poll response after unmount', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const running: DataSourceImport = {
+      ...RUNS.items[0],
+      status: 'RUNNING',
+      finished_at: null,
+      duration_seconds: null,
+      warning_count: 1,
+      error_count: 2,
+      added_measurements: 3,
+      added_stations: 4,
+    }
+    let resolveSecond!: (response: Response) => void
+    const second = new Promise<Response>((resolve) => {
+      resolveSecond = resolve
+    })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        ok({ items: [running], total: 1, offset: 0, limit: 50, average_duration_seconds: null }),
+      )
+      .mockReturnValueOnce(second)
+    vi.stubGlobal('fetch', fetchMock)
+    const { unmount } = render(<ImportHistory dataSourceId="ms" />)
+
+    expect(await screen.findByText('RUNNING')).toBeInTheDocument()
+    await act(async () => {
+      vi.advanceTimersByTime(IMPORT_POLL_INTERVAL_MS)
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    unmount()
+    await act(async () => {
+      resolveSecond(ok(RUNS))
+      await second
+    })
+    // The in-flight response must be ignored instead of updating unmounted state.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('shows the empty state when there are no runs yet', async () => {
     vi.stubGlobal(
       'fetch',

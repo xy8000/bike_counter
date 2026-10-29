@@ -325,7 +325,27 @@ Remove the redundant `successful` field from `BffDataSourceImportDto`:
 - `make test-unit` — 91 files / 580 tests passed.
 - `make coverage` — backend and frontend thresholds passed.
 - `make test-playwright` — 76 passed. The first run had one unrelated flaky
-  map-popup navigation failure; the immediate rerun was 76/76 green.
+  map-popup navigation failure; the immediate rerun was 76/76 green. The flake
+  itself is fixed in [plan 167](167_playwright_map_popup_settle_plan.md).
+
+## Addendum - Codecov patch coverage
+
+The Codecov review of the first push flagged a few changed lines without
+coverage. Added tests for:
+
+- the default no-op `DataImportRunRepository::update_progress`
+  ([`import_run_port.rs`](backend/src/core/domain/data_source/import_run_port.rs:22));
+- the live-progress failure branches in `record_live_progress` — provider
+  message count failure, progress write failure and the throttle window
+  ([`data_source_update_service.rs`](backend/src/core/application/data_source_update_service.rs:385));
+- the `DataSourceDetail` polling callback
+  ([`DataSourceDetail.test.tsx`](frontend/src/features/dataSources/DataSourceDetail.test.tsx));
+- the `ImportHistory` "Unknown" duration and the poll response that arrives
+  after unmount ([`ImportHistory.test.tsx`](frontend/src/features/dataSources/ImportHistory.test.tsx)).
+
+Follow-up gate results: `make check` green, backend tests 853 passed,
+frontend 91 files / 584 tests passed, `make coverage` green, and two consecutive
+Playwright runs passed 76/76.
 
 ## Out of scope
 

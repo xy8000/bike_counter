@@ -199,6 +199,24 @@ describe('useTimeframeSettings setters', () => {
     expect(settings.to).toBe('2024-03-01')
   })
 
+  it('keeps both back-to-back from/to edits made from the same render', () => {
+    const { read } = renderTimeframeSettings('timeframe=individual&from=2024-01-01&to=2024-02-10')
+    // Both setters come from the same pre-update render, like two controlled
+    // inputs filled before React can re-render the dialog. The second call must
+    // read the first call's URL write, not the stale defaults.
+    const current = read().settings
+    act(() => {
+      current.setFrom('2024-01-15')
+      current.setTo('2024-03-01')
+    })
+
+    const settings = read().settings
+    expect(settings.from).toBe('2024-01-15')
+    expect(settings.to).toBe('2024-03-01')
+    expect(paramsOf(read().search).get('from')).toBe('2024-01-15')
+    expect(paramsOf(read().search).get('to')).toBe('2024-03-01')
+  })
+
   it('fills the missing range side when the individual range is incomplete', () => {
     const { read } = renderTimeframeSettings('timeframe=individual&from=2024-01-01')
     act(() => read().settings.setFrom('2024-02-01'))

@@ -1539,6 +1539,7 @@ mod tests {
         fail_insert: Mutex<bool>,
         fail_finish: Mutex<bool>,
         fail_fail: Mutex<bool>,
+        fail_progress: Mutex<bool>,
         /// Facts recorded by `finish_with_facts` (one entry per finalized run).
         finished_facts: Mutex<Vec<ImportRunFacts>>,
         /// Facts recorded by `fail_with_facts` (one entry per failed run).
@@ -1559,6 +1560,10 @@ mod tests {
         fn set_fail_fail(&self, fail: bool) {
             *self.fail_fail.lock().unwrap() = fail;
         }
+
+        fn set_fail_progress(&self, fail: bool) {
+            *self.fail_progress.lock().unwrap() = fail;
+        }
     }
 
     impl DataImportRunRepository for MemoryImportRunRepository {
@@ -1571,6 +1576,9 @@ mod tests {
         }
 
         fn update_progress(&self, _id: Uuid, facts: ImportRunFacts) -> Result<(), DomainError> {
+            if *self.fail_progress.lock().unwrap() {
+                return Err(DomainError::Database("update progress failed".to_string()));
+            }
             self.progress_facts.lock().unwrap().push(facts);
             Ok(())
         }
@@ -1678,6 +1686,40 @@ mod tests {
                 ProviderMessageSeverity::Error => self.errors,
                 _ => 0,
             })
+        }
+    }
+
+    /// A provider-message store whose counters fail, exercising the best-effort
+    /// live-progress path.
+    struct FailingProviderMessageStore;
+
+    impl ProviderMessageStore for FailingProviderMessageStore {
+        fn record(
+            &self,
+            _data_source_id: DataSourceId,
+            _severity: ProviderMessageSeverity,
+            _message: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn find_by_data_source(
+            &self,
+            _data_source_id: DataSourceId,
+        ) -> Result<
+            Vec<crate::core::domain::data_source::provider_message::ProviderMessage>,
+            DomainError,
+        > {
+            Ok(Vec::new())
+        }
+
+        fn count_since(
+            &self,
+            _data_source_id: DataSourceId,
+            _severity: ProviderMessageSeverity,
+            _since: DateTime<Utc>,
+        ) -> Result<i64, DomainError> {
+            Err(DomainError::Database("count failed".to_string()))
         }
     }
 
@@ -2121,6 +2163,92 @@ mod tests {
         assert_eq!(
             final_facts[0].added_stations, progress[0].added_stations,
             "the final snapshot replaces the live counters"
+        );
+    }
+
+    #[test]
+    fn live_progress_write_failure_is_non_fatal() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        import_runs.set_fail_progress(true);
+        let service =
+            service_with_import_runs(job_repo, data_source_repo, import_runs.clone(), Vec::new())
+                .with_provider_message_store(Arc::new(RecordingProviderMessageStore {
+                    warnings: 0,
+                    errors: 0,
+                }));
+
+        let mut last_progress_at = None;
+        service.record_live_progress(
+            Uuid::new_v4(),
+            DataSourceId(DataSource::id_from_name("Münster")),
+            Utc::now(),
+            DataSourceImportProgress {
+                added_measurements: 1,
+                added_stations: 1,
+            },
+            &mut last_progress_at,
+        );
+
+        assert!(last_progress_at.is_some());
+        assert!(
+            import_runs.progress_facts.lock().unwrap().is_empty(),
+            "a failed progress write is logged, not persisted"
+        );
+    }
+
+    #[test]
+    fn live_progress_skips_when_provider_message_counts_fail() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        let service =
+            service_with_import_runs(job_repo, data_source_repo, import_runs.clone(), Vec::new())
+                .with_provider_message_store(Arc::new(FailingProviderMessageStore));
+
+        let mut last_progress_at = None;
+        service.record_live_progress(
+            Uuid::new_v4(),
+            DataSourceId(DataSource::id_from_name("Münster")),
+            Utc::now(),
+            DataSourceImportProgress {
+                added_measurements: 1,
+                added_stations: 1,
+            },
+            &mut last_progress_at,
+        );
+
+        assert!(last_progress_at.is_some());
+        assert!(
+            import_runs.progress_facts.lock().unwrap().is_empty(),
+            "a failed count skips the progress write"
+        );
+    }
+
+    #[test]
+    fn live_progress_is_throttled_between_writes() {
+        let job_repo = Arc::new(MockJobRepository::new(Vec::new()));
+        let data_source_repo = Arc::new(MockDataSourceRepository::new(Vec::new()));
+        let import_runs = Arc::new(MemoryImportRunRepository::default());
+        let service =
+            service_with_import_runs(job_repo, data_source_repo, import_runs.clone(), Vec::new());
+
+        let mut last_progress_at = Some(std::time::Instant::now());
+        service.record_live_progress(
+            Uuid::new_v4(),
+            DataSourceId(DataSource::id_from_name("Münster")),
+            Utc::now(),
+            DataSourceImportProgress {
+                added_measurements: 1,
+                added_stations: 1,
+            },
+            &mut last_progress_at,
+        );
+
+        assert!(
+            import_runs.progress_facts.lock().unwrap().is_empty(),
+            "a progress report inside the throttle window is skipped"
         );
     }
 
