@@ -23,18 +23,10 @@ pub struct HealthService {
 }
 
 impl HealthService {
-    /// Builds a service whose indicators all gate readiness and which has no
-    /// informational indicators.
-    pub fn new(critical: Vec<Arc<dyn ServiceHealthIndicator>>) -> Self {
-        Self {
-            critical,
-            informational: Vec::new(),
-        }
-    }
-
-    /// Builds a service with a separate informational set that is reported by
-    /// [`check_details`](Self::check_details) without affecting readiness.
-    pub fn with_informational(
+    /// Builds a service with a **critical** indicator set that gates readiness
+    /// and a separate **informational** set that is only reported by
+    /// [`check_details`](Self::check_details).
+    pub fn new(
         critical: Vec<Arc<dyn ServiceHealthIndicator>>,
         informational: Vec<Arc<dyn ServiceHealthIndicator>>,
     ) -> Self {
@@ -109,10 +101,13 @@ mod tests {
 
     #[test]
     fn reports_every_component_in_order() {
-        let service = HealthService::new(vec![
-            indicator("postgres", HealthStatus::Up),
-            indicator("redis", HealthStatus::Down("no route to host".to_string())),
-        ]);
+        let service = HealthService::new(
+            vec![
+                indicator("postgres", HealthStatus::Up),
+                indicator("redis", HealthStatus::Down("no route to host".to_string())),
+            ],
+            vec![],
+        );
 
         let components = service.check();
         assert_eq!(components.len(), 2);
@@ -127,13 +122,13 @@ mod tests {
 
     #[test]
     fn returns_empty_report_without_indicators() {
-        let service = HealthService::new(vec![]);
+        let service = HealthService::new(vec![], vec![]);
         assert!(service.check().is_empty());
     }
 
     #[test]
     fn check_ignores_informational_indicators() {
-        let service = HealthService::with_informational(
+        let service = HealthService::new(
             vec![indicator("postgres", HealthStatus::Up)],
             vec![indicator(
                 "provider",
@@ -149,7 +144,7 @@ mod tests {
 
     #[test]
     fn check_details_reports_only_informational_indicators() {
-        let service = HealthService::with_informational(
+        let service = HealthService::new(
             vec![indicator("postgres", HealthStatus::Up)],
             vec![
                 indicator("provider-a", HealthStatus::Up),
@@ -167,7 +162,7 @@ mod tests {
 
     #[test]
     fn details_are_empty_without_informational_indicators() {
-        let service = HealthService::new(vec![indicator("postgres", HealthStatus::Up)]);
+        let service = HealthService::new(vec![indicator("postgres", HealthStatus::Up)], vec![]);
         assert!(service.check_details().is_empty());
     }
 }
