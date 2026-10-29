@@ -63,7 +63,10 @@ Element.prototype.scrollTo = Element.prototype.scrollTo ?? (() => {})
 /// callbacks. Bounds are hard-coded so the visible-station queries built from
 /// them stay deterministic across tests.
 export function createFakeMaplibreMap() {
+  const container = document.createElement('div')
+  container.className = 'maplibregl-map'
   return {
+    getContainer: () => container,
     getBounds: () => ({
       getSouth: () => 51,
       getWest: () => 7,
@@ -87,15 +90,17 @@ function MaplibreMapMock(
   props: Readonly<{
     children?: ReactNode
     onLoad?: (event: { target: unknown }) => void
+    onMoveStart?: (event: { target: unknown }) => void
     onMoveEnd?: (event: { target: unknown }) => void
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     [key: string]: any
   }>,
 ) {
-  const { children, onLoad, onMoveEnd, ...rest } = props
+  const { children, onLoad, onMoveStart, onMoveEnd, ...rest } = props
   useEffect(() => {
     const map = createFakeMaplibreMap()
     onLoad?.({ target: map })
+    onMoveStart?.({ target: map })
     onMoveEnd?.({ target: map })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

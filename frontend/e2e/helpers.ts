@@ -87,6 +87,13 @@ export async function openMap(page: Page, url = '/'): Promise<void> {
   await waitForStations(page)
 }
 
+/// Waits until the MapLibre camera has stopped moving (fly-to selection,
+/// cluster zoom, …). Marker-anchored popups move with the camera, so clicking a
+/// popup link mid-animation can land on the map instead of the link.
+export async function waitForMapToSettle(page: Page): Promise<void> {
+  await expect(page.locator('.maplibregl-map')).toHaveAttribute('data-map-moving', 'false')
+}
+
 /// The first station marker together with its name. The marker `alt` is the
 /// station name (the same value the overview/summary banners use), which the
 /// specs reuse for the popup/overview assertions.

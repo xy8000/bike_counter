@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { getCookie, setCookie } from '../../lib/cookies'
 import {
@@ -172,65 +172,83 @@ export function useTimeframeSettings(
   const effective: PersistedTimeframeSettings = urlSettings ?? readCookie() ?? DEFAULTS
   const isIndividual = effective.timeframe === 'individual'
 
+  // Two controlled inputs can fire before React re-renders the dialog (e.g.
+  // From and To filled back to back). Closing over `effective` would let the
+  // second setter overwrite the first with stale defaults, so setters chain
+  // through this short-lived buffer until the next render.
+  const pending = useRef<PersistedTimeframeSettings | null>(null)
+  useEffect(() => {
+    pending.current = null
+  }, [effective])
+
   const update = useCallback(
-    (next: PersistedTimeframeSettings) => {
+    (mutate: (current: PersistedTimeframeSettings) => PersistedTimeframeSettings) => {
+      const next = mutate(pending.current ?? effective)
+      pending.current = next
       const params = new URLSearchParams(searchParams)
       applyToParams(params, next)
       setSearchParams(params, { replace: true })
       setCookie(COOKIE_KEY, JSON.stringify(next), COOKIE_MAX_AGE)
     },
-    [searchParams, setSearchParams],
+    [effective, searchParams, setSearchParams],
   )
 
   const setTimeframe = useCallback(
     (timeframe: Timeframe) => {
       if (timeframe === effective.timeframe) return
-      if (timeframe === 'individual') {
-        // Keep the current `compare` value (the box stays disabled but is
-        // restored to this exact value when switching back to a fixed interval).
-        const range =
-          effective.timeframe === 'individual' && effective.from && effective.to
-            ? { from: effective.from, to: effective.to }
-            : defaultIndividualRange()
-        update({ ...effective, timeframe, ...range })
-      } else {
-        update({ ...effective, timeframe, from: undefined, to: undefined })
-      }
+      update((current) => {
+        if (timeframe === 'individual') {
+          // Keep the current `compare` value (the box stays disabled but is
+          // restored to this exact value when switching back to a fixed interval).
+          const range =
+            current.timeframe === 'individual' && current.from && current.to
+              ? { from: current.from, to: current.to }
+              : defaultIndividualRange()
+          return { ...current, timeframe, ...range }
+        }
+        return { ...current, timeframe, from: undefined, to: undefined }
+      })
     },
-    [effective, update],
+    [effective.timeframe, update],
   )
 
   const setFrom = useCallback(
     (from: string) => {
       if (!isIndividual) return
-      const to = effective.to ?? defaultIndividualRange().to
-      update({ ...effective, from, to })
+      update((current) => ({
+        ...current,
+        from,
+        to: current.to ?? defaultIndividualRange().to,
+      }))
     },
-    [effective, isIndividual, update],
+    [isIndividual, update],
   )
 
   const setTo = useCallback(
     (to: string) => {
       if (!isIndividual) return
-      const from = effective.from ?? defaultIndividualRange().from
-      update({ ...effective, from, to })
+      update((current) => ({
+        ...current,
+        from: current.from ?? defaultIndividualRange().from,
+        to,
+      }))
     },
-    [effective, isIndividual, update],
+    [isIndividual, update],
   )
 
   const setCompare = useCallback(
-    (compare: boolean) => update({ ...effective, compare }),
-    [effective, update],
+    (compare: boolean) => update((current) => ({ ...current, compare })),
+    [update],
   )
 
   const setExclude = useCallback(
-    (exclude: boolean) => update({ ...effective, exclude }),
-    [effective, update],
+    (exclude: boolean) => update((current) => ({ ...current, exclude })),
+    [update],
   )
 
   const setResolution = useCallback(
-    (resolution: ResolutionLevel) => update({ ...effective, resolution }),
-    [effective, update],
+    (resolution: ResolutionLevel) => update((current) => ({ ...current, resolution })),
+    [update],
   )
 
   return {

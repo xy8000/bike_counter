@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test'
-import { cityUrl, firstMarker, mapClusters, mapMarkers, openMap, sidebarBadge } from './helpers'
+import {
+  cityUrl,
+  firstMarker,
+  mapClusters,
+  mapMarkers,
+  openMap,
+  sidebarBadge,
+  waitForMapToSettle,
+} from './helpers'
 
 test('the map loads the self-hosted PMTiles basemap archive as a static file', async ({ page }) => {
   // MapLibre reads vector tiles directly out of the static archive via HTTP
@@ -41,6 +49,10 @@ test('clicking a map marker opens a popup with the station name and detail link'
   // The popup shows the station image icon and the channel count.
   await expect(popup.locator('img')).toBeVisible()
   await expect(popup.getByText(/\d+ channels?/)).toBeVisible()
+
+  // The popup is anchored to the marker and moves while the marker-click fly-to
+  // animation runs, so wait for the camera to settle before clicking its link.
+  await waitForMapToSettle(page)
 
   // The detail link navigates in the same tab: the URL becomes the station
   // detail page and the browser context still holds exactly one page.

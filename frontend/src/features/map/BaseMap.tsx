@@ -152,6 +152,11 @@ export function BaseMap({
       scrollZoom={scrollZoom}
       doubleClickZoom={interactive}
       touchZoomRotate={interactive}
+      onMoveStart={(event) => {
+        // Expose the camera animation state so the e2e suite can wait until a
+        // marker-anchored popup stops moving before clicking it.
+        event.target.getContainer().dataset.mapMoving = 'true'
+      }}
       onClick={(event) => {
         // Marker/popup elements sit inside the map container, so clicking them
         // also bubbles up to the map's click handler. Those elements handle
@@ -165,6 +170,7 @@ export function BaseMap({
       }}
       onLoad={(event) => {
         const map = event.target
+        map.getContainer().dataset.mapMoving = 'false'
         // A shared/selected view is restored by fitting the map to it once the
         // style has loaded (the @vis.gl Map has no `bounds` init prop).
         if (fitBounds) map.fitBounds(fitBounds, { padding: 0, duration: 0 })
@@ -174,6 +180,7 @@ export function BaseMap({
       }}
       onMoveEnd={(event) => {
         const map = event.target
+        map.getContainer().dataset.mapMoving = 'false'
         onBounds?.(mapBounds(map))
         onZoom?.(map.getZoom())
       }}

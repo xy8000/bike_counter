@@ -16,7 +16,12 @@ services:
     networks:
       - db_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d bike_counter"]
+      # Force TCP: the docker-entrypoint init phase runs a temporary Postgres
+      # that answers on the Unix socket only. A socket probe would mark the
+      # database healthy while the seed is still running, so the backend could
+      # start, fail to connect when that temporary server shuts down, and make
+      # `docker compose up` abort on an unhealthy dependency.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d bike_counter"]
       interval: 5s
       timeout: 5s
       retries: 10

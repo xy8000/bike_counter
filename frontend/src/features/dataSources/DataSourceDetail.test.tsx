@@ -1,8 +1,9 @@
 import { ok } from '@/test-utils/http'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TrendSettingsProvider } from '../settings/TrendSettingsContext'
+import { IMPORT_POLL_INTERVAL_MS } from './api'
 import { DataSourceDetail } from './DataSourceDetail'
 import type { DataSourceDetail as DataSourceDetailType } from './types'
 
@@ -48,8 +49,15 @@ function detail(overrides: Partial<DataSourceDetailType>): DataSourceDetailType 
 }
 
 function makeServer(
-  options: { error?: boolean; pending?: boolean; payload?: DataSourceDetailType } = {},
+  options: {
+    error?: boolean
+    pending?: boolean
+    payload?: DataSourceDetailType
+    /// Successive detail payloads; the last one repeats once exhausted.
+    payloads?: DataSourceDetailType[]
+  } = {},
 ) {
+  let detailCalls = 0
   const mock = vi.fn((input: unknown): Promise<Response> => {
     const url = String(input)
     if (options.pending) return new Promise<Response>(() => {})
@@ -60,7 +68,9 @@ function makeServer(
       )
     }
     if (url.includes('/api/bff/data-sources/ms')) {
-      return Promise.resolve(ok(options.payload ?? detail({})))
+      const next = options.payloads?.[Math.min(detailCalls, (options.payloads?.length ?? 1) - 1)]
+      detailCalls += 1
+      return Promise.resolve(ok(next ?? options.payload ?? detail({})))
     }
     // The BaseMap tiles-readiness probe: the archive is served so the preview
     // map mounts under jsdom.
@@ -93,6 +103,7 @@ function renderDetail() {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -204,5 +215,45 @@ describe('DataSourceDetail', () => {
     expect(await screen.findByRole('heading', { name: 'Münster' })).toBeInTheDocument()
     expect(screen.getByText('Never imported')).toBeInTheDocument()
     expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('polls the detail while the last import is running until it finishes', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const running = detail({
+      last_import: {
+        status: 'RUNNING',
+        started_at: new Date().toISOString(),
+        finished_at: null,
+        duration_seconds: null,
+        failure_message: null,
+        warning_count: 1,
+        error_count: 2,
+        added_measurements: 3,
+        added_stations: 4,
+      },
+    })
+    const finished = detail({
+      last_import: {
+        ...running.last_import!,
+        status: 'FINISHED',
+        finished_at: new Date().toISOString(),
+        duration_seconds: 30,
+        warning_count: 7,
+        error_count: 8,
+      },
+    })
+    makeServer({ payloads: [running, finished] })
+    renderDetail()
+
+    expect(await screen.findByText(/Running/)).toBeInTheDocument()
+    expect(screen.getByText('1')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(IMPORT_POLL_INTERVAL_MS)
+    })
+
+    expect(await screen.findByText('Finished')).toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText('8')).toBeInTheDocument()
   })
 })

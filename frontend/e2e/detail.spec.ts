@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mapMarkers, SEARCH_TRIGGER_TEXT, openMap } from './helpers'
+import { mapMarkers, SEARCH_TRIGGER_TEXT, openMap, waitForMapToSettle } from './helpers'
 
 /// Opens the map, picks the first station and returns its id from the URL.
 async function openFirstStation(page: import('@playwright/test').Page) {
@@ -196,23 +196,11 @@ test('back to map after an in-app detail navigation restores the previous view',
   await openMap(page)
 
   // Open the overview via a marker (this flies to the station and puts the id
-  // in the URL). The fly-to duration scales with the flight distance, so wait
-  // for the URL to stabilise (the moveend-driven bounds write) rather than a
-  // fixed timeout before capturing the final bounds.
+  // in the URL). Wait for the camera to settle so the captured URL holds the
+  // final bounds rather than an intermediate one.
   await mapMarkers(page).first().click()
   await expect(page).toHaveURL(/[?&]station=[^&]+/)
-  let previousUrl = ''
-  await expect
-    .poll(
-      async () => {
-        const currentUrl = page.url()
-        const stable = currentUrl === previousUrl
-        previousUrl = currentUrl
-        return stable
-      },
-      { timeout: 10_000, intervals: [250, 250, 500] },
-    )
-    .toBe(true)
+  await waitForMapToSettle(page)
   const expectedMapUrl = page.url()
 
   // The overview's detail link navigates in-app to the station detail page.
