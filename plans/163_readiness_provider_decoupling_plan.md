@@ -268,8 +268,24 @@ flowchart TD
   (OS TCP connect timeout). Mitigated by running it on the blocking pool and by
   keeping it out of any healthcheck.
 
+## Codecov patch coverage follow-up
+
+The first push tripped the Codecov patch status (89.77 %, 9 uncovered lines):
+
+- `rest/handlers/health.rs` — the `spawn_blocking` join-error branch was not
+  reachable from the endpoint tests. The mapping is now the pure
+  `providers_report(result)` helper with unit tests for up, degraded, join error
+  and empty, so every branch of the informational response is covered.
+- `main.rs` — the wiring lines are straight-line composition-root code that no
+  unit test can execute. The composition root is now excluded from the
+  production coverage scope in [`scripts/coverage.sh`](scripts/coverage.sh),
+  [`scripts/lcov-production-only.sh`](scripts/lcov-production-only.sh) and
+  [`codecov.yml`](codecov.yml) (all three mirror each other) and documented in
+  [`agents.md`](agents.md:63).
+
 ## Definition of done
 
+- [x] Codecov patch coverage has no uncovered backend lines (informational-response mapping fully tested; composition root excluded from the coverage scope)
 - [x] `HealthService` distinguishes critical and informational indicators; `check()` and `check_details()` covered by core unit tests
 - [x] `HealthServicePort::check_details` added and documented as informational-only
 - [x] `main.rs` wires Postgres as critical and the provider indicators as informational
@@ -278,19 +294,29 @@ flowchart TD
 - [x] OpenAPI contains `/health/providers`; root HATEOAS exposes `health-providers`
 - [x] REST tests cover readiness independence, providers up/down/empty, OpenAPI path, root link
 - [x] README, `docker-compose.yml` comment, e2e compose/script and `agents.md` comments corrected; plan 03 notes the supersession
-- [x] `make check` — `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo audit` pass. The frontend Prettier step could not run in this environment (`prettier: not found`, `frontend/node_modules` absent); no frontend source was changed.
-- [x] `make test-rest` (134 passed) and `make test` (854 passed) green
-- [x] `make coverage` — backend gate green: overall (production) 87.22 % (≥ 80 %), core 97.15 % (≥ 95 %). The frontend Vitest coverage step could not run for the same missing-`node_modules` reason and is unaffected by this change.
+- [x] `make check` green — `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, frontend Prettier and `cargo audit`
+- [x] `make test-rest` (140 passed) and `make test` (858 passed) green
+- [x] `make coverage` green — backend overall (production) 88.53 % (≥ 80 %), core 97.14 % (≥ 95 %); frontend Vitest thresholds also pass
+- [x] `make test-playwright` green — 76 passed
 
 ## Verification
 
+Run on the feature branch with the frontend dependencies installed (`npm ci`,
+`playwright install chromium`) and a pre-built basemap archive in place.
+
 | Command | Result |
 |---|---|
-| `cargo fmt --check` | OK |
-| `cargo clippy --all-targets -- -D warnings` | OK |
-| `cargo audit` | OK (1 allowed warning: yanked `yoke-derive`) |
+| `make check` | OK (fmt, `clippy --all-targets -D warnings`, Prettier, `cargo audit` with 1 allowed yanked-crate warning) |
 | `cargo test core::domain::health` | 8 passed |
-| `make test-rest` | 134 passed |
-| `make test` | 854 passed |
-| `make coverage` (backend) | overall 87.22 %, core 97.15 % |
-| `npm run format:check` / `npm run test:unit:coverage` | not runnable — frontend `node_modules` not installed in this environment |
+| `make test-rest` | 140 passed |
+| `make test` | 858 passed |
+| `make coverage` | backend overall 88.53 %, core 97.14 %; frontend Vitest ≥ thresholds |
+| `make test-playwright` | 76 passed (2.5 min) |
+
+**e2e prerequisite (documentation gap found while running the gate):**
+`tiles/map.pmtiles` is **git-ignored** (`.gitignore:87`), so a fresh worktree has
+no basemap. Without it, `useTilesReady` keeps the map on "Downloading map…", the
+MapLibre map never mounts and every map-dependent spec fails (76 → 11 passing).
+The archive has to be built once with `make tiles` (or hard-linked from an
+existing checkout) before `make test-playwright`. [`agents.md`](agents.md:136)
+claimed the archive is committed; that claim is corrected in this change.

@@ -39,6 +39,10 @@ flags:
     carryforward: true
 
 ignore:
+  # Composition root: straight-line process wiring (dependency construction and
+  # `panic!` startup guards) that no unit test can execute. Mirrors the
+  # exclusion in scripts/coverage.sh and scripts/lcov-production-only.sh.
+  - "backend/src/main.rs"
   - "backend/target"
   - "frontend/node_modules"
   - "frontend/dist"
