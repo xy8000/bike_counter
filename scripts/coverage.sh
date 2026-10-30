@@ -11,6 +11,11 @@
 # files (paths containing `/tests/`, or named `tests.rs`/`test.rs`) are excluded
 # from the calculation. Test scaffolding must never inflate the number.
 #
+# The composition root `src/main.rs` is excluded as well: it is straight-line
+# process wiring (dependency construction + `panic!` startup guards) that no
+# unit test can execute, so counting it would only ever add zero-hit lines to
+# every wiring change (mirrored by scripts/lcov-production-only.sh + codecov.yml).
+#
 # The core is pure hexagonal logic and is expected to be fully unit-tested in
 # isolation with in-memory mocks, hence its higher bar than the IO-bound
 # adapters.
@@ -72,7 +77,8 @@ production_coverage() {
         }
         /^SF:/ {
             file = $0; sub(/^SF:/, "", file)
-            if (file ~ /\/tests\// || file ~ /tests\.rs$/ || file ~ /test\.rs$/) {
+            if (file ~ /\/tests\// || file ~ /tests\.rs$/ || file ~ /test\.rs$/ ||
+                file ~ /\/src\/main\.rs$/) {
                 skip = 1; b = 0
             } else {
                 skip = 0; b = test_start(file)

@@ -70,19 +70,83 @@ pub async fn get_health_providers(State(state): State<AppState>) -> Json<HealthD
     // blocking pool instead of a tokio worker thread. Unlike readiness, the
     // result is diagnostics only and never changes the HTTP status.
     let health_service = state.health_service.clone();
-    let components = tokio::task::spawn_blocking(move || health_service.check_details())
-        .await
-        .unwrap_or_else(|join_error| {
-            vec![HealthComponent {
-                name: "backend".to_string(),
-                status: HealthStatus::Down(format!("Health check task failed: {join_error}")),
-            }]
-        });
+    let result = tokio::task::spawn_blocking(move || health_service.check_details()).await;
+    let (status, components) = providers_report(result);
+    Json(HealthDto::with_components(status, components))
+}
 
+/// Turns the blocking-pool result of the informational probes into the reported
+/// overall status plus components. A join error is collapsed into a single
+/// `backend` component instead of panicking, so the endpoint always answers
+/// `200` and its body still explains what happened.
+fn providers_report<E: std::fmt::Display>(
+    result: Result<Vec<HealthComponent>, E>,
+) -> (&'static str, Vec<HealthComponent>) {
+    let components = result.unwrap_or_else(|error| {
+        vec![HealthComponent {
+            name: "backend".to_string(),
+            status: HealthStatus::Down(format!("Health check task failed: {error}")),
+        }]
+    });
     let status = if components.iter().all(|component| component.status.is_up()) {
         "up"
     } else {
         "degraded"
     };
-    Json(HealthDto::with_components(status, components))
+    (status, components)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::providers_report;
+    use crate::core::domain::health::{HealthComponent, HealthStatus};
+
+    fn component(name: &str, status: HealthStatus) -> HealthComponent {
+        HealthComponent {
+            name: name.to_string(),
+            status,
+        }
+    }
+
+    #[test]
+    fn reports_up_when_every_informational_component_is_up() {
+        let (status, components) =
+            providers_report(Ok::<_, &str>(vec![component("provider", HealthStatus::Up)]));
+
+        assert_eq!(status, "up");
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].name, "provider");
+    }
+
+    #[test]
+    fn reports_degraded_when_an_informational_component_is_down() {
+        let (status, components) = providers_report(Ok::<_, &str>(vec![
+            component("provider-a", HealthStatus::Up),
+            component("provider-b", HealthStatus::Down("offline".to_string())),
+        ]));
+
+        assert_eq!(status, "degraded");
+        assert_eq!(components[1].name, "provider-b");
+    }
+
+    #[test]
+    fn collapses_a_join_error_into_a_down_backend_component() {
+        let (status, components) = providers_report(Err("task panicked"));
+
+        assert_eq!(status, "degraded");
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].name, "backend");
+        assert_eq!(
+            components[0].status,
+            HealthStatus::Down("Health check task failed: task panicked".to_string())
+        );
+    }
+
+    #[test]
+    fn reports_up_without_informational_components() {
+        let (status, components) = providers_report(Ok::<_, &str>(Vec::new()));
+
+        assert_eq!(status, "up");
+        assert!(components.is_empty());
+    }
 }

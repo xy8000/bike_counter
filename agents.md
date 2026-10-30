@@ -69,9 +69,13 @@ The backend logs through the [`tracing`](https://docs.rs/tracing) stack — **no
   layer) drops below `CORE_COVERAGE_THRESHOLD` (default 95%). Both thresholds
   are measured on **production code only**: lines inside `#[cfg(test)]` modules
   and standalone test files are excluded, so test scaffolding can never inflate
-  the number. The core is pure hexagonal logic and is expected to be fully
-  unit-tested in isolation with in-memory mocks, so its bar is higher than the
-  adapters'.
+  the number. The composition root `backend/src/main.rs` is excluded as well —
+  it is straight-line process wiring (dependency construction + `panic!` startup
+  guards) that no unit test can execute; the same exclusion is applied by
+  [`scripts/lcov-production-only.sh`](scripts/lcov-production-only.sh) and
+  [`codecov.yml`](codecov.yml) so local, CI and Codecov agree. The core is pure
+  hexagonal logic and is expected to be fully unit-tested in isolation with
+  in-memory mocks, so its bar is higher than the adapters'.
 - **Frontend** — it then runs `npm run test:unit:coverage` (Vitest + v8 over
   the whole `frontend/src`, React components included), which fails when the
   whole-`src` line coverage drops below the thresholds in
@@ -133,10 +137,14 @@ synthesized recent measurements + pre-finished jobs). The run is **fully
 offline**: the scheduled background jobs are disabled via
 `scheduled_jobs_enabled = false` in the temporary config the orchestrator writes
 (so the backend can never start a data-import, asset-cleanup or tiles job), no
-Protomaps/tile download is needed, and the backend healthcheck is overridden to
-`/health/live` so the boot wait needs neither the PostgreSQL readiness probe nor
-the external providers (readiness itself is provider-free; provider reachability
-is informational on `/health/providers`). The specs live in
+Protomaps/tile download is needed **provided** a pre-built `tiles/map.pmtiles`
+already exists — the archive is **git-ignored**, so build it once with
+`make tiles` (or reuse one from an existing checkout) before the first e2e run;
+without it the frontend stays on "Downloading map…" and every map-dependent spec
+fails. The backend healthcheck is overridden to `/health/live` so the boot wait
+needs neither the PostgreSQL readiness probe nor the external providers
+(readiness itself is provider-free; provider reachability is informational on
+`/health/providers`). The specs live in
 [`frontend/e2e/`](frontend/e2e) with the config in
 [`frontend/playwright.config.ts`](frontend/playwright.config.ts); the
 [`scripts/e2e-playwright.sh`](scripts/e2e-playwright.sh) orchestrator boots the

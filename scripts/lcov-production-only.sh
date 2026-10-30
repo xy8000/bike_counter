@@ -7,7 +7,10 @@
 # scaffolding so the uploaded numbers match the production-only gate that
 # scripts/coverage.sh enforces locally (overall >= 80 %, core >= 95 %):
 #   * standalone test files (paths containing /tests/, or named tests.rs /
-#     test.rs) are removed entirely, and
+#     test.rs) are removed entirely,
+#   * the composition root src/main.rs is removed entirely (straight-line
+#     process wiring that no unit test can execute; mirrored by
+#     scripts/coverage.sh + codecov.yml), and
 #   * every line from the first "#[cfg(test)]" marker of a file onwards is
 #     removed.
 #
@@ -43,7 +46,8 @@ awk '
     }
     /^SF:/ {
         file = $0; sub(/^SF:/, "", file)
-        if (file ~ /\/tests\// || file ~ /tests\.rs$/ || file ~ /test\.rs$/) {
+        if (file ~ /\/tests\// || file ~ /tests\.rs$/ || file ~ /test\.rs$/ ||
+            file ~ /\/src\/main\.rs$/) {
             skip = 1
             next
         }
