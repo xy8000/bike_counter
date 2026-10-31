@@ -17,7 +17,8 @@ version after the released `v0.0.9` is a **patch** release: `v0.0.10`.
 - The version strings across the repo are still `0.0.9`; this release bumps them
   to `0.0.10`.
 - The prep is committed on `release/v0.0.10-release-prep`, branched off the
-  up-to-date `main`.
+  up-to-date `main`, and pushed to `origin`. `main` is **locked**, so the branch
+  is merged through a pull request instead of a local fast-forward.
 
 ## Delta (v0.0.9 -> `main`)
 
@@ -69,9 +70,10 @@ and pinned image tags need bumping.
 ## Approach
 
 Follow the exact `v0.0.1` .. `v0.0.9` release flow. The prep is committed on a
-`release/v0.0.10-release-prep` branch off `main`, merged to `main`
-(fast-forward, as the branch only adds the prep commit), and then the annotated
-`v0.0.10` tag is pushed.
+`release/v0.0.10-release-prep` branch off `main` and pushed to `origin`. Because
+`main` is locked, the branch is merged through a pull request (it only adds the
+prep commits, so the merge is trivial), and then the annotated `v0.0.10` tag is
+pushed.
 
 ### 1. Version bump `0.0.9` -> `0.0.10`
 
@@ -129,7 +131,8 @@ already updated:
 
 ### 4. Cut the release
 
-- Fast-forward `main` to the prep commit and push `main`.
+- Open the pull request for `release/v0.0.10-release-prep` and merge it into
+  `main` (the branch is pushed; `main` is locked, so no local fast-forward).
 - From the merged `main`:
   `git tag -a v0.0.10 -m "Bike-Counter 0.0.10"` then `git push origin v0.0.10`.
 - The push triggers [`release.yml`](../.github/workflows/release.yml), which
@@ -144,8 +147,8 @@ already updated:
 - [x] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.10`
 - [x] `VersionDto` OpenAPI example and [`release.yml`](../.github/workflows/release.yml) doc comments refreshed to `0.0.10`
 - [x] `make check`, `make test-rest` and `make test-unit` green
-- [x] Prep committed on `release/v0.0.10-release-prep` (`6e162f2`)
-- [ ] `main` fast-forwarded to the prep commit and pushed
+- [x] Prep committed on `release/v0.0.10-release-prep` (`6e162f2`, `3965e7e`) and pushed to `origin`
+- [ ] Release prep pull request merged into `main` (`main` is locked)
 - [ ] Annotated tag `v0.0.10` created and pushed
 - [ ] Release workflow completed green for `v0.0.10` — pending CI
 - [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.10` / `:latest` and `xy8000/bike-counter-frontend:0.0.10` / `:latest` — pending CI
