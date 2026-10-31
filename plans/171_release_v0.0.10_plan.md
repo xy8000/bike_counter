@@ -140,11 +140,11 @@ already updated:
 ## Definition of done
 
 - [x] Plan file in [`plans/`](.) created
-- [ ] Version bumped to `0.0.10` in `Cargo.toml`, `Cargo.lock`, `package.json`, `package-lock.json`
-- [ ] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.10`
-- [ ] `VersionDto` OpenAPI example and [`release.yml`](../.github/workflows/release.yml) doc comments refreshed to `0.0.10`
-- [ ] `make check`, `make test-rest` and `make test-unit` green
-- [ ] Prep committed on `release/v0.0.10-release-prep`
+- [x] Version bumped to `0.0.10` in `Cargo.toml`, `Cargo.lock`, `package.json`, `package-lock.json`
+- [x] `docker-compose.yml` image tags and [`README.md`](../README.md) prose updated to `0.0.10`
+- [x] `VersionDto` OpenAPI example and [`release.yml`](../.github/workflows/release.yml) doc comments refreshed to `0.0.10`
+- [x] `make check`, `make test-rest` and `make test-unit` green
+- [x] Prep committed on `release/v0.0.10-release-prep` (`6e162f2`)
 - [ ] `main` fast-forwarded to the prep commit and pushed
 - [ ] Annotated tag `v0.0.10` created and pushed
 - [ ] Release workflow completed green for `v0.0.10` — pending CI
