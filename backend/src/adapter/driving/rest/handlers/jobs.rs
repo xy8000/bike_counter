@@ -67,7 +67,9 @@ pub async fn get_job_by_id(
 #[utoipa::path(
     post,
     path = "/api/v1/jobs/{id}/cancel",
-    tag = "Jobs",
+    tag = "Admin API",
+    description = "Requests cooperative cancellation of a running job, or force-cancels it. Admin operation: it only exists when `admin_token` is configured and requires an `Authorization: Bearer <admin_token>` header.",
+    security(("bearer_auth" = [])),
     params(
         ("id" = Uuid, Path, description = "Job UUID")
     ),

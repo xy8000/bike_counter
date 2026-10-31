@@ -162,7 +162,8 @@ async fn returns_404_when_data_source_does_not_exist() {
 #[tokio::test]
 async fn reset_imported_until_clears_the_watermark_for_a_known_source() {
     let munster = data_source("Münster", "münster_opendata_github_provider");
-    let app = TestApp::with_repositories(
+    // Resetting the watermark is an admin mutation, so the route needs a token.
+    let app = TestApp::with_repositories_and_admin(
         MockDataSourceRepository {
             data_sources: vec![munster.clone()],
         },
@@ -171,7 +172,7 @@ async fn reset_imported_until_clears_the_watermark_for_a_known_source() {
 
     let id = munster.id.0;
     let response = app
-        .send(
+        .send_admin(
             Method::DELETE,
             &format!("/api/v1/data-sources/{id}/imported_until"),
         )
@@ -181,11 +182,11 @@ async fn reset_imported_until_clears_the_watermark_for_a_known_source() {
 
 #[tokio::test]
 async fn reset_imported_until_returns_404_for_an_unknown_source() {
-    let app = TestApp::new();
+    let app = TestApp::new_with_admin();
     let id = Uuid::new_v4();
 
     let response = app
-        .send(
+        .send_admin(
             Method::DELETE,
             &format!("/api/v1/data-sources/{id}/imported_until"),
         )

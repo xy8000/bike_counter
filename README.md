@@ -190,7 +190,49 @@ Machine consumers get two HTTP surfaces plus a bulk export:
   run finishes.
 
 The complete endpoint reference (parameters, schemas, examples) is served by
-Swagger-UI at <http://localhost:8080/swagger-ui/>.
+Swagger-UI at <http://localhost:8080/swagger-ui/>. The backend port is published
+on loopback only (`127.0.0.1:8080`) because the browser reaches the API through
+nginx; use an SSH tunnel or a compose override to open Swagger-UI from another
+machine.
+
+### Authentication model
+
+Everything readable is anonymous: the whole BFF (`/api/bff`), the read-only
+`/api/v1` endpoints and the OpenData tree need no credentials. The six
+data-mutating routes — `PATCH /api/v1/counting-stations/{id}`, the
+`persistent_state` `PUT`/`DELETE` routes, `DELETE
+/api/v1/data-sources/{id}/imported_until` and `POST /api/v1/jobs/{id}/cancel` —
+are only **registered when `admin_token` is configured**, and then require
+`Authorization: Bearer <admin_token>` (constant-time comparison; `401` with
+`WWW-Authenticate: Bearer` on failure). Without a token those routes answer
+`404`: the write surface fails closed instead of being open. They are grouped
+under the **Admin API** tag in Swagger-UI, which offers an authorize button.
+
+### Health endpoints
+
+| Endpoint | Meaning |
+| --- | --- |
+| `/health/live` | the process is running |
+| `/health/ready` | **Postgres reachable** — the only readiness signal (Docker healthcheck) |
+| `/health/providers` | informational third-party and object-storage reachability, cached for 30 s, always `200` |
+
+Provider reachability never gates readiness: a slow or unreachable city website
+cannot make the service unready or block the frontend start. Do not wire
+`/health/providers` to a restart policy.
+
+### Capacity model
+
+Two dials, both optional in `config.toml`:
+
+- `database_pool_max_size` (default 10) — pooled Postgres connections. It must
+  fit the database `max_connections` budget shared with the job workers.
+- `http_max_concurrent_requests` (default `2 × database_pool_max_size`) — global
+  edge concurrency limit. Requests beyond it queue in the router instead of
+  occupying blocking-pool threads; every surface also carries a timeout (BFF
+  15 s, REST reads 30 s, OpenData files 60 s, admin mutations 30 s).
+- `database_connection_timeout_seconds` (default 5) and
+  `database_statement_timeout_seconds` (default 15) bound connection acquisition
+  and query runtime, so an exhausted or runaway query cannot pin a request.
 
 ## Contributing
 

@@ -38,7 +38,9 @@ pub async fn get_persistent_state(
 #[utoipa::path(
     put,
     path = "/api/v1/data-sources/{id}/persistent_state/{key}",
-    tag = "Data Sources",
+    tag = "Admin API",
+    description = "Upserts one opaque persistent-state entry. Admin operation: it only exists when `admin_token` is configured and requires an `Authorization: Bearer <admin_token>` header.",
+    security(("bearer_auth" = [])),
     params(
         ("id" = Uuid, Path, description = "Data source UUID"),
         ("key" = String, Path, description = "Persistent-state key")
@@ -74,7 +76,9 @@ pub async fn put_persistent_state_entry(
 #[utoipa::path(
     delete,
     path = "/api/v1/data-sources/{id}/persistent_state/{key}",
-    tag = "Data Sources",
+    tag = "Admin API",
+    description = "Deletes one opaque persistent-state entry. Admin operation: it only exists when `admin_token` is configured and requires an `Authorization: Bearer <admin_token>` header.",
+    security(("bearer_auth" = [])),
     params(
         ("id" = Uuid, Path, description = "Data source UUID"),
         ("key" = String, Path, description = "Persistent-state key")
@@ -100,7 +104,9 @@ pub async fn delete_persistent_state_entry(
 #[utoipa::path(
     delete,
     path = "/api/v1/data-sources/{id}/persistent_state",
-    tag = "Data Sources",
+    tag = "Admin API",
+    description = "Clears every persistent-state entry of a data source. Admin operation: it only exists when `admin_token` is configured and requires an `Authorization: Bearer <admin_token>` header.",
+    security(("bearer_auth" = [])),
     params(
         ("id" = Uuid, Path, description = "Data source UUID")
     ),

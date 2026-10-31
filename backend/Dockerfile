@@ -52,6 +52,8 @@ EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
 
 # The container is healthy only while the application reports itself ready,
-# i.e. while PostgreSQL answers the readiness probe.
+# i.e. while PostgreSQL answers the readiness probe. Postgres only: provider
+# reachability is informational and lives on /health/providers, so a slow city
+# website can never flap this container or block the frontend start.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail --silent http://localhost:8080/health/ready || exit 1

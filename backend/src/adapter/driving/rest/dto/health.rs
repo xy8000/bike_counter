@@ -36,6 +36,10 @@ pub struct HealthDto {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<HealthComponentDto>>,
+    /// When the reported components were observed. Only set by
+    /// `/health/providers`, whose report is cached (readiness is live).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl HealthDto {
@@ -44,6 +48,7 @@ impl HealthDto {
         Self {
             status: status.into(),
             components: None,
+            observed_at: None,
         }
     }
 
@@ -57,6 +62,19 @@ impl HealthDto {
                     .map(HealthComponentDto::from)
                     .collect(),
             ),
+            observed_at: None,
         }
+    }
+
+    /// Builds a report that also states when its components were observed
+    /// (used by the cached `/health/providers` report).
+    pub fn with_observation(
+        status: impl Into<String>,
+        components: Vec<HealthComponent>,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        let mut dto = Self::with_components(status, components);
+        dto.observed_at = Some(observed_at);
+        dto
     }
 }

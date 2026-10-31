@@ -69,10 +69,16 @@ pub async fn get_health_providers(State(state): State<AppState>) -> Json<HealthD
     // The provider probes are synchronous TCP connects, so they run on the
     // blocking pool instead of a tokio worker thread. Unlike readiness, the
     // result is diagnostics only and never changes the HTTP status.
-    let health_service = state.health_service.clone();
-    let result = tokio::task::spawn_blocking(move || health_service.check_details()).await;
-    let (status, components) = providers_report(result);
-    Json(HealthDto::with_components(status, components))
+    let provider_health = state.provider_health.clone();
+    let report = tokio::task::spawn_blocking(move || provider_health.report())
+        .await
+        .map_err(|error| error.to_string());
+    let observed_at = report.as_ref().ok().map(|report| report.observed_at);
+    let (status, components) = providers_report(report.map(|report| report.components));
+    match observed_at {
+        Some(observed_at) => Json(HealthDto::with_observation(status, components, observed_at)),
+        None => Json(HealthDto::with_components(status, components)),
+    }
 }
 
 /// Turns the blocking-pool result of the informational probes into the reported

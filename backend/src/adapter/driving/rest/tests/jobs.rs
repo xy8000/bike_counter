@@ -129,10 +129,11 @@ async fn gets_job_by_id() {
 
 #[tokio::test]
 async fn cancel_running_job_requests_cooperative_cancellation() {
-    let app = TestApp::new();
+    // Cancelling is an admin mutation, so the route needs a configured token.
+    let app = TestApp::new_with_admin();
 
     let uri = format!("/api/v1/jobs/{JOB_ID_B}/cancel");
-    let (status, body) = app.request_json(Method::POST, &uri, None).await;
+    let (status, body) = app.request_admin_json(Method::POST, &uri, None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "CANCELLATION_REQUESTED");
@@ -150,11 +151,11 @@ async fn cancel_running_job_requests_cooperative_cancellation() {
 
 #[tokio::test]
 async fn force_cancel_marks_a_running_job_cancelled() {
-    let app = TestApp::new();
+    let app = TestApp::new_with_admin();
 
     let uri = format!("/api/v1/jobs/{JOB_ID_B}/cancel");
     let (status, body) = app
-        .request_json(Method::POST, &uri, Some(json!({ "force": true })))
+        .request_admin_json(Method::POST, &uri, Some(json!({ "force": true })))
         .await;
 
     assert_eq!(status, StatusCode::OK);
@@ -163,10 +164,10 @@ async fn force_cancel_marks_a_running_job_cancelled() {
 
 #[tokio::test]
 async fn cancelling_a_terminal_job_is_a_400() {
-    let app = TestApp::new();
+    let app = TestApp::new_with_admin();
 
     let (status, body) = app
-        .request_json(
+        .request_admin_json(
             Method::POST,
             &format!("/api/v1/jobs/{JOB_ID_A}/cancel"),
             None,
@@ -185,10 +186,10 @@ async fn cancelling_a_terminal_job_is_a_400() {
 
 #[tokio::test]
 async fn cancelling_an_unknown_job_is_a_404() {
-    let app = TestApp::new();
+    let app = TestApp::new_with_admin();
 
     let uri = format!("/api/v1/jobs/{UNKNOWN_ID}/cancel");
-    let (status, body) = app.request_json(Method::POST, &uri, None).await;
+    let (status, body) = app.request_admin_json(Method::POST, &uri, None).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(

@@ -3,7 +3,8 @@ use std::str::FromStr;
 
 use crate::core::domain::configuration::configuration::value_objects::{
     AssetStorageConfiguration, DataProviderConfiguration, DataSourceConfiguration,
-    DatabaseConfiguration, MapsConfiguration, OpenDataStorageConfiguration,
+    DatabaseConfiguration, DatabasePoolConfiguration, MapsConfiguration,
+    OpenDataStorageConfiguration,
 };
 use crate::core::domain::configuration::configuration::{
     Configuration, DEFAULT_ASSET_CLEANUP_CRON, DEFAULT_DATA_SOURCE_UPDATE_CRON,
@@ -45,6 +46,20 @@ struct ConfigurationDto {
     /// Set to `false` for e2e/test setups that must never reach the providers.
     #[serde(default = "default_scheduled_jobs_enabled")]
     scheduled_jobs_enabled: bool,
+    /// Optional bearer token guarding the data-mutating (admin) REST routes.
+    /// Omitted or empty disables those routes entirely (they answer 404).
+    #[serde(default)]
+    admin_token: Option<String>,
+    /// Optional pool capacity/timeout overrides (defaults: 10 / 5 s / 15 s).
+    #[serde(default)]
+    database_pool_max_size: Option<u32>,
+    #[serde(default)]
+    database_connection_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    database_statement_timeout_seconds: Option<u64>,
+    /// Optional global HTTP concurrency limit (default: twice the pool size).
+    #[serde(default)]
+    http_max_concurrent_requests: Option<usize>,
     database_url: String,
     database_user: String,
     database_password: String,
@@ -289,6 +304,17 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
             dto.opendata_storage.region,
         )?;
 
+        // Capacity timeouts are all optional: an absent key keeps the
+        // documented default, so an existing config.toml boots unchanged.
+        let defaults = DatabasePoolConfiguration::default();
+        let database_pool = DatabasePoolConfiguration::new(
+            dto.database_pool_max_size.unwrap_or(defaults.max_size()),
+            dto.database_connection_timeout_seconds
+                .unwrap_or(defaults.connection_timeout_seconds()),
+            dto.database_statement_timeout_seconds
+                .unwrap_or(defaults.statement_timeout_seconds()),
+        )?;
+
         Configuration::new(
             database,
             data_sources,
@@ -310,7 +336,15 @@ impl ConfigurationRepository for ConfigurationTomlAdapter {
                 dto.measurement_rollup_max_heartbeat_interval_seconds,
             )
         })
-        .map(|configuration| configuration.with_scheduled_jobs_enabled(dto.scheduled_jobs_enabled))
+        .and_then(|configuration| configuration.with_admin_token(dto.admin_token))
+        .and_then(|configuration| {
+            configuration.with_http_max_concurrent_requests(dto.http_max_concurrent_requests)
+        })
+        .map(|configuration| {
+            configuration
+                .with_database_pool(database_pool)
+                .with_scheduled_jobs_enabled(dto.scheduled_jobs_enabled)
+        })
     }
 }
 

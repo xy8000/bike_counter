@@ -28,19 +28,6 @@ use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::MeasurementRepository;
 use crate::core::domain::station_analytics::{MetricKey, MetricWindow};
 
-/// Sums a window across every channel from the daily rollup. The windows this
-/// feeds (the four overview metrics) are all complete local days, so the daily
-/// rollup answers them exactly without scanning the raw history.
-pub(super) fn sum_window(
-    repository: &dyn MeasurementRepository,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-    timezone: &str,
-    channel_ids: &[ChannelId],
-) -> Result<i64, DomainError> {
-    repository.sum_daily(from, to, timezone, channel_ids, None)
-}
-
 /// Timestamp of the most recent successful data-source update.
 ///
 /// Prefers the newest per-data-source `last_updated_at`: it is advanced for each
@@ -98,88 +85,79 @@ pub(super) fn metric_windows(
     // (instead of one earliest query per station), so the exclude-new-stations
     // path is a single indexed lookup over the bounds aggregate rather than a raw
     // walk of each channel's history.
-    let earliest_by_channel: HashMap<uuid::Uuid, DateTime<Utc>> = if exclude_new_stations {
-        let mut all_channel_ids: Vec<ChannelId> = Vec::new();
-        for station in stations {
-            if let Some(channels) = channels_by_station.get(&station.id.0) {
-                all_channel_ids.extend(channels.iter().map(|channel| ChannelId(channel.id.0)));
-            }
-        }
-        repository
-            .channel_bounds(&all_channel_ids)?
-            .into_iter()
-            .map(|bound| (bound.channel_id, bound.first))
-            .collect()
+    let earliest_by_channel = if exclude_new_stations {
+        channel_first_measurements(repository, stations, channels_by_station)?
     } else {
         HashMap::new()
     };
 
+    // The window boundaries only depend on the station's timezone, so the
+    // stations are grouped by timezone and each group is aggregated with one
+    // query per window instead of one query per station.
+    let mut stations_by_timezone: HashMap<&str, Vec<&CountingStation>> = HashMap::new();
     for station in stations {
-        let tz: Tz = station.timezone.parse()?;
-        let channel_ids: Vec<ChannelId> = channels_by_station
-            .get(&station.id.0)
-            .map(|channels| channels.iter().map(|c| ChannelId(c.id.0)).collect())
-            .unwrap_or_default();
+        stations_by_timezone
+            .entry(station.timezone.0.as_str())
+            .or_default()
+            .push(station);
+    }
 
-        let (day_from, day_to) = previous_local_days(tz, now, 1)?;
-        let (before_day_from, _) = previous_local_days(tz, now, 2)?;
-        let day_previous_to = day_from - Duration::microseconds(1);
+    for (timezone, group) in stations_by_timezone {
+        let tz: Tz = group[0].timezone.parse()?;
+        let windows = metric_window_pairs(tz, now)?;
 
-        let (week_from, week_to) = previous_local_days(tz, now, 7)?;
-        let (before_week_from, _) = previous_local_days(tz, now, 14)?;
-        let week_previous_to = week_from - Duration::microseconds(1);
+        // Every channel of the group: one aggregate query per window covers the
+        // whole timezone group, and the per-station totals are accumulated here.
+        let group_channel_ids = channel_ids_of(&group, channels_by_station);
+        if group_channel_ids.is_empty() {
+            continue;
+        }
 
-        let (month_from, month_to) = previous_calendar_month(tz, now)?;
-        let (before_month_from, _) = calendar_month_window(tz, now, 2)?;
-        let month_previous_to = month_from - Duration::microseconds(1);
-
-        let (year_from, year_to) = previous_calendar_year(tz, now)?;
-        let (before_year_from, _) = calendar_year_window(tz, now, 2)?;
-        let year_previous_to = year_from - Duration::microseconds(1);
-
-        // The earliest-ever measurement of the station's channels (the MIN over
-        // all of them), read from the batch fetched above. Under the Bike-Trends
-        // setting a station is "new" for a metric when this earliest is not before
-        // that metric's previous-window start — it had no data at all before the
+        // The earliest-ever measurement per station (the MIN over its channels),
+        // read from the batch fetched above. Under the Bike-Trends setting a
+        // station is "new" for a metric when this earliest is not before that
+        // metric's previous-window start — it had no data at all before the
         // comparison period. Data loss or outages inside the window never exclude
-        // it. Skipped entirely unless the setting is on, keeping the default path
-        // free of extra queries.
-        let earliest = if exclude_new_stations {
-            channel_ids
-                .iter()
-                .filter_map(|channel_id| earliest_by_channel.get(&channel_id.0).copied())
-                .min()
-        } else {
-            None
-        };
+        // it. Skipped entirely unless the setting is on.
+        let earliest_by_station = first_measurements_by_station(
+            &group,
+            channels_by_station,
+            &earliest_by_channel,
+            exclude_new_stations,
+        );
 
-        // The (current, previous) window pair of each metric, in MetricKey order.
-        let windows = [
-            ((day_from, day_to), (before_day_from, day_previous_to)),
-            ((week_from, week_to), (before_week_from, week_previous_to)),
-            (
-                (month_from, month_to),
-                (before_month_from, month_previous_to),
-            ),
-            ((year_from, year_to), (before_year_from, year_previous_to)),
-        ];
-
+        // At most two aggregate queries per metric window for the whole group,
+        // i.e. eight per distinct timezone instead of eight per station.
         for (idx, ((c_from, c_to), (p_from, p_to))) in windows.into_iter().enumerate() {
-            // No earliest (the station has no measurements at all) is treated as
-            // "new": there is no baseline to compare against.
-            if exclude_new_stations
-                && earliest.is_none_or(|earliest| introduced_after(earliest, p_from))
-            {
-                if single_station {
-                    is_new[idx] = true;
-                } else {
+            let current_by_channel =
+                daily_totals(repository, c_from, c_to, timezone, &group_channel_ids)?;
+            let previous_by_channel =
+                daily_totals(repository, p_from, p_to, timezone, &group_channel_ids)?;
+
+            for station in &group {
+                // No earliest (the station has no measurements at all) is treated
+                // as "new": there is no baseline to compare against.
+                let introduced = exclude_new_stations
+                    && is_new_station(
+                        earliest_by_station.get(&station.id.0).copied().flatten(),
+                        p_from,
+                    );
+                if introduced {
+                    if single_station {
+                        is_new[idx] = true;
+                    }
                     continue;
                 }
+
+                accumulate_station(
+                    station,
+                    &current_by_channel,
+                    &previous_by_channel,
+                    channels_by_station,
+                    &mut current[idx],
+                    &mut previous[idx],
+                );
             }
-            current[idx] +=
-                sum_window(repository, c_from, c_to, &station.timezone.0, &channel_ids)?;
-            previous[idx] +=
-                sum_window(repository, p_from, p_to, &station.timezone.0, &channel_ids)?;
         }
     }
 
@@ -209,6 +187,141 @@ pub(super) fn metric_windows(
             is_new: single_station && is_new[3],
         },
     ])
+}
+
+/// A metric's current and previous window.
+type WindowPair = (
+    (DateTime<Utc>, DateTime<Utc>),
+    (DateTime<Utc>, DateTime<Utc>),
+);
+
+/// Computes the eight local window boundaries once per timezone and pairs them
+/// as (current, previous) in `MetricKey` order.
+fn metric_window_pairs(tz: Tz, now: DateTime<Utc>) -> Result<[WindowPair; 4], DomainError> {
+    let (day_from, day_to) = previous_local_days(tz, now, 1)?;
+    let (before_day_from, _) = previous_local_days(tz, now, 2)?;
+    let day_previous_to = day_from - Duration::microseconds(1);
+
+    let (week_from, week_to) = previous_local_days(tz, now, 7)?;
+    let (before_week_from, _) = previous_local_days(tz, now, 14)?;
+    let week_previous_to = week_from - Duration::microseconds(1);
+
+    let (month_from, month_to) = previous_calendar_month(tz, now)?;
+    let (before_month_from, _) = calendar_month_window(tz, now, 2)?;
+    let month_previous_to = month_from - Duration::microseconds(1);
+
+    let (year_from, year_to) = previous_calendar_year(tz, now)?;
+    let (before_year_from, _) = calendar_year_window(tz, now, 2)?;
+    let year_previous_to = year_from - Duration::microseconds(1);
+
+    Ok([
+        ((day_from, day_to), (before_day_from, day_previous_to)),
+        ((week_from, week_to), (before_week_from, week_previous_to)),
+        (
+            (month_from, month_to),
+            (before_month_from, month_previous_to),
+        ),
+        ((year_from, year_to), (before_year_from, year_previous_to)),
+    ])
+}
+
+/// First-ever timestamp per channel, read with one `channel_bounds` query.
+fn channel_first_measurements(
+    repository: &dyn MeasurementRepository,
+    stations: &[CountingStation],
+    channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
+) -> Result<HashMap<uuid::Uuid, DateTime<Utc>>, DomainError> {
+    let mut channel_ids: Vec<ChannelId> = Vec::new();
+    for station in stations {
+        if let Some(channels) = channels_by_station.get(&station.id.0) {
+            channel_ids.extend(channels.iter().map(|channel| ChannelId(channel.id.0)));
+        }
+    }
+    Ok(repository
+        .channel_bounds(&channel_ids)?
+        .into_iter()
+        .map(|bound| (bound.channel_id, bound.first))
+        .collect())
+}
+
+/// Every channel id of the given stations, in station order.
+fn channel_ids_of(
+    stations: &[&CountingStation],
+    channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
+) -> Vec<ChannelId> {
+    let mut channel_ids = Vec::new();
+    for station in stations {
+        if let Some(channels) = channels_by_station.get(&station.id.0) {
+            channel_ids.extend(channels.iter().map(|channel| ChannelId(channel.id.0)));
+        }
+    }
+    channel_ids
+}
+
+/// The earliest-ever measurement per station (the MIN over its channels), taken
+/// from the batch fetched by [`channel_first_measurements`].
+fn first_measurements_by_station(
+    stations: &[&CountingStation],
+    channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
+    earliest_by_channel: &HashMap<uuid::Uuid, DateTime<Utc>>,
+    exclude_new_stations: bool,
+) -> HashMap<uuid::Uuid, Option<DateTime<Utc>>> {
+    stations
+        .iter()
+        .map(|station| {
+            let earliest = if exclude_new_stations {
+                channels_by_station.get(&station.id.0).and_then(|channels| {
+                    channels
+                        .iter()
+                        .filter_map(|channel| earliest_by_channel.get(&channel.id.0).copied())
+                        .min()
+                })
+            } else {
+                None
+            };
+            (station.id.0, earliest)
+        })
+        .collect()
+}
+
+/// Whether a station counts as "new" for a window that started at
+/// `previous_from`. A station without any measurement has no baseline, so it is
+/// treated as new.
+fn is_new_station(earliest: Option<DateTime<Utc>>, previous_from: DateTime<Utc>) -> bool {
+    earliest.is_none_or(|earliest| introduced_after(earliest, previous_from))
+}
+
+/// One per-channel rollup aggregate for a window, keyed by channel id.
+fn daily_totals(
+    repository: &dyn MeasurementRepository,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    timezone: &str,
+    channel_ids: &[ChannelId],
+) -> Result<HashMap<uuid::Uuid, i64>, DomainError> {
+    Ok(repository
+        .sum_daily_by_channel(from, to, timezone, channel_ids, None)?
+        .into_iter()
+        .map(|total| (total.channel_id, total.total))
+        .collect())
+}
+
+/// Adds one station's channel totals of a window into the running metric sums.
+fn accumulate_station(
+    station: &CountingStation,
+    current_by_channel: &HashMap<uuid::Uuid, i64>,
+    previous_by_channel: &HashMap<uuid::Uuid, i64>,
+    channels_by_station: &HashMap<uuid::Uuid, Vec<Channel>>,
+    current_total: &mut i64,
+    previous_total: &mut i64,
+) {
+    let Some(channels) = channels_by_station.get(&station.id.0) else {
+        return;
+    };
+    for channel in channels {
+        *current_total += current_by_channel.get(&channel.id.0).copied().unwrap_or(0);
+        *previous_total += previous_by_channel.get(&channel.id.0).copied().unwrap_or(0);
+    }
 }
 
 #[cfg(test)]

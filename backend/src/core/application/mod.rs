@@ -14,6 +14,7 @@ pub mod measurement_service;
 pub mod opendata_export_service;
 pub mod opendata_service;
 pub mod persistent_state_service;
+pub mod provider_health_cache;
 pub mod provider_message_service;
 pub mod startup_service;
 pub mod station_analytics;

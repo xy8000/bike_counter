@@ -32,6 +32,10 @@ pub use measurement_repository::PostgresMeasurementRepository;
 pub use opendata_file_repository::PostgresOpenDataFileRepository;
 pub use opendata_measurement_reader::PostgresOpenDataMeasurementReader;
 pub use persistent_state_repository::PostgresPersistentStateRepository;
+pub use pool::create_pool_with;
+// `create_pool` is the default-preserving wrapper: production wiring always
+// passes the configured pool settings, only the repository tests use the default.
+#[cfg(test)]
 pub use pool::create_pool;
 pub(crate) use pool::db_error;
 pub use provider_message_repository::PostgresProviderMessageRepository;

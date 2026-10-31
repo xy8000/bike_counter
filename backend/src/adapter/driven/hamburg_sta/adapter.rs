@@ -16,8 +16,8 @@
 //! Whole pages are buffered (no partial-page re-fetch) and up to `concurrency`
 //! fields are paged in parallel per batch.
 
+use crate::adapter::driven::http::provider_endpoint_health;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -513,13 +513,7 @@ impl HamburgStaAdapter {
 
 impl DataProvider for HamburgStaAdapter {
     fn check_health(&self) -> HealthStatus {
-        let Some((host, port)) = parse_host_and_port(&self.base_url) else {
-            return HealthStatus::Down("invalid base_url in provider config".to_string());
-        };
-        match TcpStream::connect((host, port)) {
-            Ok(_) => HealthStatus::Up,
-            Err(error) => HealthStatus::Down(format!("{error:?}")),
-        }
+        provider_endpoint_health(parse_host_and_port(&self.base_url), "base_url")
     }
 
     fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {

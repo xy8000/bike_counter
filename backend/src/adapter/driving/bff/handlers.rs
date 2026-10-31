@@ -11,7 +11,7 @@
 //! sub-resources take an optional `as_of` reference time that pins their windows,
 //! making each response a pure function of its URL (and therefore cacheable).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
@@ -186,44 +186,48 @@ fn bounds_query(bounds: GeoBounds) -> String {
     )
 }
 
-/// Resolves image URLs for a batch of stations: the built-in default asset is
-/// resolved once and reused for every station without a linked asset; each
-/// distinct linked asset is resolved once (falling back to the default when the
-/// link is stale).
+/// Resolves image URLs for a batch of stations in **one** asset lookup.
+///
+/// The built-in default asset is resolved once and reused for every station
+/// without a linked asset; every distinct linked asset is fetched in a single
+/// `find_by_ids` round trip (missing/stale links fall back to the default). This
+/// used to issue one blocking lookup per distinct asset, so a map pan with many
+/// stations paid N+1 database round trips.
 async fn station_image_urls(
-    state: &AppState,
+    asset_service: std::sync::Arc<dyn crate::core::domain::assets::service_port::AssetServicePort>,
     stations: &[CountingStation],
 ) -> Result<HashMap<Uuid, String>, (StatusCode, Json<ErrorResponseDto>)> {
     let default_asset = {
-        let service = state.asset_service.clone();
+        let service = asset_service.clone();
         blocking(move || service.default_asset())
             .await
             .map_err(map_domain_error)?
     };
     let default_url = format!("/api/bff/assets/{}/content", default_asset.id.0);
 
-    let mut linked_ids: Vec<Uuid> = stations
+    let mut linked_ids: Vec<AssetId> = stations
         .iter()
-        .filter_map(|station| station.image_asset_id.map(|id| id.0))
+        .filter_map(|station| station.image_asset_id)
         .collect();
-    linked_ids.sort_unstable();
-    linked_ids.dedup();
-    let mut linked_by_id: HashMap<Uuid, Uuid> = HashMap::new();
-    for asset_id in linked_ids {
-        let service = state.asset_service.clone();
-        let found = blocking(move || service.find_by_id(AssetId(asset_id)))
+    linked_ids.sort_unstable_by_key(|asset_id| asset_id.0);
+    linked_ids.dedup_by(|left, right| left.0 == right.0);
+
+    let existing: HashSet<Uuid> = if linked_ids.is_empty() {
+        HashSet::new()
+    } else {
+        blocking(move || asset_service.find_by_ids(&linked_ids))
             .await
-            .map_err(map_domain_error)?;
-        if let Some(asset) = found {
-            linked_by_id.insert(asset.id.0, asset.id.0);
-        }
-    }
+            .map_err(map_domain_error)?
+            .into_iter()
+            .map(|asset| asset.id.0)
+            .collect()
+    };
 
     Ok(stations
         .iter()
         .map(|station| {
             let url = match station.image_asset_id {
-                Some(asset_id) if linked_by_id.contains_key(&asset_id.0) => {
+                Some(asset_id) if existing.contains(&asset_id.0) => {
                     format!("/api/bff/assets/{}/content", asset_id.0)
                 }
                 _ => default_url.clone(),
@@ -321,7 +325,7 @@ pub async fn get_bff_stations_sidebar(
         .await
         .map_err(map_domain_error)?;
 
-    let image_urls = station_image_urls(&state, &stations).await?;
+    let image_urls = station_image_urls(state.asset_service.clone(), &stations).await?;
     let visible_count = stations.len();
     let items = stations
         .into_iter()
@@ -429,7 +433,7 @@ pub async fn get_bff_stations_search(
         .iter()
         .map(|summary| summary.station.clone())
         .collect();
-    let image_urls = station_image_urls(&state, &stations).await?;
+    let image_urls = station_image_urls(state.asset_service.clone(), &stations).await?;
     let mut items: Vec<StationSummaryDto> =
         summaries.into_iter().map(StationSummaryDto::from).collect();
     for dto in &mut items {
@@ -1294,9 +1298,36 @@ pub async fn get_bff_data_sources(
         .await
         .map_err(map_domain_error)?;
 
+    // Every logo is resolved in one round trip instead of one lookup per row.
+    let mut logo_ids: Vec<AssetId> = overview
+        .iter()
+        .filter_map(|row| row.logo_asset_id)
+        .collect();
+    logo_ids.sort_unstable_by_key(|asset_id| asset_id.0);
+    logo_ids.dedup_by(|left, right| left.0 == right.0);
+    let logo_urls: HashMap<Uuid, String> = if logo_ids.is_empty() {
+        HashMap::new()
+    } else {
+        let service = state.asset_service.clone();
+        blocking(move || service.find_by_ids(&logo_ids))
+            .await
+            .map_err(map_domain_error)?
+            .into_iter()
+            .map(|asset| {
+                (
+                    asset.id.0,
+                    format!("/api/bff/assets/{}/content", asset.id.0),
+                )
+            })
+            .collect()
+    };
+
     let mut items = Vec::with_capacity(overview.len());
     for row in overview {
-        let image_url = data_source_image_url(&state, row.logo_asset_id).await?;
+        let image_url = row
+            .logo_asset_id
+            .and_then(|asset_id| logo_urls.get(&asset_id.0).cloned())
+            .unwrap_or_default();
         items.push(BffDataSourceListItemDto {
             id: row.id,
             name: row.name,
@@ -1449,4 +1480,171 @@ pub async fn get_bff_data_source_imports(
         page.average_duration_seconds,
     );
     Ok(cached_json(&dto, CachePolicy::NoStore, &headers))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::core::domain::assets::asset::value_objects::{
+        ByteSize, ContentType, ObjectKey, Sha256,
+    };
+    use crate::core::domain::assets::asset::{Asset, AssetOrigin, BuiltinImage};
+    use crate::core::domain::assets::service_port::AssetServicePort;
+    use crate::core::domain::counting_stations::counting_station::value_objects as station_vo;
+
+    /// Asset service double that counts the lookups, so the batching contract of
+    /// `station_image_urls` is observable.
+    struct CountingAssetService {
+        default: Asset,
+        linked: Vec<Asset>,
+        find_by_ids_calls: AtomicUsize,
+        find_by_id_calls: AtomicUsize,
+    }
+
+    fn asset(id: u128) -> Asset {
+        let now = Utc::now();
+        Asset {
+            id: AssetId(Uuid::from_u128(id)),
+            object_key: ObjectKey(format!("builtin/{id}.svg")),
+            content_type: ContentType("image/svg+xml".to_string()),
+            byte_size: ByteSize(1),
+            sha256: Sha256("00".to_string()),
+            origin: AssetOrigin::Builtin,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn station(id: u128, image_asset: Option<u128>) -> CountingStation {
+        CountingStation {
+            id: station_vo::Id(Uuid::from_u128(id)),
+            name: station_vo::Name(format!("station {id}")),
+            description: station_vo::Description(String::new()),
+            external_datasource_id: None,
+            data_source_id: None,
+            coordinates: None,
+            timezone: station_vo::Timezone("Europe/Berlin".to_string()),
+            image_asset_id: image_asset.map(|id| AssetId(Uuid::from_u128(id))),
+            image_sha256: None,
+            status: station_vo::Status::Active,
+        }
+    }
+
+    impl AssetServicePort for CountingAssetService {
+        fn sync_builtin_images(&self, _builtin: &[BuiltinImage]) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn default_asset(&self) -> Result<Asset, DomainError> {
+            Ok(self.default.clone())
+        }
+
+        fn store_provider_image(
+            &self,
+            _sha256: Sha256,
+            _content_type: ContentType,
+            _bytes: &[u8],
+        ) -> Result<Asset, DomainError> {
+            Err(DomainError::Database("not used in this test".to_string()))
+        }
+
+        fn find_by_id(&self, id: AssetId) -> Result<Option<Asset>, DomainError> {
+            self.find_by_id_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.linked.iter().find(|asset| asset.id == id).cloned())
+        }
+
+        fn find_by_ids(&self, ids: &[AssetId]) -> Result<Vec<Asset>, DomainError> {
+            self.find_by_ids_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .linked
+                .iter()
+                .filter(|asset| ids.contains(&asset.id))
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn station_image_urls_resolves_every_linked_asset_in_one_call() {
+        let service = Arc::new(CountingAssetService {
+            default: asset(0xbeef),
+            linked: vec![asset(0x1), asset(0x2), asset(0x3)],
+            find_by_ids_calls: AtomicUsize::new(0),
+            find_by_id_calls: AtomicUsize::new(0),
+        });
+        let stations = vec![
+            station(0x11, Some(0x1)),
+            station(0x12, Some(0x2)),
+            station(0x13, None),
+            station(0x14, Some(0x3)),
+            // Duplicate link: must not trigger a second lookup.
+            station(0x15, Some(0x1)),
+        ];
+
+        let urls = station_image_urls(service.clone(), &stations)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service.find_by_ids_calls.load(Ordering::SeqCst),
+            1,
+            "one batch lookup for every station, independent of the station count"
+        );
+        assert_eq!(
+            service.find_by_id_calls.load(Ordering::SeqCst),
+            0,
+            "the per-id lookup must no longer be used on the batch path"
+        );
+        assert_eq!(
+            urls[&Uuid::from_u128(0x11)],
+            format!("/api/bff/assets/{}/content", Uuid::from_u128(0x1))
+        );
+        assert_eq!(
+            urls[&Uuid::from_u128(0x13)],
+            format!("/api/bff/assets/{}/content", Uuid::from_u128(0xbeef)),
+            "a station without a linked asset falls back to the default"
+        );
+    }
+
+    #[tokio::test]
+    async fn station_image_urls_falls_back_to_the_default_for_stale_links() {
+        let service = Arc::new(CountingAssetService {
+            default: asset(0xbeef),
+            linked: vec![],
+            find_by_ids_calls: AtomicUsize::new(0),
+            find_by_id_calls: AtomicUsize::new(0),
+        });
+        let stations = vec![station(0x21, Some(0x99))];
+
+        let urls = station_image_urls(service.clone(), &stations)
+            .await
+            .unwrap();
+
+        assert_eq!(service.find_by_ids_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            urls[&Uuid::from_u128(0x21)],
+            format!("/api/bff/assets/{}/content", Uuid::from_u128(0xbeef))
+        );
+    }
+
+    #[tokio::test]
+    async fn station_image_urls_skips_the_batch_lookup_without_linked_assets() {
+        let service = Arc::new(CountingAssetService {
+            default: asset(0xbeef),
+            linked: vec![],
+            find_by_ids_calls: AtomicUsize::new(0),
+            find_by_id_calls: AtomicUsize::new(0),
+        });
+        let stations = vec![station(0x31, None), station(0x32, None)];
+
+        let urls = station_image_urls(service.clone(), &stations)
+            .await
+            .unwrap();
+
+        assert_eq!(service.find_by_ids_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(urls.len(), 2);
+    }
 }

@@ -5,9 +5,9 @@
 //! [`fetcher`](super::fetcher), [`archive`](super::archive) and
 //! [`parsing`](super::parsing), keeping each concern focused.
 
+use crate::adapter::driven::http::provider_endpoint_health;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -486,7 +486,7 @@ impl MuensterGithubAdapter {
                     continue;
                 };
                 let csv_path = entry.path();
-                if csv_path.extension().and_then(|e| e.to_str()) == Some("csv") {
+                if csv_path.extension().and_then(std::ffi::OsStr::to_str) == Some("csv") {
                     csvs.push(csv_path);
                 }
             }
@@ -651,15 +651,7 @@ impl MuensterGithubAdapter {
 
 impl DataProvider for MuensterGithubAdapter {
     fn check_health(&self) -> HealthStatus {
-        let (host, port) = match parse_host_and_port(&self.url) {
-            Some(host_port) => host_port,
-            None => return HealthStatus::Down("invalid url in provider config".to_string()),
-        };
-
-        match TcpStream::connect((host, port)) {
-            Ok(_) => HealthStatus::Up,
-            Err(error) => HealthStatus::Down(format!("{error:?}")),
-        }
+        provider_endpoint_health(parse_host_and_port(&self.url), "url")
     }
 
     fn get_all_counting_stations(

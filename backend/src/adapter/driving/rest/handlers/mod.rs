@@ -31,6 +31,7 @@ use axum::http::StatusCode;
 use axum::response::Json;
 
 use crate::adapter::driving::rest::dto::ErrorResponseDto;
+use crate::core::application::provider_health_cache::ProviderHealthCache;
 use crate::core::domain::assets::asset_storage_port::AssetStorage;
 use crate::core::domain::assets::service_port::AssetServicePort;
 use crate::core::domain::channels::service_port::ChannelServicePort;
@@ -53,7 +54,10 @@ pub struct AppState {
     pub measurement_service: Arc<dyn MeasurementServicePort + Send + Sync>,
     pub data_source_service: Arc<dyn DataSourceServicePort + Send + Sync>,
     pub job_service: Arc<dyn JobServicePort + Send + Sync>,
+    /// Readiness gates on this one only (Postgres).
     pub health_service: Arc<dyn HealthServicePort + Send + Sync>,
+    /// Informational provider/storage reachability; never gates readiness.
+    pub provider_health: Arc<ProviderHealthCache>,
     pub persistent_state_service: Arc<dyn PersistentStateServicePort + Send + Sync>,
     pub provider_message_service: Arc<dyn ProviderMessageServicePort + Send + Sync>,
     pub station_analytics_service: Arc<dyn StationAnalyticsServicePort + Send + Sync>,

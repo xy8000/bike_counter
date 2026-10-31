@@ -34,6 +34,16 @@ pub const DEFAULT_MEASUREMENT_ROLLUP_CRON: &str = "0 */15 * * * *";
 /// quickly; the heartbeat loop beats every few seconds independently of the
 /// refresh chunks the job runs.
 pub const DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS: i64 = 300;
+/// Minimum accepted length of `admin_token`. A shorter value is rejected at
+/// startup so an accidentally weak secret cannot guard the write surface.
+pub const MIN_ADMIN_TOKEN_LENGTH: usize = 16;
+/// Multiplier deriving the default global HTTP concurrency limit from the pool
+/// size: two requests per connection, so a burst queues at the edge
+/// (`ConcurrencyLimitLayer`) instead of occupying blocking-pool threads that
+/// are merely waiting for a connection.
+pub const DEFAULT_HTTP_MAX_CONCURRENT_REQUESTS_MULTIPLIER: usize = 2;
+/// Upper bound accepted for `http_max_concurrent_requests`.
+pub const MAX_HTTP_MAX_CONCURRENT_REQUESTS: usize = 512;
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
@@ -67,6 +77,17 @@ pub struct Configuration {
     /// `true`; disable for test/e2e setups that must never reach out to the
     /// providers.
     scheduled_jobs_enabled: bool,
+    /// Optional bearer token guarding the data-mutating REST routes. `None`
+    /// means those routes are not registered at all (they answer 404). The
+    /// value is never rendered: [`value_objects::AdminToken`] redacts its
+    /// `Debug` representation.
+    admin_token: Option<value_objects::AdminToken>,
+    /// Explicit capacity/timeout settings for the shared synchronous pool; the
+    /// defaults preserve the previously hard-coded constants.
+    database_pool: value_objects::DatabasePoolConfiguration,
+    /// Global limit on concurrently served HTTP requests. `None` derives it
+    /// from the pool size, see [`Self::http_max_concurrent_requests`].
+    http_max_concurrent_requests: Option<usize>,
 }
 
 impl Configuration {
@@ -131,6 +152,9 @@ impl Configuration {
             measurement_rollup_max_heartbeat_interval_seconds:
                 DEFAULT_MEASUREMENT_ROLLUP_MAX_HEARTBEAT_INTERVAL_SECONDS,
             scheduled_jobs_enabled: true,
+            admin_token: None,
+            database_pool: value_objects::DatabasePoolConfiguration::default(),
+            http_max_concurrent_requests: None,
         })
     }
 
@@ -277,13 +301,85 @@ impl Configuration {
         self.scheduled_jobs_enabled = enabled;
         self
     }
+
+    /// The configured admin bearer token, or `None` when the data-mutating
+    /// routes are disabled. Safe to log: the value object redacts itself.
+    pub fn admin_token(&self) -> Option<&str> {
+        self.admin_token
+            .as_ref()
+            .map(value_objects::AdminToken::as_str)
+    }
+
+    /// Sets (or disables) the admin bearer token. An absent or empty value
+    /// disables the admin routes; a non-empty value shorter than
+    /// [`MIN_ADMIN_TOKEN_LENGTH`] is a configuration error that blocks startup.
+    pub fn with_admin_token(mut self, admin_token: Option<String>) -> Result<Self, ConfigError> {
+        self.admin_token = match admin_token {
+            Some(raw) if !raw.trim().is_empty() => Some(value_objects::AdminToken::new(&raw)?),
+            _ => None,
+        };
+        Ok(self)
+    }
+
+    /// Capacity and timeout settings for the shared Postgres pool.
+    pub fn database_pool(&self) -> &value_objects::DatabasePoolConfiguration {
+        &self.database_pool
+    }
+
+    /// Sets the explicit pool settings. Consumes and returns `self` so it can be
+    /// chained onto [`Configuration::new`].
+    pub fn with_database_pool(
+        mut self,
+        database_pool: value_objects::DatabasePoolConfiguration,
+    ) -> Self {
+        self.database_pool = database_pool;
+        self
+    }
+
+    /// Global HTTP concurrency limit applied at the router. Defaults to twice
+    /// the pool size, so requests queue at the edge instead of occupying the
+    /// blocking-pool threads that are waiting for a connection.
+    pub fn http_max_concurrent_requests(&self) -> usize {
+        self.http_max_concurrent_requests.unwrap_or(
+            self.database_pool.max_size() as usize
+                * DEFAULT_HTTP_MAX_CONCURRENT_REQUESTS_MULTIPLIER,
+        )
+    }
+
+    /// Sets the global HTTP concurrency limit. `None` restores the value derived
+    /// from the pool size; an out-of-range value is a configuration error.
+    pub fn with_http_max_concurrent_requests(
+        mut self,
+        limit: Option<usize>,
+    ) -> Result<Self, ConfigError> {
+        if let Some(limit) = limit
+            && !(1..=MAX_HTTP_MAX_CONCURRENT_REQUESTS).contains(&limit)
+        {
+            return Err(ConfigError::InvalidFormat(format!(
+                "http_max_concurrent_requests must be between 1 and \
+                 {MAX_HTTP_MAX_CONCURRENT_REQUESTS}, got {limit}"
+            )));
+        }
+        self.http_max_concurrent_requests = limit;
+        Ok(self)
+    }
 }
 
 pub mod value_objects {
     use std::collections::HashMap;
     use std::str::FromStr;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     use crate::core::domain::configuration::error::ConfigError;
+
+    /// Default maximum number of pooled connections.
+    pub const DEFAULT_DATABASE_POOL_MAX_SIZE: u32 = 10;
+    /// Default wait for a pooled connection before giving up (seconds).
+    pub const DEFAULT_DATABASE_CONNECTION_TIMEOUT_SECONDS: u64 = 5;
+    /// Default server-side statement timeout (seconds). Bounds a runaway
+    /// analytics query so it cannot pin a connection indefinitely.
+    pub const DEFAULT_DATABASE_STATEMENT_TIMEOUT_SECONDS: u64 = 15;
 
     #[derive(Debug, Clone)]
     pub struct DatabaseConfiguration {
@@ -338,6 +434,121 @@ pub mod value_objects {
 
         pub fn database_name(&self) -> &str {
             &self.database_name
+        }
+    }
+
+    /// Capacity and timeout settings for the shared synchronous Postgres pool.
+    ///
+    /// Every value is validated, so a typo blocks startup instead of silently
+    /// mis-sizing the pool. `max_size` must stay inside the Postgres
+    /// `max_connections` budget shared with the job workers.
+    #[derive(Debug, Clone)]
+    pub struct DatabasePoolConfiguration {
+        max_size: u32,
+        connection_timeout_seconds: u64,
+        statement_timeout_seconds: u64,
+    }
+
+    impl DatabasePoolConfiguration {
+        pub fn new(
+            max_size: u32,
+            connection_timeout_seconds: u64,
+            statement_timeout_seconds: u64,
+        ) -> Result<Self, ConfigError> {
+            if !(1..=64).contains(&max_size) {
+                return Err(ConfigError::InvalidFormat(format!(
+                    "database_pool_max_size must be between 1 and 64, got {max_size}"
+                )));
+            }
+            if !(1..=60).contains(&connection_timeout_seconds) {
+                return Err(ConfigError::InvalidFormat(format!(
+                    "database_connection_timeout_seconds must be between 1 and 60, \
+                     got {connection_timeout_seconds}"
+                )));
+            }
+            if !(1..=300).contains(&statement_timeout_seconds) {
+                return Err(ConfigError::InvalidFormat(format!(
+                    "database_statement_timeout_seconds must be between 1 and 300, \
+                     got {statement_timeout_seconds}"
+                )));
+            }
+            Ok(Self {
+                max_size,
+                connection_timeout_seconds,
+                statement_timeout_seconds,
+            })
+        }
+
+        /// Maximum number of pooled connections.
+        pub fn max_size(&self) -> u32 {
+            self.max_size
+        }
+
+        /// How long `pool.get()` waits for a connection before giving up.
+        pub fn connection_timeout(&self) -> Duration {
+            Duration::from_secs(self.connection_timeout_seconds)
+        }
+
+        /// The acquisition timeout in whole seconds.
+        pub fn connection_timeout_seconds(&self) -> u64 {
+            self.connection_timeout_seconds
+        }
+
+        /// The statement timeout in whole seconds.
+        pub fn statement_timeout_seconds(&self) -> u64 {
+            self.statement_timeout_seconds
+        }
+
+        /// The statement timeout in milliseconds, as Postgres expects it.
+        pub fn statement_timeout_millis(&self) -> u64 {
+            self.statement_timeout_seconds.saturating_mul(1000)
+        }
+    }
+
+    impl Default for DatabasePoolConfiguration {
+        fn default() -> Self {
+            Self {
+                max_size: DEFAULT_DATABASE_POOL_MAX_SIZE,
+                connection_timeout_seconds: DEFAULT_DATABASE_CONNECTION_TIMEOUT_SECONDS,
+                statement_timeout_seconds: DEFAULT_DATABASE_STATEMENT_TIMEOUT_SECONDS,
+            }
+        }
+    }
+
+    /// Bearer token guarding the data-mutating (admin) REST routes.
+    ///
+    /// The inner value is deliberately opaque: the `Debug` implementation
+    /// redacts it so the token can never leak through the existing
+    /// configuration logging or an accidental `{:?}`.
+    #[derive(Clone)]
+    pub struct AdminToken(Arc<str>);
+
+    impl AdminToken {
+        /// Validates and wraps a token. The value is trimmed; the minimum length
+        /// is [`super::MIN_ADMIN_TOKEN_LENGTH`] characters.
+        pub fn new(raw: &str) -> Result<Self, ConfigError> {
+            let token = raw.trim();
+            if token.is_empty() {
+                return Err(ConfigError::EmptyValue("admin_token"));
+            }
+            if token.chars().count() < super::MIN_ADMIN_TOKEN_LENGTH {
+                return Err(ConfigError::InvalidFormat(format!(
+                    "admin_token must be at least {} characters long",
+                    super::MIN_ADMIN_TOKEN_LENGTH
+                )));
+            }
+            Ok(Self(Arc::from(token)))
+        }
+
+        /// The token as a string slice, for the constant-time comparison.
+        pub fn as_str(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl std::fmt::Debug for AdminToken {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("AdminToken(<redacted>)")
         }
     }
 
@@ -1246,6 +1457,143 @@ mod tests {
             .unwrap();
             assert!(matches!(
                 base.with_measurement_rollup(DEFAULT_MEASUREMENT_ROLLUP_CRON.to_string(), interval),
+                Err(ConfigError::InvalidFormat(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn admin_token_is_absent_by_default_and_disabled_when_empty() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        assert_eq!(base.admin_token(), None);
+        assert_eq!(
+            base.clone().with_admin_token(None).unwrap().admin_token(),
+            None
+        );
+        // An empty or whitespace-only value disables the admin routes instead of
+        // failing startup.
+        assert_eq!(
+            base.clone()
+                .with_admin_token(Some(String::new()))
+                .unwrap()
+                .admin_token(),
+            None
+        );
+        assert_eq!(
+            base.with_admin_token(Some("   ".to_string()))
+                .unwrap()
+                .admin_token(),
+            None
+        );
+    }
+
+    #[test]
+    fn admin_token_requires_the_minimum_length() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        let short = "x".repeat(super::MIN_ADMIN_TOKEN_LENGTH - 1);
+        assert!(matches!(
+            base.clone().with_admin_token(Some(short)),
+            Err(ConfigError::InvalidFormat(_))
+        ));
+
+        let valid = "x".repeat(super::MIN_ADMIN_TOKEN_LENGTH);
+        assert_eq!(
+            base.with_admin_token(Some(valid.clone()))
+                .unwrap()
+                .admin_token(),
+            Some(valid.as_str())
+        );
+    }
+
+    #[test]
+    fn admin_token_debug_representation_is_redacted() {
+        let token = super::value_objects::AdminToken::new("super-secret-token-value").unwrap();
+        let rendered = format!("{token:?}");
+        assert!(rendered.contains("redacted"));
+        assert!(!rendered.contains("super-secret-token-value"));
+    }
+
+    #[test]
+    fn database_pool_defaults_preserve_the_previous_constants() {
+        let pool = super::value_objects::DatabasePoolConfiguration::default();
+        assert_eq!(pool.max_size(), 10);
+        assert_eq!(pool.connection_timeout(), std::time::Duration::from_secs(5));
+        assert_eq!(pool.statement_timeout_millis(), 15_000);
+    }
+
+    #[test]
+    fn database_pool_rejects_out_of_range_values() {
+        use super::value_objects::DatabasePoolConfiguration;
+
+        assert!(DatabasePoolConfiguration::new(0, 5, 15).is_err());
+        assert!(DatabasePoolConfiguration::new(65, 5, 15).is_err());
+        assert!(DatabasePoolConfiguration::new(10, 0, 15).is_err());
+        assert!(DatabasePoolConfiguration::new(10, 61, 15).is_err());
+        assert!(DatabasePoolConfiguration::new(10, 5, 0).is_err());
+        assert!(DatabasePoolConfiguration::new(10, 5, 301).is_err());
+        assert!(DatabasePoolConfiguration::new(10, 5, 15).is_ok());
+    }
+
+    #[test]
+    fn http_concurrency_defaults_to_twice_the_pool_size() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        assert_eq!(base.http_max_concurrent_requests(), 20);
+
+        let tuned = base
+            .with_database_pool(
+                super::value_objects::DatabasePoolConfiguration::new(4, 5, 15).unwrap(),
+            )
+            .with_http_max_concurrent_requests(Some(64))
+            .unwrap();
+        assert_eq!(tuned.http_max_concurrent_requests(), 64);
+        // Clearing the explicit limit falls back to the pooled default.
+        assert_eq!(
+            tuned
+                .with_http_max_concurrent_requests(None)
+                .unwrap()
+                .http_max_concurrent_requests(),
+            8
+        );
+    }
+
+    #[test]
+    fn http_concurrency_rejects_out_of_range_values() {
+        let base = configuration(
+            database_config(),
+            vec![],
+            DEFAULT_DATA_SOURCE_UPDATE_CRON.to_string(),
+            3600,
+            DEFAULT_ASSET_CLEANUP_CRON.to_string(),
+            3600,
+        )
+        .unwrap();
+        for limit in [0usize, 513] {
+            assert!(matches!(
+                base.clone().with_http_max_concurrent_requests(Some(limit)),
                 Err(ConfigError::InvalidFormat(_))
             ));
         }

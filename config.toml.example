@@ -3,6 +3,26 @@ database_user="postgres"
 database_password="postgres"
 database_name="bike_counter"
 
+# --- HTTP surface and database capacity (every key is optional) --------------
+
+# Bearer token guarding the data-mutating /api/v1 routes (counting-station
+# patch, persistent-state put/delete, imported_until reset, job cancel).
+# Omit it (or leave it empty) and those routes are NOT registered at all (404).
+# When set it must be at least 16 characters. Never commit a real token.
+# admin_token = "replace-with-a-long-random-token"
+
+# Maximum pooled Postgres connections (1..=64, default 10). Keep it inside the
+# postgres `max_connections` budget shared with the job workers.
+# database_pool_max_size = 10
+# Seconds to wait for a pooled connection before giving up (1..=60, default 5).
+# database_connection_timeout_seconds = 5
+# Server-side statement_timeout in seconds (1..=300, default 15), so a runaway
+# analytics query cannot pin a connection indefinitely.
+# database_statement_timeout_seconds = 15
+# Global HTTP concurrency limit (1..=512, default: 2 x database_pool_max_size).
+# Requests beyond it wait at the edge instead of occupying blocking-pool threads.
+# http_max_concurrent_requests = 20
+
 # Whether the scheduled background jobs (data-source update, asset cleanup,
 # tiles update) run at all. Defaults to true (omitting the key keeps the jobs
 # enabled); set to false for test/e2e setups that must never reach the

@@ -7,6 +7,26 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # The API only accepts small JSON payloads (the backend enforces the same
+    # 1 MiB limit), so anything larger is rejected at the edge.
+    client_max_body_size 1m;
+
+    # Compression happens here and **not** in the backend: the BFF computes its
+    # strong ETag over the uncompressed body, and double compression would make
+    # Content-Length/ETag ambiguous. JSON is the payload that matters (tens to
+    # hundreds of kB per card).
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types application/json application/javascript text/css image/svg+xml;
+
+    # Security headers. NOTE: nginx does not merge `add_header` across levels - a
+    # `location` that declares any (e.g. `/tiles/`) must repeat these.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+
     # Docker's embedded DNS resolver (127.0.0.11). We resolve the backend
     # hostname at request time via a variable so nginx starts even if the
     # backend container is briefly unavailable or restarting, instead of
@@ -31,6 +51,10 @@ server {
         # instead of re-downloading the (multi-GB) archive.
         etag on;
         add_header Cache-Control "public, max-age=604800, must-revalidate";
+        # Repeated because `add_header` is not inherited once this level has one.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
     }
 
     # Reverse-proxy the backend (BFF + REST) so the browser only ever talks
@@ -43,5 +67,24 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # The backend generates/echoes the request id; nginx only forwards it.
+        proxy_set_header X-Request-Id $request_id;
+
+        # Repeated because `add_header` is not inherited once this level has one.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+    }
+
+    # Health endpoints are not part of the browser-facing API surface but are
+    # useful for local probes through the same origin.
+    location /health/ {
+        set $backend_upstream backend:8080;
+        proxy_pass http://$backend_upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Request-Id $request_id;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
     }
 }

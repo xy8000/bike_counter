@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use uuid::Uuid;
@@ -173,9 +174,22 @@ impl ChannelRepository for MemoryChannelRepository {
 /// tests.
 struct MemoryMeasurementRepository {
     measurements: Vec<Measurement>,
+    /// How often the set-based per-channel daily aggregate ran. Used to assert
+    /// the query count of `metric_windows` (8 per distinct timezone).
+    sum_daily_by_channel_calls: Arc<AtomicUsize>,
 }
 
 impl MemoryMeasurementRepository {
+    fn new(measurements: Vec<Measurement>) -> Self {
+        Self {
+            measurements,
+            sum_daily_by_channel_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn sum_daily_by_channel_call_count(&self) -> usize {
+        self.sum_daily_by_channel_calls.load(Ordering::SeqCst)
+    }
     fn in_window(
         &self,
         from: DateTime<Utc>,
@@ -456,6 +470,19 @@ impl MeasurementRepository for MemoryMeasurementRepository {
             .collect())
     }
 
+    fn sum_daily_by_channel(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        _timezone: &str,
+        channel_ids: &[measurement_vo::ChannelId],
+        resolution_seconds: Option<i64>,
+    ) -> Result<Vec<ChannelTotal>, DomainError> {
+        self.sum_daily_by_channel_calls
+            .fetch_add(1, Ordering::SeqCst);
+        self.sum_by_channel(from, to, channel_ids, resolution_seconds)
+    }
+
     fn sum_by_month(
         &self,
         timezone: &str,
@@ -650,7 +677,7 @@ fn service_with_data_sources(
     StationAnalyticsService::new(
         Arc::new(MemoryCountingStationRepository { stations }),
         Arc::new(MemoryChannelRepository { channels }),
-        Arc::new(MemoryMeasurementRepository { measurements }),
+        Arc::new(MemoryMeasurementRepository::new(measurements)),
         Arc::new(MemoryJobRepository { jobs }),
         Arc::new(MemoryDataSourceRepository { data_sources }),
     )
@@ -2648,4 +2675,107 @@ fn stations_summary_custom_range_with_no_included_stations_is_empty() {
     assert!(g.current.is_empty());
     assert!(g.per_station.is_empty());
     assert!(g.station_pie.is_empty());
+}
+
+// -----------------------------------------------------------------------
+// read-path query counts (plan 164, workstream D)
+// -----------------------------------------------------------------------
+
+/// Groups the given channels by station, the shape `metric_windows` expects.
+fn channels_by_station(channels: &[Channel]) -> HashMap<Uuid, Vec<Channel>> {
+    let mut map: HashMap<Uuid, Vec<Channel>> = HashMap::new();
+    for channel in channels {
+        map.entry(channel.counting_station_id.0)
+            .or_default()
+            .push(channel.clone());
+    }
+    map
+}
+
+#[test]
+fn metric_windows_issues_eight_queries_for_a_single_timezone_group() {
+    let stations = vec![
+        station(STATION_1, "A", None),
+        station(STATION_B, "B", None),
+        station(STATION_C, "C", None),
+    ];
+    let channels = vec![
+        channel(CHANNEL_A1, STATION_1, "a1"),
+        channel(CHANNEL_A2, STATION_1, "a2"),
+        channel(CHANNEL_B1, STATION_B, "b1"),
+        channel(CHANNEL_C1, STATION_C, "c1"),
+    ];
+    // Only station A has data: the group query still runs once for all three.
+    let repository = MemoryMeasurementRepository::new(vec![measurement(
+        CHANNEL_A1,
+        42,
+        utc(2024, 1, 10, 10, 0, 0),
+    )]);
+
+    let metrics = super::metrics::metric_windows(
+        &repository,
+        &stations,
+        &channels_by_station(&channels),
+        detail_now(),
+        false,
+    )
+    .unwrap();
+
+    // Four metric windows x (current, previous) aggregate queries, independent
+    // of the station count.
+    assert_eq!(repository.sum_daily_by_channel_call_count(), 8);
+    // The per-station totals are still accumulated correctly.
+    let last_day = metrics
+        .iter()
+        .find(|window| window.key == MetricKey::LastDay)
+        .expect("LastDay is always present");
+    assert_eq!(last_day.current, 42);
+}
+
+#[test]
+fn metric_windows_issues_eight_queries_per_distinct_timezone() {
+    let mut berlin_1 = station(STATION_1, "A", None);
+    berlin_1.timezone = station_vo::Timezone("Europe/Berlin".to_string());
+    let mut berlin_2 = station(STATION_B, "B", None);
+    berlin_2.timezone = station_vo::Timezone("Europe/Berlin".to_string());
+    let mut utc_station = station(STATION_C, "C", None);
+    utc_station.timezone = station_vo::Timezone("UTC".to_string());
+    let stations = vec![berlin_1, berlin_2, utc_station];
+
+    let channels = vec![
+        channel(CHANNEL_A1, STATION_1, "a1"),
+        channel(CHANNEL_B1, STATION_B, "b1"),
+        channel(CHANNEL_C1, STATION_C, "c1"),
+    ];
+    let repository = MemoryMeasurementRepository::new(vec![]);
+
+    super::metrics::metric_windows(
+        &repository,
+        &stations,
+        &channels_by_station(&channels),
+        detail_now(),
+        false,
+    )
+    .unwrap();
+
+    // Two timezone groups -> two times the eight window queries.
+    assert_eq!(repository.sum_daily_by_channel_call_count(), 16);
+}
+
+#[test]
+fn metric_windows_skips_stations_without_channels_without_querying() {
+    let stations = vec![station(STATION_1, "A", None)];
+    let repository = MemoryMeasurementRepository::new(vec![]);
+
+    let metrics = super::metrics::metric_windows(
+        &repository,
+        &stations,
+        &HashMap::new(),
+        detail_now(),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(repository.sum_daily_by_channel_call_count(), 0);
+    assert!(metrics.iter().all(|window| window.current == 0));
 }

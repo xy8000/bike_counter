@@ -21,8 +21,16 @@
 # drops the e2e volumes with `down -v` before and after the run, so a fresh
 # seeded database is guaranteed every time — while the development
 # `postgres_data` / `garage_meta` / `garage_data` volumes are never touched.
+#
+# The stack is also isolated in names and host ports: the base compose file uses
+# fixed `container_name`s and publishes 8080/8081, so an e2e run next to a
+# running development stack used to fail with a container-name conflict (or a
+# port clash). The override renames every container and moves the published
+# ports to 18080/18081; `../scripts/e2e-playwright.sh` points APP_URL and
+# FRONTEND_URL at them.
 services:
   db:
+    container_name: bike_counter_db_e2e
     volumes:
       - postgres_data_e2e:/var/lib/postgresql
       # Relative bind-mount paths resolve against the compose project directory
@@ -31,17 +39,26 @@ services:
       - ./frontend/e2e/e2e-seed.sql:/docker-entrypoint-initdb.d/e2e-seed.sql:ro
 
   garage:
+    container_name: bike_counter_garage_e2e
     volumes:
       - garage_meta_e2e:/var/lib/garage/meta
       - garage_data_e2e:/var/lib/garage/data
 
   backend:
+    container_name: bike_counter_backend_e2e
+    ports: !override
+      - '127.0.0.1:18080:8080'
     healthcheck:
       test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:8080/health/live']
       interval: 5s
       timeout: 5s
       start_period: 10s
       retries: 60
+
+  frontend:
+    container_name: bike_counter_frontend_e2e
+    ports: !override
+      - '127.0.0.1:18081:8080'
 
 volumes:
   postgres_data_e2e:
