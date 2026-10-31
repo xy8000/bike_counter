@@ -131,11 +131,12 @@ already updated:
 
 ### 4. Cut the release
 
-- Open the pull request for `release/v0.0.10-release-prep` and merge it into
-  `main` (the branch is pushed; `main` is locked, so no local fast-forward).
+- The prep pull request was merged into `main` (squash-merged; `origin/main` is
+  now `0b00206` with version `0.0.10` in every manifest and image tag).
 - From the merged `main`:
-  `git tag -a v0.0.10 -m "Bike-Counter 0.0.10"` then `git push origin v0.0.10`.
-- The push triggers [`release.yml`](../.github/workflows/release.yml), which
+  `git tag -a v0.0.10 0b00206 -m "Bike-Counter 0.0.10"` then
+  `git push origin v0.0.10` — done.
+- The tag push triggers [`release.yml`](../.github/workflows/release.yml), which
   builds both multi-arch images, pushes `xy8000/bike-counter-backend:0.0.10`
   / `:latest` and `xy8000/bike-counter-frontend:0.0.10` / `:latest`,
   cosign-signs them, and creates the GitHub Release.
@@ -148,8 +149,8 @@ already updated:
 - [x] `VersionDto` OpenAPI example and [`release.yml`](../.github/workflows/release.yml) doc comments refreshed to `0.0.10`
 - [x] `make check`, `make test-rest` and `make test-unit` green
 - [x] Prep committed on `release/v0.0.10-release-prep` (`6e162f2`, `3965e7e`) and pushed to `origin`
-- [ ] Release prep pull request merged into `main` (`main` is locked)
-- [ ] Annotated tag `v0.0.10` created and pushed
+- [x] Release prep pull request merged into `main` (squash-merged as `0fe4cba`, `2d19c0d`, `0b00206`)
+- [x] Annotated tag `v0.0.10` created (commit `0b00206`) and pushed
 - [ ] Release workflow completed green for `v0.0.10` — pending CI
 - [ ] Docker Hub shows `xy8000/bike-counter-backend:0.0.10` / `:latest` and `xy8000/bike-counter-frontend:0.0.10` / `:latest` — pending CI
 - [ ] GitHub Release `v0.0.10` exists with release notes — pending CI
