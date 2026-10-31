@@ -38,7 +38,7 @@ async fn get_returns_empty_map_for_known_source() {
 async fn put_upserts_an_entry_and_get_round_trips() {
     let app = app();
     let (status, body) = app
-        .request_json(
+        .request_admin_json(
             Method::PUT,
             &entry(&DATA_SOURCE_ID_A.to_string(), "archive_checksum"),
             Some(json!({"value": "abc123"})),
@@ -60,10 +60,10 @@ async fn put_upserts_an_entry_and_get_round_trips() {
 async fn put_overwrites_an_existing_key() {
     let app = app();
     let url = entry(&DATA_SOURCE_ID_A.to_string(), "archive_checksum");
-    app.request_json(Method::PUT, &url, Some(json!({"value": "first"})))
+    app.request_admin_json(Method::PUT, &url, Some(json!({"value": "first"})))
         .await;
     let (status, body) = app
-        .request_json(Method::PUT, &url, Some(json!({"value": "second"})))
+        .request_admin_json(Method::PUT, &url, Some(json!({"value": "second"})))
         .await;
 
     assert_eq!(status, StatusCode::OK);
@@ -79,10 +79,10 @@ async fn put_overwrites_an_existing_key() {
 async fn delete_removes_a_single_entry() {
     let app = app();
     let url = entry(&DATA_SOURCE_ID_A.to_string(), "archive_checksum");
-    app.request_json(Method::PUT, &url, Some(json!({"value": "abc"})))
+    app.request_admin_json(Method::PUT, &url, Some(json!({"value": "abc"})))
         .await;
 
-    let (status, _) = app.request_json(Method::DELETE, &url, None).await;
+    let (status, _) = app.request_admin_json(Method::DELETE, &url, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (_, body) = app
@@ -95,13 +95,13 @@ async fn delete_removes_a_single_entry() {
 async fn clear_wipes_the_whole_store() {
     let app = app();
     let base = DATA_SOURCE_ID_A.to_string();
-    app.request_json(Method::PUT, &entry(&base, "a"), Some(json!({"value": "1"})))
+    app.request_admin_json(Method::PUT, &entry(&base, "a"), Some(json!({"value": "1"})))
         .await;
-    app.request_json(Method::PUT, &entry(&base, "b"), Some(json!({"value": "2"})))
+    app.request_admin_json(Method::PUT, &entry(&base, "b"), Some(json!({"value": "2"})))
         .await;
 
     let (status, _) = app
-        .request_json(Method::DELETE, &collection(&base), None)
+        .request_admin_json(Method::DELETE, &collection(&base), None)
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -126,7 +126,7 @@ async fn unknown_data_source_is_404() {
     );
 
     let (status, _) = app
-        .request_json(
+        .request_admin_json(
             Method::PUT,
             &entry(&unknown, "k"),
             Some(json!({"value": "v"})),
@@ -135,12 +135,12 @@ async fn unknown_data_source_is_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, _) = app
-        .request_json(Method::DELETE, &entry(&unknown, "k"), None)
+        .request_admin_json(Method::DELETE, &entry(&unknown, "k"), None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, _) = app
-        .request_json(Method::DELETE, &collection(&unknown), None)
+        .request_admin_json(Method::DELETE, &collection(&unknown), None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
@@ -149,7 +149,7 @@ async fn unknown_data_source_is_404() {
 async fn blank_key_is_400() {
     let app = app();
     let (status, _) = app
-        .request_json(
+        .request_admin_json(
             Method::PUT,
             &entry(&DATA_SOURCE_ID_A.to_string(), "%20"),
             Some(json!({"value": "v"})),

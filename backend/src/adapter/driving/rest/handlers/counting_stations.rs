@@ -66,7 +66,9 @@ pub async fn get_counting_station_by_id(
 #[utoipa::path(
     patch,
     path = "/api/v1/counting-stations/{id}",
-    tag = "Counting Stations",
+    tag = "Admin API",
+    description = "Updates a counting station's coordinates. Admin operation: it only exists when `admin_token` is configured and requires an `Authorization: Bearer <admin_token>` header.",
+    security(("bearer_auth" = [])),
     params(
         ("id" = Uuid, Path, description = "Counting Station UUID")
     ),

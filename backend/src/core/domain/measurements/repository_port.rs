@@ -151,6 +151,11 @@ pub trait MeasurementRepository {
     /// `resolution_seconds` restricts the sum to a single resolution; `None`
     /// sums all rows (the legacy behaviour, correct for single-resolution
     /// sources).
+    ///
+    /// Test-only: production reads aggregate per channel through
+    /// [`sum_by_channel`](Self::sum_by_channel) /
+    /// [`sum_daily_by_channel`](Self::sum_daily_by_channel).
+    #[cfg(test)]
     fn sum(
         &self,
         from: chrono::DateTime<chrono::Utc>,
@@ -350,13 +355,13 @@ pub trait MeasurementRepository {
     }
 
     /// Sums `value` over `[from, to]` from the daily rollup, for windows that are
-    /// whole local days in `timezone` (the overview metrics and `bikes_last_day`).
-    /// The rollup is keyed by each channel's own station-local date, so
-    /// `timezone` must match the station(s) being read (the current
-    /// single-timezone summary assumption).
+    /// whole local days in `timezone`.
     ///
     /// Defaults to the raw [`sum`](Self::sum) so rollup-unaware doubles behave
-    /// identically.
+    /// identically. Test-only: the overview metrics batch their per-channel
+    /// windows through [`sum_daily_by_channel`](Self::sum_daily_by_channel), so
+    /// nothing in production calls the single-total variant any more.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn sum_daily(
         &self,

@@ -2,7 +2,7 @@
 //! cache, and measurement serving. HTTP and parsing live in the sibling modules
 //! [`fetcher`](super::fetcher) and [`parsing`](super::parsing).
 
-use std::net::TcpStream;
+use crate::adapter::driven::http::provider_endpoint_health;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -291,18 +291,10 @@ impl BonnOpendataAdapter {
 
 impl DataProvider for BonnOpendataAdapter {
     fn check_health(&self) -> HealthStatus {
-        let (host, port) = match parse_host_and_port(&self.measurements_url) {
-            Some(host_port) => host_port,
-            None => {
-                return HealthStatus::Down(
-                    "invalid measurements_url in provider config".to_string(),
-                );
-            }
-        };
-        match TcpStream::connect((host, port)) {
-            Ok(_) => HealthStatus::Up,
-            Err(error) => HealthStatus::Down(format!("{error:?}")),
-        }
+        provider_endpoint_health(
+            parse_host_and_port(&self.measurements_url),
+            "measurements_url",
+        )
     }
 
     fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {

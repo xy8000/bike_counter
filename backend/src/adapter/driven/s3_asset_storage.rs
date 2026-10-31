@@ -21,6 +21,8 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::{SinkExt, Stream, StreamExt};
@@ -35,6 +37,7 @@ use crate::core::domain::assets::asset_storage_port::{
 };
 use crate::core::domain::configuration::configuration::value_objects::AssetStorageConfiguration;
 use crate::core::domain::error::DomainError;
+use crate::core::domain::health::{HealthStatus, ServiceHealthIndicator};
 
 /// How many times `ensure_bucket` retries while the object-storage server may
 /// still be starting up. The compose healthcheck gates the backend, but the S3
@@ -51,13 +54,55 @@ pub struct S3AssetStorage {
     region: Region,
     /// Credentials, reused for bucket creation.
     credentials: Credentials,
-    /// Small runtime used to drive the async rust-s3 calls from blocking
-    /// contexts (there is no tokio runtime available inside `spawn_blocking`).
-    runtime: tokio::runtime::Runtime,
+    /// Handle used to drive the async rust-s3 calls from blocking contexts
+    /// (a blocking thread is not an async context). Always a handle into the
+    /// single runtime owned by the composition root; only a standalone test
+    /// construction (see [`S3AssetStorage::new`]) keeps its own runtime alive in
+    /// `owned_runtime`.
+    runtime: tokio::runtime::Handle,
+    /// Kept alive for standalone test constructions; `None` in production, where
+    /// the runtime is shared with the rest of the process.
+    #[cfg(test)]
+    owned_runtime: Option<tokio::runtime::Runtime>,
+    /// Whether the bucket has been verified at least once. Startup no longer
+    /// aborts when the object storage is unreachable, so writes retry the bucket
+    /// creation lazily and `/health/providers` reports the current state.
+    bucket_ready: AtomicBool,
 }
 
 impl S3AssetStorage {
+    /// Builds the adapter with its **own** runtime (test-only).
+    ///
+    /// Production wiring always uses [`S3AssetStorage::with_runtime`], so the two
+    /// adapters (images and opendata) share the composition root's runtime
+    /// instead of each spinning up a multi-thread one.
+    #[cfg(test)]
     pub fn new(config: &AssetStorageConfiguration) -> Result<Self, DomainError> {
+        let runtime = tokio::runtime::Runtime::new().map_err(|error| {
+            DomainError::Database(format!("failed to create storage runtime: {error}"))
+        })?;
+        let handle = runtime.handle().clone();
+        Self::build(config, handle).map(|storage| storage.with_owned_runtime(runtime))
+    }
+
+    /// Builds the adapter on a runtime owned by the composition root.
+    pub fn with_runtime(
+        config: &AssetStorageConfiguration,
+        runtime: tokio::runtime::Handle,
+    ) -> Result<Self, DomainError> {
+        Self::build(config, runtime)
+    }
+
+    #[cfg(test)]
+    fn with_owned_runtime(mut self, runtime: tokio::runtime::Runtime) -> Self {
+        self.owned_runtime = Some(runtime);
+        self
+    }
+
+    fn build(
+        config: &AssetStorageConfiguration,
+        runtime: tokio::runtime::Handle,
+    ) -> Result<Self, DomainError> {
         let region = Region::Custom {
             region: config.region().to_string(),
             endpoint: config.endpoint().to_string(),
@@ -77,15 +122,15 @@ impl S3AssetStorage {
                 DomainError::Database(format!("invalid object storage bucket: {error}"))
             })?
             .with_path_style();
-        let runtime = tokio::runtime::Runtime::new().map_err(|error| {
-            DomainError::Database(format!("failed to create storage runtime: {error}"))
-        })?;
         Ok(Self {
             bucket,
             name: config.bucket().to_string(),
             region,
             credentials,
             runtime,
+            #[cfg(test)]
+            owned_runtime: None,
+            bucket_ready: AtomicBool::new(false),
         })
     }
 
@@ -136,13 +181,35 @@ impl S3AssetStorage {
     }
 }
 
+impl S3AssetStorage {
+    /// Verifies the bucket once and records the outcome for the health report.
+    fn ensure_bucket_once(&self) -> Result<(), DomainError> {
+        let result = self.create_and_verify_bucket();
+        self.bucket_ready.store(result.is_ok(), Ordering::SeqCst);
+        result
+    }
+
+    /// Cheap, bounded probe for `/health/providers`.
+    ///
+    /// Reuses the cached "ready" state and otherwise attempts the bucket
+    /// creation exactly once, so a Garage outage is reported instead of blocking
+    /// the endpoint for the full retry window.
+    pub fn probe(&self) -> Result<(), String> {
+        if self.bucket_ready.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.ensure_bucket_once()
+            .map_err(|error| format!("{error:?}"))
+    }
+}
+
 impl AssetStorage for S3AssetStorage {
     fn ensure_bucket(&self) -> Result<(), DomainError> {
         let mut result = Err(DomainError::Database(
             "object storage bucket could not be created".to_string(),
         ));
         for attempt in 1..=ENSURE_BUCKET_ATTEMPTS {
-            match self.create_and_verify_bucket() {
+            match self.ensure_bucket_once() {
                 Ok(()) => return Ok(()),
                 Err(error) => {
                     tracing::debug!(
@@ -168,6 +235,13 @@ impl AssetStorage for S3AssetStorage {
         content_type: &ContentType,
         bytes: &[u8],
     ) -> Result<AssetObjectInfo, DomainError> {
+        // Startup no longer aborts when the object storage is unreachable, so the
+        // first write after a Garage restart retries the bucket creation once.
+        if !self.bucket_ready.load(Ordering::SeqCst)
+            && let Err(error) = self.ensure_bucket_once()
+        {
+            tracing::debug!("object storage bucket still unavailable before upload: {error:?}");
+        }
         let bucket = self.bucket.clone();
         let key = object_key.0.clone();
         let key_for_closure = key.clone();
@@ -247,6 +321,35 @@ impl AssetStorage for S3AssetStorage {
     }
 }
 
+/// Health indicator for one object-storage adapter, reported on
+/// `/health/providers`. Informational only: it never gates readiness.
+pub struct AssetStorageHealth {
+    storage: Arc<S3AssetStorage>,
+    name: String,
+}
+
+impl AssetStorageHealth {
+    pub fn new(name: impl Into<String>, storage: Arc<S3AssetStorage>) -> Self {
+        Self {
+            storage,
+            name: name.into(),
+        }
+    }
+}
+
+impl ServiceHealthIndicator for AssetStorageHealth {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn check(&self) -> HealthStatus {
+        match self.storage.probe() {
+            Ok(()) => HealthStatus::Up,
+            Err(message) => HealthStatus::Down(message),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +368,68 @@ mod tests {
         // Construction is lazy (no network I/O), so it must always succeed for
         // valid configuration.
         assert!(S3AssetStorage::new(&config).is_ok());
+    }
+
+    fn test_configuration() -> AssetStorageConfiguration {
+        AssetStorageConfiguration::new(
+            "http://garage:3900".to_string(),
+            "garageadmin".to_string(),
+            "garageadmin-secret".to_string(),
+            "bike-counter-images".to_string(),
+            "garage".to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn with_runtime_does_not_own_a_second_runtime() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let storage =
+            S3AssetStorage::with_runtime(&test_configuration(), runtime.handle().clone()).unwrap();
+
+        assert!(
+            storage.owned_runtime.is_none(),
+            "a shared runtime must not be duplicated per adapter"
+        );
+    }
+
+    #[test]
+    fn the_health_indicator_reports_the_cached_bucket_state() {
+        let storage = Arc::new(S3AssetStorage::new(&test_configuration()).unwrap());
+        let indicator = AssetStorageHealth::new("asset_storage", storage.clone());
+
+        assert_eq!(indicator.name(), "asset_storage");
+        // A fresh adapter has not verified the bucket yet; the unit test must not
+        // touch the network, so the cached state is asserted directly.
+        assert!(!storage.bucket_ready.load(Ordering::SeqCst));
+        storage.bucket_ready.store(true, Ordering::SeqCst);
+        assert_eq!(indicator.check(), HealthStatus::Up);
+    }
+
+    #[test]
+    fn probe_reports_the_cached_state_without_touching_the_network() {
+        let storage = S3AssetStorage::new(&test_configuration()).unwrap();
+        storage.bucket_ready.store(true, Ordering::SeqCst);
+
+        assert!(storage.probe().is_ok());
+    }
+
+    #[test]
+    fn the_injected_runtime_handle_drives_futures_from_spawn_blocking() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let storage =
+            S3AssetStorage::with_runtime(&test_configuration(), runtime.handle().clone()).unwrap();
+
+        // This is exactly the bridge every blocking storage method uses: a
+        // `spawn_blocking` thread drives an async call through the injected
+        // handle instead of nesting a second runtime.
+        let value = runtime.block_on(async {
+            let handle = storage.runtime.clone();
+            tokio::task::spawn_blocking(move || handle.block_on(async { 42u8 }))
+                .await
+                .expect("the blocking task must finish")
+        });
+
+        assert_eq!(value, 42);
     }
 }

@@ -4,7 +4,7 @@
 //! to one `domain_id`), so no per-station catalog is needed; each site's time
 //! series is paged from `/data/site/{id}` over day windows.
 
-use std::net::TcpStream;
+use crate::adapter::driven::http::provider_endpoint_health;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -350,13 +350,7 @@ impl EcoCounterV2Adapter {
 
 impl DataProvider for EcoCounterV2Adapter {
     fn check_health(&self) -> HealthStatus {
-        let Some((host, port)) = parse_host_and_port(&self.base_url) else {
-            return HealthStatus::Down("invalid base_url in provider config".to_string());
-        };
-        match TcpStream::connect((host, port)) {
-            Ok(_) => HealthStatus::Up,
-            Err(error) => HealthStatus::Down(format!("{error:?}")),
-        }
+        provider_endpoint_health(parse_host_and_port(&self.base_url), "base_url")
     }
 
     fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {

@@ -92,9 +92,10 @@ async fn get_by_unknown_id_returns_404() {
 
 #[tokio::test]
 async fn patch_updates_station_coordinates() {
-    let app = TestApp::new();
+    // The mutating routes only exist when an admin token is configured.
+    let app = TestApp::new_with_admin();
     let (status, body) = app
-        .request_json(
+        .request_admin_json(
             Method::PATCH,
             &format!("/api/v1/counting-stations/{STATION_ID_A}"),
             Some(serde_json::json!({ "latitude": 51.9, "longitude": 7.6 })),
@@ -109,9 +110,9 @@ async fn patch_updates_station_coordinates() {
 
 #[tokio::test]
 async fn patch_clears_station_coordinates() {
-    let app = TestApp::new();
+    let app = TestApp::new_with_admin();
     let (status, body) = app
-        .request_json(
+        .request_admin_json(
             Method::PATCH,
             &format!("/api/v1/counting-stations/{STATION_ID_A}"),
             Some(serde_json::json!({ "latitude": null, "longitude": null })),
@@ -125,9 +126,9 @@ async fn patch_clears_station_coordinates() {
 
 #[tokio::test]
 async fn patch_unknown_station_returns_404() {
-    let app = TestApp::new();
+    let app = TestApp::new_with_admin();
     let (status, body) = app
-        .request_json(
+        .request_admin_json(
             Method::PATCH,
             &format!("/api/v1/counting-stations/{UNKNOWN_ID}"),
             Some(serde_json::json!({ "latitude": 51.9, "longitude": 7.6 })),

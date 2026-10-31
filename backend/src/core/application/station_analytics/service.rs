@@ -47,8 +47,9 @@ pub struct StationAnalyticsService {
     data_source_repository: Arc<dyn DataSourceRepository + Send + Sync>,
 }
 
-/// Per-station channel counts and the channel→station id map, over every
-/// channel in the system (the two maps `channel_maps` builds together).
+/// Per-station channel counts and the channel→station id map, restricted to the
+/// stations a request actually uses (the two maps `channel_maps` builds
+/// together).
 type ChannelMaps = (
     HashMap<uuid::Uuid, usize>,
     HashMap<uuid::Uuid, Vec<ChannelId>>,
@@ -71,9 +72,25 @@ impl StationAnalyticsService {
         }
     }
 
-    /// All channels grouped by their counting station.
-    fn channels_by_station(&self) -> Result<HashMap<uuid::Uuid, Vec<Channel>>, DomainError> {
-        let channels = self.channel_repository.find_filtered(None, None)?;
+    /// The channels of the given stations, in one set-based query (no whole-table
+    /// load, no per-station query).
+    fn channels_of_stations(
+        &self,
+        stations: &[CountingStation],
+    ) -> Result<Vec<Channel>, DomainError> {
+        let station_ids: Vec<CountingStationId> = stations
+            .iter()
+            .map(|station| CountingStationId(station.id.0))
+            .collect();
+        self.channel_repository.find_by_station_ids(&station_ids)
+    }
+
+    /// The channels of the given stations grouped by their counting station.
+    fn channels_by_station(
+        &self,
+        stations: &[CountingStation],
+    ) -> Result<HashMap<uuid::Uuid, Vec<Channel>>, DomainError> {
+        let channels = self.channels_of_stations(stations)?;
         let mut map: HashMap<uuid::Uuid, Vec<Channel>> = HashMap::new();
         for channel in channels {
             map.entry(channel.counting_station_id.0)
@@ -117,7 +134,7 @@ impl StationAnalyticsService {
             bounds.max_latitude,
             bounds.max_longitude,
         )?;
-        let channels_by_station = self.channels_by_station()?;
+        let channels_by_station = self.channels_by_station(&in_bounds)?;
         Ok(in_bounds
             .into_iter()
             .map(|station| {
@@ -259,10 +276,10 @@ impl StationAnalyticsService {
         Ok(stations)
     }
 
-    /// Per-station channel counts and the channel→station id map, over every
-    /// channel in the system.
-    fn channel_maps(&self) -> Result<ChannelMaps, DomainError> {
-        let channels = self.channel_repository.find_filtered(None, None)?;
+    /// Per-station channel counts and the channel→station id map, restricted to
+    /// the given stations.
+    fn channel_maps(&self, stations: &[CountingStation]) -> Result<ChannelMaps, DomainError> {
+        let channels = self.channels_of_stations(stations)?;
         let mut channel_count_by_station: HashMap<uuid::Uuid, usize> = HashMap::new();
         let mut channels_by_station: HashMap<uuid::Uuid, Vec<ChannelId>> = HashMap::new();
         for channel in &channels {
@@ -347,7 +364,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         now: DateTime<Utc>,
     ) -> Result<Vec<StationSummary>, DomainError> {
         let stations = self.stations_for_bounds(bounds)?;
-        let (channel_count_by_station, channels_by_station) = self.channel_maps()?;
+        let (channel_count_by_station, channels_by_station) = self.channel_maps(&stations)?;
         let bikes_by_station = self.bikes_by_station(&stations, &channels_by_station, now)?;
         Ok(stations
             .into_iter()
@@ -375,7 +392,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         now: DateTime<Utc>,
     ) -> Result<Vec<SidebarStationStats>, DomainError> {
         let stations = self.stations_for_bounds(Some(bounds))?;
-        let (channel_count_by_station, channels_by_station) = self.channel_maps()?;
+        let (channel_count_by_station, channels_by_station) = self.channel_maps(&stations)?;
         let bikes_by_station = self.bikes_by_station(&stations, &channels_by_station, now)?;
         Ok(stations
             .into_iter()
@@ -654,7 +671,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         exclude_new_stations: bool,
     ) -> Result<StationsSummaryOverview, DomainError> {
         let included = self.included_stations(bounds, exclude)?;
-        let channels_by_station = self.channels_by_station()?;
+        let channels_by_station = self.channels_by_station(&included)?;
         let metrics = metrics::metric_windows(
             self.measurement_repository.as_ref(),
             &included,
@@ -704,7 +721,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                 per_station: Vec::new(),
             });
         };
-        let channels_by_station = self.channels_by_station()?;
+        let channels_by_station = self.channels_by_station(&included)?;
         let (station_ids, channel_ids, station_of_channel) =
             Self::summary_group_ids(&included, &channels_by_station);
         let tz: Tz = first.timezone.parse()?;
@@ -756,7 +773,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
                 per_station: Vec::new(),
             });
         };
-        let channels_by_station = self.channels_by_station()?;
+        let channels_by_station = self.channels_by_station(&included)?;
         let (station_ids, channel_ids, station_of_channel) =
             Self::summary_group_ids(&included, &channels_by_station);
         let tz: Tz = first.timezone.parse()?;
@@ -785,7 +802,7 @@ impl StationAnalyticsServicePort for StationAnalyticsService {
         exclude_new_stations: bool,
     ) -> Result<Vec<MonthTotal>, DomainError> {
         let included = self.included_stations(bounds, exclude)?;
-        let channels_by_station = self.channels_by_station()?;
+        let channels_by_station = self.channels_by_station(&included)?;
         let included = if exclude_new_stations {
             self.established_stations_for_year(&included, &channels_by_station, now)?
         } else {

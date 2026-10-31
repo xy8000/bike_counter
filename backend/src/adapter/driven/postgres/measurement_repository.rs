@@ -591,6 +591,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(measurements)
     }
 
+    #[cfg(test)]
     fn sum(
         &self,
         from: chrono::DateTime<chrono::Utc>,
@@ -1102,6 +1103,7 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         Ok(earliest)
     }
 
+    #[cfg(test)]
     fn sum_daily(
         &self,
         from: chrono::DateTime<chrono::Utc>,

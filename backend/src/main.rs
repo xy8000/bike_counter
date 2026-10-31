@@ -13,13 +13,13 @@ use crate::adapter::driven::postgres::{
     PostgresDataSourceRepository, PostgresHealthCheck, PostgresImportRunRepository,
     PostgresJobRepository, PostgresMeasurementRepository, PostgresOpenDataFileRepository,
     PostgresOpenDataMeasurementReader, PostgresPersistentStateRepository,
-    PostgresProviderMessageRepository, create_pool,
+    PostgresProviderMessageRepository, create_pool_with,
 };
 use crate::adapter::driven::provider_handles::ProviderHandles;
-use crate::adapter::driven::s3_asset_storage::S3AssetStorage;
+use crate::adapter::driven::s3_asset_storage::{AssetStorageHealth, S3AssetStorage};
 use crate::adapter::driven::tiles_init::TilesInit;
 use crate::adapter::driving::job_scheduler;
-use crate::adapter::driving::rest::RestApiAdapter;
+use crate::adapter::driving::rest::{RestApiAdapter, RestApiConfig};
 use crate::core::application::asset_cleanup_service::AssetCleanupService;
 use crate::core::application::asset_service::AssetService;
 use crate::core::application::channel_service::ChannelService;
@@ -35,6 +35,7 @@ use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::opendata_export_service::OpenDataExportService;
 use crate::core::application::opendata_service::OpenDataService;
 use crate::core::application::persistent_state_service::PersistentStateService;
+use crate::core::application::provider_health_cache::ProviderHealthCache;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::startup_service::{StartupError, StartupService};
 use crate::core::application::station_analytics::StationAnalyticsService;
@@ -169,8 +170,10 @@ fn main() {
     // within a tokio runtime ("Cannot start a runtime from within a runtime").
     // Construction therefore happens here, before the async server runtime starts.
     // A single shared connection pool is created once; migrations run exactly
-    // once inside `create_pool`, and every repository clones the pool.
-    let pool = create_pool(&database_configuration)
+    // once inside `create_pool_with`, and every repository clones the pool. The
+    // pool size, acquisition timeout and server-side statement timeout come from
+    // the configuration instead of being hard-coded.
+    let pool = create_pool_with(&database_configuration, configuration.database_pool())
         .unwrap_or_else(|err| panic!("Failed to initialize Postgres connection pool: {err:?}"));
 
     let counting_station_repo = Arc::new(PostgresCountingStationRepository::new(&pool));
@@ -222,23 +225,25 @@ fn main() {
         startup.data_source_runtimes.len()
     );
 
-    // Build the health service used by the health endpoints. Readiness is
-    // critical-only: it probes PostgreSQL and never an external provider URL, so
-    // an unreachable open-data host can no longer mark the stack unhealthy. The
-    // per-data-source indicators are informational and are reported by
-    // `/health/providers` only.
+    // Readiness is deliberately critical-only: a slow or unreachable city website
+    // must never mark this service unready, delay the frontend start or flap the
+    // container healthcheck. The per-data-source and object-storage probes are
+    // informational and are reported by `/health/providers` only. The health
+    // service itself is built further down, once both storages exist, because
+    // they contribute informational indicators too.
     let critical_indicators: Vec<Arc<dyn ServiceHealthIndicator>> =
         vec![Arc::new(PostgresHealthCheck::new(pool.clone()))];
-    let health_service = Arc::new(HealthService::new(
-        critical_indicators,
-        provider_health_indicators,
-    ));
+
+    // One process-wide tokio runtime: the HTTP server and the schedulers run on
+    // it, and both storage adapters bridge their blocking methods into it through
+    // a `Handle` instead of each owning its own multi-thread runtime.
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     // Assets: S3-compatible object storage (Garage) + metadata repository +
     // service. The bucket is created and the built-in images synced idempotently
     // at startup, before any station import (which may set image links).
     let asset_storage = Arc::new(
-        S3AssetStorage::new(configuration.asset_storage())
+        S3AssetStorage::with_runtime(configuration.asset_storage(), runtime.handle().clone())
             .unwrap_or_else(|error| panic!("Failed to initialize S3 asset storage: {error:?}")),
     );
     let asset_repository = Arc::new(PostgresAssetRepository::new(&pool));
@@ -246,12 +251,15 @@ fn main() {
         asset_repository.clone(),
         asset_storage.clone(),
     ));
-    asset_storage
-        .ensure_bucket()
-        .unwrap_or_else(|error| panic!("Failed to ensure asset storage bucket: {error:?}"));
-    asset_service
-        .sync_builtin_images(&builtin_images())
-        .unwrap_or_else(|error| panic!("Failed to sync built-in images: {error:?}"));
+    // A storage outage must not abort startup: reads keep being served, the write
+    // path retries the bucket creation lazily and `/health/providers` reports the
+    // storage as down until Garage recovers.
+    if let Err(error) = asset_storage.ensure_bucket() {
+        tracing::error!("Object storage bucket is not usable yet: {error:?}");
+    }
+    if let Err(error) = asset_service.sync_builtin_images(&builtin_images()) {
+        tracing::error!("Failed to sync the built-in images: {error:?}");
+    }
 
     // Data import + scheduled data-source update service.
     let data_import_service = Arc::new(
@@ -341,13 +349,14 @@ fn main() {
         .expect("the configured opendata storage is valid")
     };
     let opendata_storage = Arc::new(
-        S3AssetStorage::new(&opendata_storage_config).unwrap_or_else(|error| {
-            panic!("Failed to initialize OpenData object storage: {error:?}")
-        }),
+        S3AssetStorage::with_runtime(&opendata_storage_config, runtime.handle().clone())
+            .unwrap_or_else(|error| {
+                panic!("Failed to initialize OpenData object storage: {error:?}")
+            }),
     );
-    opendata_storage
-        .ensure_bucket()
-        .unwrap_or_else(|error| panic!("Failed to ensure opendata storage bucket: {error:?}"));
+    if let Err(error) = opendata_storage.ensure_bucket() {
+        tracing::error!("OpenData storage bucket is not usable yet: {error:?}");
+    }
     let opendata_file_repo = Arc::new(PostgresOpenDataFileRepository::new(&pool));
     let opendata_measurement_reader = Arc::new(PostgresOpenDataMeasurementReader::new(&pool));
     let opendata_file_generator = Arc::new(OpendataFileGenerator);
@@ -382,6 +391,46 @@ fn main() {
     ));
     let data_source_service = Arc::new(DataSourceService::new(data_source_repo));
 
+    // Informational reachability for `/health/providers`: the configured
+    // providers plus both object storages. None of these gate readiness.
+    let mut informational_indicators: Vec<Arc<dyn ServiceHealthIndicator>> =
+        provider_health_indicators;
+    informational_indicators.push(Arc::new(AssetStorageHealth::new(
+        "asset_storage",
+        asset_storage.clone(),
+    )));
+    informational_indicators.push(Arc::new(AssetStorageHealth::new(
+        "opendata_storage",
+        opendata_storage.clone(),
+    )));
+    let health_service = Arc::new(HealthService::new(
+        critical_indicators,
+        informational_indicators,
+    ));
+    // The informational report is cached (TTL) so a dashboard polling
+    // `/health/providers` does not probe every provider on each request; the
+    // critical readiness set is always evaluated live.
+    let provider_health = Arc::new(ProviderHealthCache::with_default_ttl(
+        health_service.clone(),
+    ));
+
+    // HTTP policy: the admin token (absent => the mutating routes do not exist)
+    // and the global concurrency limit that bounds queued blocking work.
+    let rest_config = RestApiConfig::new(
+        configuration.admin_token().map(Arc::from),
+        configuration.http_max_concurrent_requests(),
+    );
+    tracing::info!(
+        "HTTP capacity: max_concurrent_requests={} database_pool_max_size={}",
+        rest_config.max_concurrent_requests(),
+        configuration.database_pool().max_size()
+    );
+    if rest_config.admin_token().is_none() {
+        tracing::warn!(
+            "admin_token is not configured: the data-mutating /api/v1 routes are disabled"
+        );
+    }
+
     // Initialize driving REST API adapter
     let rest_adapter = RestApiAdapter::new(
         counting_station_service,
@@ -390,6 +439,7 @@ fn main() {
         data_source_service,
         job_service,
         health_service,
+        provider_health,
         persistent_state_service,
         provider_message_service,
         station_analytics_service,
@@ -398,13 +448,13 @@ fn main() {
         asset_storage,
         opendata_service,
         opendata_storage,
+        rest_config,
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     tracing::info!("Starting Bike Counter API server on http://{}", addr);
     tracing::info!("Swagger UI available at http://localhost:8080/swagger-ui/");
 
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     if let Err(err) = runtime.block_on(async {
         if configuration.scheduled_jobs_enabled() {
             // Background schedulers: one per scheduled job type, each running at

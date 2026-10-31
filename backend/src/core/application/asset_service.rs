@@ -172,6 +172,10 @@ impl AssetServicePort for AssetService {
     fn find_by_id(&self, id: AssetId) -> Result<Option<Asset>, DomainError> {
         self.repository.find_by_id(id)
     }
+
+    fn find_by_ids(&self, ids: &[AssetId]) -> Result<Vec<Asset>, DomainError> {
+        self.repository.find_by_ids(ids)
+    }
 }
 
 /// File extension derived from the MIME type for content-addressed object keys.
@@ -511,5 +515,26 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn find_by_ids_forwards_the_batch_lookup_to_the_repository() {
+        let repository = Arc::new(MemoryAssetRepository::new());
+        let storage = Arc::new(MemoryAssetStorage::new());
+        let service = service(repository.clone(), storage);
+
+        service
+            .sync_builtin_images(&[builtin(DEFAULT_IMAGE_OBJECT_KEY, b"placeholder")])
+            .unwrap();
+        let stored = repository
+            .find_by_object_key(&ObjectKey(DEFAULT_IMAGE_OBJECT_KEY.to_string()))
+            .unwrap()
+            .unwrap();
+
+        let found = service
+            .find_by_ids(&[stored.id, AssetId(Uuid::new_v4())])
+            .unwrap();
+        assert_eq!(found.len(), 1, "unknown ids are simply absent");
+        assert_eq!(found[0].id, stored.id);
     }
 }

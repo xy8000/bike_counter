@@ -37,6 +37,19 @@ tar = "0.4.46"
 tokio = { version = "1.53.1", features = ["full"] }
 tokio-util = { version = "0.7.20", features = ["io"] }
 toml = "1.1.8+spec-1.1.0"
+# HTTP middleware (request ids, tracing spans, timeouts, body limits,
+# panic isolation) and the concurrency limit that bounds work queued behind
+# the blocking DB pool. No `compression-gzip`: nginx compresses at the edge so
+# the BFF's strong ETag stays computed over the uncompressed body.
+tower = { version = "0.5.3", features = ["limit", "util"] }
+tower-http = { version = "0.6.8", features = [
+    "catch-panic",
+    "limit",
+    "request-id",
+    "set-header",
+    "timeout",
+    "trace",
+] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "time"] }
 ureq = "3.5.0"
@@ -54,7 +67,6 @@ http-body-util = "0.1.5"
 # latest stable combination is kept at 0.27.
 testcontainers = { version = "0.27.3", features = ["blocking"] }
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
-tower = { version = "0.5.3", features = ["util"] }
 
 # Build-speed tuning (see plans/163_rust_build_time_optimization_plan.md).
 # `debug = "line-tables-only"` keeps file/line information for our own backtraces

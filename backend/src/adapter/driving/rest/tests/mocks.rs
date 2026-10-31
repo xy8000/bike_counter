@@ -20,6 +20,7 @@ use crate::core::application::job_service::JobService;
 use crate::core::application::measurement_service::MeasurementService;
 use crate::core::application::opendata_service::OpenDataService;
 use crate::core::application::persistent_state_service::PersistentStateService;
+use crate::core::application::provider_health_cache::ProviderHealthCache;
 use crate::core::application::provider_message_service::ProviderMessageService;
 use crate::core::application::station_analytics::StationAnalyticsService;
 use crate::core::domain::assets::asset::value_objects::{
@@ -663,6 +664,26 @@ pub fn mock_health_service_with_providers(
             status: postgres,
         })],
         informational,
+    ))
+}
+
+/// Provider health cache over a health service with a single healthy provider
+/// indicator, used by the router builders so `/health/providers` is covered
+/// without a real third party.
+pub fn sample_provider_health_cache() -> Arc<ProviderHealthCache> {
+    sample_provider_health_cache_for(mock_health_service_with_providers(
+        HealthStatus::Up,
+        vec![("provider", HealthStatus::Up)],
+    ))
+}
+
+/// Provider health cache reporting the informational indicators of the given
+/// health service, so `/health/providers` mirrors the test's configuration.
+pub fn sample_provider_health_cache_for(
+    health_service: Arc<HealthService>,
+) -> Arc<ProviderHealthCache> {
+    Arc::new(ProviderHealthCache::with_default_ttl(
+        health_service as Arc<dyn crate::core::domain::health::service_port::HealthServicePort>,
     ))
 }
 

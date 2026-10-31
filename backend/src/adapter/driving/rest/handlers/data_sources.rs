@@ -81,7 +81,9 @@ pub async fn list_provider_messages(
 #[utoipa::path(
     delete,
     path = "/api/v1/data-sources/{id}/imported_until",
-    tag = "Data Sources",
+    tag = "Admin API",
+    description = "Clears the import watermark so the next update re-imports everything. Admin operation: it only exists when `admin_token` is configured and requires an `Authorization: Bearer <admin_token>` header.",
+    security(("bearer_auth" = [])),
     params(
         ("id" = Uuid, Path, description = "Data source UUID")
     ),

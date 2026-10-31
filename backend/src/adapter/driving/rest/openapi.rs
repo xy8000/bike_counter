@@ -51,6 +51,7 @@ use crate::adapter::driving::rest::handlers::{
 
 #[derive(OpenApi)]
 #[openapi(
+    modifiers(&SecurityAddon),
     paths(
         list_bff_stations,
         get_bff_data_sources,
@@ -192,13 +193,39 @@ use crate::adapter::driving::rest::handlers::{
         (name = "Measurements", description = "Operations on channel measurements"),
         (name = "Data Sources", description = "External data sources"),
         (name = "Jobs", description = "Generic tracked jobs"),
+        (name = "Admin API", description = "Data-mutating operations. Only registered when `admin_token` is configured; every request needs an `Authorization: Bearer <admin_token>` header."),
         (name = "OpenData", description = "Public, immutable OpenData measurement files (parquet / csv.gz / json) and their indices"),
-        (name = "Health", description = "Operational health checks (liveness/readiness and informational provider reachability)"),
+        (name = "Health", description = "Operational health checks (liveness/readiness)"),
     ),
     info(
         title = "Bike Counter API",
         version = "1.0.0",
-        description = "HTTP API of the Bike Counter backend.\n\n- The **BFF API** (`/api/bff`) is consumed by the React frontend only.\n- The **REST API** (`/api/v1`) is the public interface for backend-to-backend integrations. It includes the **OpenData tree** (`/api/v1/opendata`) publishing immutable daily/monthly measurement files (parquet / csv.gz / json) with their metadata and JSON schemata.\n- `/health/live` and `/health/ready` are operational checks used by the Docker healthcheck; `/health/ready` probes internal dependencies (PostgreSQL) only and never external provider URLs, while `/health/providers` reports external data-source reachability informationally and always returns `200`.\n\nCacheable BFF JSON responses carry a `Cache-Control` freshness policy and a strong `ETag` (a SHA-256 of the body) and honor `If-None-Match` with `304 Not Modified`."
+        description = "HTTP API of the Bike Counter backend.\n\n- The **BFF API** (`/api/bff`) is consumed by the React frontend only.\n- The **REST API** (`/api/v1`) is the public interface for backend-to-backend integrations. It includes the **OpenData tree** (`/api/v1/opendata`) publishing immutable daily/monthly measurement files (parquet / csv.gz / json) with their metadata and JSON schemata.\n- The **Admin API** tag groups the data-mutating routes. They only exist when `admin_token` is set in the configuration and every request needs `Authorization: Bearer <admin_token>`; without the token they answer `404`.\n- `/health/live` and `/health/ready` are operational checks used by the Docker healthcheck (`/health/ready` is Postgres-only). `/health/providers` reports third-party reachability informationally and never gates readiness.\n\nCacheable BFF JSON responses carry a `Cache-Control` freshness policy and a strong `ETag` (a SHA-256 of the body) and honor `If-None-Match` with `304 Not Modified`."
     )
 )]
 pub struct ApiDoc;
+
+/// Registers the `bearer_auth` security scheme referenced by the Admin API
+/// operations (`security(("bearer_auth" = []))`), so Swagger-UI offers an
+/// authorize button for the token-guarded mutations.
+///
+/// `utoipa` 6.0 has no `security_schemes` attribute on the derive, so the scheme
+/// is added through [`utoipa::Modify`].
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi
+            .components
+            .get_or_insert_with(utoipa::openapi::Components::default);
+        components.security_schemes.insert(
+            "bearer_auth".to_string(),
+            utoipa::openapi::security::SecurityScheme::Http(
+                utoipa::openapi::security::HttpBuilder::new()
+                    .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                    .build(),
+            )
+            .into(),
+        );
+    }
+}

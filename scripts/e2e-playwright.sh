@@ -30,7 +30,10 @@
 # A temporary config.toml is created at the repo root (the backend service
 # mounts ./config.toml). Any pre-existing config.toml is backed up and restored.
 #
-# Override the frontend URL with FRONTEND_URL (default http://localhost:8081).
+# Override the frontend URL with FRONTEND_URL (default http://localhost:18081).
+# The e2e stack publishes its ports on 18080/18081 (see
+# frontend/e2e/docker-compose.e2e.yml), so it can run next to a development
+# stack that already owns 8080/8081.
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
@@ -41,8 +44,8 @@ COMPOSE_OVERRIDE="${PROJECT_ROOT}/frontend/e2e/docker-compose.e2e.yml"
 CONFIG_FILE="${PROJECT_ROOT}/config.toml"
 CONFIG_BACKUP="$(mktemp)"
 
-APP_URL="${APP_URL:-http://localhost:8080}"
-FRONTEND_URL="${FRONTEND_URL:-http://localhost:8081}"
+APP_URL="${APP_URL:-http://localhost:18080}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:18081}"
 
 # A bounding box per city covering every seeded counting station. The BFF returns
 # stations name-ordered and the seed guarantees the alphabetically-first station

@@ -65,6 +65,25 @@ impl AssetRepository for PostgresAssetRepository {
         row.as_ref().map(Self::map_row).transpose()
     }
 
+    /// One set-based lookup for the BFF's batch image resolution.
+    fn find_by_ids(&self, ids: &[AssetId]) -> Result<Vec<Asset>, DomainError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<uuid::Uuid> = ids.iter().map(|id| id.0).collect();
+        let mut client = self
+            .pool
+            .get()
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        let rows = client
+            .query(
+                &format!("SELECT {ASSET_COLUMNS} FROM assets WHERE id = ANY($1::uuid[])"),
+                &[&ids],
+            )
+            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        rows.iter().map(Self::map_row).collect()
+    }
+
     fn find_by_object_key(&self, object_key: &ObjectKey) -> Result<Option<Asset>, DomainError> {
         let mut client = self
             .pool
@@ -267,5 +286,42 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn find_by_ids_resolves_the_requested_assets_in_one_query() {
+        let database_user = "bike_counter_test_user";
+        let database_password = "bike_counter_test_password";
+        let database_name = "bike_counter_test";
+        let container = Postgres::default()
+            .with_user(database_user)
+            .with_password(database_password)
+            .with_db_name(database_name)
+            .start()
+            .unwrap();
+        let url = format!(
+            "postgres://127.0.0.1:{}/{}",
+            container.get_host_port_ipv4(5432).unwrap(),
+            database_name
+        );
+        let configuration = DatabaseConfiguration::new(
+            url,
+            database_user.to_string(),
+            database_password.to_string(),
+            database_name.to_string(),
+        )
+        .unwrap();
+        let pool = create_pool(&configuration).unwrap();
+        let repository = PostgresAssetRepository::new(&pool);
+
+        let first = repository.save(asset("builtin/one.svg")).unwrap();
+        let second = repository.save(asset("builtin/two.svg")).unwrap();
+
+        let found = repository
+            .find_by_ids(&[first.id, second.id, AssetId(Uuid::new_v4())])
+            .unwrap();
+        assert_eq!(found.len(), 2, "unknown ids are simply absent");
+
+        assert!(repository.find_by_ids(&[]).unwrap().is_empty());
     }
 }

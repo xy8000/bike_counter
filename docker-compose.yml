@@ -48,7 +48,12 @@ services:
       # frontend mounts the same dir read-only.
       - ./tiles:/data
     ports:
-      - "8080:8080"
+      # Loopback only: the browser reaches the API through nginx (same origin),
+      # so publishing the backend on every host interface would bypass the edge
+      # and expose the (token-guarded) admin routes directly. Use an SSH tunnel
+      # or a deliberate override to reach Swagger-UI from another machine - and
+      # always configure `admin_token` when you expose the API at all.
+      - "127.0.0.1:8080:8080"
     networks:
       - default
       - asset_network

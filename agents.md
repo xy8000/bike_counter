@@ -160,7 +160,16 @@ is backed up and restored).
   `postgres_data_e2e`/`garage_meta_e2e`/`garage_data_e2e` volumes (see
   [`frontend/e2e/docker-compose.e2e.yml`](frontend/e2e/docker-compose.e2e.yml)) that are
   dropped and re-seeded from the fixture on every run, so the dev
-  `postgres_data`/`garage_meta`/`garage_data` volumes are never cleared.
+  `postgres_data`/`garage_meta`/`garage_data` volumes are never cleared. The
+  override also renames every container (`*_e2e`) and publishes the stack on
+  **18080** (backend) / **18081** (frontend), so the suite can run next to a
+  development stack that already owns 8080/8081.
+- **Fresh volume**: on a brand-new e2e volume Postgres runs
+  `docker-entrypoint-initdb.d` on a temporary server and then restarts it, so the
+  backend's first connection can be dropped. Startup tolerates this through the
+  bounded initial-connection retry in
+  [`pool.rs`](backend/src/adapter/driven/postgres/pool.rs:41) (30 attempts x 1 s);
+  do not remove it without keeping the e2e stack bootable from an empty volume.
 - **Regenerate the fixture**: [`scripts/dump-e2e-fixture.sh`](scripts/dump-e2e-fixture.sh)
   re-creates [`frontend/e2e/e2e-seed.sql`](frontend/e2e/e2e-seed.sql) from a running stack
   (e.g. after a schema change).
@@ -169,8 +178,8 @@ is backed up and restored).
 - **Update**: add/change specs in [`frontend/e2e/`](frontend/e2e) and re-run
   `make test-playwright`. The map markers expose the station name via
   `alt`/`title` for locators.
-- **Target**: point Playwright at another frontend with `FRONTEND_URL`
-  (default `http://localhost:8081`).
+- **Target**: point Playwright at another stack with `FRONTEND_URL` (default
+  `http://localhost:18081`) and `APP_URL` (default `http://localhost:18080`).
 
 ## Definition of done
 
