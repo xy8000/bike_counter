@@ -616,7 +616,6 @@ fn pages_the_current_year_and_reports_done() {
             .expect("valid previous day"),
     );
 
-    // Every import run starts from a clean per-run state (plan 173).
     provider.reset_source_read();
     let batch = provider.get_measurements_source(Some(from), 1000).unwrap();
 

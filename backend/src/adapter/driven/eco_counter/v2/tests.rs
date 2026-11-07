@@ -27,7 +27,6 @@ fn read_all(
     a: &EcoCounterV2Adapter,
     from: Option<DateTime<Utc>>,
 ) -> (Vec<MeasurementRecord>, Option<DateTime<Utc>>) {
-    // Every import run starts from a clean per-run state (plan 173).
     a.reset_source_read();
     let mut measurements = Vec::new();
     let mut watermark = None;

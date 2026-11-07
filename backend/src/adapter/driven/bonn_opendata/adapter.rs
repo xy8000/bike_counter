@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
-use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner, reset_scanner};
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
@@ -346,9 +346,7 @@ impl DataProvider for BonnOpendataAdapter {
         self.max_measurement_batch_size
     }
 
-    fn reset_source_read(&self) {
-        reset_scanner(&self.scanner);
-    }
+    crate::impl_reset_source_read!(scanner);
 
     fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {
         *self.messages.lock().unwrap() = Some(sink);

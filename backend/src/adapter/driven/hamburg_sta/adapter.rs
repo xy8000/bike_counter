@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
-use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner, reset_scanner};
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
@@ -620,12 +620,9 @@ impl DataProvider for HamburgStaAdapter {
         self.max_measurement_batch_size
     }
 
-    fn reset_source_read(&self) {
-        // The per-field readers buffer rows and `@iot.nextLink` continuations of
-        // the previous run; both they and the scanner belong to one run only.
-        reset_scanner(&self.scanner);
-        *self.readers.lock().unwrap() = None;
-    }
+    // The per-field readers buffer rows and `@iot.nextLink` continuations of the
+    // previous run; both they and the scanner belong to one run only.
+    crate::impl_reset_source_read!(scanner, readers);
 
     fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {
         *self.messages.lock().unwrap() = Some(sink);
