@@ -1,3 +1,8 @@
+/* `maplibre-gl` ships its rules unlayered. Importing them into a dedicated
+   `vendor` layer, declared *before* Tailwind's layers, makes the app's rules
+   outrank them by layer order alone — so the map overlay theming below needs no
+   `!important` (the entry stylesheet owns this import, not `lib/map.tsx`). */
+@import 'maplibre-gl/dist/maplibre-gl.css' layer(vendor);
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
@@ -103,9 +108,11 @@
     @apply bg-background text-foreground;
   }
   /* Tailwind's preflight (img { max-width: 100% }) would squash the MapLibre
-     marker images, so restore normal sizing and give them their native size. */
+     marker images, so restore normal sizing and give them their native size.
+     The class selector (0,1,0) outranks preflight's `img` (0,0,1) inside this
+     layer, and `.station-marker--large` below stays the more specific override. */
   .station-marker {
-    max-width: none !important;
+    max-width: none;
     width: 32px;
     height: 40px;
   }
@@ -125,36 +132,34 @@
    The colours come from the same CSS tokens as the rest of the UI, so they
    switch with the OS preference automatically.
 
-   These rules are deliberately unlayered and use `!important`: maplibre-gl.css
-   is imported unlayered, and unlayered styles beat any `@layer` rule regardless
-   of source order — so without `!important` the popup would keep maplibre's
-   hard-coded white background, which hides the light-on-white station name in
-   dark mode. */
+   `maplibre-gl.css` is imported into the `vendor` cascade layer at the top of
+   this file, so these unlayered rules always outrank it regardless of source
+   order — no `!important` is required. */
 .maplibregl-popup-content {
-  background: var(--popover) !important;
-  color: var(--popover-foreground) !important;
-  box-shadow: 0 4px 24px rgb(0 0 0 / 0.35) !important;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.35);
 }
 .maplibregl-popup-tip {
-  border-top-color: var(--popover) !important;
-  border-bottom-color: var(--popover) !important;
+  border-top-color: var(--popover);
+  border-bottom-color: var(--popover);
 }
 .maplibregl-ctrl-group {
-  background: var(--popover) !important;
-  color: var(--popover-foreground) !important;
+  background: var(--popover);
+  color: var(--popover-foreground);
 }
 .maplibregl-ctrl-group button {
-  background: var(--popover) !important;
-  color: var(--popover-foreground) !important;
+  background: var(--popover);
+  color: var(--popover-foreground);
 }
 .maplibregl-ctrl-group button + button {
-  border-top-color: var(--border) !important;
+  border-top-color: var(--border);
 }
 .maplibregl-ctrl-attrib,
 .maplibregl-ctrl-attrib a {
-  background: var(--popover) !important;
-  color: var(--muted-foreground) !important;
+  background: var(--popover);
+  color: var(--muted-foreground);
 }
 .maplibregl-ctrl-attrib a:hover {
-  color: var(--popover-foreground) !important;
+  color: var(--popover-foreground);
 }

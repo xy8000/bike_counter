@@ -295,7 +295,7 @@ impl TilesInit {
             return Ok(bin);
         }
 
-        fs::create_dir_all(&self.bin_dir)
+        create_private_dir(&self.bin_dir)
             .map_err(|e| format!("failed to create {}: {e}", self.bin_dir.display()))?;
 
         let url = format!(
@@ -332,14 +332,37 @@ impl TilesInit {
 
 /// Ensures the cached CLI binary is executable (release tarballs carry the exec
 /// bit, but make it explicit to survive filesystem quirks).
+///
+/// The backend is the only consumer of the downloaded binary, so it is granted
+/// `0o700` — owner read/write/execute and nothing for group or others.
+/// Group/world execute bits on a downloaded executable are unnecessary
+/// privilege (rust:S2612), so they are deliberately not granted.
 #[cfg(unix)]
 fn make_executable(bin: &Path) {
     use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(bin, fs::Permissions::from_mode(0o755));
+    let _ = fs::set_permissions(bin, fs::Permissions::from_mode(0o700));
 }
 
 #[cfg(not(unix))]
 fn make_executable(_bin: &Path) {}
+
+/// Creates `dir` (and its parents) with owner-only permissions: the cache holds
+/// the downloaded CLI, which only this process executes, so the directory must
+/// not even be listable by other users. The tiles directory is deliberately
+/// **not** created this way — it is a bind mount that nginx also serves.
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(dir)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(dir)
+    }
+}
 
 /// Resolves the Protomaps build to extract from: [`LATEST_BUILD_TOKEN`] — or a
 /// dated pin that is no longer available — uses the **newest** build in the
@@ -474,9 +497,16 @@ mod tests {
                       fi\n\
                       [ -n \"$dest\" ] && touch \"$dest\"\n\
                       exit 0\n";
+        write_fake_binary(bin_dir, script);
+    }
+
+    /// Writes `script` as the fake `pmtiles` CLI with the same owner-only mode
+    /// the real download gets.
+    #[cfg(unix)]
+    fn write_fake_binary(bin_dir: &Path, script: &str) {
         fs::write(bin_dir.join("pmtiles"), script).unwrap();
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(bin_dir.join("pmtiles"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(bin_dir.join("pmtiles"), fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -555,6 +585,41 @@ mod tests {
         let mut init = TilesInit::with_dirs(maps_configuration(), tiles_dir, bin_dir);
         init.source_resolver = |configured| Ok(configured.to_string());
         init
+    }
+
+    /// The cached CLI is a downloaded executable whose only consumer is this
+    /// process, so it must be owner-executable and nothing more (rust:S2612).
+    #[cfg(unix)]
+    #[test]
+    fn make_executable_grants_owner_execute_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("cli_mode");
+        let bin = dir.join("pmtiles");
+        fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o644)).unwrap();
+
+        make_executable(&bin);
+
+        let mode = fs::metadata(&bin).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "group/world must not be able to execute it");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The CLI cache directory holds that binary, so it is created owner-only.
+    #[cfg(unix)]
+    #[test]
+    fn create_private_dir_grants_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_dir("cli_dir_mode");
+        let dir = root.join("nested").join("bin");
+
+        create_private_dir(&dir).unwrap();
+
+        let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "the CLI cache must not be listable by others");
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// Serialises the tests that spawn the fake `pmtiles` CLI: writing and
@@ -678,9 +743,7 @@ mod tests {
         let script = "#!/bin/sh\n\
                       echo 'fetching: 404 Not Found' >&2\n\
                       exit 1\n";
-        fs::write(bin_dir.join("pmtiles"), script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(bin_dir.join("pmtiles"), fs::Permissions::from_mode(0o755)).unwrap();
+        write_fake_binary(&bin_dir, script);
         let init = init_with_stub_source(tiles_dir.clone(), bin_dir);
 
         let error = init.update().unwrap_err();
