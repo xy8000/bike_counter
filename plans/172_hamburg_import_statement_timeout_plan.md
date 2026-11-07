@@ -162,8 +162,8 @@ batch (and the `INSERT INTO measurement_hourly …` of the rollup job).
 - [x] over-sized measurement batches are chunked; the repository test writes
       `MEASUREMENT_INSERT_CHUNK_ROWS + 3` rows in one batch and asserts all land
 - [x] `make check` green (fmt, clippy `-D warnings`, frontend prettier, audit)
-- [x] `make test` green (926 passed, including the Postgres repository tests)
-- [x] `make coverage` green (backend thresholds and frontend unit coverage)
+- [x] `make test` green (927 passed, including the Postgres repository tests)
+- [x] `make coverage` green (overall 89.51 %, core 97.64 %, frontend unit coverage)
 - [x] README capacity model documents the request-vs-maintenance timeout scope
 - [ ] post-deploy verification on the instance (Hamburg import finishes and
       `imported_until` advances past `2026-11-01T03:00:00Z`) — tracked as the

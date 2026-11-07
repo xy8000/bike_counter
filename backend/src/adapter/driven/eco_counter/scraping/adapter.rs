@@ -541,6 +541,12 @@ impl DataProvider for EcoCounterWebAdapter {
         self.max_measurement_batch_size
     }
 
+    fn reset_source_read(&self) {
+        // The site cursors belong to one run: dropping the scanner makes the
+        // next run page again from the persisted watermark (plan 173).
+        *self.scanner.lock().unwrap() = None;
+    }
+
     fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {
         *self.messages.lock().unwrap() = Some(sink);
     }

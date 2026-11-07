@@ -1,0 +1,90 @@
+# 173 - Münster stuck at "0 new measurements" (per-run provider read state)
+
+Status: implemented — `DataProvider::reset_source_read` is called at the start of
+every source run and every archive-paging adapter discards its scanner there
+([`data_import_service.rs`](backend/src/core/application/data_import_service.rs:458),
+[`provider_port.rs`](backend/src/core/domain/data_source/provider_port.rs:183)).
+
+## Symptom (live instance, backend 0.0.10)
+
+Münster (`a023b021-9754-56c7-8c4e-9c391069aff5`) has reported **0 processed /
+0 added** measurements on every daily run since 2026-11-01, while upstream
+publishes daily:
+
+* `imported_until` = `last_data_at` = **2026-10-30T22:45:00Z**, frozen.
+* import history: `FINISHED`, 11–16 s, `added_measurements = 0` every day since
+  Nov 1; the last additions were Oct 29–31 (4 732–4 960 rows).
+* the aggregate job metadata for Münster says
+  `…_processed_measurements = 0` — the provider returned **no row at all**
+  (not "all duplicates").
+* the upstream archive is live: commit `Update 2026-11-07`, and
+  `100020113/2026-11.csv` contains rows through `2026-11-06 23:45` while
+  `2026-10.csv` ends `2026-10-31 23:45` — i.e. ~1 week of unpublished data.
+* the instance *does* refresh the archive each run: its persistent state shows
+  `archive_downloaded_at = archive_extracted_at = 2026-11-07T03:00:02Z` with a
+  fresh ETag. So the staleness is not in the download/cache layers.
+
+## Root cause
+
+Every archive-paging adapter keeps its **per-run** cursor state in the adapter
+instance (`Mutex<Option<SourceScanner>>`), and the provider instance is built
+**once per process** (the data-source runtimes live in `DataSourceStartup`).
+The scanner is only re-seeded when the run anchor (`from`, the persisted
+`imported_until`) or the channel set changes
+([`muenster_github/adapter.rs:685`](backend/src/adapter/driven/muenster_github/adapter.rs:685)).
+
+Sequence that froze Münster:
+
+1. The 2026-11-01 03:00 run used the archive of the previous day (the upstream
+   commit for Nov 1 lands at ~04:19), whose newest row was exactly the
+   `imported_until` value. Every channel page was therefore empty and marked
+   `done`; the run legitimately finished with 0 rows, so the watermark was not
+   advanced.
+2. On Nov 2 the archive did contain Nov 1 data, **but the run anchor was still
+   `2026-10-30T22:45Z` and the channel set was unchanged**, so
+   `SourceScanner::matches` returned `true` and the adapter reused the previous
+   run's exhausted cursors: `next_channel()` returned `None`, the provider
+   returned an empty `more = false` batch, and the run finished in ~11 s with 0
+   rows — forever after.
+
+The same design flaw has a second, worse effect: a batch is recorded in the
+scanner **before** it is persisted by the core, so when `save_batch` fails (e.g.
+the Hamburg SQLSTATE 57014 in plan 172) those cursors stay advanced. A resumed
+run with the same watermark would then silently skip the rows that were read but
+never stored.
+
+## Fix
+
+Introduce a per-run reset on the provider port and call it at the start of every
+source import:
+
+- [`DataProvider::reset_source_read()`](backend/src/core/domain/data_source/provider_port.rs:183)
+  — defaulted no-op, documented as mandatory for providers with per-run state.
+- [`DataImportService::update_data_source_with_live_progress`](backend/src/core/application/data_import_service.rs:458)
+  calls it right after the `Starting` phase, before stations/channels/measurements
+  are read, so both a crashed/aborted run and a normally finished one start from
+  the persisted watermark with clean cursors.
+- implemented in every adapter that pages with a `SourceScanner`: Münster, Bonn,
+  Leipzig, Hamburg (scanner **and** per-field stream readers), and the three
+  eco-counter variants (v1, v2, web/scraping).
+
+## Tests
+
+- [`every_run_starts_from_a_clean_provider_read_state`](backend/src/core/application/data_import_service.rs:2019)
+  — a spy provider asserts the reset runs once per source run (twice for two
+  runs).
+- [`channel_without_a_station_directory_serves_no_measurements`](backend/src/adapter/driven/muenster_github/tests.rs:1191)
+  now also proves the regression: an exhausted scanner keeps returning
+  `more = false` until `reset_source_read()` re-arms it.
+
+## Definition of done
+
+- [x] `DataProvider::reset_source_read` added with a documented default
+- [x] called at the start of every source run (core test)
+- [x] implemented in Münster, Bonn, Leipzig, Hamburg and the eco-counter adapters
+- [x] regression test: a reset scanner pages the source again
+- [x] `make check`, `make test` (927 passed) and `make coverage` (overall
+      89.51 %, core 97.64 %) green
+- [ ] post-deploy verification: Münster imports the Oct 31 – today backlog on
+      the first run after the release (its last successful data is
+      `2026-10-30T22:45Z`)
