@@ -347,6 +347,35 @@ const ROLLUP_REFRESH_LOCK_KEY: i64 = 0x726f_6c6c_7570;
 /// a small safety buffer.
 const ROLLUP_REFRESH_MARGIN_HOURS: i64 = 40;
 
+/// Rows per `INSERT` statement inside `save_batch`.
+///
+/// A source-level batch can be large (Hamburg serves up to 1000 five-minute rows
+/// per field) and every row also costs one overlap-guard trigger lookup plus
+/// three index writes. Writing the batch in bounded statements keeps each
+/// statement's runtime predictable on slow storage instead of letting one
+/// statement blow the connection's `statement_timeout` (plan 172).
+const MEASUREMENT_INSERT_CHUNK_ROWS: usize = 250;
+
+/// Lifts the pool's request-scoped `statement_timeout` for the remainder of the
+/// current transaction.
+///
+/// The pool applies `statement_timeout` to every connection so a runaway request
+/// query cannot pin a connection (plan 164, workstream E1). Background
+/// maintenance statements — an import batch or a rollup rebuild — legitimately
+/// run longer than a request budget and were cancelled with SQLSTATE 57014 on
+/// larger data sets (plan 172). `SET LOCAL` scopes the exemption to the caller's
+/// transaction, so request queries on the same pooled connection keep the
+/// configured guard; the maintenance work stays bounded by the rows/range it was
+/// asked to process.
+fn exempt_transaction_from_statement_timeout(
+    transaction: &mut postgres::Transaction<'_>,
+) -> Result<(), DomainError> {
+    transaction
+        .execute("SET LOCAL statement_timeout = 0", &[])
+        .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+    Ok(())
+}
+
 /// Which backing table a bucket query reads from.
 enum BucketSource {
     /// The daily rollup (calendar granularities and fixed daily buckets).
@@ -449,45 +478,53 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut transaction = client
             .transaction()
             .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        // Import batch writes are maintenance work: do not let the request
+        // timeout cancel them (see plan 172).
+        exempt_transaction_from_statement_timeout(&mut transaction)?;
 
-        // A single multi-row INSERT instead of one round trip per measurement.
-        // The 65 535 parameter cap allows ~16 383 rows per statement; provider
-        // batch sizes are far below this.
-        let placeholders: Vec<String> = measurements
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let base = index * 6;
-                format!(
-                    "(${}, ${}, ${}, ${}, ${}, ${})",
-                    base + 1,
-                    base + 2,
-                    base + 3,
-                    base + 4,
-                    base + 5,
-                    base + 6
-                )
-            })
-            .collect();
-        let query = format!(
-            "INSERT INTO measurements (id, value, channel_id, timestamp, resolution_seconds, interval_end) \
-             VALUES {} ON CONFLICT (channel_id, timestamp, resolution_seconds) DO NOTHING",
-            placeholders.join(", ")
-        );
+        // Multi-row INSERT statements instead of one round trip per measurement,
+        // written in bounded chunks so a single statement (and its per-row
+        // overlap-guard trigger lookups plus index writes) keeps a predictable
+        // runtime. The 65 535 parameter cap allows ~16 383 rows per statement, so
+        // the chunk size stays well inside it.
+        let mut inserted = 0u64;
+        for chunk in measurements.chunks(MEASUREMENT_INSERT_CHUNK_ROWS) {
+            let placeholders: Vec<String> = chunk
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let base = index * 6;
+                    format!(
+                        "(${}, ${}, ${}, ${}, ${}, ${})",
+                        base + 1,
+                        base + 2,
+                        base + 3,
+                        base + 4,
+                        base + 5,
+                        base + 6
+                    )
+                })
+                .collect();
+            let query = format!(
+                "INSERT INTO measurements (id, value, channel_id, timestamp, resolution_seconds, interval_end) \
+                 VALUES {} ON CONFLICT (channel_id, timestamp, resolution_seconds) DO NOTHING",
+                placeholders.join(", ")
+            );
 
-        let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(measurements.len() * 6);
-        for measurement in &measurements {
-            params.push(&measurement.id.0);
-            params.push(&measurement.value.0);
-            params.push(&measurement.channel_id.0);
-            params.push(&measurement.timestamp.0);
-            params.push(&measurement.resolution_seconds.0);
-            params.push(&measurement.interval_end);
+            let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(chunk.len() * 6);
+            for measurement in chunk {
+                params.push(&measurement.id.0);
+                params.push(&measurement.value.0);
+                params.push(&measurement.channel_id.0);
+                params.push(&measurement.timestamp.0);
+                params.push(&measurement.resolution_seconds.0);
+                params.push(&measurement.interval_end);
+            }
+
+            inserted += transaction
+                .execute(&query, &params)
+                .map_err(|error| DomainError::Database(super::db_error(&error)))?;
         }
-
-        let inserted = transaction
-            .execute(&query, &params)
-            .map_err(|error| DomainError::Database(super::db_error(&error)))?;
 
         transaction
             .commit()
@@ -1294,6 +1331,11 @@ impl MeasurementRepository for PostgresMeasurementRepository {
         let mut transaction = client
             .transaction()
             .map_err(|error| DomainError::Database(super::db_error(&error)))?;
+        // Rollup rebuilds scan a whole measurement range; they must not be cut
+        // off by the request timeout (see plan 172). This also covers the wait
+        // for a competing refresh below: waiting for the lock is expected, not a
+        // failure.
+        exempt_transaction_from_statement_timeout(&mut transaction)?;
 
         // Serialize with any other rollup refresh (the scheduled backfill vs. the
         // post-import hook, or another instance) so their upserts cannot deadlock
@@ -1517,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn save_batch_persists_all_rows_in_a_single_statement() {
+    fn save_batch_persists_all_rows_in_bounded_statements() {
         let database_user = "bike_counter_test_user";
         let database_password = "bike_counter_test_password";
         let database_name = "bike_counter_test";
@@ -1591,6 +1633,38 @@ mod tests {
             repository.find_by_channel_id(channel_id()).unwrap().len(),
             20
         );
+
+        // A batch larger than one INSERT statement is written completely: the
+        // write is chunked inside a single transaction (see plan 172).
+        let overflow = super::MEASUREMENT_INSERT_CHUNK_ROWS + 3;
+        let big_batch = (100u128..(100 + overflow as u128))
+            .map(|i| measurement(i, i as i64))
+            .collect();
+        let inserted = repository.save_batch(big_batch).unwrap();
+        assert_eq!(
+            inserted as usize, overflow,
+            "every row of an over-sized batch must be inserted"
+        );
+        assert_eq!(
+            repository.find_by_channel_id(channel_id()).unwrap().len(),
+            20 + overflow
+        );
+
+        // The maintenance transaction lifts the request-scoped statement_timeout
+        // so a slow batch cannot be cancelled (plan 172); `SET LOCAL` keeps the
+        // guard for request queries on the same pooled connection.
+        let mut client = repository.pool.get().unwrap();
+        client
+            .batch_execute("SET statement_timeout = 1000")
+            .unwrap();
+        let mut transaction = client.transaction().unwrap();
+        super::exempt_transaction_from_statement_timeout(&mut transaction).unwrap();
+        let timeout: String = transaction
+            .query_one("SELECT current_setting('statement_timeout')", &[])
+            .unwrap()
+            .get(0);
+        assert_eq!(timeout, "0");
+        transaction.rollback().unwrap();
     }
 
     #[test]
