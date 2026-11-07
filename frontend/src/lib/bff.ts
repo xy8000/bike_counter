@@ -2,7 +2,7 @@
 /// single JSON fetch wrapper and the HATEOAS `_links` unwrapper that every
 /// feature used to re-declare.
 
-import { assertSafeBffUrl } from './apiUrl'
+import { safeBffRequestUrl } from './apiUrl'
 
 /// The wire shape of one HATEOAS link entry: the backend serializes `_links`
 /// values as `LinkDto` (`{ href, templated }`).
@@ -27,17 +27,19 @@ function assertSameOriginResponse(url: string, response: Response): void {
   }
 }
 
-/// Fetch `url` and parse the JSON body, throwing on a non-ok response. Every
-/// request URL — including the HATEOAS `_links.*.href` values the feature
-/// modules pass through and the ids interpolated into BFF paths — is validated
-/// against the same-origin BFF route allowlist (plus the segment/query
-/// allowlists) before the fetch, and the normalized target is what reaches
-/// `fetch`. A compromised or spoofed response, a crafted deep link or any other
-/// user-controlled input therefore cannot point the browser at another host, at
-/// another API surface or at an unintended BFF endpoint (CSRF/SSRF).
+/// Fetch `url` and parse the JSON body, throwing on a non-ok response.
+///
+/// `url` is tainted by definition: route params from the browser URL, the
+/// `exclude` ids and every HATEOAS `_links.*.href` all reach this function. It is
+/// never used as a request destination itself. `safeBffRequestUrl` parses it,
+/// proves the origin is the app's own, normalizes the path and matches it (and
+/// its query keys) against the BFF allowlists; the destination handed to `fetch`
+/// is then taken from that parsed `URL` only. A compromised response, a crafted
+/// deep link or any other user-controlled input therefore cannot reach another
+/// host, another API surface or an unintended BFF endpoint (CSRF/SSRF).
 export async function getJson<T>(url: string): Promise<T> {
-  const target = assertSafeBffUrl(url)
-  const response = await fetch(target)
+  const target = safeBffRequestUrl(url)
+  const response = await fetch(`${target.pathname}${target.search}`)
   assertSameOriginResponse(url, response)
   if (!response.ok) throw new Error(`${url} responded with ${response.status}`)
   return response.json() as Promise<T>

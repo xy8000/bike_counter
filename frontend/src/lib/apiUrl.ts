@@ -167,10 +167,11 @@ export function assertSafeRequestUrl(url: string): string {
   return toRequestTarget(resolved)
 }
 
-/// Returns the normalized request target when `url` is a safe path under the BFF
-/// prefix **and** matches the [`BFF_ROUTE_ALLOWLIST`], and throws otherwise. This
-/// is the guard every shared `getJson` request goes through.
-export function assertSafeBffUrl(url: string): string {
+/// Parses `url` into the parsed, normalized target of an allowlisted BFF route
+/// and throws otherwise: the single source of truth for the origin check, the
+/// segment/query allowlists and the route allowlist. Callers that perform a
+/// request take the destination from the returned `URL` object only.
+export function safeBffRequestUrl(url: string): URL {
   const message = `Refusing to fetch non-BFF URL: ${url}`
   const resolved = parseSameOriginUrl(url, message)
   if (!resolved.pathname.startsWith(BFF_PATH_PREFIX)) {
@@ -181,7 +182,13 @@ export function assertSafeBffUrl(url: string): string {
   if (!BFF_ROUTE_ALLOWLIST.some((route) => route.test(resolved.pathname))) {
     throw new Error(`Refusing to fetch non-allowlisted BFF URL: ${url}`)
   }
-  return toRequestTarget(resolved)
+  return resolved
+}
+
+/// Returns the normalized request target when `url` is a safe path under the BFF
+/// prefix **and** matches the [`BFF_ROUTE_ALLOWLIST`], and throws otherwise.
+export function assertSafeBffUrl(url: string): string {
+  return toRequestTarget(safeBffRequestUrl(url))
 }
 
 /// Validates one dynamic path segment (an id taken from the browser URL) and

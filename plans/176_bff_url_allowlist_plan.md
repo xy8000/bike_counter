@@ -89,10 +89,12 @@ parameters:
 - `assertSafeRequestUrl(url)` - same-origin structural guard (existing contract
   and error prefix `Refusing to fetch unsafe URL: …`), returning the normalized
   `pathname + search`.
-- `assertSafeBffUrl(url)` - structural guard **plus** the `/api/bff/` prefix
+- `safeBffRequestUrl(url)` - structural guard **plus** the `/api/bff/` prefix
   **plus** the route allowlist (error prefixes `Refusing to fetch non-BFF URL: …`
-  and `Refusing to fetch non-allowlisted BFF URL: …`), returning the normalized
-  request target.
+  and `Refusing to fetch non-allowlisted BFF URL: …`), returning the parsed
+  `URL`. It is the single source of truth for the BFF destination.
+- `assertSafeBffUrl(url)` - thin wrapper over `safeBffRequestUrl` that returns
+  the normalized request target string.
 - `safePathSegment(value)` - validates one id taken from the browser URL and
   returns it unchanged, throwing `Refusing to use unsafe path segment: …` for
   anything outside the safe segment charset (including `.`, `..`, `%2f`, `?`,
@@ -107,7 +109,9 @@ parameters:
 
 ## 2. `bff.ts` - the sink stays, the destination is constrained
 
-- `getJson` fetches `assertSafeBffUrl(url)`, i.e. the sink only ever receives an
+- `getJson` never hands the tainted `url` to `fetch`. It calls
+  `safeBffRequestUrl(url)` and takes the destination from the returned `URL`
+  (`${target.pathname}${target.search}`), so the sink only ever receives an
   allowlisted, normalized, same-origin BFF path.
 - After the response, a non-empty `response.url` must still be same-origin and
   parsable (`response.redirected` to another host is rejected), so an open
@@ -136,14 +140,21 @@ parameters:
 
 ## 4. Tests
 
+Both suites are **table-driven** (`it.each`) over shared payload tables, so a
+new attack payload is one line of data instead of another copy of the same
+`expect(() => …).toThrow(…)` block (this is what removes the duplicated lines
+SonarCloud reported for "new code"). A small `stubFetch`/`responseWithUrl` helper
+per file keeps the fetch-spy and redirect fixtures in one place.
+
 - New [`bff.test.ts`](frontend/src/lib/bff.test.ts): JSON happy path, unchanged
-  query, non-ok status message, absolute/protocol-relative/traversal/
-  non-allowlisted-BFF/outside-BFF/unknown-query rejection with **no** `fetch`
-  call, cross-origin redirect response, same-origin final URL, `unwrapLinks`.
-- [`apiUrl.test.ts`](frontend/src/lib/apiUrl.test.ts): allowlist coverage for
-  every route shape, dot-segment rewriting, percent-encoded traversal, fragment,
-  `userinfo`, whitespace, empty segments, unknown query keys, malformed and
-  control-character escapes, and `safePathSegment` acceptance/rejection.
+  query, non-ok status message, one parameterized rejection test covering
+  off-origin / protocol-relative / percent-encoded traversal / outside-BFF /
+  non-allowlisted-BFF / unknown-query payloads (each asserting **no** `fetch`
+  call), cross-origin redirect response, same-origin final URL, `unwrapLinks`.
+- [`apiUrl.test.ts`](frontend/src/lib/apiUrl.test.ts): shared `UNSAFE_URLS` table
+  run against **both** guards, a `NON_BFF_URLS` table, a parameterized acceptance
+  test over every allowlisted route shape, and parameterized `safePathSegment`
+  acceptance/rejection tables.
 - Call-site regression tests: a tainted station/data-source id and a tainted
   `exclude` id are refused without a request
   ([`stationDetail/api.test.ts`](frontend/src/features/stationDetail/api.test.ts),
@@ -156,13 +167,41 @@ parameters:
   [`test-utils/stationsSummary.ts`](frontend/src/test-utils/stationsSummary.ts)),
   as do the detail-page fixtures.
 
+## 5. Follow-up: duplicated lines on new code + re-reported sink
+
+SonarCloud then reported **11.9 % duplicated lines on new code**, concentrated in
+the two guard suites ([`bff.test.ts`](frontend/src/lib/bff.test.ts) 39.2 % /
+51 lines, [`apiUrl.test.ts`](frontend/src/lib/apiUrl.test.ts) 35.7 % / 40 lines)
+plus a "bad practice" finding on the four near-identical rejection tests, and
+re-reported both CSRF/SSRF findings on the `fetch` call of
+[`getJson`](frontend/src/lib/bff.ts:40).
+
+- **Duplication** - the per-payload `it('rejects …', async () => { … })` blocks
+  became `it.each` tables (`REJECTED_URLS` in `bff.test.ts`, shared
+  `UNSAFE_URLS`/`NON_BFF_URLS`/`ALLOWED_BFF_URLS` in `apiUrl.test.ts`), and the
+  repeated fetch-spy / redirect-response setup moved into two tiny per-file
+  helpers (`stubFetch`, `responseWithUrl`). Test *coverage* only grew (the
+  tables expand to more individual cases), duplicates shrank: a new attack
+  payload is now one data row.
+- **The sink** - `getJson` no longer forwards the validated string: it calls
+  `safeBffRequestUrl(url)` and builds the request destination from the returned
+  `URL` (`${target.pathname}${target.search}`). The taint chain the analyzer
+  follows (`url → fetch`) is therefore broken at the sink: origin, path
+  segments, query keys and the route allowlist are all decided inside
+  `safeBffRequestUrl`, where the parsed `URL` is compared against the app's own
+  origin. `safePathSegment` at the call sites and `assertSameOriginResponse`
+  after the fetch are unchanged, and no `sonar-disable`/eslint suppression was
+  added.
+
 ## Definition of done
 
 - [x] Plan file added
 - [x] `apiUrl.ts` parser + segment/query/route allowlists + `safePathSegment`
-- [x] `bff.ts` validates through `assertSafeBffUrl` and re-checks the response origin
+- [x] `safeBffRequestUrl` as the single BFF destination source of truth
+- [x] `bff.ts` takes the sink destination from the parsed `URL` and re-checks the response origin
 - [x] Call sites no longer interpolate raw route parameters
-- [x] Unit tests for the new guards and updated fixtures (615 tests green)
+- [x] Table-driven guard tests (no copy-pasted payload blocks, no suppressions)
+- [x] Unit tests for the new guards and updated fixtures (653 tests green)
 - [x] `make check` green (rustfmt, clippy, Prettier, `cargo audit`)
 - [x] `npx tsc --noEmit` green
 - [x] `npx vitest run --coverage` green (frontend `src` lines 96.49 %, above the 80 % gate)
