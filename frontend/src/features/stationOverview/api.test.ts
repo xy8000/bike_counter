@@ -55,19 +55,31 @@ describe('fetchStationOverview', () => {
 describe('fetchStationOverviewStats', () => {
   const stats = { total_bikes: 5, metrics: [] }
 
-  it('fetches the stats card through the given href', async () => {
+  it('builds the stats path locally from the station id', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(stats))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(fetchStationOverviewStats(STATS_URL)).resolves.toEqual(stats)
+    await expect(fetchStationOverviewStats('zoo')).resolves.toEqual(stats)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith(STATS_URL)
+  })
+
+  it('refuses a tainted station id without issuing a request (CSRF/SSRF guard)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok(stats))
+    vi.stubGlobal('fetch', fetchMock)
+
+    for (const id of ['../admin', 'zoo?x=1']) {
+      await expect(fetchStationOverviewStats(id)).rejects.toThrow(
+        'Refusing to use unsafe path segment',
+      )
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('rejects when the stats request is not ok', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({}, 500)))
 
-    await expect(fetchStationOverviewStats(STATS_URL)).rejects.toThrow(
+    await expect(fetchStationOverviewStats('zoo')).rejects.toThrow(
       `${STATS_URL} responded with 500`,
     )
   })
