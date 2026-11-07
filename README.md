@@ -233,6 +233,10 @@ Two dials, both optional in `config.toml`:
 - `database_connection_timeout_seconds` (default 5) and
   `database_statement_timeout_seconds` (default 15) bound connection acquisition
   and query runtime, so an exhausted or runaway query cannot pin a request.
+  The statement timeout guards the request path; the background maintenance
+  transactions (import batch writes, rollup rebuilds) lift it with
+  `SET LOCAL statement_timeout = 0` so a large import batch on slow storage can
+  never be cancelled (see [plan 172](plans/172_hamburg_import_statement_timeout_plan.md)).
 
 ## Contributing
 
