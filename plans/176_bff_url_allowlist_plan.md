@@ -205,6 +205,12 @@ to `getJson`. That flow is now structurally gone:
   response body is display data only and never a request destination;
 - a regression test asserts a tainted id is refused without any request.
 
+The only behavioural difference is that the stats card no longer repeats the
+shell's `as_of` token (the backend defaults it to "now"). The overview panel has
+a single stats card, so there is no cross-card consistency to preserve there -
+unlike the detail/summary pages, where the shared `as_of` is what keeps several
+cards on the same reference time.
+
 The remaining HATEOAS→`fetch` flows (station-detail cards, stations-summary
 cards, sidebar stats) still take their link from the previous response; they are
 guarded by the allowlist but the analyzer can point at any of them. Cutting them
