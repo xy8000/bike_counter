@@ -25,20 +25,26 @@ describe('useStationGraphs', () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(GRAPHS))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useStationGraphs('/api/graphs/s1/week', false))
+    const { result } = renderHook(() =>
+      useStationGraphs('/api/bff/station-detail/s1/graphs/week', false),
+    )
 
     await waitFor(() => expect(result.current.data).toEqual(GRAPHS))
-    expect(fetchMock).toHaveBeenCalledWith('/api/graphs/s1/week')
+    expect(fetchMock).toHaveBeenCalledWith('/api/bff/station-detail/s1/graphs/week')
   })
 
   it('appends the trend param when exclude is on', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(GRAPHS))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useStationGraphs('/api/graphs/s1/week', true))
+    const { result } = renderHook(() =>
+      useStationGraphs('/api/bff/station-detail/s1/graphs/week', true),
+    )
 
     await waitFor(() => expect(result.current.data).toEqual(GRAPHS))
-    expect(fetchMock).toHaveBeenCalledWith('/api/graphs/s1/week?exclude_new_stations=true')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/bff/station-detail/s1/graphs/week?exclude_new_stations=true',
+    )
   })
 
   it('does not fetch when the url is null', async () => {

@@ -20,7 +20,7 @@ describe('useStationsSummaryMonthly', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() =>
-      useStationsSummaryMonthly('/api/monthly/summary', ['s1'], false),
+      useStationsSummaryMonthly('/api/bff/stations/summary/monthly', ['s1'], false),
     )
 
     expect(result.current.loading).toBe(true)
@@ -29,14 +29,14 @@ describe('useStationsSummaryMonthly', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.error).toBe(false)
     expect(result.current.monthly?.monthly_totals).toHaveLength(2)
-    expect(fetchMock).toHaveBeenCalledWith('/api/monthly/summary?exclude=s1')
+    expect(fetchMock).toHaveBeenCalledWith('/api/bff/stations/summary/monthly?exclude=s1')
   })
 
   it('reports the error when the monthly request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
 
     const { result } = renderHook(() =>
-      useStationsSummaryMonthly('/api/monthly/summary', [], false),
+      useStationsSummaryMonthly('/api/bff/stations/summary/monthly', [], false),
     )
 
     await waitFor(() => expect(result.current.error).toBe(true))
@@ -61,14 +61,16 @@ describe('useStationsSummaryMonthly', () => {
 
     const { result, rerender } = renderHook(
       ({ excludeNewStations }: { excludeNewStations: boolean }) =>
-        useStationsSummaryMonthly('/api/monthly/summary', [], excludeNewStations),
+        useStationsSummaryMonthly('/api/bff/stations/summary/monthly', [], excludeNewStations),
       { initialProps: { excludeNewStations: false } },
     )
     await waitFor(() => expect(result.current.monthly?.monthly_totals).toHaveLength(2))
 
     rerender({ excludeNewStations: true })
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith('/api/monthly/summary?exclude_new_stations=true'),
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/bff/stations/summary/monthly?exclude_new_stations=true',
+      ),
     )
   })
 })

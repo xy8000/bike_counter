@@ -13,7 +13,9 @@ describe('useResource', () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(payload))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useResource<{ value: number }>('/api/card'))
+    const { result } = renderHook(() =>
+      useResource<{ value: number }>('/api/bff/station-detail/card/overview'),
+    )
 
     expect(result.current.loading).toBe(true)
     expect(result.current.data).toBeNull()
@@ -22,7 +24,7 @@ describe('useResource', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.data).toEqual(payload)
     expect(result.current.error).toBe(false)
-    expect(fetchMock).toHaveBeenCalledWith('/api/card')
+    expect(fetchMock).toHaveBeenCalledWith('/api/bff/station-detail/card/overview')
   })
 
   it('does not fetch and stays idle when url is null', () => {
@@ -58,23 +60,25 @@ describe('useResource', () => {
 
     const { result, rerender } = renderHook(
       ({ url }: { url: string | null }) => useResource<{ value: number }>(url),
-      { initialProps: { url: '/api/a' } },
+      { initialProps: { url: '/api/bff/station-detail/a/overview' } },
     )
     await waitFor(() => expect(result.current.data).toEqual({ value: 1 }))
 
-    rerender({ url: '/api/b' })
+    rerender({ url: '/api/bff/station-detail/b/overview' })
     expect(result.current.loading).toBe(true)
     expect(result.current.data).toBeNull()
 
     await waitFor(() => expect(result.current.data).toEqual({ value: 2 }))
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/b')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/bff/station-detail/b/overview')
   })
 
   it('reports the error when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
 
-    const { result } = renderHook(() => useResource<unknown>('/api/card'))
+    const { result } = renderHook(() =>
+      useResource<unknown>('/api/bff/station-detail/card/overview'),
+    )
 
     await waitFor(() => expect(result.current.error).toBe(true))
     expect(result.current.loading).toBe(false)
@@ -84,7 +88,9 @@ describe('useResource', () => {
   it('reports the error when the response is not ok', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
 
-    const { result } = renderHook(() => useResource<unknown>('/api/card'))
+    const { result } = renderHook(() =>
+      useResource<unknown>('/api/bff/station-detail/card/overview'),
+    )
 
     await waitFor(() => expect(result.current.error).toBe(true))
     expect(result.current.loading).toBe(false)
@@ -94,17 +100,18 @@ describe('useResource', () => {
     let resolveA!: (response: Response) => void
     let resolveB!: (response: Response) => void
     const fetchMock = vi.fn((url: string) => {
-      if (url === '/api/a') return new Promise<Response>((resolve) => (resolveA = resolve))
+      if (url === '/api/bff/station-detail/a/overview')
+        return new Promise<Response>((resolve) => (resolveA = resolve))
       return new Promise<Response>((resolve) => (resolveB = resolve))
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const { result, rerender } = renderHook(
       ({ url }: { url: string | null }) => useResource<{ value: number }>(url),
-      { initialProps: { url: '/api/a' } },
+      { initialProps: { url: '/api/bff/station-detail/a/overview' } },
     )
 
-    rerender({ url: '/api/b' })
+    rerender({ url: '/api/bff/station-detail/b/overview' })
     act(() => {
       resolveA(ok({ value: 1 }))
       resolveB(ok({ value: 2 }))
@@ -119,7 +126,9 @@ describe('useResource', () => {
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => (resolvePending = resolve)))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { unmount } = renderHook(() => useResource<{ value: number }>('/api/card'))
+    const { unmount } = renderHook(() =>
+      useResource<{ value: number }>('/api/bff/station-detail/card/overview'),
+    )
 
     unmount()
     act(() => {

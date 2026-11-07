@@ -1,3 +1,4 @@
+import { safePathSegment } from '../../lib/apiUrl'
 import { getJson } from '../../lib/bff'
 import type { DataSourceDetail, DataSourceImports, DataSourceSummary } from './types'
 
@@ -9,7 +10,7 @@ export async function fetchDataSources(): Promise<DataSourceSummary[]> {
 
 /// The detail payload of one data source (stats + badges + map stations).
 export async function fetchDataSourceDetail(id: string): Promise<DataSourceDetail> {
-  return getJson<DataSourceDetail>(`/api/bff/data-sources/${id}`)
+  return getJson<DataSourceDetail>(`/api/bff/data-sources/${safePathSegment(id)}`)
 }
 
 /// Default page size of the import-run history (issue #48: the last 50 jobs).
@@ -26,5 +27,6 @@ export async function fetchDataSourceImports(
   limit = IMPORT_PAGE_SIZE,
 ): Promise<DataSourceImports> {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
-  return getJson<DataSourceImports>(`/api/bff/data-sources/${id}/imports?${params.toString()}`)
+  const safeId = safePathSegment(id)
+  return getJson<DataSourceImports>(`/api/bff/data-sources/${safeId}/imports?${params.toString()}`)
 }

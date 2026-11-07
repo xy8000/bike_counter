@@ -51,13 +51,16 @@ function rawShell(stations: SummaryStation[]) {
     stations,
     last_update: '2026-01-02T12:00:00Z',
     _links: {
-      self: { href: '/api/summary/self', templated: false },
-      overview: { href: '/api/overview/summary', templated: false },
-      graphs_day: { href: '/api/graphs/summary/day', templated: false },
-      graphs_week: { href: '/api/graphs/summary/week', templated: false },
-      graphs_last_30_days: { href: '/api/graphs/summary/last_30_days', templated: false },
-      graphs_year: { href: '/api/graphs/summary/year', templated: false },
-      monthly: { href: '/api/monthly/summary', templated: false },
+      self: { href: '/api/bff/stations/summary', templated: false },
+      overview: { href: '/api/bff/stations/summary/overview', templated: false },
+      graphs_day: { href: '/api/bff/stations/summary/graphs/day', templated: false },
+      graphs_week: { href: '/api/bff/stations/summary/graphs/week', templated: false },
+      graphs_last_30_days: {
+        href: '/api/bff/stations/summary/graphs/last_30_days',
+        templated: false,
+      },
+      graphs_year: { href: '/api/bff/stations/summary/graphs/year', templated: false },
+      monthly: { href: '/api/bff/stations/summary/monthly', templated: false },
     },
   }
 }
@@ -147,7 +150,9 @@ function makeServer(options: ServerOptions = {}) {
     if (options.pending?.some((part) => url.includes(part))) {
       return new Promise<Response>(() => {})
     }
-    if (url.includes('/api/bff/stations/summary')) {
+    // The shell always carries the bounds query; the sub-resources live under
+    // `/summary/…`, so the trailing `?` keeps the branches disjoint.
+    if (url.startsWith('/api/bff/stations/summary?')) {
       if (options.shellError) return Promise.reject(new Error('shell failed'))
       return Promise.resolve(ok(rawShell(stations)))
     }
@@ -162,15 +167,15 @@ function makeServer(options: ServerOptions = {}) {
     if (url.includes('/api/bff/global-summary')) {
       return Promise.resolve(ok(GLOBAL_SUMMARY))
     }
-    if (url.includes('/api/graphs/summary/')) {
+    if (url.includes('/api/bff/stations/summary/graphs/')) {
       if (options.graphsError) return Promise.reject(new Error('graphs failed'))
       return Promise.resolve(ok(graphsFor(stations, options.emptyGraphs ?? false)))
     }
-    if (url.includes('/api/overview/summary')) {
+    if (url.includes('/api/bff/stations/summary/overview')) {
       if (options.overviewError) return Promise.reject(new Error('overview failed'))
       return Promise.resolve(ok(OVERVIEW))
     }
-    if (url.includes('/api/monthly/summary')) {
+    if (url.includes('/api/bff/stations/summary/monthly')) {
       if (options.monthlyError) return Promise.reject(new Error('monthly failed'))
       return Promise.resolve(ok(MONTHLY))
     }
@@ -282,14 +287,18 @@ describe('StationsSummary', () => {
     // The cards were fetched through the shell's HATEOAS links; the week graphs
     // link carries the mid-resolution hour token.
     expect(mock).toHaveBeenCalledWith(expect.stringContaining('/api/bff/stations/summary?'))
-    expect(mock).toHaveBeenCalledWith('/api/overview/summary')
-    expect(mock).toHaveBeenCalledWith('/api/graphs/summary/week?resolution=hour')
-    expect(mock).toHaveBeenCalledWith('/api/monthly/summary')
+    expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview')
+    expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/graphs/week?resolution=hour')
+    expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/monthly')
   })
 
   it('shows the per-card skeletons while the card sub-requests are pending', async () => {
     makeServer({
-      pending: ['/api/overview/summary', '/api/graphs/summary/', '/api/monthly/summary'],
+      pending: [
+        '/api/bff/stations/summary/overview',
+        '/api/bff/stations/summary/graphs/',
+        '/api/bff/stations/summary/monthly',
+      ],
     })
     const { container } = renderSummary(ENTRY)
 
@@ -348,7 +357,7 @@ describe('StationsSummary', () => {
     // The year timeframe at the default mid resolution uses the year link with
     // the `week` granularity.
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/graphs/summary/year?resolution=week'),
+      expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/graphs/year?resolution=week'),
     )
   })
 
@@ -357,15 +366,19 @@ describe('StationsSummary', () => {
     renderSummary(`${ENTRY}&exclude_new_stations=1`)
 
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/overview/summary?exclude_new_stations=true'),
-    )
-    await waitFor(() =>
       expect(mock).toHaveBeenCalledWith(
-        '/api/graphs/summary/week?resolution=hour&exclude_new_stations=true',
+        '/api/bff/stations/summary/overview?exclude_new_stations=true',
       ),
     )
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/monthly/summary?exclude_new_stations=true'),
+      expect(mock).toHaveBeenCalledWith(
+        '/api/bff/stations/summary/graphs/week?resolution=hour&exclude_new_stations=true',
+      ),
+    )
+    await waitFor(() =>
+      expect(mock).toHaveBeenCalledWith(
+        '/api/bff/stations/summary/monthly?exclude_new_stations=true',
+      ),
     )
   })
 
@@ -421,9 +434,13 @@ describe('StationsSummary', () => {
 
     fireEvent.click(marker)
 
-    await waitFor(() => expect(mock).toHaveBeenCalledWith('/api/overview/summary?exclude=s1'))
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/graphs/summary/week?resolution=hour&exclude=s1'),
+      expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview?exclude=s1'),
+    )
+    await waitFor(() =>
+      expect(mock).toHaveBeenCalledWith(
+        '/api/bff/stations/summary/graphs/week?resolution=hour&exclude=s1',
+      ),
     )
     expect(screen.getByAltText('A-Stadt')).toHaveClass('station-marker--disabled')
   })
@@ -433,12 +450,14 @@ describe('StationsSummary', () => {
     renderSummary(`${ENTRY}&disabled=s1`)
 
     const marker = await screen.findByAltText('A-Stadt')
-    await waitFor(() => expect(mock).toHaveBeenCalledWith('/api/overview/summary?exclude=s1'))
+    await waitFor(() =>
+      expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview?exclude=s1'),
+    )
     expect(marker).toHaveClass('station-marker--disabled')
 
     fireEvent.click(marker)
 
-    await waitFor(() => expect(mock).toHaveBeenCalledWith('/api/overview/summary'))
+    await waitFor(() => expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview'))
     expect(screen.getByAltText('A-Stadt')).not.toHaveClass('station-marker--disabled')
   })
 })

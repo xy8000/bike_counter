@@ -17,13 +17,16 @@ export function rawSummaryPage() {
     stations: [],
     last_update: null,
     _links: {
-      self: { href: '/api/summary/self', templated: false },
-      overview: { href: '/api/overview/summary', templated: false },
-      graphs_day: { href: '/api/graphs/summary/day', templated: false },
-      graphs_week: { href: '/api/graphs/summary/week', templated: false },
-      graphs_last_30_days: { href: '/api/graphs/summary/last_30_days', templated: false },
-      graphs_year: { href: '/api/graphs/summary/year', templated: false },
-      monthly: { href: '/api/monthly/summary', templated: false },
+      self: { href: '/api/bff/stations/summary', templated: false },
+      overview: { href: '/api/bff/stations/summary/overview', templated: false },
+      graphs_day: { href: '/api/bff/stations/summary/graphs/day', templated: false },
+      graphs_week: { href: '/api/bff/stations/summary/graphs/week', templated: false },
+      graphs_last_30_days: {
+        href: '/api/bff/stations/summary/graphs/last_30_days',
+        templated: false,
+      },
+      graphs_year: { href: '/api/bff/stations/summary/graphs/year', templated: false },
+      monthly: { href: '/api/bff/stations/summary/monthly', templated: false },
     },
   }
 }

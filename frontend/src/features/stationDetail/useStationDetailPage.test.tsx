@@ -16,12 +16,15 @@ function shell(id: string) {
     channels: [],
     _links: {
       self: { href: `/stations/${id}`, templated: false },
-      overview: { href: `/api/overview/${id}`, templated: false },
-      graphs_day: { href: `/api/graphs/${id}/day`, templated: false },
-      graphs_week: { href: `/api/graphs/${id}/week`, templated: false },
-      graphs_last_30_days: { href: `/api/graphs/${id}/last_30_days`, templated: false },
-      graphs_year: { href: `/api/graphs/${id}/year`, templated: false },
-      monthly: { href: `/api/monthly/${id}`, templated: false },
+      overview: { href: `/api/bff/station-detail/${id}/overview`, templated: false },
+      graphs_day: { href: `/api/bff/station-detail/${id}/graphs/day`, templated: false },
+      graphs_week: { href: `/api/bff/station-detail/${id}/graphs/week`, templated: false },
+      graphs_last_30_days: {
+        href: `/api/bff/station-detail/${id}/graphs/last_30_days`,
+        templated: false,
+      },
+      graphs_year: { href: `/api/bff/station-detail/${id}/graphs/year`, templated: false },
+      monthly: { href: `/api/bff/station-detail/${id}/monthly`, templated: false },
     },
   }
 }
@@ -43,7 +46,7 @@ describe('useStationDetailPage', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.error).toBe(false)
     expect(result.current.data?.name).toBe('Station s1')
-    expect(result.current.data?._links.overview).toBe('/api/overview/s1')
+    expect(result.current.data?._links.overview).toBe('/api/bff/station-detail/s1/overview')
     expect(fetchMock).toHaveBeenCalledWith('/api/bff/station-detail/s1')
   })
 

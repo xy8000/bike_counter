@@ -24,7 +24,7 @@ describe('useStationsSummaryGraphs', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() =>
-      useStationsSummaryGraphs('/api/graphs/summary/week?resolution=hour', [], true),
+      useStationsSummaryGraphs('/api/bff/stations/summary/graphs/week?resolution=hour', [], true),
     )
 
     expect(result.current.loading).toBe(true)
@@ -34,7 +34,7 @@ describe('useStationsSummaryGraphs', () => {
     expect(result.current.error).toBe(false)
     expect(result.current.graphs?.current).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/graphs/summary/week?resolution=hour&exclude_new_stations=true',
+      '/api/bff/stations/summary/graphs/week?resolution=hour&exclude_new_stations=true',
     )
   })
 
@@ -42,7 +42,7 @@ describe('useStationsSummaryGraphs', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
 
     const { result } = renderHook(() =>
-      useStationsSummaryGraphs('/api/graphs/summary/week', [], false),
+      useStationsSummaryGraphs('/api/bff/stations/summary/graphs/week', [], false),
     )
 
     await waitFor(() => expect(result.current.error).toBe(true))
@@ -67,13 +67,15 @@ describe('useStationsSummaryGraphs', () => {
 
     const { result, rerender } = renderHook(
       ({ link }: { link: string | null }) => useStationsSummaryGraphs(link, [], false),
-      { initialProps: { link: '/api/graphs/summary/week' } },
+      { initialProps: { link: '/api/bff/stations/summary/graphs/week' } },
     )
     await waitFor(() => expect(result.current.graphs?.current).toHaveLength(1))
 
-    rerender({ link: '/api/graphs/summary/year?resolution=week' })
+    rerender({ link: '/api/bff/stations/summary/graphs/year?resolution=week' })
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith('/api/graphs/summary/year?resolution=week'),
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/bff/stations/summary/graphs/year?resolution=week',
+      ),
     )
   })
 })

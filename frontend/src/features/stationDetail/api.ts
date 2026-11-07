@@ -1,3 +1,4 @@
+import { safePathSegment } from '../../lib/apiUrl'
 import { getJson, unwrapLinks, type RawLink } from '../../lib/bff'
 import type {
   DetailLinks,
@@ -9,9 +10,10 @@ import type {
 
 /// Fetch the detail page shell (metadata + channels + HATEOAS links).
 export async function fetchStationDetailPage(id: string): Promise<StationDetailPage> {
+  const safeId = safePathSegment(id)
   const data = await getJson<
     Omit<StationDetailPage, '_links'> & { _links: Record<string, RawLink> }
-  >(`/api/bff/station-detail/${id}`)
+  >(`/api/bff/station-detail/${safeId}`)
   return { ...data, _links: unwrapLinks<DetailLinks>(data._links) }
 }
 
@@ -25,7 +27,7 @@ export function withTrendParam(url: string, excludeNewStations: boolean): string
 
 /// Fetch one stats card by its HATEOAS link (the link carries the `as_of`
 /// reference, so the URL is a pure function of the reference time).
-export function fetchOverviewStats(
+export async function fetchOverviewStats(
   url: string,
   excludeNewStations: boolean,
 ): Promise<StationOverviewStats> {
@@ -33,11 +35,11 @@ export function fetchOverviewStats(
 }
 
 /// Fetch one timeframe of graph data by its HATEOAS link.
-export function fetchGraphs(url: string, excludeNewStations: boolean): Promise<PeriodGraphs> {
+export async function fetchGraphs(url: string, excludeNewStations: boolean): Promise<PeriodGraphs> {
   return getJson(withTrendParam(url, excludeNewStations))
 }
 
 /// Fetch the monthly totals card by its HATEOAS link.
-export function fetchMonthlyTotals(url: string): Promise<{ monthly_totals: MonthTotal[] }> {
+export async function fetchMonthlyTotals(url: string): Promise<{ monthly_totals: MonthTotal[] }> {
   return getJson(url)
 }
