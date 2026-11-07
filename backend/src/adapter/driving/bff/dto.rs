@@ -218,7 +218,7 @@ pub struct GlobalSummaryDto {
 /// Backend application version, returned by `GET /api/bff/version`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct VersionDto {
-    #[schema(example = "0.0.10")]
+    #[schema(example = "0.0.11")]
     pub version: String,
 }
 
