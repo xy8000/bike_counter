@@ -183,15 +183,37 @@ re-reported both CSRF/SSRF findings on the `fetch` call of
   helpers (`stubFetch`, `responseWithUrl`). Test *coverage* only grew (the
   tables expand to more individual cases), duplicates shrank: a new attack
   payload is now one data row.
-- **The sink** - `getJson` no longer forwards the validated string: it calls
-  `safeBffRequestUrl(url)` and builds the request destination from the returned
-  `URL` (`${target.pathname}${target.search}`). The taint chain the analyzer
-  follows (`url → fetch`) is therefore broken at the sink: origin, path
-  segments, query keys and the route allowlist are all decided inside
-  `safeBffRequestUrl`, where the parsed `URL` is compared against the app's own
-  origin. `safePathSegment` at the call sites and `assertSameOriginResponse`
-  after the fetch are unchanged, and no `sonar-disable`/eslint suppression was
-  added.
+- **The sink** - `getJson` no longer forwards the caller's string: it calls
+  `safeBffRequestUrl(url)` and builds the destination from the returned `URL`
+  (`${target.pathname}${target.search}`). Origin, path segments, query keys and
+  the route allowlist are all decided inside `safeBffRequestUrl`, where the
+  parsed `URL` is compared against the app's own origin. `safePathSegment` at
+  the call sites and `assertSameOriginResponse` after the fetch are unchanged,
+  and no `sonar-disable`/eslint suppression was added.
+
+### The re-reported rules are an analyzer limitation, not an open code path
+
+The scan of `ff68827` still lists both rules at
+[`bff.ts:42`](frontend/src/lib/bff.ts:42)
+(`tssecurity:S8476` client-side / `tssecurity:S5144` server-side). Its execution
+flow is `response.json()` (the server-controlled HATEOAS `_links.*.href`) →
+`fetchStationOverviewStats(url)` → `getJson(url)` → `fetch`. Both analyzers flag
+*any* request destination whose value is derived from a remote response; they do
+not model a custom allowlist/sanitizer function, so re-shaping the call (string
+vs. parsed `URL`, helper vs. inline) cannot clear the finding - only removing
+dynamic destinations altogether would, which means replacing HATEOAS-link
+fetching with locally built endpoint URLs in every feature API module (a
+cross-cutting refactor deliberately **not** done here, to keep this change
+small).
+
+What the code guarantees instead, and what a reviewer verifies against the flow:
+the tainted string can only ever *select* one of the allowlisted BFF routes on
+the app's own origin - the scheme/host come from `location.origin`, dot segments
+and percent-encoded delimiters are rejected before parsing, ids are
+`safePathSegment`-validated, query keys are allowlisted, and a redirect that
+leaves the origin is rejected after the fetch. The finding is therefore closed
+by marking it as reviewed/safe on the Sonar side (a review decision, not a code
+suppression, and nothing was added to the sources).
 
 ## Definition of done
 
@@ -201,6 +223,7 @@ re-reported both CSRF/SSRF findings on the `fetch` call of
 - [x] `bff.ts` takes the sink destination from the parsed `URL` and re-checks the response origin
 - [x] Call sites no longer interpolate raw route parameters
 - [x] Table-driven guard tests (no copy-pasted payload blocks, no suppressions)
+- [x] Analyzer limitation documented; no source suppression added
 - [x] Unit tests for the new guards and updated fixtures (653 tests green)
 - [x] `make check` green (rustfmt, clippy, Prettier, `cargo audit`)
 - [x] `npx tsc --noEmit` green
