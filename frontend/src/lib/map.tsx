@@ -1,4 +1,7 @@
-import 'maplibre-gl/dist/maplibre-gl.css'
+// `maplibre-gl.css` is imported by `src/index.css` into the low-priority
+// `vendor` cascade layer, so the app's overlay rules can style the map without
+// `!important`. Importing it here (unlayered) would outrank them again.
+//
 // maplibre-gl v6 runs its tile parsing in a separate Web Worker
 // (`maplibre-gl-worker.mjs`). The bundler does not emit that worker on its own,
 // so without this the worker 404s, no tiles are fetched and the map's `load`

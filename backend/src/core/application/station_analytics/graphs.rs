@@ -20,8 +20,8 @@ use crate::core::domain::counting_stations::counting_station::{
 use crate::core::domain::error::DomainError;
 use crate::core::domain::measurements::measurement::value_objects::ChannelId;
 use crate::core::domain::measurements::repository_port::{
-    BucketGranularity, ChannelBucket, ChannelTotal, HourTotal, MeasurementRepository, TimeBucket,
-    WeekdayTotal,
+    BucketGranularity, ChannelBucket, ChannelHourTotal, ChannelTotal, ChannelWeekdayTotal,
+    HourTotal, MeasurementRepository, TimeBucket, WeekdayTotal,
 };
 use crate::core::domain::station_analytics::{
     GraphResolution, PerChannelSeries, PerStationSeries, PeriodGraphs, StationTotal,
@@ -435,32 +435,17 @@ pub(super) fn period_data(
     group_order: &[uuid::Uuid],
     exclude_new_stations: bool,
 ) -> Result<PeriodData, DomainError> {
-    // Bike-Trends like-for-like filter: the set of groups that already existed
-    // before the comparison window started — their earliest-ever measurement is
-    // before `reference_from` (the previous window's start, or the current
-    // window's start for a custom range with no previous period). A group
-    // introduced during the window (no data before its start) is dropped; data
-    // loss or outages inside the window never exclude a group. Empty (no
-    // filtering) when the setting is off.
-    let established_groups: HashSet<uuid::Uuid> = if exclude_new_stations {
-        let reference_from = previous
-            .as_ref()
-            .map_or(current.from, |previous| previous.from);
-        let mut earliest_by_group: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
-        for row in repository.channel_bounds(channel_ids)? {
-            if let Some(&group) = group_of_channel.get(&row.channel_id) {
-                let entry = earliest_by_group.entry(group).or_insert(row.first);
-                *entry = (*entry).min(row.first);
-            }
-        }
-        earliest_by_group
-            .into_iter()
-            .filter(|(_, earliest)| !introduced_after(*earliest, reference_from))
-            .map(|(group, _)| group)
-            .collect()
-    } else {
-        HashSet::new()
-    };
+    // Bike-Trends like-for-like filter: only groups that already existed before
+    // the comparison window started are folded in (see
+    // `established_group_ids`); empty (no filtering) when the setting is off.
+    let established_groups = established_group_ids(
+        repository,
+        channel_ids,
+        group_of_channel,
+        previous,
+        current,
+        exclude_new_stations,
+    )?;
 
     // Whether a channel belongs to an established (fully covered) group. With
     // the setting off every channel qualifies, so the default path is untouched.
@@ -471,8 +456,8 @@ pub(super) fn period_data(
                 .is_some_and(|group| established_groups.contains(group))
     };
 
-    let current_rows: Vec<ChannelBucket> = repository
-        .sum_buckets_by_channel(
+    let current_rows = established_rows(
+        repository.sum_buckets_by_channel(
             current.from,
             current.to,
             current.granularity,
@@ -480,12 +465,11 @@ pub(super) fn period_data(
             timezone,
             channel_ids,
             None,
-        )?
-        .into_iter()
-        .filter(|row| in_established(row.channel_id))
-        .collect();
-    let previous_rows: Vec<ChannelBucket> = previous
-        .map(|previous| {
+        )?,
+        &in_established,
+    );
+    let previous_rows = match previous {
+        Some(previous) => established_rows(
             repository.sum_buckets_by_channel(
                 previous.from,
                 previous.to,
@@ -494,24 +478,15 @@ pub(super) fn period_data(
                 timezone,
                 channel_ids,
                 None,
-            )
-        })
-        .transpose()?
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|row| in_established(row.channel_id))
-        .collect();
+            )?,
+            &in_established,
+        ),
+        None => Vec::new(),
+    };
 
-    // Aggregate series: fold the per-channel buckets back into one series
+    // Aggregate series: the per-channel buckets folded back into one series
     // keyed by bucket start (the repository orders by channel then bucket).
-    let mut current_map: BTreeMap<DateTime<Utc>, i64> = BTreeMap::new();
-    for row in &current_rows {
-        *current_map.entry(row.start).or_insert(0) += row.total;
-    }
-    let current_series: Vec<TimeBucket> = current_map
-        .into_iter()
-        .map(|(start, total)| TimeBucket { start, total })
-        .collect();
+    let current_series = fold_series(&current_rows);
     // A custom range has no previous period and the user picked the exact
     // from/to, so the aggregate series is zero-filled to draw the whole period
     // (months/weeks without traffic render as 0 instead of being omitted).
@@ -529,14 +504,7 @@ pub(super) fn period_data(
     } else {
         current_series
     };
-    let mut previous_map: BTreeMap<DateTime<Utc>, i64> = BTreeMap::new();
-    for row in &previous_rows {
-        *previous_map.entry(row.start).or_insert(0) += row.total;
-    }
-    let previous_series: Vec<TimeBucket> = previous_map
-        .into_iter()
-        .map(|(start, total)| TimeBucket { start, total })
-        .collect();
+    let previous_series = fold_series(&previous_rows);
 
     // Weekday radar: with daily-or-finer buckets (the fixed timeframes) folding
     // the bucket series yields the same totals as a per-row sum. With wider
@@ -547,25 +515,17 @@ pub(super) fn period_data(
     let wide_buckets = !is_daily_or_finer(current.granularity);
     let mut current_weekday_by_group: HashMap<uuid::Uuid, Vec<WeekdayTotal>> = HashMap::new();
     if wide_buckets {
-        for row in repository.sum_weekdays_by_channel(
-            current.from,
-            current.to,
-            timezone,
-            channel_ids,
-            None,
-        )? {
-            if in_established(row.channel_id)
-                && let Some(&group_id) = group_of_channel.get(&row.channel_id)
-            {
-                current_weekday_by_group
-                    .entry(group_id)
-                    .or_default()
-                    .push(WeekdayTotal {
-                        weekday: row.weekday,
-                        total: row.total,
-                    });
-            }
-        }
+        current_weekday_by_group = weekday_groups_by_channel(
+            repository.sum_weekdays_by_channel(
+                current.from,
+                current.to,
+                timezone,
+                channel_ids,
+                None,
+            )?,
+            &in_established,
+            group_of_channel,
+        );
     }
     let weekday_radar = if wide_buckets {
         fold_weekdays(&current_weekday_by_group)
@@ -579,43 +539,24 @@ pub(super) fn period_data(
     };
 
     // Per-group hour-of-day totals for the nerd-stats hour radar.
-    let mut current_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
-    for row in
-        repository.sum_hours_by_channel(current.from, current.to, timezone, channel_ids, None)?
-    {
-        if in_established(row.channel_id)
-            && let Some(&group_id) = group_of_channel.get(&row.channel_id)
-        {
-            current_hour_by_group
-                .entry(group_id)
-                .or_default()
-                .push(HourTotal {
-                    hour: row.hour,
-                    total: row.total,
-                });
-        }
-    }
+    let current_hour_by_group = hour_groups_by_channel(
+        repository.sum_hours_by_channel(current.from, current.to, timezone, channel_ids, None)?,
+        &in_established,
+        group_of_channel,
+    );
     let mut previous_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
     if let Some(previous) = previous {
-        for row in repository.sum_hours_by_channel(
-            previous.from,
-            previous.to,
-            timezone,
-            channel_ids,
-            None,
-        )? {
-            if in_established(row.channel_id)
-                && let Some(&group_id) = group_of_channel.get(&row.channel_id)
-            {
-                previous_hour_by_group
-                    .entry(group_id)
-                    .or_default()
-                    .push(HourTotal {
-                        hour: row.hour,
-                        total: row.total,
-                    });
-            }
-        }
+        previous_hour_by_group = hour_groups_by_channel(
+            repository.sum_hours_by_channel(
+                previous.from,
+                previous.to,
+                timezone,
+                channel_ids,
+                None,
+            )?,
+            &in_established,
+            group_of_channel,
+        );
     }
 
     // Aggregate hour-of-day radar over the raw measurements (the 30-day and
@@ -623,19 +564,10 @@ pub(super) fn period_data(
     // setting on the aggregate is folded from the (already filtered) per-group
     // rows, because the aggregate `sum_hours` cannot be restricted per group.
     let (hourly, hourly_previous) = if exclude_new_stations {
-        let fold = |by_group: &HashMap<uuid::Uuid, Vec<HourTotal>>| {
-            let mut totals: BTreeMap<u8, i64> = BTreeMap::new();
-            for hours in by_group.values() {
-                for hour in hours {
-                    *totals.entry(hour.hour).or_insert(0) += hour.total;
-                }
-            }
-            totals
-                .into_iter()
-                .map(|(hour, total)| HourTotal { hour, total })
-                .collect()
-        };
-        (fold(&current_hour_by_group), fold(&previous_hour_by_group))
+        (
+            fold_hours(&current_hour_by_group),
+            fold_hours(&previous_hour_by_group),
+        )
     } else {
         let previous_hours = match previous {
             Some(previous) => {
@@ -649,82 +581,29 @@ pub(super) fn period_data(
         )
     };
 
-    // Per-group series + pie from the per-channel buckets.
-    let mut current_by_group: HashMap<uuid::Uuid, Vec<TimeBucket>> = HashMap::new();
-    let mut pie_by_group: HashMap<uuid::Uuid, i64> = HashMap::new();
-    for row in current_rows {
-        if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
-            current_by_group
-                .entry(group_id)
-                .or_default()
-                .push(TimeBucket {
-                    start: row.start,
-                    total: row.total,
-                });
-            *pie_by_group.entry(group_id).or_insert(0) += row.total;
-        }
-    }
-    let mut previous_by_group: HashMap<uuid::Uuid, Vec<TimeBucket>> = HashMap::new();
-    for row in previous_rows {
-        if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
-            previous_by_group
-                .entry(group_id)
-                .or_default()
-                .push(TimeBucket {
-                    start: row.start,
-                    total: row.total,
-                });
-        }
-    }
+    // Per-group series from the per-channel buckets.
+    let current_by_group = series_by_channel(current_rows, group_of_channel);
+    let previous_by_group = series_by_channel(previous_rows, group_of_channel);
 
-    // Keep the group order stable; a group is only included when it has
-    // data in at least one of the two periods (non-established groups are
-    // empty after filtering and are dropped automatically). For a custom
-    // range the per-group current series is zero-filled too, so the
-    // per-channel / per-station nerd charts draw the whole selected period.
-    let custom_range = previous.is_none();
+    // Keep the group order stable; a group is only included when it has data in
+    // at least one of the two periods (non-established groups are empty after
+    // filtering and are dropped automatically). For a custom range the
+    // per-group current series is zero-filled too, so the per-channel /
+    // per-station nerd charts draw the whole selected period.
+    let mut sources = GroupSources {
+        current_by_group,
+        previous_by_group,
+        weekday_by_group: current_weekday_by_group,
+        hour_by_group: current_hour_by_group,
+        previous_hour_by_group,
+        wide_buckets,
+        custom_range: previous.is_none(),
+        current,
+        tz,
+    };
     let per_group = group_order
         .iter()
-        .filter_map(|group_id| {
-            let mut current_series = current_by_group.remove(group_id).unwrap_or_default();
-            let previous_series = previous_by_group.remove(group_id).unwrap_or_default();
-            if current_series.is_empty() && previous_series.is_empty() {
-                return None;
-            }
-            if custom_range && !current_series.is_empty() {
-                current_series = zero_fill_buckets(
-                    current_series,
-                    current.granularity,
-                    current.from,
-                    current.to,
-                    current.origin,
-                    tz,
-                );
-            }
-            let (weekday_radar, weekday_radar_previous) = if wide_buckets {
-                (
-                    current_weekday_by_group
-                        .remove(group_id)
-                        .unwrap_or_default(),
-                    Vec::new(),
-                )
-            } else {
-                (
-                    weekday_totals(&current_series, tz),
-                    weekday_totals(&previous_series, tz),
-                )
-            };
-            Some(GroupGraphData {
-                group_id: *group_id,
-                weekday_radar,
-                weekday_radar_previous,
-                hourly: current_hour_by_group.remove(group_id).unwrap_or_default(),
-                hourly_previous: previous_hour_by_group.remove(group_id).unwrap_or_default(),
-                pie_total: pie_by_group.get(group_id).copied().unwrap_or(0),
-                current: current_series,
-                previous: previous_series,
-            })
-        })
+        .filter_map(|group_id| sources.graph(group_id))
         .collect();
 
     Ok(PeriodData {
@@ -736,6 +615,193 @@ pub(super) fn period_data(
         hourly_previous,
         per_group,
     })
+}
+
+/// The Bike-Trends like-for-like group set: groups whose earliest-ever
+/// measurement is before `reference_from` (the previous window's start, or the
+/// current window's start for a custom range). Empty when the setting is off.
+fn established_group_ids(
+    repository: &dyn MeasurementRepository,
+    channel_ids: &[ChannelId],
+    group_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
+    previous: Option<&Window>,
+    current: &Window,
+    exclude_new_stations: bool,
+) -> Result<HashSet<uuid::Uuid>, DomainError> {
+    if !exclude_new_stations {
+        return Ok(HashSet::new());
+    }
+    let reference_from = previous.map_or(current.from, |previous| previous.from);
+    let mut earliest_by_group: HashMap<uuid::Uuid, DateTime<Utc>> = HashMap::new();
+    for row in repository.channel_bounds(channel_ids)? {
+        if let Some(&group) = group_of_channel.get(&row.channel_id) {
+            let entry = earliest_by_group.entry(group).or_insert(row.first);
+            *entry = (*entry).min(row.first);
+        }
+    }
+    Ok(earliest_by_group
+        .into_iter()
+        .filter(|(_, earliest)| !introduced_after(*earliest, reference_from))
+        .map(|(group, _)| group)
+        .collect())
+}
+
+/// Drops the channels whose group is not established. With the setting off the
+/// predicate accepts everything, so the default path is unaffected.
+fn established_rows(
+    rows: Vec<ChannelBucket>,
+    in_established: &impl Fn(uuid::Uuid) -> bool,
+) -> Vec<ChannelBucket> {
+    rows.into_iter()
+        .filter(|row| in_established(row.channel_id))
+        .collect()
+}
+
+/// Folds per-channel buckets into one aggregate series keyed by bucket start
+/// (the repository orders by channel then bucket).
+fn fold_series(rows: &[ChannelBucket]) -> Vec<TimeBucket> {
+    let mut totals: BTreeMap<DateTime<Utc>, i64> = BTreeMap::new();
+    for row in rows {
+        *totals.entry(row.start).or_insert(0) += row.total;
+    }
+    totals
+        .into_iter()
+        .map(|(start, total)| TimeBucket { start, total })
+        .collect()
+}
+
+/// Per-group weekday totals from the per-channel weekday rows.
+fn weekday_groups_by_channel(
+    rows: Vec<ChannelWeekdayTotal>,
+    in_established: &impl Fn(uuid::Uuid) -> bool,
+    group_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
+) -> HashMap<uuid::Uuid, Vec<WeekdayTotal>> {
+    let mut by_group: HashMap<uuid::Uuid, Vec<WeekdayTotal>> = HashMap::new();
+    for row in rows {
+        if in_established(row.channel_id)
+            && let Some(&group_id) = group_of_channel.get(&row.channel_id)
+        {
+            by_group.entry(group_id).or_default().push(WeekdayTotal {
+                weekday: row.weekday,
+                total: row.total,
+            });
+        }
+    }
+    by_group
+}
+
+/// Per-group hour-of-day totals from the per-channel hour rows.
+fn hour_groups_by_channel(
+    rows: Vec<ChannelHourTotal>,
+    in_established: &impl Fn(uuid::Uuid) -> bool,
+    group_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
+) -> HashMap<uuid::Uuid, Vec<HourTotal>> {
+    let mut by_group: HashMap<uuid::Uuid, Vec<HourTotal>> = HashMap::new();
+    for row in rows {
+        if in_established(row.channel_id)
+            && let Some(&group_id) = group_of_channel.get(&row.channel_id)
+        {
+            by_group.entry(group_id).or_default().push(HourTotal {
+                hour: row.hour,
+                total: row.total,
+            });
+        }
+    }
+    by_group
+}
+
+/// Folds per-group hour totals into the aggregate hour-of-day radar.
+fn fold_hours(by_group: &HashMap<uuid::Uuid, Vec<HourTotal>>) -> Vec<HourTotal> {
+    let mut totals: BTreeMap<u8, i64> = BTreeMap::new();
+    for hours in by_group.values() {
+        for hour in hours {
+            *totals.entry(hour.hour).or_insert(0) += hour.total;
+        }
+    }
+    totals
+        .into_iter()
+        .map(|(hour, total)| HourTotal { hour, total })
+        .collect()
+}
+
+/// Per-group series from the per-channel buckets.
+fn series_by_channel(
+    rows: Vec<ChannelBucket>,
+    group_of_channel: &HashMap<uuid::Uuid, uuid::Uuid>,
+) -> HashMap<uuid::Uuid, Vec<TimeBucket>> {
+    let mut by_group: HashMap<uuid::Uuid, Vec<TimeBucket>> = HashMap::new();
+    for row in rows {
+        if let Some(&group_id) = group_of_channel.get(&row.channel_id) {
+            by_group.entry(group_id).or_default().push(TimeBucket {
+                start: row.start,
+                total: row.total,
+            });
+        }
+    }
+    by_group
+}
+
+/// The per-group inputs of one [`period_data`] call: the maps a group's graph is
+/// assembled from (each group is drained exactly once, in `group_order`) plus
+/// the window and the bucket width the series are zero-filled/derived with.
+struct GroupSources<'a> {
+    current_by_group: HashMap<uuid::Uuid, Vec<TimeBucket>>,
+    previous_by_group: HashMap<uuid::Uuid, Vec<TimeBucket>>,
+    weekday_by_group: HashMap<uuid::Uuid, Vec<WeekdayTotal>>,
+    hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>>,
+    previous_hour_by_group: HashMap<uuid::Uuid, Vec<HourTotal>>,
+    wide_buckets: bool,
+    custom_range: bool,
+    current: &'a Window,
+    tz: Tz,
+}
+
+impl GroupSources<'_> {
+    /// The graph data of one group, or `None` when it holds no data in either
+    /// period (only reachable for groups the like-for-like filter removed).
+    fn graph(&mut self, group_id: &uuid::Uuid) -> Option<GroupGraphData> {
+        let mut current_series = self.current_by_group.remove(group_id).unwrap_or_default();
+        let previous_series = self.previous_by_group.remove(group_id).unwrap_or_default();
+        if current_series.is_empty() && previous_series.is_empty() {
+            return None;
+        }
+        // The pie describes the current window only.
+        let pie_total = current_series.iter().map(|bucket| bucket.total).sum();
+        if self.custom_range && !current_series.is_empty() {
+            current_series = zero_fill_buckets(
+                current_series,
+                self.current.granularity,
+                self.current.from,
+                self.current.to,
+                self.current.origin,
+                self.tz,
+            );
+        }
+        let (weekday_radar, weekday_radar_previous) = if self.wide_buckets {
+            (
+                self.weekday_by_group.remove(group_id).unwrap_or_default(),
+                Vec::new(),
+            )
+        } else {
+            (
+                weekday_totals(&current_series, self.tz),
+                weekday_totals(&previous_series, self.tz),
+            )
+        };
+        Some(GroupGraphData {
+            group_id: *group_id,
+            weekday_radar,
+            weekday_radar_previous,
+            hourly: self.hour_by_group.remove(group_id).unwrap_or_default(),
+            hourly_previous: self
+                .previous_hour_by_group
+                .remove(group_id)
+                .unwrap_or_default(),
+            pie_total,
+            current: current_series,
+            previous: previous_series,
+        })
+    }
 }
 
 /// The per-channel detail graphs for one timeframe (nerd stats per channel).

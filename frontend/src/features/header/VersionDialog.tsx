@@ -7,6 +7,18 @@ import {
 } from '@/components/ui/dialog'
 import { FRONTEND_VERSION } from '../../lib/version'
 
+/// The backend version label: the fetched version, the error fallback, or the
+/// in-flight placeholder while `GET /api/bff/version` is still pending.
+function backendVersionLabel(backendVersion: string | null, error: boolean): string {
+  if (backendVersion) {
+    return `v${backendVersion}`
+  }
+  if (error) {
+    return 'Unavailable'
+  }
+  return 'Loading…'
+}
+
 /// Popup dialogue for the installed application versions. The frontend version
 /// is baked into the bundle at build time; the backend version is fetched from
 /// `GET /api/bff/version` and shows a loading/error fallback until it arrives.
@@ -19,7 +31,7 @@ export function VersionDialog({
   error: boolean
   onClose: () => void
 }>) {
-  const backendLabel = backendVersion ? `v${backendVersion}` : error ? 'Unavailable' : 'Loading…'
+  const backendLabel = backendVersionLabel(backendVersion, error)
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

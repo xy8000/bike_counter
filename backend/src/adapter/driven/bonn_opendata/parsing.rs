@@ -380,74 +380,15 @@ pub fn parse_yearly_hourly_csv(
             // Skip the preamble rows until the `Time` header row.
             if first == "Time" {
                 header_seen = true;
-                for (index, header) in record.iter().enumerate() {
-                    if index == 0 {
-                        columns.push(None);
-                        continue;
-                    }
-                    let (has_index, name) = header_parts(header);
-                    let channel = station_by_name.get(&name).cloned();
-                    if channel.is_none() && has_index {
-                        // An indexed column that still does not match: likely a
-                        // renamed station outside the alias table. Aggregate
-                        // columns (no index) are expected and stay silent.
-                        if let Some(messages) = messages {
-                            let message = format!(
-                                "yearly CSV: column '{header}' does not match an imported station; skipped"
-                            );
-                            let _ = messages.provider_event_occurred(
-                                ProviderMessageSeverity::Warning,
-                                &message,
-                            );
-                        }
-                    }
-                    columns.push(channel);
-                }
+                columns = yearly_column_channels(&record, station_by_name, messages);
             }
             continue;
         }
 
-        if first.is_empty() {
-            continue;
-        }
-        let Some(naive) = parse_german_datetime(first) else {
-            if let Some(messages) = messages {
-                let message = format!("yearly CSV: unparsable timestamp '{first}' skipped");
-                let _ = messages.provider_event_occurred(ProviderMessageSeverity::Debug, &message);
-            }
+        let Some(timestamp) = yearly_row_timestamp(first, messages) else {
             continue;
         };
-        let Some(timestamp) = berlin_to_utc(naive) else {
-            continue;
-        };
-
-        for (index, channel) in columns.iter().enumerate() {
-            if index == 0 {
-                continue;
-            }
-            let Some(channel) = channel else {
-                continue;
-            };
-            let Some(value_text) = record.get(index).map(str::trim) else {
-                continue;
-            };
-            if value_text.is_empty() {
-                continue;
-            }
-            let Ok(value) = value_text.parse::<i64>() else {
-                if let Some(messages) = messages {
-                    let message = format!("yearly CSV: non-integer value '{value_text}' skipped");
-                    let _ =
-                        messages.provider_event_occurred(ProviderMessageSeverity::Debug, &message);
-                }
-                continue;
-            };
-            rows.push(WideRow {
-                channel: channel.clone(),
-                timestamp,
-                value,
-            });
-        }
+        push_yearly_values(&record, &columns, timestamp, messages, &mut rows);
     }
 
     if !header_seen {
@@ -456,6 +397,97 @@ pub fn parse_yearly_hourly_csv(
         ));
     }
     Ok(rows)
+}
+
+/// Emits one provider message, when a sink is attached.
+fn emit_csv_message(
+    messages: Option<&(dyn ProviderMessageSink + Send + Sync)>,
+    severity: ProviderMessageSeverity,
+    message: &str,
+) {
+    if let Some(messages) = messages {
+        let _ = messages.provider_event_occurred(severity, message);
+    }
+}
+
+/// Maps a yearly CSV header row to one channel per column: `None` for the
+/// `Time` column, for aggregate columns and for station names that do not
+/// resolve through the alias table.
+fn yearly_column_channels(
+    headers: &csv::StringRecord,
+    station_by_name: &HashMap<String, String>,
+    messages: Option<&(dyn ProviderMessageSink + Send + Sync)>,
+) -> Vec<Option<String>> {
+    headers
+        .iter()
+        .enumerate()
+        .map(|(index, header)| {
+            if index == 0 {
+                return None;
+            }
+            let (has_index, name) = header_parts(header);
+            let channel = station_by_name.get(&name).cloned();
+            if channel.is_none() && has_index {
+                // An indexed column that still does not match: likely a renamed
+                // station outside the alias table. Aggregate columns (no index)
+                // are expected and stay silent.
+                let message = format!(
+                    "yearly CSV: column '{header}' does not match an imported station; skipped"
+                );
+                emit_csv_message(messages, ProviderMessageSeverity::Warning, &message);
+            }
+            channel
+        })
+        .collect()
+}
+
+/// The UTC timestamp of one data row: `None` for the blank/preamble rows and
+/// for unparsable lead cells (both skipped, the latter debug-logged).
+fn yearly_row_timestamp(
+    first: &str,
+    messages: Option<&(dyn ProviderMessageSink + Send + Sync)>,
+) -> Option<DateTime<Utc>> {
+    if first.is_empty() {
+        return None;
+    }
+    let Some(naive) = parse_german_datetime(first) else {
+        let message = format!("yearly CSV: unparsable timestamp '{first}' skipped");
+        emit_csv_message(messages, ProviderMessageSeverity::Debug, &message);
+        return None;
+    };
+    berlin_to_utc(naive)
+}
+
+/// Emits one row per mapped, non-empty, integer-parsable station column of
+/// `record` at `timestamp`; non-integer cells are debug-logged and skipped.
+fn push_yearly_values(
+    record: &csv::StringRecord,
+    columns: &[Option<String>],
+    timestamp: DateTime<Utc>,
+    messages: Option<&(dyn ProviderMessageSink + Send + Sync)>,
+    rows: &mut Vec<WideRow>,
+) {
+    for (index, channel) in columns.iter().enumerate().skip(1) {
+        let Some(channel) = channel else {
+            continue;
+        };
+        let Some(value_text) = record.get(index).map(str::trim) else {
+            continue;
+        };
+        if value_text.is_empty() {
+            continue;
+        }
+        let Ok(value) = value_text.parse::<i64>() else {
+            let message = format!("yearly CSV: non-integer value '{value_text}' skipped");
+            emit_csv_message(messages, ProviderMessageSeverity::Debug, &message);
+            continue;
+        };
+        rows.push(WideRow {
+            channel: channel.clone(),
+            timestamp,
+            value,
+        });
+    }
 }
 
 /// Parses a German-formatted local timestamp in one of the two observed formats:
