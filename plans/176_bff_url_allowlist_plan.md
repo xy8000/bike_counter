@@ -191,46 +191,47 @@ re-reported both CSRF/SSRF findings on the `fetch` call of
   the call sites and `assertSameOriginResponse` after the fetch are unchanged,
   and no `sonar-disable`/eslint suppression was added.
 
-### Cutting the reported execution flow
+### No response value is a request destination any more
 
-The flow Sonar shows is the *station-overview* one: the shell response's
-`_links.stats.href` is handed to `fetchStationOverviewStats`, which forwards it
-to `getJson`. That flow is now structurally gone:
+The flow Sonar shows is a shell response's `_links.*.href` being passed to a card
+fetch and forwarded to `getJson`. Every page now derives its card URLs locally
+from the inputs it already has, so the payload is display data only:
 
-- [`fetchStationOverviewStats(id)`](frontend/src/features/stationOverview/api.ts:20)
-  takes the station id, validates it with `safePathSegment` and builds
-  `/api/bff/station-overview/{id}/stats` locally;
-- [`useStationOverview`](frontend/src/features/stationOverview/useStationOverview.ts:12)
-  passes the shell's `data.id` instead of its `_links.stats` href, so the
-  response body is display data only and never a request destination;
-- a regression test asserts a tainted id is refused without any request.
+- station overview - [`fetchStationOverviewStats(id)`](frontend/src/features/stationOverview/api.ts:20)
+  and the shell's `_links.stats` are built from the `safePathSegment`-validated
+  id; [`useStationOverview`](frontend/src/features/stationOverview/useStationOverview.ts:12)
+  passes `data.id`, never the href;
+- station detail - [`detailLinks(id)`](frontend/src/features/stationDetail/api.ts:19)
+  rebuilds `self`, `overview`, the four `graphs_*` and `monthly` links from the
+  validated id; the shell's own `_links` are discarded;
+- stations summary - [`summaryLinks(bounds)`](frontend/src/features/stationsSummary/api.ts:22)
+  rebuilds the same set with the view's bounds query; the shell's `_links` are
+  discarded;
+- sidebar - [`fetchSidebarShell(bounds)`](frontend/src/features/stations/api.ts:24)
+  rebuilds `_links.stats` from the bounds query.
 
-The only behavioural difference is that the stats card no longer repeats the
-shell's `as_of` token (the backend defaults it to "now"). The overview panel has
-a single stats card, so there is no cross-card consistency to preserve there -
-unlike the detail/summary pages, where the shared `as_of` is what keeps several
-cards on the same reference time.
+A compromised response can therefore only change what is *displayed*, not where
+the next request goes; the allowlist guard in `getJson` remains as the second
+layer for the remaining dynamic segments (ids, bounds).
 
-The remaining HATEOAS→`fetch` flows (station-detail cards, stations-summary
-cards, sidebar stats) still take their link from the previous response; they are
-guarded by the allowlist but the analyzer can point at any of them. Cutting them
-the same way means localizing their paths too, which currently also drops the
-shared `as_of` query the links carry (the reference time the cards agree on) -
-that is a behaviour decision, so it is not done unprompted here.
+The behavioural difference: cards no longer repeat the shell's `as_of` token, so
+each card uses the server's "now" instead of the reference time captured when
+the shell was produced. Cards on one page are now anchored within milliseconds
+of each other rather than on one shared instant. Tests covering the page shells
+were updated to assert the locally derived links.
 
-### Why a fully code-only closure is not possible
+### Why a fully code-only closure may still need a review
 
-The same sink is reported by **three** rules at
+The same sink was reported by **three** rules at
 [`bff.ts:42`](frontend/src/lib/bff.ts:42) - `tssecurity:S8476` (client-side
 request forgery), `tssecurity:S5144` (server-side request forgery) and the
 path-traversal rule ("API Traversal via unsanitized user input"). They are three
-labels on one dataflow: a request destination derived from a remote response.
-The analyzers do not model a custom allowlist/sanitizer function, so re-shaping
-the call (string vs. parsed `URL`, helper vs. inline, validation moved into or
-out of `getJson`) cannot clear them. Only "no dynamic destination at all" would,
-i.e. every request path a literal - impossible for an API addressed by station
-ids, and the reason the remaining HATEOAS-driven cards are localized one by one
-instead of rewriting every feature API module here.
+labels on one dataflow. The response-derived path is now gone (see above), but
+the shared helper is still generic: it receives a dynamic path built from route
+params/bounds, which some taint models also treat as user input. If such a rule
+fires on `getJson` itself, the analyzers still have no model for a custom
+allowlist/sanitizer, so the correct closure is a review decision ("Safe") - not a
+code suppression - justified by the guarantees listed below.
 
 What the code guarantees instead, and what a reviewer verifies against the flow:
 the tainted string can only ever *select* one of the allowlisted BFF routes on
@@ -248,7 +249,7 @@ suppression, and nothing was added to the sources).
 - [x] `safeBffRequestUrl` as the single BFF destination source of truth
 - [x] `bff.ts` takes the sink destination from the parsed `URL` and re-checks the response origin
 - [x] Call sites no longer interpolate raw route parameters
-- [x] Station-overview stats destination built locally from the id (no response href reaches `fetch`)
+- [x] Every card destination built locally (overview, detail, summary, sidebar); response `_links` are display-only
 - [x] Table-driven guard tests (no copy-pasted payload blocks, no suppressions)
 - [x] Analyzer limitation documented; no source suppression added
 - [x] Unit tests for the new guards and updated fixtures (653 tests green)

@@ -1,5 +1,5 @@
 import { safePathSegment } from '../../lib/apiUrl'
-import { getJson, unwrapLinks, type RawLink } from '../../lib/bff'
+import { getJson } from '../../lib/bff'
 import type { Bounds } from '../../lib/geo'
 import { bboxQuery } from '../../lib/geo'
 import type {
@@ -13,11 +13,28 @@ import type {
 /// Fetch the summary page shell for the stations inside `bounds` (bounds-only:
 /// the shell does not depend on the disabled/exclude set).
 export async function fetchStationsSummaryPage(bounds: Bounds): Promise<StationsSummaryPage> {
-  const params = new URLSearchParams(bboxQuery(bounds))
-  const data = await getJson<
-    Omit<StationsSummaryPage, '_links'> & { _links: Record<string, RawLink> }
-  >(`/api/bff/stations/summary?${params.toString()}`)
-  return { ...data, _links: unwrapLinks<StationsSummaryLinks>(data._links) }
+  const query = bboxQuery(bounds)
+  const data = await getJson<Omit<StationsSummaryPage, '_links'>>(
+    `/api/bff/stations/summary?${query}`,
+  )
+  return { ...data, _links: summaryLinks(query) }
+}
+
+/// Every card link is built locally from the same bounds query; the shell's
+/// `_links.*.href` values are display-only, so a compromised response cannot
+/// steer a card request (CSRF/SSRF). The cards fall back to the server's "now"
+/// reference instead of the shell's `as_of` token.
+function summaryLinks(query: string): StationsSummaryLinks {
+  const base = '/api/bff/stations/summary'
+  return {
+    self: `${base}?${query}`,
+    overview: `${base}/overview?${query}`,
+    graphs_day: `${base}/graphs/day?${query}`,
+    graphs_week: `${base}/graphs/week?${query}`,
+    graphs_last_30_days: `${base}/graphs/last_30_days?${query}`,
+    graphs_year: `${base}/graphs/year?${query}`,
+    monthly: `${base}/monthly?${query}`,
+  }
 }
 
 /// Appends the excluded station ids and the Bike-Trends flag to a summary card's

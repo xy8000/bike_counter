@@ -22,10 +22,11 @@ describe('useStationsSummaryPage', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.error).toBe(false)
-    expect(result.current.page?._links.overview).toBe('/api/bff/stations/summary/overview')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/bff/stations/summary?min_lat=51&min_lng=7&max_lat=52&max_lng=8',
+    const bounds = 'min_lat=51&min_lng=7&max_lat=52&max_lng=8'
+    expect(result.current.page?._links.overview).toBe(
+      `/api/bff/stations/summary/overview?${bounds}`,
     )
+    expect(fetchMock).toHaveBeenCalledWith(`/api/bff/stations/summary?${bounds}`)
   })
 
   it('reports the error when the shell request fails', async () => {

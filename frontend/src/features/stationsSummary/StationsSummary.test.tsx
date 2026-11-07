@@ -284,12 +284,14 @@ describe('StationsSummary', () => {
     expect(container.querySelector('[data-testid="recharts-RadarChart"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="recharts-PieChart"]')).not.toBeNull()
 
-    // The cards were fetched through the shell's HATEOAS links; the week graphs
-    // link carries the mid-resolution hour token.
+    // The card URLs are built locally from the bounds; the week graphs card adds
+    // the mid-resolution hour token.
     expect(mock).toHaveBeenCalledWith(expect.stringContaining('/api/bff/stations/summary?'))
-    expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview')
-    expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/graphs/week?resolution=hour')
-    expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/monthly')
+    expect(mock).toHaveBeenCalledWith(`/api/bff/stations/summary/overview?${BASE_QUERY}`)
+    expect(mock).toHaveBeenCalledWith(
+      `/api/bff/stations/summary/graphs/week?${BASE_QUERY}&resolution=hour`,
+    )
+    expect(mock).toHaveBeenCalledWith(`/api/bff/stations/summary/monthly?${BASE_QUERY}`)
   })
 
   it('shows the per-card skeletons while the card sub-requests are pending', async () => {
@@ -354,10 +356,12 @@ describe('StationsSummary', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'This year' }))
 
-    // The year timeframe at the default mid resolution uses the year link with
+    // The year timeframe at the default mid resolution uses the year card with
     // the `week` granularity.
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/graphs/year?resolution=week'),
+      expect(mock).toHaveBeenCalledWith(
+        `/api/bff/stations/summary/graphs/year?${BASE_QUERY}&resolution=week`,
+      ),
     )
   })
 
@@ -367,17 +371,17 @@ describe('StationsSummary', () => {
 
     await waitFor(() =>
       expect(mock).toHaveBeenCalledWith(
-        '/api/bff/stations/summary/overview?exclude_new_stations=true',
+        `/api/bff/stations/summary/overview?${BASE_QUERY}&exclude_new_stations=true`,
       ),
     )
     await waitFor(() =>
       expect(mock).toHaveBeenCalledWith(
-        '/api/bff/stations/summary/graphs/week?resolution=hour&exclude_new_stations=true',
+        `/api/bff/stations/summary/graphs/week?${BASE_QUERY}&resolution=hour&exclude_new_stations=true`,
       ),
     )
     await waitFor(() =>
       expect(mock).toHaveBeenCalledWith(
-        '/api/bff/stations/summary/monthly?exclude_new_stations=true',
+        `/api/bff/stations/summary/monthly?${BASE_QUERY}&exclude_new_stations=true`,
       ),
     )
   })
@@ -435,11 +439,13 @@ describe('StationsSummary', () => {
     fireEvent.click(marker)
 
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview?exclude=s1'),
+      expect(mock).toHaveBeenCalledWith(
+        `/api/bff/stations/summary/overview?${BASE_QUERY}&exclude=s1`,
+      ),
     )
     await waitFor(() =>
       expect(mock).toHaveBeenCalledWith(
-        '/api/bff/stations/summary/graphs/week?resolution=hour&exclude=s1',
+        `/api/bff/stations/summary/graphs/week?${BASE_QUERY}&resolution=hour&exclude=s1`,
       ),
     )
     expect(screen.getByAltText('A-Stadt')).toHaveClass('station-marker--disabled')
@@ -451,13 +457,17 @@ describe('StationsSummary', () => {
 
     const marker = await screen.findByAltText('A-Stadt')
     await waitFor(() =>
-      expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview?exclude=s1'),
+      expect(mock).toHaveBeenCalledWith(
+        `/api/bff/stations/summary/overview?${BASE_QUERY}&exclude=s1`,
+      ),
     )
     expect(marker).toHaveClass('station-marker--disabled')
 
     fireEvent.click(marker)
 
-    await waitFor(() => expect(mock).toHaveBeenCalledWith('/api/bff/stations/summary/overview'))
+    await waitFor(() =>
+      expect(mock).toHaveBeenCalledWith(`/api/bff/stations/summary/overview?${BASE_QUERY}`),
+    )
     expect(screen.getByAltText('A-Stadt')).not.toHaveClass('station-marker--disabled')
   })
 })

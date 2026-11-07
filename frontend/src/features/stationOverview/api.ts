@@ -1,16 +1,16 @@
 import { safePathSegment } from '../../lib/apiUrl'
-import { getJson, type RawLink } from '../../lib/bff'
+import { getJson } from '../../lib/bff'
 import type { StationOverviewPage, StationOverviewStats } from './types'
 
-/// Fetch the overview shell (identity + HATEOAS stats link) for one counting
-/// station. The BFF serializes `_links.stats` as a `LinkDto` (`{ href,
-/// templated }`); the frontend only needs the `href` string.
+/// Fetch the overview shell (identity) for one counting station. The stats link
+/// is derived locally from the validated id, so the shell response never
+/// supplies a request destination.
 export async function fetchStationOverview(id: string): Promise<StationOverviewPage> {
-  const url = `/api/bff/station-overview/${safePathSegment(id)}`
-  const data = await getJson<
-    Omit<StationOverviewPage, '_links'> & { _links: Record<string, RawLink> }
-  >(url)
-  return { ...data, _links: { stats: data._links.stats.href } }
+  const safeId = safePathSegment(id)
+  const data = await getJson<Omit<StationOverviewPage, '_links'>>(
+    `/api/bff/station-overview/${safeId}`,
+  )
+  return { ...data, _links: { stats: `/api/bff/station-overview/${safeId}/stats` } }
 }
 
 /// Fetch the overview stats card (all-time total + four metrics) for one

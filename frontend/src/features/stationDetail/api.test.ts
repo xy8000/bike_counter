@@ -21,7 +21,7 @@ afterEach(() => {
 })
 
 describe('fetchStationDetailPage', () => {
-  it('unwraps every _links LinkDto href and keeps the rest of the payload', async () => {
+  it('derives every card link locally and keeps the rest of the payload', async () => {
     const raw = {
       id: 's1',
       name: 'Zoo Station',
@@ -54,12 +54,12 @@ describe('fetchStationDetailPage', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/bff/station-detail/s1')
     expect(page.name).toBe('Zoo Station')
-    expect(page._links.self).toBe('/stations/s1')
+    // The links are rebuilt from the validated id; the response's own hrefs
+    // (including the `as_of` query) are informational only and never used.
+    expect(page._links.self).toBe('/api/bff/station-detail/s1')
     expect(page._links.overview).toBe('/api/bff/station-detail/s1/overview')
     expect(page._links.graphs_day).toBe('/api/bff/station-detail/s1/graphs/day')
-    expect(page._links.graphs_week).toBe(
-      '/api/bff/station-detail/s1/graphs/week?as_of=2026-01-01T00:00:00Z',
-    )
+    expect(page._links.graphs_week).toBe('/api/bff/station-detail/s1/graphs/week')
     expect(page._links.graphs_last_30_days).toBe('/api/bff/station-detail/s1/graphs/last_30_days')
     expect(page._links.graphs_year).toBe('/api/bff/station-detail/s1/graphs/year')
     expect(page._links.monthly).toBe('/api/bff/station-detail/s1/monthly')

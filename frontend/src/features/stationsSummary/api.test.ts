@@ -14,21 +14,21 @@ afterEach(() => {
 
 describe('stationsSummary api', () => {
   describe('fetchStationsSummaryPage', () => {
-    it('builds the bounds-only query and unwraps the _links hrefs', async () => {
+    it('builds the bounds-only query and the card links locally', async () => {
       const fetchMock = vi.fn().mockResolvedValue(ok(rawSummaryPage()))
       vi.stubGlobal('fetch', fetchMock)
 
       const page = await fetchStationsSummaryPage(SUMMARY_BOUNDS)
 
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/bff/stations/summary?min_lat=51&min_lng=7&max_lat=52&max_lng=8',
-      )
+      const bounds = 'min_lat=51&min_lng=7&max_lat=52&max_lng=8'
+      expect(fetchMock).toHaveBeenCalledWith(`/api/bff/stations/summary?${bounds}`)
       expect(page.image_url).toBe('/img/summary.png')
-      // Each `_links` value is unwrapped from a `LinkDto` to its bare `href`.
-      expect(page._links.self).toBe('/api/bff/stations/summary')
-      expect(page._links.overview).toBe('/api/bff/stations/summary/overview')
-      expect(page._links.graphs_week).toBe('/api/bff/stations/summary/graphs/week')
-      expect(page._links.monthly).toBe('/api/bff/stations/summary/monthly')
+      // The card links are derived from the bounds, not from the response's
+      // `_links` (which are informational only).
+      expect(page._links.self).toBe(`/api/bff/stations/summary?${bounds}`)
+      expect(page._links.overview).toBe(`/api/bff/stations/summary/overview?${bounds}`)
+      expect(page._links.graphs_week).toBe(`/api/bff/stations/summary/graphs/week?${bounds}`)
+      expect(page._links.monthly).toBe(`/api/bff/stations/summary/monthly?${bounds}`)
     })
 
     it('rejects when the shell responds with a non-ok status', async () => {
