@@ -13,6 +13,7 @@
 //! un-checkpointed tail.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 
@@ -42,6 +43,18 @@ struct Cursor {
     /// Highest real measurement read so far; caps the safe watermark.
     last_real: Option<DateTime<Utc>>,
     done: bool,
+}
+
+/// Drops the per-run reader state kept in `slot`.
+///
+/// Every adapter that pages through a [`SourceScanner`] calls this from its
+/// [`DataProvider::reset_source_read`](crate::core::domain::data_source::provider_port::DataProvider::reset_source_read)
+/// implementation (`T` is the adapter's scanner state, a [`SourceScanner`] or a
+/// wrapper around one), so each import run starts from the persisted watermark
+/// with clean cursors. Without it an exhausted scanner would be reused whenever
+/// the watermark did not move, hiding new upstream data forever (plan 173).
+pub fn reset_scanner<T>(slot: &Mutex<Option<T>>) {
+    *slot.lock().unwrap() = None;
 }
 
 /// Fair whole-source reader state for one run (anchored at a `from`).
@@ -185,6 +198,19 @@ mod tests {
             next_from: Some(next),
             done: false,
         }
+    }
+
+    #[test]
+    fn reset_scanner_drops_the_per_run_state() {
+        let slot = Mutex::new(Some(SourceScanner::new(None, &["a".to_string()])));
+        assert!(slot.lock().unwrap().is_some());
+
+        reset_scanner(&slot);
+
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "a reset slot re-seeds from the run anchor on the next call"
+        );
     }
 
     #[test]

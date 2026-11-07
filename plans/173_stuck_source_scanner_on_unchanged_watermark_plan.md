@@ -64,6 +64,10 @@ source import:
   calls it right after the `Starting` phase, before stations/channels/measurements
   are read, so both a crashed/aborted run and a normally finished one start from
   the persisted watermark with clean cursors.
+- a single shared [`reset_scanner`](backend/src/adapter/driven/source_merge.rs:47)
+  helper drops the slot (`Mutex<Option<T>>`, so both a bare `SourceScanner` and
+  the eco-counter `ScannerState` wrappers work), keeping the per-adapter code to
+  one delegation line and the logic in one place;
 - implemented in every adapter that pages with a `SourceScanner`: Münster, Bonn,
   Leipzig, Hamburg (scanner **and** per-field stream readers), and the three
   eco-counter variants (v1, v2, web/scraping).
@@ -76,6 +80,10 @@ source import:
 - [`channel_without_a_station_directory_serves_no_measurements`](backend/src/adapter/driven/muenster_github/tests.rs:1191)
   now also proves the regression: an exhausted scanner keeps returning
   `more = false` until `reset_source_read()` re-arms it.
+- `reset_scanner_drops_the_per_run_state` covers the shared helper, and the
+  adapters' `read_*` test helpers call `reset_source_read()` at the start of every
+  source read (Hamburg, Bonn, Leipzig, eco v1/v2, and the scraping paging test),
+  so the delegation lines are exercised too — production patch coverage 100 %.
 
 ## Definition of done
 

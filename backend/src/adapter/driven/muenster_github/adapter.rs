@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner, reset_scanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
@@ -712,10 +712,7 @@ impl DataProvider for MuensterGithubAdapter {
     }
 
     fn reset_source_read(&self) {
-        // The channel cursors belong to one run: dropping the scanner makes the
-        // next run page again from the persisted watermark even when that
-        // watermark (and the channel set) did not change (plan 173).
-        *self.scanner.lock().unwrap() = None;
+        reset_scanner(&self.scanner);
     }
 
     fn attach_persistent_state(&self, state: Arc<dyn PersistentStateAccess + Send + Sync>) {

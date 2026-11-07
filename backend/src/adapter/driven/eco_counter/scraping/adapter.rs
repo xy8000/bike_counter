@@ -25,7 +25,7 @@ use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
 use crate::adapter::driven::eco_counter::common::parse_host_and_port;
-use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner, reset_scanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
@@ -542,9 +542,7 @@ impl DataProvider for EcoCounterWebAdapter {
     }
 
     fn reset_source_read(&self) {
-        // The site cursors belong to one run: dropping the scanner makes the
-        // next run page again from the persisted watermark (plan 173).
-        *self.scanner.lock().unwrap() = None;
+        reset_scanner(&self.scanner);
     }
 
     fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {

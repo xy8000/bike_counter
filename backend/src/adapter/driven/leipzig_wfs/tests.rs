@@ -190,6 +190,8 @@ fn read_source(
     from: Option<DateTime<Utc>>,
     batch_size: usize,
 ) -> HashMap<String, Vec<MeasurementRecord>> {
+    // Every import run starts from a clean per-run state (plan 173).
+    adapter.reset_source_read();
     let mut out: HashMap<String, Vec<MeasurementRecord>> = HashMap::new();
     let mut calls = 0;
     loop {

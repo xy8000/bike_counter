@@ -170,6 +170,8 @@ fn read_channel(
     batch_size: usize,
     channel_external_id: &str,
 ) -> Vec<MeasurementRecord> {
+    // Every import run starts from a clean per-run state (plan 173).
+    adapter.reset_source_read();
     let mut out = Vec::new();
     let mut calls = 0;
     loop {
