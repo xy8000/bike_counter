@@ -19,14 +19,15 @@ export async function fetchMapStations(bounds: Bounds): Promise<StationMapList['
 }
 
 /// Fetch the sidebar shell (identity + image_url + counters + stats link). The
-/// BFF serializes `_links.stats` as a `LinkDto` (`{ href, templated }`); the
-/// frontend only needs the `href` string to fetch the stats sub-resource.
+/// stats link is rebuilt locally from the same bounds query instead of using the
+/// response's `_links.stats.href`: the payload is display data only, so a
+/// compromised shell response cannot choose the stats request destination.
 export async function fetchSidebarShell(bounds: Bounds): Promise<SidebarShell> {
   const query = bboxQuery(bounds)
   const data = await getJson<Omit<SidebarShell, '_links'> & { _links: Record<string, RawLink> }>(
     `/api/bff/stations/sidebar?${query}`,
   )
-  return { ...data, _links: { stats: data._links.stats.href } }
+  return { ...data, _links: { stats: `/api/bff/stations/sidebar/stats?${query}` } }
 }
 
 /// Fetch the per-station stats via the shell's stats link (which carries the
