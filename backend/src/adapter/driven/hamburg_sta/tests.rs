@@ -23,7 +23,6 @@ fn read_field(
     batch_size: usize,
     field: &str,
 ) -> Vec<MeasurementRecord> {
-    // Every import run starts from a clean per-run state (plan 173).
     a.reset_source_read();
     let mut out = Vec::new();
     let mut calls = 0;
