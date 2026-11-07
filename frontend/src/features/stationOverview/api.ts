@@ -1,3 +1,4 @@
+import { safePathSegment } from '../../lib/apiUrl'
 import { getJson, type RawLink } from '../../lib/bff'
 import type { StationOverviewPage, StationOverviewStats } from './types'
 
@@ -5,7 +6,7 @@ import type { StationOverviewPage, StationOverviewStats } from './types'
 /// station. The BFF serializes `_links.stats` as a `LinkDto` (`{ href,
 /// templated }`); the frontend only needs the `href` string.
 export async function fetchStationOverview(id: string): Promise<StationOverviewPage> {
-  const url = `/api/bff/station-overview/${id}`
+  const url = `/api/bff/station-overview/${safePathSegment(id)}`
   const data = await getJson<
     Omit<StationOverviewPage, '_links'> & { _links: Record<string, RawLink> }
   >(url)

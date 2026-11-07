@@ -21,7 +21,7 @@ describe('useStationsSummaryOverview', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() =>
-      useStationsSummaryOverview('/api/overview/summary', ['s1'], true),
+      useStationsSummaryOverview('/api/bff/stations/summary/overview', ['s1'], true),
     )
 
     expect(result.current.loading).toBe(true)
@@ -31,7 +31,7 @@ describe('useStationsSummaryOverview', () => {
     expect(result.current.error).toBe(false)
     expect(result.current.overview?.total_bikes).toBe(1234)
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/overview/summary?exclude=s1&exclude_new_stations=true',
+      '/api/bff/stations/summary/overview?exclude=s1&exclude_new_stations=true',
     )
   })
 
@@ -39,7 +39,7 @@ describe('useStationsSummaryOverview', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
 
     const { result } = renderHook(() =>
-      useStationsSummaryOverview('/api/overview/summary', [], false),
+      useStationsSummaryOverview('/api/bff/stations/summary/overview', [], false),
     )
 
     await waitFor(() => expect(result.current.error).toBe(true))
@@ -64,12 +64,14 @@ describe('useStationsSummaryOverview', () => {
 
     const { result, rerender } = renderHook(
       ({ exclude }: { exclude: string[] }) =>
-        useStationsSummaryOverview('/api/overview/summary', exclude, false),
+        useStationsSummaryOverview('/api/bff/stations/summary/overview', exclude, false),
       { initialProps: { exclude: [] as string[] } },
     )
     await waitFor(() => expect(result.current.overview?.total_bikes).toBe(1234))
 
     rerender({ exclude: ['s2'] })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/overview/summary?exclude=s2'))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/bff/stations/summary/overview?exclude=s2'),
+    )
   })
 })

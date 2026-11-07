@@ -40,6 +40,16 @@ describe('fetchStationOverview', () => {
 
     await expect(fetchStationOverview('zoo')).rejects.toThrow(`${SHELL_URL} responded with 404`)
   })
+
+  it('refuses a tainted station id without issuing a request (CSRF/SSRF guard)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok(rawShell))
+    vi.stubGlobal('fetch', fetchMock)
+
+    for (const id of ['../admin', 'zoo/stats', 'zoo?x=1', 'zoo%2f..%2fadmin']) {
+      await expect(fetchStationOverview(id)).rejects.toThrow('Refusing to use unsafe path segment')
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('fetchStationOverviewStats', () => {

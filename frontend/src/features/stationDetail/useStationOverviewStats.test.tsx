@@ -18,26 +18,34 @@ describe('useStationOverviewStats', () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(STATS))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useStationOverviewStats('/api/overview/s1', false))
+    const { result } = renderHook(() =>
+      useStationOverviewStats('/api/bff/station-detail/s1/overview', false),
+    )
 
     await waitFor(() => expect(result.current.data).toEqual(STATS))
-    expect(fetchMock).toHaveBeenCalledWith('/api/overview/s1')
+    expect(fetchMock).toHaveBeenCalledWith('/api/bff/station-detail/s1/overview')
   })
 
   it('appends the trend param when exclude is on', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(STATS))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useStationOverviewStats('/api/overview/s1', true))
+    const { result } = renderHook(() =>
+      useStationOverviewStats('/api/bff/station-detail/s1/overview', true),
+    )
 
     await waitFor(() => expect(result.current.data).toEqual(STATS))
-    expect(fetchMock).toHaveBeenCalledWith('/api/overview/s1?exclude_new_stations=true')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/bff/station-detail/s1/overview?exclude_new_stations=true',
+    )
   })
 
   it('reports the error when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
 
-    const { result } = renderHook(() => useStationOverviewStats('/api/overview/s1', false))
+    const { result } = renderHook(() =>
+      useStationOverviewStats('/api/bff/station-detail/s1/overview', false),
+    )
 
     await waitFor(() => expect(result.current.error).toBe(true))
     expect(result.current.data).toBeNull()

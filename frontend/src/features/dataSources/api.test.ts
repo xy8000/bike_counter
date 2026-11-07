@@ -73,6 +73,18 @@ describe('dataSources api', () => {
         '/api/bff/data-sources/ms responded with 404',
       )
     })
+
+    it('refuses a tainted data-source id without issuing a request (CSRF/SSRF guard)', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(ok(DETAIL))
+      vi.stubGlobal('fetch', fetchMock)
+
+      for (const id of ['../api/v1/admin', 'ms/imports', 'ms?x=1']) {
+        await expect(fetchDataSourceDetail(id)).rejects.toThrow(
+          'Refusing to use unsafe path segment',
+        )
+      }
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
   })
 
   describe('fetchDataSourceImports', () => {

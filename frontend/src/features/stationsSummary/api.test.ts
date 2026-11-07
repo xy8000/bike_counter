@@ -25,10 +25,10 @@ describe('stationsSummary api', () => {
       )
       expect(page.image_url).toBe('/img/summary.png')
       // Each `_links` value is unwrapped from a `LinkDto` to its bare `href`.
-      expect(page._links.self).toBe('/api/summary/self')
-      expect(page._links.overview).toBe('/api/overview/summary')
-      expect(page._links.graphs_week).toBe('/api/graphs/summary/week')
-      expect(page._links.monthly).toBe('/api/monthly/summary')
+      expect(page._links.self).toBe('/api/bff/stations/summary')
+      expect(page._links.overview).toBe('/api/bff/stations/summary/overview')
+      expect(page._links.graphs_week).toBe('/api/bff/stations/summary/graphs/week')
+      expect(page._links.monthly).toBe('/api/bff/stations/summary/monthly')
     })
 
     it('rejects when the shell responds with a non-ok status', async () => {
@@ -47,9 +47,9 @@ describe('stationsSummary api', () => {
         .mockResolvedValue(ok({ channel_count: 4, total_bikes: 10, metrics: [] }))
       vi.stubGlobal('fetch', fetchMock)
 
-      await fetchSummaryOverview('/api/overview/summary', [], false)
+      await fetchSummaryOverview('/api/bff/stations/summary/overview', [], false)
 
-      expect(fetchMock).toHaveBeenCalledWith('/api/overview/summary')
+      expect(fetchMock).toHaveBeenCalledWith('/api/bff/stations/summary/overview')
     })
 
     it('appends the exclude ids and the new-stations flag to a bare link', async () => {
@@ -58,10 +58,10 @@ describe('stationsSummary api', () => {
         .mockResolvedValue(ok({ channel_count: 4, total_bikes: 10, metrics: [] }))
       vi.stubGlobal('fetch', fetchMock)
 
-      await fetchSummaryOverview('/api/overview/summary', ['s1', 's2'], true)
+      await fetchSummaryOverview('/api/bff/stations/summary/overview', ['s1', 's2'], true)
 
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/overview/summary?exclude=s1,s2&exclude_new_stations=true',
+        '/api/bff/stations/summary/overview?exclude=s1,s2&exclude_new_stations=true',
       )
     })
 
@@ -71,19 +71,37 @@ describe('stationsSummary api', () => {
         .mockResolvedValue(ok({ channel_count: 4, total_bikes: 10, metrics: [] }))
       vi.stubGlobal('fetch', fetchMock)
 
-      await fetchSummaryOverview('/api/overview/summary?as_of=2026-01-01', ['s1'], true)
+      await fetchSummaryOverview(
+        '/api/bff/stations/summary/overview?as_of=2026-01-01',
+        ['s1'],
+        true,
+      )
 
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/overview/summary?as_of=2026-01-01&exclude=s1&exclude_new_stations=true',
+        '/api/bff/stations/summary/overview?as_of=2026-01-01&exclude=s1&exclude_new_stations=true',
       )
     })
 
     it('rejects when the overview responds with a non-ok status', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 404 })))
 
-      await expect(fetchSummaryOverview('/api/overview/summary', ['s1'], false)).rejects.toThrow(
-        '/api/overview/summary?exclude=s1 responded with 404',
-      )
+      await expect(
+        fetchSummaryOverview('/api/bff/stations/summary/overview', ['s1'], false),
+      ).rejects.toThrow('/api/bff/stations/summary/overview?exclude=s1 responded with 404')
+    })
+
+    it('refuses an exclude id that would inject another parameter (CSRF/SSRF guard)', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(ok({}))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await expect(
+        fetchSummaryOverview(
+          '/api/bff/stations/summary/overview',
+          ['s1&url=https://evil.example'],
+          false,
+        ),
+      ).rejects.toThrow('Refusing to use unsafe path segment')
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 
@@ -92,10 +110,14 @@ describe('stationsSummary api', () => {
       const fetchMock = vi.fn().mockResolvedValue(ok({}))
       vi.stubGlobal('fetch', fetchMock)
 
-      await fetchSummaryGraphs('/api/graphs/summary/week?resolution=hour', ['s1'], true)
+      await fetchSummaryGraphs(
+        '/api/bff/stations/summary/graphs/week?resolution=hour',
+        ['s1'],
+        true,
+      )
 
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/graphs/summary/week?resolution=hour&exclude=s1&exclude_new_stations=true',
+        '/api/bff/stations/summary/graphs/week?resolution=hour&exclude=s1&exclude_new_stations=true',
       )
     })
 
@@ -103,17 +125,17 @@ describe('stationsSummary api', () => {
       const fetchMock = vi.fn().mockResolvedValue(ok({}))
       vi.stubGlobal('fetch', fetchMock)
 
-      await fetchSummaryGraphs('/api/graphs/summary/year', [], false)
+      await fetchSummaryGraphs('/api/bff/stations/summary/graphs/year', [], false)
 
-      expect(fetchMock).toHaveBeenCalledWith('/api/graphs/summary/year')
+      expect(fetchMock).toHaveBeenCalledWith('/api/bff/stations/summary/graphs/year')
     })
 
     it('rejects when the graphs card responds with a non-ok status', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
 
-      await expect(fetchSummaryGraphs('/api/graphs/summary/week', ['s1'], false)).rejects.toThrow(
-        '/api/graphs/summary/week?exclude=s1 responded with 500',
-      )
+      await expect(
+        fetchSummaryGraphs('/api/bff/stations/summary/graphs/week', ['s1'], false),
+      ).rejects.toThrow('/api/bff/stations/summary/graphs/week?exclude=s1 responded with 500')
     })
   })
 
@@ -122,19 +144,19 @@ describe('stationsSummary api', () => {
       const fetchMock = vi.fn().mockResolvedValue(ok({ monthly_totals: [] }))
       vi.stubGlobal('fetch', fetchMock)
 
-      await fetchSummaryMonthly('/api/monthly/summary?as_of=2026-01-01', [], true)
+      await fetchSummaryMonthly('/api/bff/stations/summary/monthly?as_of=2026-01-01', [], true)
 
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/monthly/summary?as_of=2026-01-01&exclude_new_stations=true',
+        '/api/bff/stations/summary/monthly?as_of=2026-01-01&exclude_new_stations=true',
       )
     })
 
     it('rejects when the monthly card responds with a non-ok status', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
 
-      await expect(fetchSummaryMonthly('/api/monthly/summary', [], false)).rejects.toThrow(
-        '/api/monthly/summary responded with 500',
-      )
+      await expect(
+        fetchSummaryMonthly('/api/bff/stations/summary/monthly', [], false),
+      ).rejects.toThrow('/api/bff/stations/summary/monthly responded with 500')
     })
   })
 })

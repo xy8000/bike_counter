@@ -17,10 +17,10 @@ vi.mock('@/components/ui/chart', async () => {
 })
 
 const SHELL_URL = '/api/bff/station-detail/s1'
-const OVERVIEW_URL = '/api/overview/s1'
-const GRAPHS_WEEK_URL = '/api/graphs/s1/week'
-const GRAPHS_YEAR_URL = '/api/graphs/s1/year'
-const MONTHLY_URL = '/api/monthly/s1'
+const OVERVIEW_URL = '/api/bff/station-detail/s1/overview'
+const GRAPHS_WEEK_URL = '/api/bff/station-detail/s1/graphs/week'
+const GRAPHS_YEAR_URL = '/api/bff/station-detail/s1/graphs/year'
+const MONTHLY_URL = '/api/bff/station-detail/s1/monthly'
 
 const GLOBAL_SUMMARY = {
   station_count: 4,
@@ -46,9 +46,12 @@ function rawShell() {
     _links: {
       self: { href: '/stations/s1', templated: false },
       overview: { href: OVERVIEW_URL, templated: false },
-      graphs_day: { href: '/api/graphs/s1/day', templated: false },
+      graphs_day: { href: '/api/bff/station-detail/s1/graphs/day', templated: false },
       graphs_week: { href: GRAPHS_WEEK_URL, templated: false },
-      graphs_last_30_days: { href: '/api/graphs/s1/last_30_days', templated: false },
+      graphs_last_30_days: {
+        href: '/api/bff/station-detail/s1/graphs/last_30_days',
+        templated: false,
+      },
       graphs_year: { href: GRAPHS_YEAR_URL, templated: false },
       monthly: { href: MONTHLY_URL, templated: false },
     },
@@ -124,7 +127,7 @@ function makeServer(options: ServerOptions = {}) {
   }
   const mock = vi.fn((input: unknown): Promise<Response> => {
     const url = String(input)
-    if (url.includes('/api/bff/station-detail/')) {
+    if (url === SHELL_URL) {
       if (state.shellError) return Promise.reject(new Error('shell failed'))
       return Promise.resolve(ok(rawShell()))
     }
@@ -139,7 +142,7 @@ function makeServer(options: ServerOptions = {}) {
     if (url.includes('/global-summary')) {
       return Promise.resolve(ok(GLOBAL_SUMMARY))
     }
-    if (url.includes('/overview/')) {
+    if (url.includes('/overview')) {
       if (state.overviewError) return Promise.reject(new Error('overview failed'))
       return Promise.resolve(ok(OVERVIEW))
     }

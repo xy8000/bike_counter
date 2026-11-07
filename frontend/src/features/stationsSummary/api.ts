@@ -1,6 +1,7 @@
+import { safePathSegment } from '../../lib/apiUrl'
+import { getJson, unwrapLinks, type RawLink } from '../../lib/bff'
 import type { Bounds } from '../../lib/geo'
 import { bboxQuery } from '../../lib/geo'
-import { getJson, unwrapLinks, type RawLink } from '../../lib/bff'
 import type {
   MonthlyTotals,
   StationsSummaryLinks,
@@ -20,7 +21,9 @@ export async function fetchStationsSummaryPage(bounds: Bounds): Promise<Stations
 }
 
 /// Appends the excluded station ids and the Bike-Trends flag to a summary card's
-/// HATEOAS link (the link already carries the bounds + `as_of`).
+/// HATEOAS link (the link already carries the bounds + `as_of`). Every id is
+/// validated as one plain path segment first, so an id can never smuggle an
+/// extra query key (`&…`) or delimiter into the request.
 function withSummaryParams(
   baseUrl: string,
   exclude: string[],
@@ -29,7 +32,7 @@ function withSummaryParams(
   let url = baseUrl
   if (exclude.length > 0) {
     const separator = url.includes('?') ? '&' : '?'
-    url = `${url}${separator}exclude=${exclude.join(',')}`
+    url = `${url}${separator}exclude=${exclude.map(safePathSegment).join(',')}`
   }
   if (excludeNewStations) {
     const separator = url.includes('?') ? '&' : '?'
@@ -40,7 +43,7 @@ function withSummaryParams(
 
 /// Fetch one summary stats card by its HATEOAS link, including the local
 /// exclude set and the Bike-Trends flag in the query.
-export function fetchSummaryOverview(
+export async function fetchSummaryOverview(
   link: string,
   exclude: string[],
   excludeNewStations: boolean,
@@ -48,7 +51,7 @@ export function fetchSummaryOverview(
   return getJson(withSummaryParams(link, exclude, excludeNewStations))
 }
 
-export function fetchSummaryGraphs(
+export async function fetchSummaryGraphs(
   link: string,
   exclude: string[],
   excludeNewStations: boolean,
@@ -56,7 +59,7 @@ export function fetchSummaryGraphs(
   return getJson(withSummaryParams(link, exclude, excludeNewStations))
 }
 
-export function fetchSummaryMonthly(
+export async function fetchSummaryMonthly(
   link: string,
   exclude: string[],
   excludeNewStations: boolean,

@@ -19,17 +19,17 @@ describe('useStationMonthly', () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(MONTHLY))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => useStationMonthly('/api/monthly/s1'))
+    const { result } = renderHook(() => useStationMonthly('/api/bff/station-detail/s1/monthly'))
 
     await waitFor(() => expect(result.current.data).toEqual(MONTHLY))
     expect(result.current.error).toBe(false)
-    expect(fetchMock).toHaveBeenCalledWith('/api/monthly/s1')
+    expect(fetchMock).toHaveBeenCalledWith('/api/bff/station-detail/s1/monthly')
   })
 
   it('reports the error when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
 
-    const { result } = renderHook(() => useStationMonthly('/api/monthly/s1'))
+    const { result } = renderHook(() => useStationMonthly('/api/bff/station-detail/s1/monthly'))
 
     await waitFor(() => expect(result.current.error).toBe(true))
     expect(result.current.data).toBeNull()
