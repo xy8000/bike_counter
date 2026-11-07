@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
-use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner};
+use crate::adapter::driven::source_merge::{ChannelPage, SourceScanner, reset_scanner};
 use crate::core::domain::configuration::configuration::value_objects::DataSourceConfiguration;
 use crate::core::domain::configuration::error::ConfigError;
 use crate::core::domain::data_source::provider_message::ProviderMessageSeverity;
@@ -621,10 +621,9 @@ impl DataProvider for HamburgStaAdapter {
     }
 
     fn reset_source_read(&self) {
-        // Drop both the whole-source scanner and the per-field stream readers:
-        // their cursors and `@iot.nextLink` continuations belong to one run only
-        // (plan 173).
-        *self.scanner.lock().unwrap() = None;
+        // The per-field readers buffer rows and `@iot.nextLink` continuations of
+        // the previous run; both they and the scanner belong to one run only.
+        reset_scanner(&self.scanner);
         *self.readers.lock().unwrap() = None;
     }
 
