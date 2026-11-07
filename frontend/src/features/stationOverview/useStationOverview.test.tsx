@@ -72,7 +72,7 @@ describe('useStationOverview', () => {
     expect(result.current.statsError).toBe(false)
   })
 
-  it('loads the shell and then the stats from the _links.stats href', async () => {
+  it('loads the shell and then the stats for the same station id', async () => {
     const server = makeServer()
     const { result } = renderHook(() => useStationOverview('zoo'))
 

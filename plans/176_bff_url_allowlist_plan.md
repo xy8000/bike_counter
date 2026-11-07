@@ -191,7 +191,28 @@ re-reported both CSRF/SSRF findings on the `fetch` call of
   the call sites and `assertSameOriginResponse` after the fetch are unchanged,
   and no `sonar-disable`/eslint suppression was added.
 
-### The re-reported rules are an analyzer limitation, not an open code path
+### Cutting the reported execution flow
+
+The flow Sonar shows is the *station-overview* one: the shell response's
+`_links.stats.href` is handed to `fetchStationOverviewStats`, which forwards it
+to `getJson`. That flow is now structurally gone:
+
+- [`fetchStationOverviewStats(id)`](frontend/src/features/stationOverview/api.ts:20)
+  takes the station id, validates it with `safePathSegment` and builds
+  `/api/bff/station-overview/{id}/stats` locally;
+- [`useStationOverview`](frontend/src/features/stationOverview/useStationOverview.ts:12)
+  passes the shell's `data.id` instead of its `_links.stats` href, so the
+  response body is display data only and never a request destination;
+- a regression test asserts a tainted id is refused without any request.
+
+The remaining HATEOAS→`fetch` flows (station-detail cards, stations-summary
+cards, sidebar stats) still take their link from the previous response; they are
+guarded by the allowlist but the analyzer can point at any of them. Cutting them
+the same way means localizing their paths too, which currently also drops the
+shared `as_of` query the links carry (the reference time the cards agree on) -
+that is a behaviour decision, so it is not done unprompted here.
+
+### Why a fully code-only closure is not possible
 
 The scan of `ff68827` still lists both rules at
 [`bff.ts:42`](frontend/src/lib/bff.ts:42)
@@ -222,6 +243,7 @@ suppression, and nothing was added to the sources).
 - [x] `safeBffRequestUrl` as the single BFF destination source of truth
 - [x] `bff.ts` takes the sink destination from the parsed `URL` and re-checks the response origin
 - [x] Call sites no longer interpolate raw route parameters
+- [x] Station-overview stats destination built locally from the id (no response href reaches `fetch`)
 - [x] Table-driven guard tests (no copy-pasted payload blocks, no suppressions)
 - [x] Analyzer limitation documented; no source suppression added
 - [x] Unit tests for the new guards and updated fixtures (653 tests green)

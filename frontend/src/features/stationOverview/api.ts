@@ -13,8 +13,10 @@ export async function fetchStationOverview(id: string): Promise<StationOverviewP
   return { ...data, _links: { stats: data._links.stats.href } }
 }
 
-/// Fetch the overview stats card (all-time total + four metrics) via the
-/// shell's stats link.
-export async function fetchStationOverviewStats(url: string): Promise<StationOverviewStats> {
-  return getJson<StationOverviewStats>(url)
+/// Fetch the overview stats card (all-time total + four metrics) for one
+/// counting station. The request path is built locally from the validated id, so
+/// the shell's `_links.stats` href is never used as a request destination and a
+/// compromised shell response cannot steer this request.
+export async function fetchStationOverviewStats(id: string): Promise<StationOverviewStats> {
+  return getJson<StationOverviewStats>(`/api/bff/station-overview/${safePathSegment(id)}/stats`)
 }
