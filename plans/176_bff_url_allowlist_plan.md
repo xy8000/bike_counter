@@ -220,18 +220,17 @@ that is a behaviour decision, so it is not done unprompted here.
 
 ### Why a fully code-only closure is not possible
 
-The scan of `ff68827` still lists both rules at
-[`bff.ts:42`](frontend/src/lib/bff.ts:42)
-(`tssecurity:S8476` client-side / `tssecurity:S5144` server-side). Its execution
-flow is `response.json()` (the server-controlled HATEOAS `_links.*.href`) →
-`fetchStationOverviewStats(url)` → `getJson(url)` → `fetch`. Both analyzers flag
-*any* request destination whose value is derived from a remote response; they do
-not model a custom allowlist/sanitizer function, so re-shaping the call (string
-vs. parsed `URL`, helper vs. inline) cannot clear the finding - only removing
-dynamic destinations altogether would, which means replacing HATEOAS-link
-fetching with locally built endpoint URLs in every feature API module (a
-cross-cutting refactor deliberately **not** done here, to keep this change
-small).
+The same sink is reported by **three** rules at
+[`bff.ts:42`](frontend/src/lib/bff.ts:42) - `tssecurity:S8476` (client-side
+request forgery), `tssecurity:S5144` (server-side request forgery) and the
+path-traversal rule ("API Traversal via unsanitized user input"). They are three
+labels on one dataflow: a request destination derived from a remote response.
+The analyzers do not model a custom allowlist/sanitizer function, so re-shaping
+the call (string vs. parsed `URL`, helper vs. inline, validation moved into or
+out of `getJson`) cannot clear them. Only "no dynamic destination at all" would,
+i.e. every request path a literal - impossible for an API addressed by station
+ids, and the reason the remaining HATEOAS-driven cards are localized one by one
+instead of rewriting every feature API module here.
 
 What the code guarantees instead, and what a reviewer verifies against the flow:
 the tainted string can only ever *select* one of the allowlisted BFF routes on
