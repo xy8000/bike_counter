@@ -1229,6 +1229,16 @@ fn channel_without_a_station_directory_serves_no_measurements() {
     assert!(page.measurements.is_empty());
     assert!(!page.more, "an exhausted scanner serves an empty batch");
 
+    // A new import run starts from a clean cursor set: without the reset the
+    // exhausted scanner would keep reporting "no new data" forever, which is the
+    // live bug that froze Münster at its 2026-10-30 watermark (plan 173).
+    adapter.reset_source_read();
+    let page = adapter.get_measurements_source(None, 500).unwrap();
+    assert!(
+        page.more,
+        "a reset scanner pages the channels again instead of staying exhausted"
+    );
+
     fs::remove_dir_all(&fixture).unwrap();
 }
 

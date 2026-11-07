@@ -711,6 +711,13 @@ impl DataProvider for MuensterGithubAdapter {
         self.max_measurement_batch_size
     }
 
+    fn reset_source_read(&self) {
+        // The channel cursors belong to one run: dropping the scanner makes the
+        // next run page again from the persisted watermark even when that
+        // watermark (and the channel set) did not change (plan 173).
+        *self.scanner.lock().unwrap() = None;
+    }
+
     fn attach_persistent_state(&self, state: Arc<dyn PersistentStateAccess + Send + Sync>) {
         *self.state.lock().unwrap() = Some(state);
     }

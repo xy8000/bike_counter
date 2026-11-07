@@ -620,6 +620,14 @@ impl DataProvider for HamburgStaAdapter {
         self.max_measurement_batch_size
     }
 
+    fn reset_source_read(&self) {
+        // Drop both the whole-source scanner and the per-field stream readers:
+        // their cursors and `@iot.nextLink` continuations belong to one run only
+        // (plan 173).
+        *self.scanner.lock().unwrap() = None;
+        *self.readers.lock().unwrap() = None;
+    }
+
     fn attach_provider_messages(&self, sink: Arc<dyn ProviderMessageSink + Send + Sync>) {
         *self.messages.lock().unwrap() = Some(sink);
     }

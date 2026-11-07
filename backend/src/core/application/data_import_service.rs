@@ -456,6 +456,12 @@ impl DataImportService {
         mut on_progress: impl FnMut(DataSourceImportProgress) -> Result<(), DomainError>,
     ) -> Result<DataSourceUpdate, DomainError> {
         on_phase(DataSourceImportPhase::Starting)?;
+        // Every run starts from the persisted watermark with a clean provider
+        // read state. The provider instance lives for the whole process, so a
+        // cursor set left over from the previous run must never be reused: an
+        // exhausted one would hide new upstream data forever, and advanced
+        // cursors would skip rows a failed save never persisted (plan 173).
+        runtime.provider.reset_source_read();
         let (station_ids, added_stations) = {
             on_phase(DataSourceImportPhase::SyncingStations)?;
             self.sync_counting_stations(runtime)?
@@ -681,6 +687,7 @@ fn to_measurements(records: Vec<MeasurementRecord>, channel_id: Uuid) -> Vec<Mea
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, VecDeque};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -857,6 +864,46 @@ mod tests {
 
         fn max_measurement_batch_size(&self) -> usize {
             self.batch_size
+        }
+    }
+
+    /// Records `reset_source_read` calls so a test can prove every source run
+    /// starts with a clean provider read state (plan 173).
+    struct ResetSpyProvider {
+        resets: Arc<AtomicUsize>,
+    }
+
+    impl DataProvider for ResetSpyProvider {
+        fn check_health(&self) -> HealthStatus {
+            HealthStatus::Up
+        }
+
+        fn get_all_counting_stations(&self) -> Result<Vec<CountingStationRecord>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn get_all_channels(&self) -> Result<Vec<ChannelRecord>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn get_measurements_source(
+            &self,
+            _from: Option<DateTime<Utc>>,
+            _max_batch_size: usize,
+        ) -> Result<SourceMeasurementBatch, ProviderError> {
+            Ok(SourceMeasurementBatch {
+                measurements: Vec::new(),
+                next_from: None,
+                more: false,
+            })
+        }
+
+        fn max_measurement_batch_size(&self) -> usize {
+            500
+        }
+
+        fn reset_source_read(&self) {
+            self.resets.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -1965,6 +2012,36 @@ mod tests {
         assert_eq!(
             saved_channel.counting_station_id.0,
             station_repo.stations.lock().unwrap()[0].id.0
+        );
+    }
+
+    #[test]
+    fn every_run_starts_from_a_clean_provider_read_state() {
+        // Regression guard for the Münster source stuck at "0 new measurements"
+        // (plan 173): the provider instance survives between runs, so the import
+        // must reset its per-run cursors every time instead of reusing an
+        // exhausted one.
+        let resets = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(ResetSpyProvider {
+            resets: resets.clone(),
+        });
+        let runtime = DataSourceRuntime {
+            data_source_id: DataSourceId(Uuid::new_v4()),
+            provider,
+        };
+        let (stations, channels, measurements) = empty_repos();
+        let service = DataImportService::new(stations, channels, measurements);
+
+        for _ in 0..2 {
+            service
+                .update_data_source(&runtime, None, None, |_, _, _| Ok(()))
+                .unwrap();
+        }
+
+        assert_eq!(
+            resets.load(Ordering::Relaxed),
+            2,
+            "each source run must reset the provider's per-run read state"
         );
     }
 

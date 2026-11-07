@@ -180,6 +180,23 @@ pub trait DataProvider: Send + Sync {
     /// [`Self::get_measurements_source`].
     fn max_measurement_batch_size(&self) -> usize;
 
+    /// Called by the import worker at the start of **every** source run, before
+    /// the first [`Self::get_measurements_source`] call.
+    ///
+    /// A provider that keeps per-run read state (the channel cursors and buffers
+    /// behind [`Self::get_measurements_source`]) **must** discard it here. The
+    /// import runner builds the provider once per process, so without this reset
+    /// the cursor set of the previous run survives: a run that ended with every
+    /// channel exhausted would be reused whenever the persisted watermark did
+    /// not move, and the source would report "no new data" forever (live bug:
+    /// Münster stuck since 2026-10-30, plan 173). Resetting also makes rows that
+    /// were read but not persisted (a failed `save_batch`) re-read instead of
+    /// silently skipped.
+    ///
+    /// The default is a no-op, so stateless providers and existing mocks are
+    /// unaffected.
+    fn reset_source_read(&self) {}
+
     /// Optional: called once at startup so a stateful provider can keep its
     /// persistent-state handle. The handle is already scoped to this provider's
     /// data source. The default is a no-op, so providers without persistent
